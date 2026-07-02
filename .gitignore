@@ -1,0 +1,45 @@
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.iml
+
+# Java / Spring Boot
+backend/build/
+backend/out/
+backend/.gradle/
+*.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Database local files
+db/data/
+*.db
+*.sqlite
+
+# Documents / planning files if not public
+*.pdf
+
+# Temporary
+tmp/
+temp/
