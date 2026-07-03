@@ -48,6 +48,7 @@ meet-or-solo/
 - [docs/07_DEPLOYMENT.md](docs/07_DEPLOYMENT.md)
 - [docs/08_AI_WORKING_RULES.md](docs/08_AI_WORKING_RULES.md)
 - [docs/09_TEST_AND_QUALITY_STRATEGY.md](docs/09_TEST_AND_QUALITY_STRATEGY.md)
+- [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)
 
 ## 문서 작성 언어
 
@@ -122,12 +123,29 @@ profile 용도:
 - `dev`: Oracle Cloud VM의 개발/시연용 DB에 연결합니다. 초기 서버 배포는 이 profile을 사용합니다.
 - `prod`: 추후 제출/운영 단계에서 별도 DB와 도메인으로 분리하기 위해 유지합니다. 현재 VM 배포 대상은 아닙니다.
 
+### 로컬 실행 주의사항
+
+- `docker compose`는 프로젝트 루트에서 실행합니다.
+- `docker compose`는 `--env-file .env`를 통해 `.env`를 읽습니다.
+- Spring Boot `bootRun`은 `.env`를 자동으로 읽지 않습니다.
+- PowerShell과 Git Bash의 환경변수는 서로 공유되지 않습니다.
+- Git Bash에서 `source .env`를 했다면 같은 Git Bash 터미널에서 `./gradlew bootRun`까지 실행해야 합니다.
+- PowerShell에서 실행할 경우 `application-local.yml` fallback 값으로 실행하거나, PowerShell 환경변수를 직접 설정해야 합니다.
+
+로컬 기본값은 아래 기준으로 둡니다.
+
+```text
+DB_URL=jdbc:postgresql://localhost:5432/meet_or_solo_local
+DB_USERNAME=meet_user
+DB_PASSWORD=meet_password
+```
+
 ### PostgreSQL 컨테이너 실행
 
 로컬 개발용 PostgreSQL만 실행합니다. Redis는 MVP 1단계에서 제외합니다.
 
 ```bash
-docker compose -f docker-compose.local.yml up -d
+docker compose -f docker-compose.local.yml --env-file .env up -d
 ```
 
 상태 확인:
