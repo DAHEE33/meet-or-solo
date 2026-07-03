@@ -39,6 +39,26 @@ Redis는 MVP 1단계 배포 구성에 포함하지 않습니다.
 - disk usage를 모니터링한다.
 - JVM memory 설정을 보수적으로 둔다.
 
+## 초기 서버 배포 profile
+
+현재 MVP 초기 단계에서는 Oracle Cloud VM 리소스를 고려하여 `dev` 환경만 서버에 배포합니다.
+
+초기 서버 배포는 다음 환경변수를 사용합니다.
+
+```text
+SPRING_PROFILES_ACTIVE=dev
+```
+
+`local`, `dev`, `prod` profile은 코드에 유지합니다.
+
+- `local`: 개인 PC Docker PostgreSQL 기준
+- `dev`: Oracle Cloud VM의 개발/시연용 DB 기준
+- `prod`: 추후 제출/운영 단계에서 별도 디렉터리, 별도 DB, 별도 도메인 또는 외부 DB 서비스로 분리
+
+현재 VM에는 `dev`만 올립니다. `prod`는 지금 배포 대상이 아니며, 실제 운영 경계가 필요해질 때 분리합니다.
+
+PostgreSQL `5432`는 외부 전체 공개를 하지 않습니다. 개발자가 DB에 직접 접속해야 하면 SSH tunnel 방식을 우선 고려합니다.
+
 ## production Docker Compose 방향
 
 추후 `docker-compose.prod.yml`에는 다음이 포함될 수 있습니다.

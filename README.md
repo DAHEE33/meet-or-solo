@@ -106,7 +106,7 @@ DB_PORT
 SPRING_PROFILES_ACTIVE
 ```
 
-운영 profile은 다음 환경변수를 사용하도록 placeholder로만 구성되어 있습니다.
+`dev`와 `prod` profile은 다음 환경변수를 사용하도록 placeholder로만 구성되어 있습니다.
 
 ```text
 DB_URL
@@ -115,6 +115,12 @@ DB_PASSWORD
 FLYWAY_LOCATIONS
 SERVER_PORT
 ```
+
+profile 용도:
+
+- `local`: 개인 PC의 Docker PostgreSQL에 연결합니다.
+- `dev`: Oracle Cloud VM의 개발/시연용 DB에 연결합니다. 초기 서버 배포는 이 profile을 사용합니다.
+- `prod`: 추후 제출/운영 단계에서 별도 DB와 도메인으로 분리하기 위해 유지합니다. 현재 VM 배포 대상은 아닙니다.
 
 ### PostgreSQL 컨테이너 실행
 
@@ -127,7 +133,7 @@ docker compose -f docker-compose.local.yml up -d
 상태 확인:
 
 ```bash
-docker compose -f docker-compose.local.yml ps
+docker compose -f docker-compose.local.yml --env-file .env ps
 ```
 
 중지:
@@ -160,6 +166,8 @@ SPRING_PROFILES_ACTIVE=local ./gradlew bootRun
 
 Spring Boot 실행 시 Flyway가 `db/migration`의 migration을 적용합니다. 현재 `V1__init.sql`은 실제 도메인 테이블이 아니라 schema 검증용 placeholder 테이블만 생성합니다.
 
+실행 로그에서 `Flyway` 또는 `Migrating schema` 관련 메시지를 확인해 migration 적용 여부를 확인합니다.
+
 ### `/api/health` 확인
 
 backend 실행 후 다음 명령으로 확인합니다.
@@ -176,6 +184,44 @@ curl http://localhost:8080/api/health
   "status": "OK"
 }
 ```
+
+### 로컬 DB와 Flyway 확인
+
+로컬 PostgreSQL 컨테이너 상태를 확인합니다.
+
+```bash
+docker compose -f docker-compose.local.yml --env-file .env ps
+```
+
+backend를 `local` profile로 실행합니다.
+
+```bash
+cd backend
+set -a
+source ../.env
+set +a
+./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
+health endpoint를 확인합니다.
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+Flyway는 Spring Boot 실행 시 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다. 현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이며, 실제 서비스 테이블은 이후 `V2`, `V3` 파일로 추가합니다.
+
+PostgreSQL 컨테이너에 접속해 Flyway 적용 이력을 확인합니다.
+
+```bash
+docker exec -it meet-or-solo-postgres-local psql -U <LOCAL_DB_USERNAME> -d <LOCAL_DB_NAME>
+```
+
+```sql
+select * from flyway_schema_history;
+```
+
+이미 적용된 `V1`, `V2` 같은 migration 파일은 수정하지 않습니다. 변경이 필요하면 `V3`, `V4`처럼 새 migration 파일을 추가합니다.
 
 ### 아직 구현하지 않은 기능
 

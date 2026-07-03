@@ -39,6 +39,7 @@ com.survey.meetorsolo
 ```text
 application.yml
 application-local.yml
+application-dev.yml
 application-prod.yml
 ```
 
@@ -48,12 +49,22 @@ application-prod.yml
 - 로컬 CORS origin
 - 개발 로그
 
+`dev`:
+
+- Oracle Cloud VM의 개발/시연용 PostgreSQL 연결
+- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경변수 기반 설정
+- 초기 서버 배포 대상 profile
+- 실제 서버 IP, DB 계정, 비밀번호는 저장소에 기록하지 않음
+
 `prod`:
 
 - 환경변수 기반 Secret
 - 제한된 CORS
 - 보안 header
 - 저장소에 DB credential 미포함
+- 추후 제출/운영 단계에서 dev와 분리하기 위한 profile
+
+`application.yml`은 기본 profile을 `local`로 둡니다. 서버 배포 시에는 환경변수로 `SPRING_PROFILES_ACTIVE=dev`를 명시합니다.
 
 ## Flyway
 
@@ -67,6 +78,12 @@ Flyway는 초기부터 활성화합니다.
 - schema 변경 이력이 남아야 한다.
 
 Migration 파일은 영속 데이터에 영향을 주므로 신중히 검토합니다.
+
+Spring Boot 실행 시 Flyway는 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다.
+
+현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration입니다. 실제 서비스 테이블은 이후 `V2`, `V3` 파일로 추가합니다.
+
+이미 적용된 `V1`, `V2` 같은 migration 파일은 수정하지 않습니다. 변경이 필요하면 `V3`, `V4`처럼 새 migration 파일을 추가합니다.
 
 ## PostgreSQL
 
