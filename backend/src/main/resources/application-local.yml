@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:meet_or_solo}
-    username: ${POSTGRES_USER:meet_or_solo}
-    password: ${POSTGRES_PASSWORD:CHANGE_ME_LOCAL_PASSWORD}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:meet_or_solo_local}
+    username: ${POSTGRES_USER:meet_user}
+    password: ${POSTGRES_PASSWORD:meet_password}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -18,3 +18,7 @@ spring:
 logging:
   level:
     org.hibernate.SQL: debug
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}

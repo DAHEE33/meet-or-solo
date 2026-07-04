@@ -75,21 +75,22 @@
 - `frontend/dist/`는 build 결과물이므로 커밋하지 않는다.
 - 현재 frontend 화면은 개발 연결 확인용이며 실제 서비스 UI가 아니다.
 
-## 3. 다음 작업 단계
+### [4단계] Backend 공통 코드화 완료
 
-### [4단계] Backend 공통 코드화
+상태: 완료
 
-상태: 다음 작업
+완료 항목:
 
-목표:
-
-- 공통 응답 포맷
-- 공통 예외 처리
+- `ApiResponse` 기반 공통 응답 포맷 추가
+- `ErrorResponse` 기반 공통 에러 응답 구조 추가
 - `ErrorCode`
 - `BusinessException`
 - `GlobalExceptionHandler`
-- validation 에러 응답
-- CORS local/dev/prod 기반 설정
+- validation 에러 응답 공통 포맷 적용
+- `/api/**` CORS 설정 추가
+- local 기본 CORS origin: `http://localhost:5173`
+- dev/prod CORS origin은 `CORS_ALLOWED_ORIGINS` 환경변수 기반으로 확장 가능하게 구성
+- `HealthController` 응답을 공통 `ApiResponse` 포맷으로 변경
 
 주의:
 
@@ -97,12 +98,14 @@
 - 실제 서비스 DB 테이블은 만들지 않는다.
 - DB migration은 추가하지 않는다.
 - 인증, 매칭, 축제, 체크인, 신고 기능은 구현하지 않는다.
+- 응답에 stack trace, DB URL, 환경변수, 내부 예외 상세를 노출하지 않는다.
+- 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 한다.
 
-## 4. 이후 단계 순서
+## 3. 다음 작업 단계
 
 ### [5단계] Frontend 공통 코드화
 
-상태: 예정
+상태: 다음 작업
 
 - API client
 - 공통 fetch wrapper
@@ -110,7 +113,15 @@
 - route 구조
 - layout 구조
 - 환경변수 처리
+- 새 backend `ApiResponse` 포맷에 맞춘 `healthApi`와 `HealthCheckPage` 수정
 - 실제 서비스 화면은 아직 구현하지 않음
+
+주의:
+
+- 실제 서비스 화면은 구현하지 않는다.
+- Kakao OAuth, JWT, 축제/매칭/체크인/신고 기능은 구현하지 않는다.
+
+## 4. 이후 단계 순서
 
 ### [6단계] Oracle VM dev 서버/dev DB 구축
 
@@ -163,11 +174,10 @@
 
 기능 분업을 시작하기 전에 아래 순서를 완료합니다.
 
-1. [4단계] Backend 공통 코드화
-2. [5단계] Frontend 공통 코드화
-3. [6단계] Oracle VM dev 서버/dev DB 구축
-4. [7단계] nginx + docker-compose dev 배포 초안
-5. [8단계] GitHub Actions CI/CD 초안
+1. [5단계] Frontend 공통 코드화
+2. [6단계] Oracle VM dev 서버/dev DB 구축
+3. [7단계] nginx + docker-compose dev 배포 초안
+4. [8단계] GitHub Actions CI/CD 초안
 
 ## 6. 현재 아직 하지 않은 것
 
@@ -198,6 +208,12 @@
 - `backend/src/main/resources/application-dev.yml`
 - `backend/src/main/resources/application-prod.yml`
 - `backend/src/main/java/.../global/health/HealthController.java`
+- `backend/src/main/java/.../global/response/ApiResponse.java`
+- `backend/src/main/java/.../global/error/ErrorCode.java`
+- `backend/src/main/java/.../global/error/ErrorResponse.java`
+- `backend/src/main/java/.../global/exception/BusinessException.java`
+- `backend/src/main/java/.../global/exception/GlobalExceptionHandler.java`
+- `backend/src/main/java/.../global/config/CorsConfig.java`
 - `db/migration/V1__init.sql`
 - `frontend/package.json`
 - `frontend/package-lock.json`

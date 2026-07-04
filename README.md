@@ -18,14 +18,15 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 완료된 단계는 0~3단계입니다.
+현재 완료된 단계는 0~4단계입니다.
 
 - 0단계: 프로젝트 방향/문서화 완료
 - 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
 - 2단계: local/dev/prod 실행 전략 정리 완료
 - 3단계: Frontend PWA 기본 스캐폴딩 + `/api/health` 연동 완료
+- 4단계: Backend 공통 코드화 완료
 
-다음 작업은 4단계 Backend 공통 코드화입니다. 이후 5단계 Frontend 공통 코드화, 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
+다음 작업은 5단계 Frontend 공통 코드화입니다. 이후 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
 
 자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
@@ -48,11 +49,10 @@ meet-or-solo/
 
 기능 분업 전까지 남은 작업:
 
-1. Backend 공통 코드화
-2. Frontend 공통 코드화
-3. Oracle VM dev 서버/dev DB 구축
-4. nginx + docker-compose dev 배포 초안
-5. GitHub Actions CI/CD 초안
+1. Frontend 공통 코드화
+2. Oracle VM dev 서버/dev DB 구축
+3. nginx + docker-compose dev 배포 초안
+4. GitHub Actions CI/CD 초안
 
 ## 문서
 
@@ -218,10 +218,16 @@ curl http://localhost:8080/api/health
 
 ```json
 {
-  "service": "meet-or-solo-backend",
-  "status": "OK"
+  "success": true,
+  "data": {
+    "status": "OK",
+    "service": "meet-or-solo-backend"
+  },
+  "error": null
 }
 ```
+
+4단계에서 backend `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 합니다.
 
 ## 로컬 frontend 개발환경
 
@@ -343,8 +349,12 @@ curl http://localhost:8080/api/health
 
 ```json
 {
-  "service": "meet-or-solo-backend",
-  "status": "OK"
+  "success": true,
+  "data": {
+    "status": "OK",
+    "service": "meet-or-solo-backend"
+  },
+  "error": null
 }
 ```
 

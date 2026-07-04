@@ -30,6 +30,97 @@ com.survey.meetorsolo
 
 각 domain은 controller, service, repository, DTO, entity 책임을 명확히 나눕니다. 예외, 공통 응답, 보안 utility, 암호화, audit 등은 `common`에 둡니다.
 
+현재 4단계 Backend 공통 코드화에서는 실제 domain 기능을 만들지 않고 아래 공통 패키지만 정리합니다.
+
+```text
+com.survey.meetorsolo
+├─ global
+│  ├─ config
+│  ├─ error
+│  ├─ exception
+│  ├─ health
+│  └─ response
+└─ domain
+```
+
+## 공통 응답 포맷
+
+REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
+
+성공 응답:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "error": null
+}
+```
+
+실패 응답:
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "요청 값 검증에 실패했습니다.",
+    "fields": []
+  }
+}
+```
+
+현재 공통 구조는 MVP 수준으로 유지합니다. trace id, error detail, debug field 같은 운영 확장 필드는 필요해질 때 별도 승인 후 추가합니다.
+
+## 공통 예외 처리
+
+공통 예외 구조:
+
+- `ErrorCode`: HTTP status, 에러 코드, 기본 메시지를 정의한다.
+- `ErrorResponse`: 실패 응답의 `error` 객체를 표현한다.
+- `BusinessException`: domain/service에서 명시적으로 던질 비즈니스 예외의 기본형이다.
+- `GlobalExceptionHandler`: validation, `BusinessException`, 예상하지 못한 예외를 공통 응답으로 변환한다.
+
+`GlobalExceptionHandler`는 응답에 stack trace, DB URL, 환경변수, 내부 예외 상세를 노출하지 않습니다. 예상하지 못한 예외는 서버 로그에만 기록하고, 클라이언트에는 `INTERNAL_SERVER_ERROR` 공통 메시지만 반환합니다.
+
+## Validation 에러 응답
+
+`spring-boot-starter-validation` 기반 validation 실패는 공통 실패 응답으로 반환합니다.
+
+예시:
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "요청 값 검증에 실패했습니다.",
+    "fields": [
+      {
+        "field": "name",
+        "message": "must not be blank"
+      }
+    ]
+  }
+}
+```
+
+현재 단계에서는 실제 비즈니스 DTO를 만들지 않습니다.
+
+## CORS
+
+CORS는 `global/config/CorsConfig`에서 `/api/**` 기준으로 설정합니다.
+
+기본 방향:
+
+- local 기본 허용 origin: `http://localhost:5173`
+- 현재 local frontend는 Vite proxy를 우선 사용한다.
+- dev/prod는 `CORS_ALLOWED_ORIGINS` 환경변수로 확장 가능하게 둔다.
+- 실제 IP, 실제 도메인, Secret은 하드코딩하지 않는다.
+- credential 기반 CORS는 아직 사용하지 않는다.
+
 ## 설정 profile
 
 설정은 YAML 중심으로 관리합니다.
@@ -116,22 +207,28 @@ MVP 매칭은 다음을 활용합니다.
 
 ## Health API
 
-1단계에서는 개발환경 검증용 최소 endpoint만 둡니다.
+현재는 개발환경 검증용 최소 endpoint만 둡니다.
 
 ```text
 GET /api/health
 ```
 
-예정 응답:
+응답:
 
 ```json
 {
-  "status": "ok",
-  "service": "meet-or-solo-backend"
+  "success": true,
+  "data": {
+    "status": "OK",
+    "service": "meet-or-solo-backend"
+  },
+  "error": null
 }
 ```
 
 이 endpoint는 Secret, host 상세 정보, DB URL, 환경변수를 노출하지 않습니다.
+
+4단계에서 `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 합니다.
 
 ## 추후 보안 기능
 
