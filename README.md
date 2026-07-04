@@ -18,15 +18,16 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 완료된 단계는 0~4단계입니다.
+현재 완료된 단계는 0~5단계입니다.
 
 - 0단계: 프로젝트 방향/문서화 완료
 - 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
 - 2단계: local/dev/prod 실행 전략 정리 완료
 - 3단계: Frontend PWA 기본 스캐폴딩 + `/api/health` 연동 완료
 - 4단계: Backend 공통 코드화 완료
+- 5단계: Frontend 공통 코드화 완료
 
-다음 작업은 5단계 Frontend 공통 코드화입니다. 이후 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
+다음 작업은 6단계 Oracle VM dev 서버/dev DB 구축입니다. 이후 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
 
 자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
@@ -49,10 +50,9 @@ meet-or-solo/
 
 기능 분업 전까지 남은 작업:
 
-1. Frontend 공통 코드화
-2. Oracle VM dev 서버/dev DB 구축
-3. nginx + docker-compose dev 배포 초안
-4. GitHub Actions CI/CD 초안
+1. Oracle VM dev 서버/dev DB 구축
+2. nginx + docker-compose dev 배포 초안
+3. GitHub Actions CI/CD 초안
 
 ## 문서
 
@@ -227,7 +227,7 @@ curl http://localhost:8080/api/health
 }
 ```
 
-4단계에서 backend `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 합니다.
+4단계에서 backend `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 5단계에서 frontend `apiClient`, `ApiResponse<T>` 타입, `healthApi`, `HealthCheckPage`를 새 응답 구조에 맞게 수정했습니다.
 
 ## 로컬 frontend 개발환경
 
@@ -253,7 +253,20 @@ cp .env.local.example .env.local
 VITE_API_BASE_URL=
 ```
 
-local 개발에서는 `VITE_API_BASE_URL`을 비워두고 Vite dev server proxy를 사용합니다. 운영 또는 서버 환경 예시는 `frontend/.env.production.example`에 placeholder로만 둡니다. 실제 IP, 도메인, API Key, Secret은 저장소에 커밋하지 않습니다.
+local 개발에서는 `VITE_API_BASE_URL`을 비워두고 Vite dev server proxy를 사용합니다. frontend API 호출은 기본적으로 `/api/...` 상대 경로를 사용합니다. 운영 또는 서버 환경 예시는 `frontend/.env.production.example`에 placeholder로만 둡니다. 실제 IP, 도메인, API Key, Secret은 저장소에 커밋하지 않습니다.
+
+frontend는 backend 공통 응답인 `ApiResponse<T>`를 기준으로 API 응답을 처리합니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "OK",
+    "service": "meet-or-solo-backend"
+  },
+  "error": null
+}
+```
 
 ### frontend 의존성 설치
 
@@ -407,7 +420,7 @@ npm run dev
 
 4. 브라우저에서 `http://localhost:5173/`에 접속해 `연결 성공`, `status`, `service` 값이 표시되는지 확인합니다.
 
-현재 frontend는 local 개발에서 상대 경로 `/api/health`를 호출하고, Vite proxy가 backend `http://localhost:8080/api/health`로 전달합니다.
+현재 frontend는 local 개발에서 상대 경로 `/api/health`를 호출하고, Vite proxy가 backend `http://localhost:8080/api/health`로 전달합니다. `healthApi`는 공통 `apiClient`를 통해 backend `ApiResponse<T>` wrapper를 해석하고, `HealthCheckPage`는 `data.status`, `data.service` 값을 표시합니다.
 
 ### 로컬 DB와 Flyway 확인
 

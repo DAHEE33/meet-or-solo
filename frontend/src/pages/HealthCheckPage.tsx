@@ -42,7 +42,7 @@ export function HealthCheckPage() {
         </p>
 
         <div className={`status-box status-${health.status}`} role="status" aria-live="polite">
-          {health.status === 'loading' && <p>backend health 응답을 확인하는 중입니다.</p>}
+          {health.status === 'loading' && <p>요청 중입니다.</p>}
           {health.status === 'success' && (
             <>
               <span className="status-label">연결 성공</span>
@@ -63,7 +63,7 @@ export function HealthCheckPage() {
               <span className="status-label">연결 실패</span>
               <p>{health.message}</p>
               <p className="hint">
-                backend local profile 실행 여부와 <code>VITE_API_BASE_URL</code> 값을 확인합니다.
+                backend local profile 실행 여부와 Vite proxy 설정을 확인합니다.
               </p>
             </>
           )}

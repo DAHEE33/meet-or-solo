@@ -99,33 +99,34 @@
 - DB migration은 추가하지 않는다.
 - 인증, 매칭, 축제, 체크인, 신고 기능은 구현하지 않는다.
 - 응답에 stack trace, DB URL, 환경변수, 내부 예외 상세를 노출하지 않는다.
-- 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 한다.
+- 5단계 Frontend 공통 코드화에서 frontend `healthApi`와 `HealthCheckPage`를 새 `ApiResponse` 포맷에 맞게 수정했다.
 
 ## 3. 다음 작업 단계
 
 ### [5단계] Frontend 공통 코드화
 
-상태: 다음 작업
+상태: 완료
 
-- API client
-- 공통 fetch wrapper
-- loading/error UI
-- route 구조
-- layout 구조
-- 환경변수 처리
-- 새 backend `ApiResponse` 포맷에 맞춘 `healthApi`와 `HealthCheckPage` 수정
-- 실제 서비스 화면은 아직 구현하지 않음
+- `ApiResponse<T>`, `ApiError`, `FieldError` 타입 추가
+- fetch 기반 공통 `apiClient` 추가
+- local 개발에서 Vite proxy와 `/api/...` 상대 경로 사용 기준 유지
+- 추후 dev/prod에서 `VITE_API_BASE_URL`을 사용할 수 있도록 구조 유지
+- 새 backend `ApiResponse` 포맷에 맞춘 `healthApi` 수정
+- 새 backend `ApiResponse` 포맷에 맞춘 `HealthCheckPage` 수정
+- loading/error UI는 `HealthCheckPage` 안에서 최소 상태로 유지
+- React Router, 디자인 시스템, 실제 서비스 화면은 도입하지 않음
 
 주의:
 
 - 실제 서비스 화면은 구현하지 않는다.
 - Kakao OAuth, JWT, 축제/매칭/체크인/신고 기능은 구현하지 않는다.
+- backend 코드, DB migration, nginx, docker-compose, GitHub Actions, 테스트 코드는 수정하지 않는다.
 
 ## 4. 이후 단계 순서
 
 ### [6단계] Oracle VM dev 서버/dev DB 구축
 
-상태: 예정
+상태: 다음 작업
 
 - `/home/ubuntu/meet-or-solo` 기준 dev 서버 배포 구조
 - `SPRING_PROFILES_ACTIVE=dev`
@@ -174,10 +175,9 @@
 
 기능 분업을 시작하기 전에 아래 순서를 완료합니다.
 
-1. [5단계] Frontend 공통 코드화
-2. [6단계] Oracle VM dev 서버/dev DB 구축
-3. [7단계] nginx + docker-compose dev 배포 초안
-4. [8단계] GitHub Actions CI/CD 초안
+1. [6단계] Oracle VM dev 서버/dev DB 구축
+2. [7단계] nginx + docker-compose dev 배포 초안
+3. [8단계] GitHub Actions CI/CD 초안
 
 ## 6. 현재 아직 하지 않은 것
 
@@ -222,6 +222,8 @@
 - `frontend/src/App.tsx`
 - `frontend/src/main.tsx`
 - `frontend/src/vite-env.d.ts`
+- `frontend/src/api/types.ts`
+- `frontend/src/api/apiClient.ts`
 - `frontend/src/api/healthApi.ts`
 - `frontend/src/pages/HealthCheckPage.tsx`
 - `frontend/src/styles/global.css`
