@@ -8,9 +8,31 @@
 
 1. `AGENTS.md`를 읽는다.
 2. 관련 `docs/*.md`를 읽는다.
-3. 사용자의 현재 요청 범위를 확인한다.
-4. 사용자가 계획만 요청했는지, 파일 수정을 요청했는지 구분한다.
-5. 파일 수정이 필요하면 수정 전 변경 계획을 먼저 제안한다.
+3. `docs/10_PROGRESS_LOG.md`를 읽고 현재 완료 단계와 다음 작업 단계를 확인한다.
+4. 사용자의 현재 요청 범위가 현재 WBS 단계와 맞는지 확인한다.
+5. 사용자가 계획만 요청했는지, 파일 수정을 요청했는지 구분한다.
+6. 파일 수정이 필요하면 수정 전 변경 계획을 먼저 제안한다.
+
+## WBS 단계 준수
+
+새 작업은 [docs/10_PROGRESS_LOG.md](10_PROGRESS_LOG.md)의 단계 순서를 기준으로 진행합니다.
+
+현재 완료된 큰 흐름:
+
+- 0단계 프로젝트 방향/문서화
+- 1단계 Backend + Local PostgreSQL + Flyway 확인
+- 2단계 local/dev/prod 실행 전략 정리
+- 3단계 Frontend PWA 기본 스캐폴딩 + `/api/health` 연동
+
+다음 작업은 4단계 Backend 공통 코드화입니다. 이후 5단계 Frontend 공통 코드화, 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
+
+규칙:
+
+- 현재 단계와 무관한 기능 구현을 임의로 앞당기지 않는다.
+- Backend/Frontend 공통 코드화 단계에서는 실제 비즈니스 기능을 구현하지 않는다.
+- 배포 단계 전에는 nginx, docker-compose dev/prod, GitHub Actions 파일을 임의로 만들거나 수정하지 않는다.
+- 실제 서비스 DB 테이블은 9단계에서 `V2` 이후 migration으로 추가한다.
+- 기능 분업은 10단계에서 WBS에 맞춰 시작한다.
 
 ## 문서 작성 언어
 
@@ -38,7 +60,7 @@
 
 승인된 범위 안에서만 작업합니다.
 
-승인 범위가 1단계 개발환경 세팅이면 다음을 구현하지 않습니다.
+승인 범위가 공통 코드화 또는 개발환경 정리이면 다음을 구현하지 않습니다.
 
 - OAuth login
 - JWT auth
@@ -63,7 +85,7 @@
 
 ## Redis 규칙
 
-Redis는 MVP 1단계에 포함하지 않습니다.
+Redis는 MVP 초기 단계에 포함하지 않습니다.
 
 추가 금지 항목:
 
@@ -177,9 +199,9 @@ GitHub 원격 저장소는 아직 미연결 상태입니다.
 - 요청된 파일만 수정한다.
 - 사용자가 문서만 요청했다면 backend, frontend, Docker, nginx, GitHub Actions 파일을 수정하지 않는다.
 
-## 1단계 개발환경 세팅 경계
+## 단계별 작업 경계
 
-승인 후 1단계에서 허용되는 작업:
+현재 완료된 개발환경 세팅 범위:
 
 - 모노레포 구조 정리
 - backend Spring Boot 실행 구조
@@ -188,15 +210,28 @@ GitHub 원격 저장소는 아직 미연결 상태입니다.
 - Flyway 기본 설정
 - `/api/health`
 - frontend에서 `/api/health` 호출
-- nginx reverse proxy 초안
-- GitHub Actions 초안
 - README 실행 방법
 
-1단계에서 금지되는 작업:
+다음 4단계 Backend 공통 코드화에서 허용되는 작업:
+
+- 공통 응답 포맷
+- 공통 예외 처리
+- `ErrorCode`
+- `BusinessException`
+- `GlobalExceptionHandler`
+- validation 에러 응답
+- CORS local/dev/prod 기반 설정
+
+4단계에서 금지되는 작업:
 
 - 실제 매칭 구현
 - 실제 인증 구현
 - 관광공사 OpenAPI 실제 연동
+- 실제 서비스 DB 테이블 migration
+- frontend 실제 서비스 화면
+- nginx 설정 생성
+- docker-compose dev/prod 생성
+- GitHub Actions 생성
 - Redis
 - 자유 채팅
 - 운영 Secret

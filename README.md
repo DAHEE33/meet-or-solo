@@ -18,7 +18,16 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 단계는 개발환경과 프로젝트 방향성을 정리하고, frontend PWA 기본 스캐폴딩에서 backend `/api/health` 연결을 확인하는 단계입니다.
+현재 완료된 단계는 0~3단계입니다.
+
+- 0단계: 프로젝트 방향/문서화 완료
+- 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
+- 2단계: local/dev/prod 실행 전략 정리 완료
+- 3단계: Frontend PWA 기본 스캐폴딩 + `/api/health` 연동 완료
+
+다음 작업은 4단계 Backend 공통 코드화입니다. 이후 5단계 Frontend 공통 코드화, 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
+
+자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
 아직 다음 항목은 실제 구현 범위가 아닙니다.
 
@@ -32,6 +41,18 @@ meet-or-solo/
 - 관리자 기능
 - Redis 구성
 - 운영 배포 자동화 완성
+
+## WBS 진행 기준
+
+새 작업을 시작하기 전에는 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인하고 현재 단계에 맞는 작업만 진행합니다.
+
+기능 분업 전까지 남은 작업:
+
+1. Backend 공통 코드화
+2. Frontend 공통 코드화
+3. Oracle VM dev 서버/dev DB 구축
+4. nginx + docker-compose dev 배포 초안
+5. GitHub Actions CI/CD 초안
 
 ## 문서
 
@@ -57,9 +78,9 @@ meet-or-solo/
 
 `README.md`, `docs/*.md`, `AGENTS.md`, `CLAUDE.md`의 본문은 한국어로 작성합니다. 기술 용어, 파일명, 클래스명, 함수명, 환경변수명, 명령어, 경로는 영어 원문을 유지합니다.
 
-## 1단계 범위
+## 초기 개발환경 범위
 
-사용자가 명시적으로 승인한 뒤 진행할 1단계 범위는 개발환경 세팅입니다.
+완료된 초기 개발환경 범위는 다음과 같습니다.
 
 - 모노레포 구조 정리
 - backend Spring Boot 실행 구조 정리
@@ -68,11 +89,9 @@ meet-or-solo/
 - Flyway 기본 설정
 - `/api/health`
 - React에서 `/api/health` 호출
-- nginx reverse proxy 초안
-- GitHub Actions 초안
 - README 실행 방법 정리
 
-1단계에서는 비즈니스 기능을 구현하지 않습니다.
+Backend/Frontend 공통 코드화 단계에서는 비즈니스 기능을 구현하지 않습니다.
 
 ## 로컬 backend 개발환경
 
@@ -143,7 +162,7 @@ DB_PASSWORD=meet_password
 
 ### PostgreSQL 컨테이너 실행
 
-로컬 개발용 PostgreSQL만 실행합니다. Redis는 MVP 1단계에서 제외합니다.
+로컬 개발용 PostgreSQL만 실행합니다. Redis는 MVP 초기 단계에서 제외합니다.
 
 ```bash
 docker compose -f docker-compose.local.yml --env-file .env up -d

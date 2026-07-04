@@ -32,11 +32,13 @@
 
 - 작업 전 `AGENTS.md`와 `docs/*.md`를 먼저 확인한다.
 - 새 작업을 시작하기 전 `docs/10_PROGRESS_LOG.md`를 읽고 현재 완료 단계와 다음 작업 범위를 확인한다.
+- `docs/10_PROGRESS_LOG.md`의 WBS 단계 순서를 기준으로 현재 단계에 맞는 작업만 수행한다.
 - 작업 범위가 불명확하면 먼저 계획을 제안하고 사용자 승인을 받는다.
 - 파일 생성/수정 전에는 변경 계획을 먼저 제안한다.
 - 사용자가 "진행해줘"라고 승인한 범위만 작업한다.
-- 1단계에서는 비즈니스 기능을 구현하지 않는다.
-- Redis는 MVP 1단계에 추가하지 않는다.
+- 공통 코드화, 배포, CI/CD, 기능 구현은 `docs/10_PROGRESS_LOG.md`의 단계 순서를 벗어나 임의로 앞당기지 않는다.
+- Backend/Frontend 공통 코드화 단계에서는 비즈니스 기능을 구현하지 않는다.
+- Redis는 MVP 초기 단계에 추가하지 않는다.
 - Redis는 추후 `MatchingStateStore`를 통해 확장 가능하게만 문서화한다.
 - 자유 채팅 기능은 구현하지 않는다.
 - `MatchRoomPage`는 자유 채팅방이 아니라 상태 동기화용 매칭방이다.
@@ -53,19 +55,17 @@
 - 테스트 전략은 [docs/09_TEST_AND_QUALITY_STRATEGY.md](docs/09_TEST_AND_QUALITY_STRATEGY.md)를 따른다.
 - 단순 CRUD보다 장애 시 영향이 큰 로직을 우선 테스트한다.
 
-## 현재 1단계 범위
+## 현재 WBS 진행 기준
 
-사용자가 승인하면 1단계에서는 개발환경 세팅만 진행한다.
+현재 단계와 다음 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 기준으로 한다.
 
-- 모노레포 구조 정리
-- Spring Boot 실행 구조 정리
-- React + TypeScript + Vite + PWA 스캐폴딩
-- PostgreSQL Docker Compose
-- Flyway 기본 설정
-- `/api/health`
-- React에서 `/api/health` 호출
-- nginx reverse proxy 초안
-- GitHub Actions 초안
-- README 실행 방법
+현재 완료된 큰 흐름:
+
+- 0단계 프로젝트 방향/문서화
+- 1단계 Backend + Local PostgreSQL + Flyway 확인
+- 2단계 local/dev/prod 실행 전략 정리
+- 3단계 Frontend PWA 기본 스캐폴딩 + `/api/health` 연동
+
+다음 작업은 4단계 Backend 공통 코드화이다. 이후 5단계 Frontend 공통 코드화, 6단계 Oracle VM dev 서버/dev DB 구축, 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행한다.
 
 비즈니스 기능은 명시적 승인 전까지 placeholder 또는 TODO로만 남긴다.

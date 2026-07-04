@@ -16,11 +16,28 @@
 
 현재 `backend`에 복사된 신규 Spring Boot 프로젝트의 버전은 구현 단계에서 확인하고 정렬합니다. 프로젝트 방향은 별도 결정이 없는 한 Java 17과 Spring Boot 3.x를 기준으로 합니다.
 
-## MVP 1단계 로컬 서비스
+## WBS 기준 개발환경 단계
 
-1단계 로컬 컨테이너는 PostgreSQL만 둡니다.
+현재 개발환경 단계는 아래 순서로 정리합니다.
 
-Redis는 1단계 `docker-compose`에 추가하지 않습니다.
+1. Backend + Local PostgreSQL + Flyway 확인
+2. local/dev/prod 실행 전략 정리
+3. Frontend PWA 기본 스캐폴딩 + `/api/health` 연동
+4. Backend 공통 코드화
+5. Frontend 공통 코드화
+6. Oracle VM dev 서버/dev DB 구축
+7. nginx + docker-compose dev 배포 초안
+8. GitHub Actions CI/CD 초안
+9. 실제 서비스 DB 테이블/Flyway migration
+10. 풀스택 A/B 기능 분업
+
+현재 완료 단계와 다음 작업은 [docs/10_PROGRESS_LOG.md](10_PROGRESS_LOG.md)를 기준으로 확인합니다.
+
+## 로컬 서비스
+
+로컬 컨테이너는 PostgreSQL만 둡니다.
+
+Redis는 초기 개발환경과 MVP 초기 `docker-compose`에 추가하지 않습니다.
 
 예정 서비스:
 
@@ -32,30 +49,39 @@ postgres:
 
 로컬 개발에서는 `5432`를 열 수 있지만, 운영에서는 PostgreSQL을 외부에 공개하지 않습니다.
 
-## local/dev/prod 환경 차이
+## local/dev/prod 환경 역할
 
 profile 기준:
 
-- `local`: 개인 PC의 Docker PostgreSQL에 연결한다.
-- `dev`: Oracle Cloud VM의 개발/시연용 서버 환경이다.
-- `prod`: 추후 제출/운영 단계에서 별도 DB, 별도 도메인, 별도 디렉터리 또는 외부 DB 서비스로 분리한다.
+- `local`: 각 팀원의 개인 PC에서 Docker PostgreSQL로 개발하고 빠르게 확인하는 환경이다.
+- `dev`: Oracle Cloud VM에 배포하는 개발/시연용 공유 환경이다.
+- `prod`: 추후 제출/운영 단계에서 별도 DB, 별도 도메인, 별도 디렉터리 또는 외부 DB 서비스로 분리할 운영 후보 환경이다.
 
 `local`은 개인 개발 편의를 위해 `application-local.yml`에 fallback 기본값을 둘 수 있습니다.
 
 `dev`와 `prod`는 서버 환경이므로 환경변수 주입을 원칙으로 합니다. 실제 DB URL, 계정, 비밀번호, 서버 IP, 도메인은 저장소에 기록하지 않습니다.
 
-현재는 Oracle Cloud VM 리소스를 고려해 `dev`만 서버에 배포합니다. `prod`는 추후 운영 필요가 생기면 추가 배포합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
+현재는 Oracle Cloud VM 리소스와 작업 안정성을 고려해 `dev`만 VM에 배포합니다. `prod`는 추후 제출/운영 필요가 생기면 분리합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
+
+기능 분업 전에 `dev` 서버와 `dev` DB를 구축하는 이유:
+
+- A/B가 같은 API base URL과 같은 DB schema 기준으로 기능을 확인할 수 있다.
+- local PC 차이로 발생하는 환경 문제를 공유 dev 환경에서 빠르게 분리할 수 있다.
+- frontend/backend 연동 이슈를 각자 로컬 설정 문제가 아니라 배포 경계 기준으로 검증할 수 있다.
+- 시연 가능한 기준 환경을 먼저 만든 뒤 기능 단위로 병합 여부를 판단할 수 있다.
+- DB, CORS, 환경변수, reverse proxy 같은 공통 경계를 먼저 고정해 기능 구현 중 충돌을 줄일 수 있다.
 
 Docker Compose 방향:
 
 - `docker-compose.local.yml`: 로컬 PostgreSQL과 개발 편의 구성
-- `docker-compose.prod.yml`: 추후 운영 서비스와 내부 네트워크 구성
+- dev 배포용 docker-compose: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 초안
+- prod 배포용 docker-compose: 추후 제출/운영 단계에서 dev와 분리해 별도 작성
 
-1단계에서는 최소 구성만 작성합니다. 환경 검증에 필요하지 않은 서비스는 추가하지 않습니다.
+현재까지는 local PostgreSQL 중심의 최소 구성만 사용합니다. nginx, docker-compose dev/prod, GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
 
-## 로컬 실행 순서 예정
+## 로컬 실행 순서
 
-1단계에서 목표로 하는 로컬 실행 흐름:
+로컬 실행 흐름:
 
 1. PostgreSQL 시작
 2. backend 실행
@@ -229,7 +255,7 @@ db/migration/
 
 또는 Spring Boot classpath migration 위치를 사용할 수 있습니다. 실제 구현 전 어떤 방식을 사용할지 문서에 명시해야 합니다.
 
-1단계 초기 migration은 최소화합니다. 비즈니스 테이블을 과도하게 만들지 않습니다.
+초기 migration은 최소화합니다. 비즈니스 테이블을 과도하게 만들지 않습니다.
 
 ## `/api/health` 확인 방법 예정
 
@@ -239,7 +265,7 @@ db/migration/
 curl http://localhost:8080/api/health
 ```
 
-frontend는 1단계에서 개발환경 검증 용도로 `/api/health` 결과를 표시하거나 로그로 확인합니다. 이는 비즈니스 기능이 아닙니다.
+frontend는 초기 개발환경 검증 용도로 `/api/health` 결과를 표시하거나 로그로 확인합니다. 이는 비즈니스 기능이 아닙니다.
 
 ## Secret 관리
 
