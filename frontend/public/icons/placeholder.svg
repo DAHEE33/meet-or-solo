@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="meet-or-solo placeholder icon">
+  <rect width="512" height="512" fill="#0f172a"/>
+  <circle cx="196" cy="220" r="72" fill="#38bdf8"/>
+  <circle cx="316" cy="220" r="72" fill="#f97316"/>
+  <path d="M128 376c18-58 62-92 128-92s110 34 128 92" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round"/>
+</svg>

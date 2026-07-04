@@ -41,6 +41,22 @@
 - PowerShell에서 실행할 경우 `application-local.yml` fallback 값으로 실행하거나 PowerShell 환경변수를 직접 설정한다.
 - 로컬 기본값은 `DB_URL=jdbc:postgresql://localhost:5432/meet_or_solo_local`, `DB_USERNAME=meet_user`, `DB_PASSWORD=meet_password` 기준으로 둔다.
 
+### [3단계] Frontend PWA 기본 스캐폴딩 및 health 연동 확인 구성 완료
+
+- `frontend`에 React + TypeScript + Vite 기본 구조를 구성했다.
+- `vite-plugin-pwa` 기반 PWA 기본 설정을 추가했다.
+- `manifest`의 앱 이름은 `meet-or-solo`로 설정했다.
+- 아이콘은 `public/icons/placeholder.svg` placeholder로 두었다.
+- `frontend/.env.local.example`, `frontend/.env.production.example`에 `VITE_API_BASE_URL` 예시를 추가했다.
+- `src/api/healthApi.ts`에서 상대 경로 `/api/health`로 backend health API를 호출하도록 구성했다.
+- `src/pages/HealthCheckPage.tsx`에서 loading, success, error 상태를 표시하도록 구성했다.
+- local 개발에서 `/api/health`가 Vite dev server `localhost:5173`으로 요청되어 404가 발생하는 이슈가 있었고, `frontend/vite.config.ts`의 Vite proxy로 `/api` 요청을 backend `localhost:8080`으로 전달하도록 정리했다.
+- frontend 화면에서 backend `GET /api/health` 연동을 확인했다.
+- local 개발에서는 `VITE_API_BASE_URL`을 비워두고 상대 경로 `/api/health`와 Vite proxy를 사용한다.
+- 현재 PWA는 기본 shell, manifest, service worker 생성 설정, placeholder icon 수준이다.
+- `frontend/dist/`는 build 결과물이므로 커밋하지 않는다.
+- 현재 frontend 화면은 개발 연결 확인용이며 실제 서비스 UI가 아니다.
+
 ## 2. 현재까지 생성/수정된 주요 파일
 
 - `.env.example`
@@ -51,6 +67,19 @@
 - `backend/src/main/resources/application-prod.yml`
 - `backend/src/main/java/.../global/health/HealthController.java`
 - `db/migration/V1__init.sql`
+- `frontend/package.json`
+- `frontend/package-lock.json`
+- `frontend/vite.config.ts`
+- `frontend/index.html`
+- `frontend/src/App.tsx`
+- `frontend/src/main.tsx`
+- `frontend/src/vite-env.d.ts`
+- `frontend/src/api/healthApi.ts`
+- `frontend/src/pages/HealthCheckPage.tsx`
+- `frontend/src/styles/global.css`
+- `frontend/public/icons/placeholder.svg`
+- `frontend/.env.local.example`
+- `frontend/.env.production.example`
 - `README.md`
 - `AGENTS.md`
 - `CLAUDE.md`
@@ -60,8 +89,7 @@
 
 - 실제 서비스 DB 테이블 생성
 - `V2` 이상의 Flyway migration 작성
-- 프론트엔드 PWA 스캐폴딩
-- React 화면 구현
+- 실제 서비스 React 화면 구현
 - Kakao OAuth 로그인
 - JWT 인증/인가
 - 축제 목록/상세 기능
@@ -79,12 +107,6 @@
 ## 4. 다음 작업 후보
 
 다음 작업은 아래 순서로 진행한다.
-
-### [3단계]
-
-- frontend React + TypeScript + Vite + PWA 스캐폴딩
-- frontend에서 `/api/health` 호출 확인
-- 아직 실제 화면/비즈니스 기능은 구현하지 않음
 
 ### [4단계]
 

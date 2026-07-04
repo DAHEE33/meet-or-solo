@@ -1,14 +1,11 @@
-.env
-.env.*
-!.env.example
-
-.DS_Store
-Thumbs.db
-
 # env
 .env
 .env.*
 !.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.local.example
+!frontend/.env.production.example
 
 # OS
 .DS_Store
@@ -22,18 +19,22 @@ Thumbs.db
 backend/build/
 backend/out/
 backend/.gradle/
+.gradle/
+build/
+out/
 *.log
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/build/
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
+frontend/.vite/
 
 # Database local files
 db/data/
+data/postgres/
+postgres-data/
+pgdata/
 *.db
 *.sqlite
 

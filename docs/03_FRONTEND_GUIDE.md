@@ -12,6 +12,153 @@
 - 매칭 상태를 명확하게 보여준다.
 - 자유 채팅이 아니라 버튼 기반 제한형 인터랙션을 제공한다.
 
+## 현재 3단계 범위
+
+현재 frontend는 PWA 기본 스캐폴딩과 backend `GET /api/health` 연동 확인까지만 구성합니다.
+
+구성된 항목:
+
+- React + TypeScript + Vite 기본 구조
+- `vite-plugin-pwa` 기반 PWA 기본 설정
+- `manifest` 기본 값
+- placeholder icon
+- 상대 경로 `/api/health` 기반 health API 호출
+- Vite proxy 기반 backend local 연결
+- 개발 확인용 `HealthCheckPage`
+
+현재 구현하지 않는 항목:
+
+- 실제 서비스 화면
+- 로그인
+- 축제 목록/상세
+- GPS 체크인
+- 매칭
+- `MatchRoomPage`
+- Web Push 실제 권한 흐름
+- Kakao Maps
+- 관리자 화면
+- frontend 테스트 코드
+
+## 기본 폴더 구조
+
+현재 최소 구조는 아래 기준입니다.
+
+```text
+frontend/
+├─ public/
+│  └─ icons/
+├─ src/
+│  ├─ api/
+│  ├─ components/
+│  ├─ pages/
+│  └─ styles/
+├─ index.html
+├─ package.json
+├─ tsconfig.json
+└─ vite.config.ts
+```
+
+`src/components`는 추후 공통 UI가 필요할 때 사용합니다. 지금은 개발 확인용 화면을 `src/pages/HealthCheckPage.tsx`에 둡니다.
+
+## 환경변수
+
+frontend는 Vite 환경변수 `VITE_API_BASE_URL`을 사용합니다.
+
+로컬 예시:
+
+```text
+VITE_API_BASE_URL=
+```
+
+파일:
+
+- `frontend/.env.local.example`
+- `frontend/.env.production.example`
+
+local 개발에서는 `VITE_API_BASE_URL`을 비워두고 Vite proxy로 `/api` 요청을 backend에 전달합니다. 실제 IP, 도메인, API Key, Secret은 저장소에 기록하지 않습니다. 운영 예시는 placeholder만 사용합니다.
+
+local 개발에서 frontend 코드는 backend URL을 직접 하드코딩하지 않고 `/api/health` 상대 경로를 호출합니다.
+
+## 실행 방법
+
+의존성을 설치합니다.
+
+```bash
+cd frontend
+npm install
+```
+
+로컬 환경변수 파일을 준비합니다.
+
+```bash
+cp .env.local.example .env.local
+```
+
+dev server를 실행합니다.
+
+```bash
+npm run dev
+```
+
+backend local profile을 먼저 실행한 뒤 Vite dev server URL에 접속하면 `GET /api/health` 응답 상태를 확인할 수 있습니다.
+
+local 개발 서버 포트:
+
+- backend: `http://localhost:8080`
+- frontend: `http://localhost:5173`
+
+브라우저에서 직접 확인할 주소는 `http://localhost:5173/`입니다. backend 직접 확인은 `http://localhost:8080/api/health`로 합니다.
+
+Vite dev server는 `/api` 요청을 backend로 proxy합니다.
+
+```text
+Browser -> http://localhost:5173/api/health -> Vite proxy -> http://localhost:8080/api/health
+```
+
+`frontend/vite.config.ts`의 proxy 설정을 바꾸면 frontend dev server를 재시작해야 합니다.
+
+## Health API 연동
+
+health API 호출 코드는 `src/api/healthApi.ts`에 둡니다.
+
+요청:
+
+```text
+GET /api/health
+```
+
+예상 응답:
+
+```json
+{
+  "status": "OK",
+  "service": "meet-or-solo-backend"
+}
+```
+
+현재 화면은 loading, success, error 상태만 표시합니다. 이는 개발환경 연결 확인용이며 비즈니스 기능이 아닙니다.
+
+frontend 화면에서 `연결 성공`, `status`, `service`가 표시되면 frontend-backend 연동 확인이 완료된 것입니다.
+
+## PWA 기본 설정
+
+PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
+
+현재 설정:
+
+- `registerType: autoUpdate`
+- `manifest.name: meet-or-solo`
+- `manifest.short_name: meet-or-solo`
+- `display: standalone`
+- placeholder icon: `public/icons/placeholder.svg`
+- `navigateFallback: /index.html`
+
+현재 PWA는 기본 shell, manifest, service worker 생성 설정, placeholder icon 수준입니다. `npm run build`를 실행하면 `dist/manifest.webmanifest`, `dist/sw.js`, `dist/registerSW.js` 같은 빌드 결과물이 생성됩니다.
+
+`frontend/dist/`는 build 결과물이므로 커밋하지 않습니다. `frontend/public/icons/placeholder.svg`는 소스 리소스이므로 커밋 대상입니다.
+
+실제 설치 안내 UI, offline fallback 화면, Web Push 권한 흐름, 실제 앱 아이콘 세트, 브랜딩 작업은 추후 별도 승인 후 구현합니다.
+
 ## 개발/운영 차이
 
 개발 환경:

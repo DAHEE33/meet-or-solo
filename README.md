@@ -18,10 +18,11 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 단계는 개발환경과 프로젝트 방향성을 정리하는 단계입니다.
+현재 단계는 개발환경과 프로젝트 방향성을 정리하고, frontend PWA 기본 스캐폴딩에서 backend `/api/health` 연결을 확인하는 단계입니다.
 
 아직 다음 항목은 실제 구현 범위가 아닙니다.
 
+- 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증
 - 관광공사 OpenAPI 실제 연동
@@ -75,8 +76,8 @@ meet-or-solo/
 
 ## 로컬 backend 개발환경
 
-이번 단계에서는 backend, PostgreSQL, Flyway, `/api/health`만 구성합니다.
-frontend, nginx, `docker-compose.prod.yml`, GitHub Actions는 아직 생성하거나 수정하지 않습니다.
+이번 단계에서는 backend, PostgreSQL, Flyway, `/api/health`, frontend PWA 기본 스캐폴딩과 `/api/health` 연동 확인 화면만 구성합니다.
+nginx, `docker-compose.prod.yml`, GitHub Actions는 아직 생성하거나 수정하지 않습니다.
 
 ### 필요 도구
 
@@ -203,6 +204,182 @@ curl http://localhost:8080/api/health
 }
 ```
 
+## 로컬 frontend 개발환경
+
+frontend는 React + TypeScript + Vite 기반 PWA로 구성합니다. 현재 화면은 실제 서비스 UI가 아니라 backend `/api/health` 응답을 확인하는 개발용 화면입니다.
+
+### 필요 도구
+
+- Node.js LTS
+- npm
+
+### frontend 환경변수 준비
+
+`frontend/.env.local.example`을 참고해 로컬 전용 `frontend/.env.local`을 만듭니다.
+
+```bash
+cd frontend
+cp .env.local.example .env.local
+```
+
+로컬 기본값:
+
+```text
+VITE_API_BASE_URL=
+```
+
+local 개발에서는 `VITE_API_BASE_URL`을 비워두고 Vite dev server proxy를 사용합니다. 운영 또는 서버 환경 예시는 `frontend/.env.production.example`에 placeholder로만 둡니다. 실제 IP, 도메인, API Key, Secret은 저장소에 커밋하지 않습니다.
+
+### frontend 의존성 설치
+
+```bash
+cd frontend
+npm install
+```
+
+### frontend dev server 실행
+
+```bash
+cd frontend
+npm run dev
+```
+
+Vite dev server가 안내하는 URL로 접속하면 개발용 HealthCheck 화면이 표시됩니다.
+
+local 개발에서 frontend dev server는 `/api` 요청을 backend로 전달합니다.
+
+```text
+Browser -> http://localhost:5173/api -> Vite proxy -> http://localhost:8080/api
+```
+
+`frontend/vite.config.ts`의 proxy 설정을 바꾸면 `npm run dev`를 재시작해야 합니다.
+
+## 팀원 로컬 실행 가이드
+
+처음 repository를 받은 팀원은 아래 순서로 local 개발환경을 실행합니다. 개인 `.env` 파일은 로컬에서만 사용하고 커밋하지 않습니다.
+
+### 1. repository 준비
+
+```bash
+git clone <REPOSITORY_URL>
+cd meet-or-solo
+```
+
+`<REPOSITORY_URL>`은 실제 원격 저장소가 확정된 뒤 사용하는 값입니다. 실제 서버 IP, 도메인, Secret은 문서나 코드에 기록하지 않습니다.
+
+### 2. 환경변수 파일 준비
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Git Bash:
+
+```bash
+cp .env.example .env
+cp frontend/.env.local.example frontend/.env.local
+```
+
+`frontend/.env.local`의 local 기본값은 `VITE_API_BASE_URL=`입니다. local 개발에서는 frontend가 `/api/health` 상대 경로를 호출하고 Vite proxy가 backend로 전달합니다.
+
+### 3. Docker PostgreSQL 실행
+
+Docker Desktop이 실행 중이어야 합니다. 프로젝트 루트에서 local PostgreSQL을 시작합니다.
+
+```bash
+docker compose -f docker-compose.local.yml --env-file .env up -d
+```
+
+`5432` 포트가 이미 사용 중이면 기존 PostgreSQL을 끄거나 `docker-compose.local.yml`과 `.env` 기준 포트 구성을 조정해야 합니다.
+
+### 4. backend 실행
+
+PowerShell에서는 `application-local.yml` fallback 값으로 실행하거나 필요한 환경변수를 PowerShell에 직접 설정합니다.
+
+```powershell
+cd backend
+.\gradlew.bat bootRun --args='--spring.profiles.active=local'
+```
+
+Git Bash에서는 `.env`를 export한 터미널에서 backend를 실행합니다.
+
+```bash
+cd backend
+set -a
+source ../.env
+set +a
+./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
+backend 직접 확인:
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+예상 응답:
+
+```json
+{
+  "service": "meet-or-solo-backend",
+  "status": "OK"
+}
+```
+
+### 5. frontend 실행
+
+backend와 다른 터미널에서 실행합니다.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+브라우저에서 다음 주소로 접속합니다.
+
+```text
+http://localhost:5173/
+```
+
+HealthCheck 카드에 `연결 성공`, `status=OK`, `service=meet-or-solo-backend`가 표시되면 frontend-backend 연동 확인이 완료된 것입니다.
+
+frontend 화면에서 404가 나면 `frontend/vite.config.ts`의 Vite proxy 설정과 frontend dev server 재시작 여부를 확인합니다. proxy 설정을 바꾼 뒤에는 반드시 `npm run dev`를 다시 실행합니다.
+
+### backend + frontend health 연동 확인
+
+1. 로컬 PostgreSQL 컨테이너를 실행합니다.
+
+```bash
+docker compose -f docker-compose.local.yml --env-file .env up -d
+```
+
+2. backend를 `local` profile로 실행합니다.
+
+```bash
+cd backend
+set -a
+source ../.env
+set +a
+./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
+3. 다른 터미널에서 frontend를 실행합니다.
+
+```bash
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev
+```
+
+4. 브라우저에서 `http://localhost:5173/`에 접속해 `연결 성공`, `status`, `service` 값이 표시되는지 확인합니다.
+
+현재 frontend는 local 개발에서 상대 경로 `/api/health`를 호출하고, Vite proxy가 backend `http://localhost:8080/api/health`로 전달합니다.
+
 ### 로컬 DB와 Flyway 확인
 
 로컬 PostgreSQL 컨테이너 상태를 확인합니다.
@@ -243,10 +420,10 @@ select * from flyway_schema_history;
 
 ### 아직 구현하지 않은 기능
 
-- frontend PWA 스캐폴딩과 `/api/health` 호출
 - nginx reverse proxy
 - `docker-compose.prod.yml`
 - GitHub Actions
+- 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증/인가
 - 관광공사 OpenAPI 실제 연동

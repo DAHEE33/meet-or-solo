@@ -132,6 +132,91 @@ npm run preview
 - `npm run build`로 `dist`를 만든다.
 - Nginx가 `dist`를 정적 파일로 서빙한다.
 
+## 팀원 로컬 실행 가이드
+
+처음 repository를 받은 팀원은 아래 순서로 local 개발환경을 실행합니다.
+
+### 환경변수 파일
+
+개인 `.env` 파일은 로컬에서만 사용하고 커밋하지 않습니다.
+
+루트 환경변수는 `.env.example`을 기준으로 각자 `.env`를 만듭니다.
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Git Bash:
+
+```bash
+cp .env.example .env
+```
+
+frontend 환경변수는 `frontend/.env.local.example`을 기준으로 각자 `frontend/.env.local`을 만듭니다.
+
+PowerShell:
+
+```powershell
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Git Bash:
+
+```bash
+cp frontend/.env.local.example frontend/.env.local
+```
+
+local 개발에서는 `frontend/.env.local`의 `VITE_API_BASE_URL`을 비워두고 Vite proxy를 사용합니다.
+
+```text
+VITE_API_BASE_URL=
+```
+
+### 실행 순서
+
+Docker Desktop이 실행 중이어야 합니다.
+
+프로젝트 루트에서 PostgreSQL을 실행합니다.
+
+```bash
+docker compose -f docker-compose.local.yml --env-file .env up -d
+```
+
+`5432` 포트가 이미 사용 중이면 기존 PostgreSQL을 끄거나 포트를 조정해야 합니다.
+
+backend는 `8080`, frontend는 `5173`을 사용합니다. backend와 frontend는 각각 다른 터미널에서 실행합니다.
+
+PowerShell에서 backend를 실행합니다.
+
+```powershell
+cd backend
+.\gradlew.bat bootRun --args='--spring.profiles.active=local'
+```
+
+Git Bash에서 `.env`를 export하고 backend를 실행합니다.
+
+```bash
+cd backend
+set -a
+source ../.env
+set +a
+./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
+frontend를 실행합니다.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+브라우저에서 `http://localhost:5173/`에 접속합니다. HealthCheck 카드에 `연결 성공`, `status=OK`, `service=meet-or-solo-backend`가 표시되면 local 연동 확인이 완료된 것입니다.
+
+frontend 화면에서 404가 나면 `frontend/vite.config.ts`의 Vite proxy 설정과 frontend dev server 재시작 여부를 확인합니다.
+
 ## Flyway 방향
 
 Flyway는 초기부터 사용합니다.
