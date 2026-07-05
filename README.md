@@ -324,6 +324,7 @@ dev DB 기준:
 - PostgreSQL `5432`는 외부 전체 공개를 하지 않습니다.
 - backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신합니다.
 - 팀원이 dev DB에 직접 접근해야 하면 SSH tunnel을 사용합니다.
+- dev compose는 PostgreSQL을 외부 공개 없이 서버 내부 `127.0.0.1:15432`에만 publish합니다.
 
 backend `dev` profile 기준 환경변수:
 
@@ -370,6 +371,7 @@ dev compose 구성:
 
 - 외부 공개: nginx `18080`
 - 외부 직접 공개 금지: backend `8080`, PostgreSQL `5432`
+- 서버 내부 loopback 전용: PostgreSQL tunnel 목적지 `127.0.0.1:15432`
 - 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않습니다.
 
 배포 산출물 기준:

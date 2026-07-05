@@ -164,10 +164,12 @@
 - `postgres`는 `postgres:16-alpine` 기준으로 작성
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`는 환경변수로 주입
 - PostgreSQL data volume 후보를 `data/postgres`로 구성
+- 팀원 dev DB 확인을 위한 SSH tunnel 고정 목적지로 PostgreSQL을 host loopback `127.0.0.1:15432`에만 publish
 - `backend`는 Spring Boot jar를 `backend/app.jar`로 mount해 `java -jar`로 실행
 - `backend`는 `SPRING_PROFILES_ACTIVE=dev` 기준으로 실행
 - `DB_URL`은 compose 내부 service name `postgres` 기준으로 예시 구성
-- `backend 8080`과 `postgres 5432`는 외부에 직접 publish하지 않음
+- `backend 8080`은 외부에 직접 publish하지 않음
+- `postgres 5432`는 외부에 직접 publish하지 않고 서버 내부 `127.0.0.1:15432`에만 publish
 - `nginx`는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 외부 `18080` 포트로 publish
 - `infra/nginx/default.dev.conf` 추가
 - nginx가 `frontend/dist` 정적 파일을 서빙하고 SPA fallback을 적용하도록 구성
@@ -285,6 +287,7 @@ dev 서버 기준:
 - 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않음
 - Oracle Cloud Ingress에서 `18080` 포트가 열려 있어야 함
 - backend `8080`과 PostgreSQL `5432`는 외부에 직접 공개하지 않음
+- PostgreSQL dev DB 직접 확인은 SSH tunnel `local 15432 -> server localhost 15432 -> postgres 5432` 기준으로 사용
 
 주의:
 

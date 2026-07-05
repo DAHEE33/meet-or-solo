@@ -136,6 +136,8 @@ dev DB는 Oracle VM 내부 PostgreSQL을 기준으로 준비합니다.
 - PostgreSQL `5432`는 외부 전체 공개를 하지 않는다.
 - backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신한다.
 - 팀원이 DB에 직접 접근해야 하는 경우 SSH tunnel을 사용한다.
+- dev compose의 PostgreSQL은 서버 내부 loopback에만 `127.0.0.1:15432 -> postgres:5432`로 publish한다.
+- 이 포트는 외부 공개용이 아니라 SSH tunnel의 고정 목적지로만 사용한다.
 
 dev DB URL 예시는 형식만 문서화합니다.
 
@@ -148,7 +150,7 @@ DB_URL=jdbc:postgresql://<INTERNAL_DB_HOST>:5432/meet_or_solo_dev
 팀원 SSH tunnel 접근 예시는 placeholder만 사용합니다.
 
 ```bash
-ssh -L 15432:localhost:5432 <SSH_USER>@<DEV_SERVER_HOST>
+ssh -L 15432:localhost:15432 <SSH_USER>@<DEV_SERVER_HOST>
 ```
 
 터널 연결 후 개인 PC의 DB client는 아래처럼 접근하는 방향입니다.
@@ -162,6 +164,8 @@ password=<DB_PASSWORD>
 ```
 
 `<SSH_USER>`, `<DEV_SERVER_HOST>`, `<DB_USERNAME>`, `<DB_PASSWORD>` 실제 값은 문서나 repository에 기록하지 않습니다.
+
+IntelliJ Database의 내장 SSH tunnel을 사용할 경우에는 `SSH/SSL` 탭에서 서버 SSH 정보를 설정하고, `General` 탭의 DB host/port는 서버 내부 기준인 `localhost:15432`를 사용한다.
 
 ## dev profile 환경변수 기준
 
