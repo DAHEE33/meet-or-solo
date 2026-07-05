@@ -14,7 +14,7 @@
 -> 이후 풀스택 A/B 기능 분업
 ```
 
-다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비와 nginx/docker-compose dev 배포 초안을 잡고, GitHub Actions CI와 dev CD 초안 이후 기능 분업으로 넘어갑니다.
+다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비, nginx/docker-compose dev 배포 초안, GitHub Actions CI와 dev CD 초안을 잡고 기능 분업으로 넘어갑니다.
 
 ## 2. 현재 완료된 단계
 
@@ -221,14 +221,40 @@
 
 ### [8-2단계] GitHub Actions dev CD 초안
 
-상태: 다음 작업
+상태: 완료
 
-- CI 산출물을 dev 서버에 배포하는 CD 초안
-- `develop` 또는 수동 workflow 기준 dev 배포 후보
+완료 항목:
+
+- `.github/workflows/deploy-dev.yml` 추가
+- `workflow_dispatch` 수동 실행 trigger만 사용
+- 자동 `push` 배포는 제외
+- backend를 Java 17로 `bootJar -x test` 빌드하는 단계 추가
+- frontend를 Node.js 20으로 `npm ci`, `npm run build`하는 단계 추가
+- backend jar를 `backend/app.jar` 이름으로 배포 패키지에 포함
+- frontend `dist`를 배포 패키지에 포함
+- `infra/docker/docker-compose.dev.yml`을 배포 패키지에 포함
+- `infra/nginx/default.dev.conf`를 배포 패키지에 포함
+- `db/migration`을 배포 패키지에 포함
 - GitHub Secrets 이름 후보 사용
-- SSH로 Oracle VM dev 서버에 접속하는 흐름 후보
-- docker compose 재기동 또는 service restart 후보
-- 실제 운영/prod 자동 배포는 아직 하지 않음
+- `DEV_SERVER_HOST`
+- `DEV_SERVER_USER`
+- `DEV_SSH_KEY`
+- `DEV_DEPLOY_PATH`
+- 서버 `.env`는 GitHub Actions가 만들지 않고 Oracle VM에서 서버 관리자가 직접 생성하는 기준으로 문서화
+- 서버 `.env`가 없으면 workflow가 실패하도록 초안 작성
+- `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d` 실행 초안 포함
+- CD 실행 전 Oracle VM 준비 항목과 실패 시 확인 항목 문서화
+
+주의:
+
+- 실제 Oracle VM에 접속하지 않았다.
+- 실제 Secret 값을 작성하지 않았다.
+- 실제 배포 성공을 가정하지 않았다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
+- backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, prod 설정, 테스트 코드는 수정하지 않았다.
+- prod workflow를 만들지 않았다.
+- prod docker-compose를 만들지 않았다.
+- prod nginx 설정을 만들지 않았다.
 
 ### [9단계] 실제 서비스 DB 테이블/Flyway migration
 
@@ -249,9 +275,11 @@
 
 ## 4. 기능 분업 전까지 남은 작업
 
-기능 분업을 시작하기 전에 아래 순서를 완료합니다.
+기능 분업을 시작하기 전에 공통 개발환경, dev 배포 초안, CI/CD 초안 정리를 완료했습니다. 다음 작업은 별도 승인 후 아래 중 하나로 진행합니다.
 
-1. [8-2단계] GitHub Actions dev CD 초안
+1. 기능 분업 전 최종 점검
+2. [9단계] 실제 서비스 DB 테이블/Flyway migration
+3. [10단계] 풀스택 A/B 기능 분업 시작
 
 ## 5. 현재 아직 하지 않은 것
 
@@ -267,7 +295,7 @@
 - `MatchRoomPage`
 - 신고/제재 기능
 - 테스트 코드
-- GitHub Actions dev CD
+- GitHub Actions dev CD 실제 실행
 - prod nginx 설정
 - Oracle VM 실제 접속/배포
 - prod docker-compose 배포 구성
@@ -308,6 +336,7 @@
 - `infra/nginx/default.dev.conf`
 - `infra/env/.env.dev.example`
 - `.github/workflows/ci.yml`
+- `.github/workflows/deploy-dev.yml`
 - `README.md`
 - `AGENTS.md`
 - `CLAUDE.md`

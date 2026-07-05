@@ -273,6 +273,8 @@ frontend/dist -> frontend/dist
 
 위 산출물은 8단계 CI/CD 또는 수동 배포 시 서버로 복사합니다. 현재 단계에서는 실제 Oracle VM에 접속하거나 배포하지 않습니다.
 
+8-2단계 dev CD 초안은 GitHub Actions `workflow_dispatch` 수동 실행 기준입니다. workflow는 산출물을 서버로 업로드하는 초안만 제공하며, 실제 서버 `.env`는 생성하지 않습니다. Oracle VM의 `DEV_DEPLOY_PATH/.env`는 서버 관리자가 직접 생성하고 관리합니다.
+
 ## 팀원 로컬 실행 가이드
 
 처음 repository를 받은 팀원은 아래 순서로 local 개발환경을 실행합니다.

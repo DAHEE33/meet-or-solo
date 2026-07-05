@@ -1,0 +1,90 @@
+name: Deploy Dev
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-dev:
+    name: Build and Deploy Dev
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build backend jar
+        working-directory: backend
+        run: |
+          chmod +x ./gradlew
+          ./gradlew bootJar -x test
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend dist
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare deploy package
+        run: |
+          mkdir -p deploy-package/backend
+          mkdir -p deploy-package/frontend
+          mkdir -p deploy-package/infra/docker
+          mkdir -p deploy-package/infra/nginx
+          mkdir -p deploy-package/db
+
+          JAR_PATH="$(find backend/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*plain.jar' | head -n 1)"
+          if [ -z "$JAR_PATH" ]; then
+            echo "backend jar not found"
+            exit 1
+          fi
+
+          cp "$JAR_PATH" deploy-package/backend/app.jar
+          cp -R frontend/dist deploy-package/frontend/dist
+          cp infra/docker/docker-compose.dev.yml deploy-package/infra/docker/docker-compose.dev.yml
+          cp infra/nginx/default.dev.conf deploy-package/infra/nginx/default.dev.conf
+          cp -R db/migration deploy-package/db/migration
+
+          tar -czf deploy-dev.tar.gz -C deploy-package .
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEV_SSH_KEY }}" > ~/.ssh/dev_key
+          chmod 600 ~/.ssh/dev_key
+          ssh-keyscan -H "${{ secrets.DEV_SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload package
+        run: |
+          ssh -i ~/.ssh/dev_key "${{ secrets.DEV_SERVER_USER }}@${{ secrets.DEV_SERVER_HOST }}" "mkdir -p '${{ secrets.DEV_DEPLOY_PATH }}'"
+          scp -i ~/.ssh/dev_key deploy-dev.tar.gz "${{ secrets.DEV_SERVER_USER }}@${{ secrets.DEV_SERVER_HOST }}:${{ secrets.DEV_DEPLOY_PATH }}/deploy-dev.tar.gz"
+
+      - name: Deploy on dev server
+        run: |
+          ssh -i ~/.ssh/dev_key "${{ secrets.DEV_SERVER_USER }}@${{ secrets.DEV_SERVER_HOST }}" << 'EOF'
+          set -e
+          cd "${{ secrets.DEV_DEPLOY_PATH }}"
+          tar -xzf deploy-dev.tar.gz
+          rm deploy-dev.tar.gz
+
+          if [ ! -f .env ]; then
+            echo "Missing .env on dev server. Create it directly on the Oracle VM before running this workflow."
+            exit 1
+          fi
+
+          mkdir -p logs/backend logs/nginx data/postgres
+          docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d
+          EOF

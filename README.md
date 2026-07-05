@@ -18,7 +18,7 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 완료된 단계는 0~7단계와 8-1단계입니다.
+현재 완료된 단계는 0~8-2단계입니다.
 
 - 0단계: 프로젝트 방향/문서화 완료
 - 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
@@ -29,8 +29,9 @@ meet-or-solo/
 - 6단계: Oracle VM dev 서버/dev DB 구축 준비 문서화 완료
 - 7단계: nginx + docker-compose dev 배포 초안 완료
 - 8-1단계: GitHub Actions CI 초안 완료
+- 8-2단계: GitHub Actions dev CD 초안 완료
 
-다음 작업은 8-2단계 GitHub Actions dev CD 초안입니다.
+다음 작업은 기능 분업 전 최종 점검 또는 9단계 실제 서비스 DB 테이블/Flyway migration 준비입니다.
 
 자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
@@ -51,9 +52,7 @@ meet-or-solo/
 
 새 작업을 시작하기 전에는 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인하고 현재 단계에 맞는 작업만 진행합니다.
 
-기능 분업 전까지 남은 작업:
-
-1. GitHub Actions dev CD 초안
+기능 분업 전까지 공통 개발환경, dev 배포 초안, CI/CD 초안은 정리된 상태입니다. 실제 기능 구현 또는 DB migration을 시작하기 전에는 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인하고 별도 승인 후 진행합니다.
 
 ## 문서
 
@@ -403,6 +402,40 @@ CI job:
 
 현재 CI는 compile/build 검증만 수행합니다. `bootRun`, DB 연결, PostgreSQL 컨테이너 실행, Oracle VM 접속, SSH 배포, docker compose 실행은 하지 않습니다. GitHub Secrets, 서버 IP, SSH Key, 실제 배포 Secret은 8-2단계 dev CD 초안에서 placeholder 기준으로 검토합니다.
 
+## GitHub Actions dev CD 초안
+
+8-2단계에서는 `workflow_dispatch` 수동 실행 기준의 dev CD workflow 초안을 추가했습니다. 실제 Oracle VM 접속이나 배포 성공은 수행하거나 가정하지 않습니다.
+
+파일:
+
+```text
+.github/workflows/deploy-dev.yml
+```
+
+trigger:
+
+- `workflow_dispatch`
+
+필요한 GitHub Secrets 이름:
+
+```text
+DEV_SERVER_HOST
+DEV_SERVER_USER
+DEV_SSH_KEY
+DEV_DEPLOY_PATH
+```
+
+workflow 동작 방향:
+
+1. backend를 Java 17로 `bootJar -x test` 빌드합니다.
+2. frontend를 Node.js 20으로 `npm ci`, `npm run build` 합니다.
+3. `backend/app.jar`, `frontend/dist`, `infra/docker/docker-compose.dev.yml`, `infra/nginx/default.dev.conf`, `db/migration`을 배포 패키지로 묶습니다.
+4. GitHub Secrets의 SSH 정보로 dev 서버에 패키지를 업로드합니다.
+5. `DEV_DEPLOY_PATH`에서 압축을 풀고 서버 `.env` 존재 여부를 확인합니다.
+6. 서버 `.env`가 있으면 `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d`를 실행하는 초안입니다.
+
+서버 `.env`는 GitHub Actions가 만들지 않습니다. Oracle VM에서 서버 관리자가 직접 생성해야 하며 repository와 workflow에 실제 Secret 값을 기록하지 않습니다. CD 실행 전 Oracle VM에는 Docker, Docker Compose, 배포 디렉터리, 서버 `.env`, 방화벽 정책이 준비되어 있어야 합니다.
+
 ## 팀원 로컬 실행 가이드
 
 처음 repository를 받은 팀원은 아래 순서로 local 개발환경을 실행합니다. 개인 `.env` 파일은 로컬에서만 사용하고 커밋하지 않습니다.
@@ -574,7 +607,6 @@ select * from flyway_schema_history;
 ### 아직 구현하지 않은 기능
 
 - `docker-compose.prod.yml`
-- GitHub Actions dev CD
 - 실제 Oracle VM 배포
 - prod nginx 설정
 - 실제 서비스 화면

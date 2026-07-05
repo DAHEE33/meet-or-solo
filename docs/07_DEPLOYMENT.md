@@ -348,18 +348,92 @@ frontend CI 기준:
 
 ## 8-2단계: GitHub Actions dev CD 초안
 
-8-2단계에서는 dev 서버 배포 자동화 초안을 별도 승인 후 작성합니다. GitHub 원격 저장소, server, domain, Secrets가 확정되기 전까지 값은 placeholder로만 다룹니다.
+8-2단계에서는 dev 서버 배포 자동화 초안을 `workflow_dispatch` 수동 실행 기준으로 작성합니다. 실제 Oracle VM 접속이나 실제 배포 성공을 수행하거나 가정하지 않습니다. GitHub 원격 저장소, server, domain, Secrets가 확정되기 전까지 값은 placeholder로만 다룹니다.
 
-초기 workflow 방향:
+dev CD workflow:
+
+```text
+.github/workflows/deploy-dev.yml
+```
+
+trigger:
+
+```text
+workflow_dispatch
+```
+
+자동 `push` 배포는 이번 단계에서 사용하지 않습니다. 처음에는 GitHub Actions 화면에서 수동으로 실행하는 기준만 둡니다.
+
+필요한 GitHub Secrets 이름:
+
+```text
+DEV_SERVER_HOST
+DEV_SERVER_USER
+DEV_SSH_KEY
+DEV_DEPLOY_PATH
+```
+
+실제 Secret 값은 workflow, 문서, repository에 기록하지 않습니다. SSH private key는 `DEV_SSH_KEY` Secret에만 저장합니다.
+
+workflow 동작 흐름:
 
 1. Checkout
-2. backend build
-3. frontend build
-4. `develop` 또는 수동 workflow 기준 dev 배포 초안
-5. GitHub Secrets에서 서버 접속 정보를 읽음
-6. SSH로 dev server 접속
-7. service restart 또는 docker compose 재기동
-8. `/api/health` 확인
+2. Java 17 설정
+3. backend `bootJar -x test`
+4. Node.js 20 설정
+5. frontend `npm ci`
+6. frontend `npm run build`
+7. 배포 패키지 생성
+8. GitHub Secrets에서 dev 서버 접속 정보 사용
+9. SSH로 `DEV_DEPLOY_PATH` 생성
+10. 배포 패키지 업로드
+11. dev 서버에서 압축 해제
+12. 서버 `.env` 존재 여부 확인
+13. `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d`
+
+배포 패키지 포함 항목:
+
+- `backend/app.jar`
+- `frontend/dist/`
+- `infra/docker/docker-compose.dev.yml`
+- `infra/nginx/default.dev.conf`
+- `db/migration/`
+
+배포 패키지에 포함하지 않는 항목:
+
+- 서버 `.env`
+- DB password
+- SSH private key
+- 실제 IP/domain
+- API Key
+- GitHub Secrets 실제 값
+
+서버 `.env` 기준:
+
+- GitHub Actions는 서버 `.env`를 생성하지 않습니다.
+- 서버 관리자가 Oracle VM에서 `DEV_DEPLOY_PATH/.env`를 직접 생성합니다.
+- `.env` 값은 `infra/env/.env.dev.example`을 참고하되 실제 값은 서버에만 둡니다.
+
+CD 실행 전 Oracle VM 준비 항목:
+
+1. Docker 설치
+2. Docker Compose plugin 설치
+3. `DEV_DEPLOY_PATH`로 사용할 디렉터리 결정
+4. `DEV_DEPLOY_PATH/.env` 직접 생성
+5. nginx 외부 `80` 접근 허용
+6. backend `8080` 외부 직접 접근 차단
+7. PostgreSQL `5432` 외부 직접 접근 차단
+8. GitHub Actions에서 접속할 SSH user와 key 준비
+
+실패 시 확인 항목:
+
+- GitHub Secrets 이름이 workflow와 일치하는지 확인합니다.
+- `DEV_SERVER_HOST`, `DEV_SERVER_USER`, `DEV_SSH_KEY`, `DEV_DEPLOY_PATH` 값이 GitHub Secrets에 존재하는지 확인합니다.
+- Oracle VM의 SSH 접근이 허용되어 있는지 확인합니다.
+- `DEV_DEPLOY_PATH/.env`가 서버에 존재하는지 확인합니다.
+- 서버에 Docker와 Docker Compose plugin이 설치되어 있는지 확인합니다.
+- `frontend/dist`, `backend/app.jar`, `db/migration`이 배포 패키지에 포함되었는지 확인합니다.
+- nginx `80`만 외부 접근 가능하고 backend `8080`, PostgreSQL `5432`가 외부 공개되지 않았는지 확인합니다.
 
 테스트 자동화와 prod 자동 배포는 추후 단계에서 확장합니다. 실제 운영/prod 자동 배포는 현재 범위가 아닙니다.
 
