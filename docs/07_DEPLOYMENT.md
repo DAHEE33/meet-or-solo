@@ -29,7 +29,8 @@ Redis는 MVP 초기 배포 구성에 포함하지 않습니다.
 
 1. [6단계] Oracle VM dev 서버/dev DB 구축 준비
 2. [7단계] nginx + docker-compose dev 배포 초안
-3. [8단계] GitHub Actions CI/CD 초안
+3. [8-1단계] GitHub Actions CI 초안
+4. [8-2단계] GitHub Actions dev CD 초안
 
 이 순서는 기능 구현 전에 팀이 같은 dev 환경에서 frontend/backend 연동, DB 연결, reverse proxy 경계를 확인하기 위한 것입니다.
 
@@ -301,19 +302,64 @@ Let's Encrypt + Certbot
 
 실제 domain이 확정되기 전까지 placeholder를 사용합니다.
 
-## 8단계: GitHub Actions CI/CD 초안
+## 8-1단계: GitHub Actions CI 초안
 
-GitHub 원격 저장소는 아직 미연결 상태입니다. workflow는 remote, server, domain, Secrets가 확정되기 전까지 placeholder 초안으로만 작성합니다.
+8-1단계에서는 자동 배포 없이 GitHub Actions에서 backend와 frontend가 build 되는지만 검증합니다.
+
+CI workflow:
+
+```text
+.github/workflows/ci.yml
+```
+
+trigger:
+
+- `pull_request` to `main`
+- `push` to `main`
+
+현재 `develop` 브랜치는 확정 전이므로 `main` 중심으로 작성합니다. 추후 `develop` 브랜치 운영이 확정되면 trigger 대상에 `develop`을 추가할 수 있습니다.
+
+CI job:
+
+| job | 목적 | 실행 명령 |
+| --- | --- | --- |
+| `backend-build` | backend compile/package 검증 | `./gradlew build -x test` |
+| `frontend-build` | frontend TypeScript/Vite build 검증 | `npm ci`, `npm run build` |
+
+backend CI 기준:
+
+- Java 17을 사용합니다.
+- Gradle cache를 사용합니다.
+- `backend` 디렉터리에서 실행합니다.
+- `bootRun`은 실행하지 않습니다.
+- PostgreSQL 컨테이너를 띄우지 않습니다.
+- Flyway/DB 연결이 필요한 애플리케이션 실행은 하지 않습니다.
+- 실제 `.env`나 DB Secret 없이 동작해야 합니다.
+
+frontend CI 기준:
+
+- Node.js 20을 사용합니다.
+- npm cache를 사용합니다.
+- `frontend` 디렉터리에서 실행합니다.
+- `npm ci` 후 `npm run build`를 실행합니다.
+- `frontend/dist/`는 build 산출물이므로 Git에 커밋하지 않습니다.
+
+8-1단계에서는 Oracle VM 접속, SSH 배포, `docker compose up`, 서버 `.env` 생성, GitHub Secrets 사용을 하지 않습니다.
+
+## 8-2단계: GitHub Actions dev CD 초안
+
+8-2단계에서는 dev 서버 배포 자동화 초안을 별도 승인 후 작성합니다. GitHub 원격 저장소, server, domain, Secrets가 확정되기 전까지 값은 placeholder로만 다룹니다.
 
 초기 workflow 방향:
 
 1. Checkout
 2. backend build
 3. frontend build
-4. `develop` 또는 수동 workflow 기준 dev 배포
-5. SSH로 dev server 접속
-6. service restart 또는 docker compose 재기동
-7. `/api/health` 확인
+4. `develop` 또는 수동 workflow 기준 dev 배포 초안
+5. GitHub Secrets에서 서버 접속 정보를 읽음
+6. SSH로 dev server 접속
+7. service restart 또는 docker compose 재기동
+8. `/api/health` 확인
 
 테스트 자동화와 prod 자동 배포는 추후 단계에서 확장합니다. 실제 운영/prod 자동 배포는 현재 범위가 아닙니다.
 

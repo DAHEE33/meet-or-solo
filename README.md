@@ -18,7 +18,7 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 완료된 단계는 0~7단계입니다.
+현재 완료된 단계는 0~7단계와 8-1단계입니다.
 
 - 0단계: 프로젝트 방향/문서화 완료
 - 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
@@ -28,8 +28,9 @@ meet-or-solo/
 - 5단계: Frontend 공통 코드화 완료
 - 6단계: Oracle VM dev 서버/dev DB 구축 준비 문서화 완료
 - 7단계: nginx + docker-compose dev 배포 초안 완료
+- 8-1단계: GitHub Actions CI 초안 완료
 
-다음 작업은 8단계 GitHub Actions CI/CD 초안입니다.
+다음 작업은 8-2단계 GitHub Actions dev CD 초안입니다.
 
 자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
@@ -52,7 +53,7 @@ meet-or-solo/
 
 기능 분업 전까지 남은 작업:
 
-1. GitHub Actions CI/CD 초안
+1. GitHub Actions dev CD 초안
 
 ## 문서
 
@@ -378,6 +379,30 @@ dev compose 구성:
 
 dev 환경변수 예시는 `infra/env/.env.dev.example`에만 둡니다. 실제 비밀번호, 실제 IP, 실제 도메인, API Key, Secret은 repository에 기록하지 않습니다.
 
+## GitHub Actions CI 초안
+
+8-1단계에서는 자동 배포 없이 backend와 frontend build를 검증하는 CI workflow만 추가했습니다.
+
+파일:
+
+```text
+.github/workflows/ci.yml
+```
+
+trigger:
+
+- `pull_request` to `main`
+- `push` to `main`
+
+현재 `develop` 브랜치는 확정 전이므로 `main` 중심으로 작성했습니다. 추후 `develop` 브랜치 운영이 확정되면 trigger 대상에 `develop`을 추가할 수 있습니다.
+
+CI job:
+
+- `backend-build`: Java 17 설정 후 `backend` 디렉터리에서 `./gradlew build -x test` 실행
+- `frontend-build`: Node.js 20 설정 후 `frontend` 디렉터리에서 `npm ci`, `npm run build` 실행
+
+현재 CI는 compile/build 검증만 수행합니다. `bootRun`, DB 연결, PostgreSQL 컨테이너 실행, Oracle VM 접속, SSH 배포, docker compose 실행은 하지 않습니다. GitHub Secrets, 서버 IP, SSH Key, 실제 배포 Secret은 8-2단계 dev CD 초안에서 placeholder 기준으로 검토합니다.
+
 ## 팀원 로컬 실행 가이드
 
 처음 repository를 받은 팀원은 아래 순서로 local 개발환경을 실행합니다. 개인 `.env` 파일은 로컬에서만 사용하고 커밋하지 않습니다.
@@ -549,7 +574,7 @@ select * from flyway_schema_history;
 ### 아직 구현하지 않은 기능
 
 - `docker-compose.prod.yml`
-- GitHub Actions
+- GitHub Actions dev CD
 - 실제 Oracle VM 배포
 - prod nginx 설정
 - 실제 서비스 화면

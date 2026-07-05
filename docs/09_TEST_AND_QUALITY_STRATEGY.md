@@ -180,6 +180,16 @@ GitHub Actions에서 push/PR마다 다음을 실행하는 방향으로 설계합
 
 coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되었는지가 더 중요합니다.
 
+현재 8-1단계 CI 초안은 테스트 자동화 전 단계의 build 검증입니다.
+
+8-1단계 CI 범위:
+
+- backend `./gradlew build -x test`
+- frontend `npm ci`
+- frontend `npm run build`
+
+8-1단계 CI에서는 `bootRun`, DB 연결, PostgreSQL 컨테이너 실행, Oracle VM 배포를 하지 않습니다. backend/frontend 테스트 자동화와 배포 차단 기준은 테스트 코드와 CD 초안이 준비되는 후속 단계에서 확장합니다.
+
 품질 기준 예시:
 
 - 매칭 domain/service 테스트가 존재한다.

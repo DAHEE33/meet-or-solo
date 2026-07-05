@@ -14,7 +14,7 @@
 -> 이후 풀스택 A/B 기능 분업
 ```
 
-다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비와 nginx/docker-compose dev 배포 초안을 잡고, GitHub Actions CI/CD 초안 이후 기능 분업으로 넘어갑니다.
+다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비와 nginx/docker-compose dev 배포 초안을 잡고, GitHub Actions CI와 dev CD 초안 이후 기능 분업으로 넘어갑니다.
 
 ## 2. 현재 완료된 단계
 
@@ -189,14 +189,45 @@
 - backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, 테스트 코드는 수정하지 않았다.
 - 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
 
-### [8단계] GitHub Actions CI/CD 초안
+### [8-1단계] GitHub Actions CI 초안
+
+상태: 완료
+
+완료 항목:
+
+- `.github/workflows/ci.yml` 추가
+- `pull_request` to `main` trigger 추가
+- `push` to `main` trigger 추가
+- `backend-build` job 추가
+- backend CI에서 Java 17 설정
+- backend CI에서 Gradle cache 적용
+- backend CI에서 `./gradlew build -x test` 실행
+- backend CI에서 `bootRun`, DB 연결, PostgreSQL 컨테이너 실행 제외
+- `frontend-build` job 추가
+- frontend CI에서 Node.js 20 설정
+- frontend CI에서 npm cache 적용
+- frontend CI에서 `npm ci`, `npm run build` 실행
+- CI는 compile/build 검증만 수행하고 자동 배포/CD는 하지 않음
+
+주의:
+
+- 실제 Oracle VM에 접속하지 않았다.
+- SSH 배포를 구성하지 않았다.
+- `docker compose up`을 실행하지 않았다.
+- 서버 `.env`를 생성하지 않았다.
+- GitHub Secrets를 사용하지 않았다.
+- backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, nginx/docker-compose prod, 테스트 코드는 수정하지 않았다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
+
+### [8-2단계] GitHub Actions dev CD 초안
 
 상태: 다음 작업
 
-- backend build
-- frontend build
-- `develop` 또는 수동 workflow 기준 dev 배포 초안
-- GitHub Secrets 사용
+- CI 산출물을 dev 서버에 배포하는 CD 초안
+- `develop` 또는 수동 workflow 기준 dev 배포 후보
+- GitHub Secrets 이름 후보 사용
+- SSH로 Oracle VM dev 서버에 접속하는 흐름 후보
+- docker compose 재기동 또는 service restart 후보
 - 실제 운영/prod 자동 배포는 아직 하지 않음
 
 ### [9단계] 실제 서비스 DB 테이블/Flyway migration
@@ -220,7 +251,7 @@
 
 기능 분업을 시작하기 전에 아래 순서를 완료합니다.
 
-1. [8단계] GitHub Actions CI/CD 초안
+1. [8-2단계] GitHub Actions dev CD 초안
 
 ## 5. 현재 아직 하지 않은 것
 
@@ -236,7 +267,7 @@
 - `MatchRoomPage`
 - 신고/제재 기능
 - 테스트 코드
-- GitHub Actions
+- GitHub Actions dev CD
 - prod nginx 설정
 - Oracle VM 실제 접속/배포
 - prod docker-compose 배포 구성
@@ -276,6 +307,7 @@
 - `infra/docker/docker-compose.dev.yml`
 - `infra/nginx/default.dev.conf`
 - `infra/env/.env.dev.example`
+- `.github/workflows/ci.yml`
 - `README.md`
 - `AGENTS.md`
 - `CLAUDE.md`
