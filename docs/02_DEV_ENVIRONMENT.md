@@ -25,7 +25,7 @@
 3. Frontend PWA 기본 스캐폴딩 + `/api/health` 연동
 4. Backend 공통 코드화
 5. Frontend 공통 코드화
-6. Oracle VM dev 서버/dev DB 구축
+6. Oracle VM dev 서버/dev DB 구축 준비
 7. nginx + docker-compose dev 배포 초안
 8. GitHub Actions CI/CD 초안
 9. 실제 서비스 DB 테이블/Flyway migration
@@ -61,7 +61,7 @@ profile 기준:
 
 `dev`와 `prod`는 서버 환경이므로 환경변수 주입을 원칙으로 합니다. 실제 DB URL, 계정, 비밀번호, 서버 IP, 도메인은 저장소에 기록하지 않습니다.
 
-현재는 Oracle Cloud VM 리소스와 작업 안정성을 고려해 `dev`만 VM에 배포합니다. `prod`는 추후 제출/운영 필요가 생기면 분리합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
+현재는 Oracle Cloud VM 리소스와 작업 안정성을 고려해 `dev`만 VM에 배포하는 방향으로 준비합니다. 6단계에서는 실제 서버 접속이나 배포 자동화를 수행하지 않고 dev 서버와 dev DB 구성 기준만 문서화합니다. `prod`는 추후 제출/운영 필요가 생기면 분리합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
 
 기능 분업 전에 `dev` 서버와 `dev` DB를 구축하는 이유:
 
@@ -78,6 +78,96 @@ Docker Compose 방향:
 - prod 배포용 docker-compose: 추후 제출/운영 단계에서 dev와 분리해 별도 작성
 
 현재까지는 local PostgreSQL 중심의 최소 구성만 사용합니다. nginx, docker-compose dev/prod, GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
+
+## Oracle VM dev 서버 준비 기준
+
+6단계 dev 서버 준비는 문서와 템플릿 후보 정리까지만 진행합니다. 실제 Oracle VM에 접속하거나 파일을 배포하지 않습니다.
+
+예정 서버 기준 경로:
+
+```text
+/home/ubuntu/meet-or-solo/
+├─ backend/
+│  └─ app.jar
+├─ frontend/
+│  └─ dist/
+├─ nginx/
+│  └─ default.conf
+├─ data/
+│  └─ postgres/
+├─ logs/
+└─ .env
+```
+
+디렉터리 역할:
+
+| 경로 | 역할 |
+| --- | --- |
+| `/home/ubuntu/meet-or-solo/backend/` | Spring Boot build artifact인 `app.jar` 배치 후보 |
+| `/home/ubuntu/meet-or-solo/frontend/dist/` | `npm run build` 결과물 배치 후보 |
+| `/home/ubuntu/meet-or-solo/nginx/` | 7단계에서 작성할 nginx dev 설정 후보 위치 |
+| `/home/ubuntu/meet-or-solo/data/postgres/` | PostgreSQL dev data volume 후보 |
+| `/home/ubuntu/meet-or-solo/logs/` | backend/nginx 등 dev 로그 보관 후보 |
+| `/home/ubuntu/meet-or-solo/.env` | dev 서버 환경변수 주입 후보. 실제 값은 저장소에 커밋하지 않음 |
+
+이번 단계에서는 위 구조를 실제 파일로 만들지 않습니다. `nginx/default.conf`, `docker-compose.dev.yml`, GitHub Actions workflow는 각각 7단계와 8단계에서 별도 승인 후 작성합니다.
+
+## Oracle VM dev DB 기준
+
+dev DB는 Oracle VM 내부 PostgreSQL을 기준으로 준비합니다.
+
+기준:
+
+- DB 이름 예시는 `meet_or_solo_dev`를 사용한다.
+- DB user/password는 실제 값을 문서, 코드, 예시 파일에 하드코딩하지 않는다.
+- DB 접속 정보는 VM의 `.env` 또는 추후 GitHub Secrets에서 주입한다.
+- PostgreSQL `5432`는 외부 전체 공개를 하지 않는다.
+- backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신한다.
+- 팀원이 DB에 직접 접근해야 하는 경우 SSH tunnel을 사용한다.
+
+dev DB URL 예시는 형식만 문서화합니다.
+
+```text
+DB_URL=jdbc:postgresql://<INTERNAL_DB_HOST>:5432/meet_or_solo_dev
+```
+
+`<INTERNAL_DB_HOST>`는 `localhost`, docker compose service name, VM 내부 host 중 7단계 배포 방식에서 확정합니다. 실제 서버 IP, 도메인, DB 계정, 비밀번호는 기록하지 않습니다.
+
+팀원 SSH tunnel 접근 예시는 placeholder만 사용합니다.
+
+```bash
+ssh -L 15432:localhost:5432 <SSH_USER>@<DEV_SERVER_HOST>
+```
+
+터널 연결 후 개인 PC의 DB client는 아래처럼 접근하는 방향입니다.
+
+```text
+host=localhost
+port=15432
+database=meet_or_solo_dev
+user=<DB_USERNAME>
+password=<DB_PASSWORD>
+```
+
+`<SSH_USER>`, `<DEV_SERVER_HOST>`, `<DB_USERNAME>`, `<DB_PASSWORD>` 실제 값은 문서나 repository에 기록하지 않습니다.
+
+## dev profile 환경변수 기준
+
+backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
+
+필수 또는 권장 환경변수:
+
+| 환경변수 | 용도 |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | 서버 실행 profile. dev 서버에서는 `dev` 사용 |
+| `DB_URL` | PostgreSQL dev DB JDBC URL |
+| `DB_USERNAME` | PostgreSQL dev DB 사용자 |
+| `DB_PASSWORD` | PostgreSQL dev DB 비밀번호 |
+| `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. 실제 domain/IP는 placeholder로만 관리 |
+| `FLYWAY_LOCATIONS` | Flyway migration 위치. 기본 후보는 `filesystem:../db/migration` |
+| `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
+
+예시 값에는 실제 IP, 실제 도메인, 실제 계정, 실제 비밀번호를 넣지 않습니다.
 
 ## 로컬 실행 순서
 
@@ -129,12 +219,16 @@ DB_PASSWORD=meet_password
 GET /api/health
 ```
 
-예정 응답:
+현재 응답:
 
 ```json
 {
-  "status": "ok",
-  "service": "meet-or-solo-backend"
+  "success": true,
+  "data": {
+    "status": "OK",
+    "service": "meet-or-solo-backend"
+  },
+  "error": null
 }
 ```
 
@@ -157,6 +251,8 @@ npm run preview
 
 - `npm run build`로 `dist`를 만든다.
 - Nginx가 `dist`를 정적 파일로 서빙한다.
+- `frontend/dist/`는 build 결과물이므로 Git에 커밋하지 않는다.
+- `/api` 요청은 Nginx가 backend로 reverse proxy한다.
 
 ## 팀원 로컬 실행 가이드
 

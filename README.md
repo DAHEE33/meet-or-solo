@@ -18,7 +18,7 @@ meet-or-solo/
 
 ## 현재 상태
 
-현재 완료된 단계는 0~5단계입니다.
+현재 완료된 단계는 0~6단계입니다.
 
 - 0단계: 프로젝트 방향/문서화 완료
 - 1단계: Backend + Local PostgreSQL + Flyway 확인 완료
@@ -26,8 +26,9 @@ meet-or-solo/
 - 3단계: Frontend PWA 기본 스캐폴딩 + `/api/health` 연동 완료
 - 4단계: Backend 공통 코드화 완료
 - 5단계: Frontend 공통 코드화 완료
+- 6단계: Oracle VM dev 서버/dev DB 구축 준비 문서화 완료
 
-다음 작업은 6단계 Oracle VM dev 서버/dev DB 구축입니다. 이후 7단계 nginx/docker-compose dev 배포, 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
+다음 작업은 7단계 nginx/docker-compose dev 배포 초안입니다. 이후 8단계 GitHub Actions CI/CD 초안 순서로 진행합니다.
 
 자세한 단계 순서와 남은 작업은 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인합니다.
 
@@ -50,9 +51,8 @@ meet-or-solo/
 
 기능 분업 전까지 남은 작업:
 
-1. Oracle VM dev 서버/dev DB 구축
-2. nginx + docker-compose dev 배포 초안
-3. GitHub Actions CI/CD 초안
+1. nginx + docker-compose dev 배포 초안
+2. GitHub Actions CI/CD 초안
 
 ## 문서
 
@@ -133,6 +133,7 @@ SPRING_PROFILES_ACTIVE
 DB_URL
 DB_USERNAME
 DB_PASSWORD
+CORS_ALLOWED_ORIGINS
 FLYWAY_LOCATIONS
 SERVER_PORT
 ```
@@ -291,6 +292,55 @@ Browser -> http://localhost:5173/api -> Vite proxy -> http://localhost:8080/api
 ```
 
 `frontend/vite.config.ts`의 proxy 설정을 바꾸면 `npm run dev`를 재시작해야 합니다.
+
+## Oracle VM dev 서버/dev DB 준비 기준
+
+6단계에서는 실제 Oracle VM 접속이나 배포 자동화를 수행하지 않고, 팀원이 함께 확인할 dev 서버와 dev DB 구성 기준만 문서화했습니다. 현재 서버 배포 대상은 `dev`만이며, `prod`는 추후 제출/운영 단계에서 별도 디렉터리, 별도 DB, 별도 도메인 또는 외부 DB 서비스로 분리합니다.
+
+예정 dev 서버 구조:
+
+```text
+/home/ubuntu/meet-or-solo/
+├─ backend/
+│  └─ app.jar
+├─ frontend/
+│  └─ dist/
+├─ nginx/
+│  └─ default.conf
+├─ data/
+│  └─ postgres/
+├─ logs/
+└─ .env
+```
+
+위 구조는 6단계 기준 문서화용입니다. 실제 `nginx/default.conf`, `docker-compose.dev.yml`, GitHub Actions workflow 파일은 아직 만들지 않았고, 7단계와 8단계에서 별도 승인 후 초안으로 작성합니다.
+
+dev DB 기준:
+
+- DB 이름 예시는 `meet_or_solo_dev`를 사용합니다.
+- DB user/password는 실제 값을 저장소에 기록하지 않고 `.env` 또는 GitHub Secrets에서 주입합니다.
+- PostgreSQL `5432`는 외부 전체 공개를 하지 않습니다.
+- backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신합니다.
+- 팀원이 dev DB에 직접 접근해야 하면 SSH tunnel을 사용합니다.
+
+backend `dev` profile 기준 환경변수:
+
+```text
+SPRING_PROFILES_ACTIVE=dev
+DB_URL
+DB_USERNAME
+DB_PASSWORD
+CORS_ALLOWED_ORIGINS
+FLYWAY_LOCATIONS
+SERVER_PORT
+```
+
+frontend 기준:
+
+- local 개발은 `npm run dev`와 Vite proxy를 사용합니다.
+- dev 서버 배포는 `npm run build` 결과물인 `frontend/dist`를 사용합니다.
+- `frontend/dist/`는 build 결과물이므로 Git에 커밋하지 않습니다.
+- dev 서버에서는 nginx가 `frontend/dist`를 서빙하고 `/api` 요청은 backend로 reverse proxy하는 방향입니다.
 
 ## 팀원 로컬 실행 가이드
 

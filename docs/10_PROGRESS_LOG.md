@@ -14,7 +14,7 @@
 -> 이후 풀스택 A/B 기능 분업
 ```
 
-다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB, nginx/docker-compose dev 배포, GitHub Actions CI/CD 초안을 잡고 기능 분업으로 넘어갑니다.
+다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비, nginx/docker-compose dev 배포, GitHub Actions CI/CD 초안을 잡고 기능 분업으로 넘어갑니다.
 
 ## 2. 현재 완료된 단계
 
@@ -101,9 +101,7 @@
 - 응답에 stack trace, DB URL, 환경변수, 내부 예외 상세를 노출하지 않는다.
 - 5단계 Frontend 공통 코드화에서 frontend `healthApi`와 `HealthCheckPage`를 새 `ApiResponse` 포맷에 맞게 수정했다.
 
-## 3. 다음 작업 단계
-
-### [5단계] Frontend 공통 코드화
+### [5단계] Frontend 공통 코드화 완료
 
 상태: 완료
 
@@ -122,22 +120,42 @@
 - Kakao OAuth, JWT, 축제/매칭/체크인/신고 기능은 구현하지 않는다.
 - backend 코드, DB migration, nginx, docker-compose, GitHub Actions, 테스트 코드는 수정하지 않는다.
 
-## 4. 이후 단계 순서
+### [6단계] Oracle VM dev 서버/dev DB 구축 준비 완료
 
-### [6단계] Oracle VM dev 서버/dev DB 구축
+상태: 완료
 
-상태: 다음 작업
+완료 항목:
 
-- `/home/ubuntu/meet-or-solo` 기준 dev 서버 배포 구조
-- `SPRING_PROFILES_ACTIVE=dev`
-- PostgreSQL dev DB
-- PostgreSQL `5432` 외부 전체 공개 금지
-- 필요 시 SSH tunnel 사용
-- `prod`는 아직 만들지 않음
+- `/home/ubuntu/meet-or-solo` 기준 dev 서버 폴더 구조 문서화
+- `backend/app.jar`, `frontend/dist`, `nginx/default.conf`, `data/postgres`, `logs`, `.env` 역할 정리
+- Oracle VM 내부 PostgreSQL dev DB 기준 정리
+- DB 이름 예시 `meet_or_solo_dev` 문서화
+- DB user/password는 `.env` 또는 GitHub Secrets에서 주입하고 실제 값을 하드코딩하지 않는 원칙 정리
+- PostgreSQL `5432` 외부 전체 공개 금지 원칙 재확인
+- backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신하는 방향 정리
+- 팀원 dev DB 직접 접근은 SSH tunnel을 우선 사용하는 방향 정리
+- backend `application-dev.yml` 기준 환경변수 목록 정리
+- frontend local 개발은 `npm run dev`와 Vite proxy, dev 서버 배포는 `npm run build` 결과물인 `frontend/dist`를 사용하는 기준 정리
+- `frontend/dist/`는 Git에 커밋하지 않는 원칙 재확인
+- nginx가 `frontend/dist`를 서빙하고 `/api`를 backend로 reverse proxy하는 방향 정리
+- 실제 nginx 설정 파일은 7단계에서 작성한다고 명시
+- 7단계에서 만들 파일 후보만 문서화
+
+주의:
+
+- 실제 Oracle VM에 접속하지 않았다.
+- 실제 파일을 서버에 배포하지 않았다.
+- nginx 설정 파일을 만들지 않았다.
+- docker-compose dev/prod 파일을 만들지 않았다.
+- GitHub Actions 파일을 만들지 않았다.
+- backend/frontend 코드, DB migration, 실제 서비스 테이블, 테스트 코드는 수정하지 않았다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
+
+## 3. 이후 단계 순서
 
 ### [7단계] nginx + docker-compose dev 배포 초안
 
-상태: 예정
+상태: 다음 작업
 
 - dev 배포 기준 docker-compose 구성
 - frontend `dist`, backend app, postgres, nginx 연결
@@ -171,15 +189,14 @@
 - B 예시: Kakao OAuth, JWT, 회원/프로필, 체크인, 신고/평가
 - 실제 담당 범위는 WBS에 맞춰 조정
 
-## 5. 기능 분업 전까지 남은 작업
+## 4. 기능 분업 전까지 남은 작업
 
 기능 분업을 시작하기 전에 아래 순서를 완료합니다.
 
-1. [6단계] Oracle VM dev 서버/dev DB 구축
-2. [7단계] nginx + docker-compose dev 배포 초안
-3. [8단계] GitHub Actions CI/CD 초안
+1. [7단계] nginx + docker-compose dev 배포 초안
+2. [8단계] GitHub Actions CI/CD 초안
 
-## 6. 현재 아직 하지 않은 것
+## 5. 현재 아직 하지 않은 것
 
 - 실제 서비스 DB 테이블 생성
 - `V2` 이상의 Flyway migration 작성
@@ -195,11 +212,11 @@
 - 테스트 코드
 - GitHub Actions
 - nginx 설정
-- Oracle VM 실제 배포
+- Oracle VM 실제 접속/배포
 - docker-compose dev/prod 배포 구성
 - prod 배포
 
-## 7. 현재까지 생성/수정된 주요 파일
+## 6. 현재까지 생성/수정된 주요 파일
 
 - `.env.example`
 - `docker-compose.local.yml`
@@ -235,7 +252,7 @@
 - `CLAUDE.md`
 - `docs/*.md`
 
-## 8. 작업 규칙
+## 7. 작업 규칙
 
 - 새 작업을 시작하기 전 `docs/10_PROGRESS_LOG.md`를 먼저 확인한다.
 - 현재 완료 단계와 다음 작업 단계를 확인한 뒤, 현재 단계에 맞는 작업만 수행한다.

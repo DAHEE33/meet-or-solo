@@ -27,7 +27,7 @@ Redis는 MVP 초기 배포 구성에 포함하지 않습니다.
 
 기능 분업 전 배포 관련 작업은 다음 순서로 진행합니다.
 
-1. [6단계] Oracle VM dev 서버/dev DB 구축
+1. [6단계] Oracle VM dev 서버/dev DB 구축 준비
 2. [7단계] nginx + docker-compose dev 배포 초안
 3. [8단계] GitHub Actions CI/CD 초안
 
@@ -77,18 +77,87 @@ SPRING_PROFILES_ACTIVE=dev
 
 PostgreSQL `5432`는 외부 전체 공개를 하지 않습니다. 개발자가 DB에 직접 접속해야 하면 SSH tunnel 방식을 우선 고려합니다.
 
-## 6단계: Oracle VM dev 서버/dev DB 구축
+## 6단계: Oracle VM dev 서버/dev DB 구축 준비
 
-dev 서버 구축 기준:
+6단계는 실제 서버 접속이나 파일 배포가 아니라 dev 서버와 dev DB 구성 기준을 팀원이 함께 확인할 수 있게 정리하는 단계입니다.
+
+dev 서버 준비 기준:
 
 - `/home/ubuntu/meet-or-solo` 기준 배포 구조를 사용한다.
 - backend는 `SPRING_PROFILES_ACTIVE=dev`로 실행한다.
-- PostgreSQL dev DB를 구성한다.
+- PostgreSQL dev DB는 Oracle VM 내부 PostgreSQL을 기준으로 한다.
 - PostgreSQL `5432`는 외부 전체 공개를 하지 않는다.
 - DB 직접 확인이 필요하면 SSH tunnel을 우선 사용한다.
 - `prod`는 아직 만들지 않는다.
 
 실제 서버 IP, 계정, DB 비밀번호, SSH Key는 문서나 repository에 기록하지 않습니다.
+
+예정 dev 서버 폴더 구조:
+
+```text
+/home/ubuntu/meet-or-solo/
+├─ backend/
+│  └─ app.jar
+├─ frontend/
+│  └─ dist/
+├─ nginx/
+│  └─ default.conf
+├─ data/
+│  └─ postgres/
+├─ logs/
+└─ .env
+```
+
+폴더별 기준:
+
+- `backend/app.jar`: backend build artifact 후보입니다.
+- `frontend/dist/`: frontend `npm run build` 결과물 후보입니다.
+- `nginx/default.conf`: 7단계에서 작성할 nginx dev 설정 후보입니다. 6단계에서는 파일을 만들지 않습니다.
+- `data/postgres/`: Oracle VM 내부 PostgreSQL dev data volume 후보입니다.
+- `logs/`: dev 서버 로그 보관 후보입니다.
+- `.env`: dev 서버 환경변수 파일 후보입니다. 실제 값은 repository에 커밋하지 않습니다.
+
+dev DB 기준:
+
+- DB 이름 예시는 `meet_or_solo_dev`를 사용합니다.
+- DB user/password는 실제 값을 하드코딩하지 않고 `.env` 또는 GitHub Secrets에서 주입합니다.
+- backend와 PostgreSQL은 같은 VM 내부 네트워크 또는 localhost 경계에서 통신합니다.
+- 외부에서 PostgreSQL `5432`로 직접 접속하는 구성을 만들지 않습니다.
+- 팀원이 dev DB를 확인해야 하면 SSH tunnel을 사용합니다.
+
+SSH tunnel 예시는 placeholder만 사용합니다.
+
+```bash
+ssh -L 15432:localhost:5432 <SSH_USER>@<DEV_SERVER_HOST>
+```
+
+backend `dev` profile 기준 환경변수:
+
+```text
+SPRING_PROFILES_ACTIVE=dev
+DB_URL
+DB_USERNAME
+DB_PASSWORD
+CORS_ALLOWED_ORIGINS
+FLYWAY_LOCATIONS
+SERVER_PORT
+```
+
+`DB_URL` 형식 예시는 아래처럼만 둡니다.
+
+```text
+jdbc:postgresql://<INTERNAL_DB_HOST>:5432/meet_or_solo_dev
+```
+
+`<INTERNAL_DB_HOST>`는 7단계 nginx/docker-compose dev 배포 초안에서 배포 방식에 맞춰 확정합니다. 실제 IP, 실제 도메인, 실제 DB 계정, 실제 비밀번호는 문서에 쓰지 않습니다.
+
+frontend dev/prod build 기준:
+
+- local 개발은 `npm run dev`와 Vite proxy를 사용합니다.
+- dev 서버 배포는 `npm run build` 결과물인 `frontend/dist`를 사용합니다.
+- `frontend/dist/`는 build 결과물이므로 Git에 커밋하지 않습니다.
+- nginx가 `frontend/dist`를 서빙하고 `/api` 요청은 backend로 reverse proxy합니다.
+- 실제 nginx 설정 파일은 7단계에서 작성합니다.
 
 ## 7단계: nginx + docker-compose dev 배포 초안
 
@@ -102,6 +171,15 @@ dev 배포 초안에는 다음 연결을 목표로 합니다.
 dev 배포 기준 docker-compose를 먼저 정리하고, prod용 docker-compose는 추후 제출/운영 단계에서 분리합니다.
 
 현재 단계에서는 사용자가 명시적으로 승인하기 전까지 nginx 설정 파일이나 docker-compose dev/prod 파일을 생성 또는 수정하지 않습니다.
+
+7단계에서 만들 파일 후보:
+
+- `docker-compose.dev.yml`
+- `infra/nginx/dev/default.conf` 또는 이에 준하는 nginx dev 설정 파일
+- dev 서버용 `.env` 템플릿 후보. 실제 Secret 값은 포함하지 않음
+- 필요 시 dev 배포/재시작 스크립트 후보
+
+7단계에서도 `prod`용 docker-compose는 만들지 않고, dev 배포 초안을 먼저 검증합니다.
 
 ## prod Docker Compose 방향
 
