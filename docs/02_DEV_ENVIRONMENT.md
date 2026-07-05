@@ -79,6 +79,8 @@ Docker Compose 방향:
 
 현재까지는 local PostgreSQL 중심의 최소 구성과 dev 배포 템플릿만 사용합니다. prod docker-compose와 GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
 
+dev compose의 nginx는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 host `18080`을 container `80`에 매핑합니다. dev 서버 검증은 `http://<DEV_SERVER_HOST>:18080` 또는 서버 내부 `curl http://localhost:18080/api/health`를 기준으로 합니다.
+
 ## Oracle VM dev 서버 준비 기준
 
 6단계 dev 서버 준비는 문서와 템플릿 후보 정리까지만 진행합니다. 실제 Oracle VM에 접속하거나 파일을 배포하지 않습니다.
@@ -173,7 +175,7 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 | `DB_URL` | PostgreSQL dev DB JDBC URL |
 | `DB_USERNAME` | PostgreSQL dev DB 사용자 |
 | `DB_PASSWORD` | PostgreSQL dev DB 비밀번호 |
-| `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. 실제 domain/IP는 placeholder로만 관리 |
+| `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. dev 서버 기준은 `http://<DEV_SERVER_HOST>:18080` |
 | `FLYWAY_LOCATIONS` | Flyway migration 위치. 기본 후보는 `filesystem:../db/migration` |
 | `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
 
@@ -274,6 +276,8 @@ frontend/dist -> frontend/dist
 위 산출물은 8단계 CI/CD 또는 수동 배포 시 서버로 복사합니다. 현재 단계에서는 실제 Oracle VM에 접속하거나 배포하지 않습니다.
 
 8-2단계 dev CD 초안은 GitHub Actions `workflow_dispatch` 수동 실행 기준입니다. workflow는 산출물을 서버로 업로드하는 초안만 제공하며, 실제 서버 `.env`는 생성하지 않습니다. Oracle VM의 `DEV_DEPLOY_PATH/.env`는 서버 관리자가 직접 생성하고 관리합니다.
+
+`workflow_dispatch`는 수동 실행 trigger이므로 `git push`만으로 dev 서버에 자동 반영되지 않습니다. GitHub Actions 화면에서 `Deploy Dev` workflow를 최신 commit 기준으로 실행해야 서버에 배포 패키지가 업로드됩니다.
 
 ## 팀원 로컬 실행 가이드
 

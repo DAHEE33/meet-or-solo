@@ -168,7 +168,7 @@
 - `backend`는 `SPRING_PROFILES_ACTIVE=dev` 기준으로 실행
 - `DB_URL`은 compose 내부 service name `postgres` 기준으로 예시 구성
 - `backend 8080`과 `postgres 5432`는 외부에 직접 publish하지 않음
-- `nginx`만 외부 `80` 포트로 publish
+- `nginx`는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 외부 `18080` 포트로 publish
 - `infra/nginx/default.dev.conf` 추가
 - nginx가 `frontend/dist` 정적 파일을 서빙하고 SPA fallback을 적용하도록 구성
 - `/api/` 요청을 `backend:8080`으로 reverse proxy
@@ -244,25 +244,91 @@
 - 서버 `.env`가 없으면 workflow가 실패하도록 초안 작성
 - `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d` 실행 초안 포함
 - CD 실행 전 Oracle VM 준비 항목과 실패 시 확인 항목 문서화
+- Oracle VM에서 dev compose 수동 검증 중 `eclipse-temurin:17-jre-alpine`의 ARM64 manifest 문제를 확인해 `eclipse-temurin:17-jre-jammy` 기준으로 정리
+- 기존 운영 nginx가 host `80`을 사용 중인 VM에서 dev compose nginx는 host `18080`으로 검증하는 기준으로 정리
+- 서버 내부 `curl http://localhost:18080/api/health` 응답 성공 확인
 
 주의:
 
-- 실제 Oracle VM에 접속하지 않았다.
+- 실제 Oracle VM dev compose 수동 검증은 수행했으나, 실제 Secret 값은 문서화하지 않았다.
 - 실제 Secret 값을 작성하지 않았다.
-- 실제 배포 성공을 가정하지 않았다.
+- prod 배포 성공을 가정하지 않았다.
 - 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
 - backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, prod 설정, 테스트 코드는 수정하지 않았다.
 - prod workflow를 만들지 않았다.
 - prod docker-compose를 만들지 않았다.
 - prod nginx 설정을 만들지 않았다.
 
-### [9단계] 실제 서비스 DB 테이블/Flyway migration
+### [8-3단계] Oracle VM dev 배포 수동 검증 완료
+
+상태: 완료
+
+완료 항목:
+
+- Oracle VM에서 meet-or-solo dev 배포 수동 검증 완료
+- `postgres` 컨테이너 Healthy 상태 확인
+- `backend` 컨테이너 Running 상태 확인
+- `nginx` 컨테이너 Started 상태 확인
+- 서버 내부 `curl http://localhost:18080/api/health` 성공 확인
+- 외부 브라우저 `http://<DEV_SERVER_HOST>:18080/api/health` 성공 확인
+- health 응답 확인
+
+```json
+{"success":true,"data":{"status":"OK","service":"meet-or-solo-backend"},"error":null}
+```
+
+dev 서버 기준:
+
+- dev 서버 접속 주소는 `http://<DEV_SERVER_HOST>:18080`
+- health API 확인 주소는 `http://<DEV_SERVER_HOST>:18080/api/health`
+- dev `CORS_ALLOWED_ORIGINS` 기준은 `http://<DEV_SERVER_HOST>:18080`
+- 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않음
+- Oracle Cloud Ingress에서 `18080` 포트가 열려 있어야 함
+- backend `8080`과 PostgreSQL `5432`는 외부에 직접 공개하지 않음
+
+주의:
+
+- 실제 IP는 문서에 기록하지 않고 `<DEV_SERVER_HOST>` placeholder를 사용한다.
+- 실제 DB 비밀번호, Secret, API Key는 작성하지 않았다.
+- backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, docker-compose, nginx 설정, GitHub Actions workflow는 수정하지 않았다.
+- prod 배포는 아직 하지 않았다.
+
+### [9-1단계] 실제 서비스 DB 설계 검토/확정
+
+상태: 완료
+
+완료 항목:
+
+- `docs/11_DATABASE_DESIGN.md` 추가
+- 실제 서비스 DB 테이블 후보를 MVP 필수와 추후 분리 후보로 구분
+- `members`, `festivals`, `festival_checkins`, `match_pools`, `match_attempts`, `match_proposals`, `match_groups`, `reports` 등 핵심 테이블 설계안 정리
+- 각 테이블별 목적, 주요 컬럼, PK, FK, 상태값, CHECK constraint 후보, UNIQUE constraint 후보, INDEX 후보, 개인정보/보안 고려사항, MVP 필수 여부 정리
+- PostgreSQL 기준으로 `VARCHAR` + `CHECK constraint` 상태값 전략 정리
+- 원본 GPS 좌표를 저장하지 않는 체크인 설계 원칙 재확인
+- 자유 채팅 테이블을 만들지 않는 기준 재확인
+- Redis 없이 PostgreSQL `status`, `expires_at`, `locked_at`, transaction lock, partial unique index를 활용하는 방향 정리
+- 다음 9-2단계 Flyway SQL 파일 분리안 정리
+
+주의:
+
+- 실제 Flyway migration SQL 파일은 생성하지 않았다.
+- `db/migration/V2~` 파일은 생성하지 않았다.
+- 이미 적용된 `db/migration/V1__init.sql`은 수정하지 않았다.
+- backend/frontend 기능 코드, nginx, docker-compose, GitHub Actions workflow는 수정하지 않았다.
+- 실제 Oracle VM에 접속하지 않았다.
+- 실제 DB migration을 적용하지 않았다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
+
+### [9-2단계] 실제 서비스 DB 테이블/Flyway migration
 
 상태: 예정
 
-- `V2` 이후 migration 작성
-- `member`, `festival`, `checkin`, `matching`, `report` 등 실제 테이블 생성
+- 9-1단계에서 확정한 `docs/11_DATABASE_DESIGN.md` 기준으로 `V2` 이후 migration 작성
+- `db/migration/V2__create_core_tables.sql` 생성 후보
+- `db/migration/V3__create_matching_tables.sql` 생성 후보
+- `db/migration/V4__create_safety_admin_recommendation_tables.sql` 생성 후보
 - 이미 적용된 migration은 수정하지 않고 새 버전으로 추가
+- local/dev DB 모두 Flyway로 동일한 schema를 적용
 
 ### [10단계] 풀스택 A/B 기능 분업 시작
 
@@ -278,7 +344,7 @@
 기능 분업을 시작하기 전에 공통 개발환경, dev 배포 초안, CI/CD 초안 정리를 완료했습니다. 다음 작업은 별도 승인 후 아래 중 하나로 진행합니다.
 
 1. 기능 분업 전 최종 점검
-2. [9단계] 실제 서비스 DB 테이블/Flyway migration
+2. [9-2단계] 실제 서비스 DB 테이블/Flyway migration
 3. [10단계] 풀스택 A/B 기능 분업 시작
 
 ## 5. 현재 아직 하지 않은 것
@@ -295,9 +361,7 @@
 - `MatchRoomPage`
 - 신고/제재 기능
 - 테스트 코드
-- GitHub Actions dev CD 실제 실행
 - prod nginx 설정
-- Oracle VM 실제 접속/배포
 - prod docker-compose 배포 구성
 - prod 배포
 
@@ -341,6 +405,7 @@
 - `AGENTS.md`
 - `CLAUDE.md`
 - `docs/*.md`
+- `docs/11_DATABASE_DESIGN.md`
 
 ## 7. 작업 규칙
 
