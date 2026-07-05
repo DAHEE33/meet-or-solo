@@ -74,10 +74,10 @@ profile 기준:
 Docker Compose 방향:
 
 - `docker-compose.local.yml`: 로컬 PostgreSQL과 개발 편의 구성
-- dev 배포용 docker-compose: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 초안
+- `infra/docker/docker-compose.dev.yml`: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 dev 배포 초안
 - prod 배포용 docker-compose: 추후 제출/운영 단계에서 dev와 분리해 별도 작성
 
-현재까지는 local PostgreSQL 중심의 최소 구성만 사용합니다. nginx, docker-compose dev/prod, GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
+현재까지는 local PostgreSQL 중심의 최소 구성과 dev 배포 템플릿만 사용합니다. prod docker-compose와 GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
 
 ## Oracle VM dev 서버 준비 기준
 
@@ -110,7 +110,17 @@ Docker Compose 방향:
 | `/home/ubuntu/meet-or-solo/logs/` | backend/nginx 등 dev 로그 보관 후보 |
 | `/home/ubuntu/meet-or-solo/.env` | dev 서버 환경변수 주입 후보. 실제 값은 저장소에 커밋하지 않음 |
 
-이번 단계에서는 위 구조를 실제 파일로 만들지 않습니다. `nginx/default.conf`, `docker-compose.dev.yml`, GitHub Actions workflow는 각각 7단계와 8단계에서 별도 승인 후 작성합니다.
+6단계에서는 위 구조를 실제 파일로 만들지 않고 문서화만 했습니다. 7단계에서 dev nginx/docker-compose 템플릿을 추가했고, GitHub Actions workflow는 8단계에서 별도 승인 후 작성합니다.
+
+7단계에서 repository 안에 dev 배포 초안 파일을 추가했습니다.
+
+```text
+infra/docker/docker-compose.dev.yml
+infra/nginx/default.dev.conf
+infra/env/.env.dev.example
+```
+
+이 파일들은 실제 Oracle VM 배포가 아니라 dev 배포 기준 템플릿입니다. 실제 서버 `.env`, backend jar, frontend `dist`, PostgreSQL data, logs는 Git에 커밋하지 않습니다.
 
 ## Oracle VM dev DB 기준
 
@@ -253,6 +263,15 @@ npm run preview
 - Nginx가 `dist`를 정적 파일로 서빙한다.
 - `frontend/dist/`는 build 결과물이므로 Git에 커밋하지 않는다.
 - `/api` 요청은 Nginx가 backend로 reverse proxy한다.
+
+dev 서버 산출물 배치 기준:
+
+```text
+backend/build/libs/*.jar -> backend/app.jar
+frontend/dist -> frontend/dist
+```
+
+위 산출물은 8단계 CI/CD 또는 수동 배포 시 서버로 복사합니다. 현재 단계에서는 실제 Oracle VM에 접속하거나 배포하지 않습니다.
 
 ## 팀원 로컬 실행 가이드
 

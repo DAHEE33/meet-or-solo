@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!infra/env/.env.dev.example
 frontend/.env
 frontend/.env.*
 !frontend/.env.local.example
@@ -16,6 +17,7 @@ Thumbs.db
 *.iml
 
 # Java / Spring Boot
+backend/app.jar
 backend/build/
 backend/out/
 backend/.gradle/
@@ -23,6 +25,7 @@ backend/.gradle/
 build/
 out/
 *.log
+logs/
 
 # Frontend
 frontend/node_modules/
@@ -40,6 +43,10 @@ pgdata/
 
 # Documents / planning files if not public
 *.pdf
+
+# Keys / certificates
+*.pem
+*.key
 
 # Temporary
 tmp/

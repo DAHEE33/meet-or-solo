@@ -161,6 +161,8 @@ frontend dev/prod build 기준:
 
 ## 7단계: nginx + docker-compose dev 배포 초안
 
+7단계에서는 실제 Oracle VM 접속이나 배포 없이, repository 안에 dev 배포용 템플릿을 준비합니다.
+
 dev 배포 초안에는 다음 연결을 목표로 합니다.
 
 - frontend `dist`
@@ -170,16 +172,106 @@ dev 배포 초안에는 다음 연결을 목표로 합니다.
 
 dev 배포 기준 docker-compose를 먼저 정리하고, prod용 docker-compose는 추후 제출/운영 단계에서 분리합니다.
 
-현재 단계에서는 사용자가 명시적으로 승인하기 전까지 nginx 설정 파일이나 docker-compose dev/prod 파일을 생성 또는 수정하지 않습니다.
+7단계에서 준비한 파일:
 
-7단계에서 만들 파일 후보:
-
-- `docker-compose.dev.yml`
-- `infra/nginx/dev/default.conf` 또는 이에 준하는 nginx dev 설정 파일
-- dev 서버용 `.env` 템플릿 후보. 실제 Secret 값은 포함하지 않음
-- 필요 시 dev 배포/재시작 스크립트 후보
+- `infra/docker/docker-compose.dev.yml`
+- `infra/nginx/default.dev.conf`
+- `infra/env/.env.dev.example`
 
 7단계에서도 `prod`용 docker-compose는 만들지 않고, dev 배포 초안을 먼저 검증합니다.
+
+### dev docker compose 구성
+
+`infra/docker/docker-compose.dev.yml`은 Oracle VM dev 서버에서 아래 서비스를 하나의 compose 내부 network로 연결하는 초안입니다.
+
+| service | 역할 | 외부 포트 |
+| --- | --- | --- |
+| `postgres` | PostgreSQL dev DB | 공개하지 않음 |
+| `backend` | Spring Boot jar 실행 | 공개하지 않음 |
+| `nginx` | frontend 정적 파일 서빙, `/api` reverse proxy | `80` |
+
+기준:
+
+- `postgres`는 `postgres:16-alpine`을 사용합니다.
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`는 실제 서버 `.env`에서 주입합니다.
+- PostgreSQL data는 `data/postgres` 경로를 volume으로 사용합니다.
+- `backend`는 서버에 배치된 `backend/app.jar`를 `java -jar`로 실행합니다.
+- `backend`는 `SPRING_PROFILES_ACTIVE=dev`를 사용합니다.
+- `DB_URL`은 compose 내부 service name인 `postgres`를 사용합니다.
+- `backend`의 `8080`과 `postgres`의 `5432`는 외부에 직접 publish하지 않습니다.
+- `nginx`만 외부 `80` 포트를 publish합니다.
+
+`DB_URL` 예시:
+
+```text
+jdbc:postgresql://postgres:5432/meet_or_solo_dev
+```
+
+### nginx dev 설정
+
+`infra/nginx/default.dev.conf`는 dev 환경용 nginx 설정 초안입니다.
+
+기준:
+
+- `frontend/dist`를 `/usr/share/nginx/html`로 mount해 정적 파일을 서빙합니다.
+- SPA routing을 위해 `try_files $uri $uri/ /index.html`을 사용합니다.
+- `/api/` 요청은 `backend:8080`으로 reverse proxy합니다.
+- `/ws/` WebSocket 경로는 아직 실제 구현 전이므로 주석 placeholder로만 남깁니다.
+- HTTPS, Certbot, 실제 domain 설정은 이번 단계에서 하지 않습니다.
+
+### dev 서버 환경변수 예시
+
+`infra/env/.env.dev.example`은 커밋 가능한 예시 파일입니다. 실제 서버 `.env`는 Oracle VM에서 서버 관리자가 직접 생성하고 repository에 커밋하지 않습니다.
+
+포함 항목:
+
+```text
+SPRING_PROFILES_ACTIVE=dev
+POSTGRES_DB
+POSTGRES_USER
+POSTGRES_PASSWORD
+DB_URL
+DB_USERNAME
+DB_PASSWORD
+CORS_ALLOWED_ORIGINS
+FLYWAY_LOCATIONS
+SERVER_PORT
+```
+
+예시 파일의 `CHANGE_ME` 값은 실제 서버에서 반드시 별도 값으로 교체합니다. 실제 IP, 실제 도메인, 실제 DB 계정, 실제 비밀번호, API Key, Secret은 repository에 기록하지 않습니다.
+
+### 배포 산출물 기준
+
+backend 산출물:
+
+```text
+backend/build/libs/*.jar -> /home/ubuntu/meet-or-solo/backend/app.jar
+```
+
+frontend 산출물:
+
+```text
+frontend/dist -> /home/ubuntu/meet-or-solo/frontend/dist
+```
+
+기준:
+
+- `backend/build/`는 build 결과물이므로 Git에 커밋하지 않습니다.
+- `frontend/dist/`는 build 결과물이므로 Git에 커밋하지 않습니다.
+- 산출물은 8단계 CI/CD 또는 수동 배포 시 Oracle VM으로 복사합니다.
+- 이번 단계에서는 실제 서버 복사나 compose 실행을 하지 않습니다.
+
+### 실제 Oracle VM에서 수행할 작업 후보
+
+실제 서버 작업은 이 문서 기준을 확인한 뒤 별도 승인과 실제 서버 접근 권한이 있을 때 수행합니다.
+
+1. Oracle VM에 `/home/ubuntu/meet-or-solo` 기준 디렉터리를 준비합니다.
+2. 실제 서버 `.env`를 생성하고 Secret 값을 서버에만 기록합니다.
+3. backend jar 산출물을 `backend/app.jar`로 배치합니다.
+4. frontend build 산출물을 `frontend/dist`로 배치합니다.
+5. `infra/docker/docker-compose.dev.yml`과 `infra/nginx/default.dev.conf`를 기준으로 dev compose를 실행합니다.
+6. 외부에서는 nginx `80`만 접근 가능하게 하고, backend `8080`과 PostgreSQL `5432`는 공개하지 않습니다.
+7. `/api/health`가 nginx를 통해 backend로 proxy되는지 확인합니다.
 
 ## prod Docker Compose 방향
 

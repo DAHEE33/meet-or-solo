@@ -14,7 +14,7 @@
 -> 이후 풀스택 A/B 기능 분업
 ```
 
-다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비, nginx/docker-compose dev 배포, GitHub Actions CI/CD 초안을 잡고 기능 분업으로 넘어갑니다.
+다만 실제 작업 안정성을 위해 이 저장소에서는 Backend 공통 코드화와 Frontend 공통 코드화를 먼저 마무리한 뒤, Oracle VM dev 서버/dev DB 구축 준비와 nginx/docker-compose dev 배포 초안을 잡고, GitHub Actions CI/CD 초안 이후 기능 분업으로 넘어갑니다.
 
 ## 2. 현재 완료된 단계
 
@@ -155,16 +155,43 @@
 
 ### [7단계] nginx + docker-compose dev 배포 초안
 
-상태: 다음 작업
+상태: 완료
 
-- dev 배포 기준 docker-compose 구성
-- frontend `dist`, backend app, postgres, nginx 연결
-- prod용 docker-compose는 추후 분리
-- 현재는 dev 배포 초안만 작성
+완료 항목:
+
+- `infra/docker/docker-compose.dev.yml` 추가
+- `postgres`, `backend`, `nginx` service를 compose 내부 network로 연결
+- `postgres`는 `postgres:16-alpine` 기준으로 작성
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`는 환경변수로 주입
+- PostgreSQL data volume 후보를 `data/postgres`로 구성
+- `backend`는 Spring Boot jar를 `backend/app.jar`로 mount해 `java -jar`로 실행
+- `backend`는 `SPRING_PROFILES_ACTIVE=dev` 기준으로 실행
+- `DB_URL`은 compose 내부 service name `postgres` 기준으로 예시 구성
+- `backend 8080`과 `postgres 5432`는 외부에 직접 publish하지 않음
+- `nginx`만 외부 `80` 포트로 publish
+- `infra/nginx/default.dev.conf` 추가
+- nginx가 `frontend/dist` 정적 파일을 서빙하고 SPA fallback을 적용하도록 구성
+- `/api/` 요청을 `backend:8080`으로 reverse proxy
+- `/ws/` 경로는 실제 구현 전 placeholder 주석으로만 남김
+- HTTPS/Certbot/domain 설정은 추가하지 않음
+- `infra/env/.env.dev.example` 추가
+- 실제 서버 `.env`는 Oracle VM에서 서버 관리자가 직접 생성한다고 문서화
+- backend jar와 frontend dist 산출물 배치 기준 문서화
+- `.gitignore`에 실제 env, key, log, build/data 산출물 ignore 기준 보강
+
+주의:
+
+- 실제 Oracle VM에 접속하지 않았다.
+- 실제 배포하지 않았다.
+- GitHub Actions 파일을 만들지 않았다.
+- prod docker-compose를 만들지 않았다.
+- prod nginx 설정을 만들지 않았다.
+- backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, 테스트 코드는 수정하지 않았다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
 
 ### [8단계] GitHub Actions CI/CD 초안
 
-상태: 예정
+상태: 다음 작업
 
 - backend build
 - frontend build
@@ -193,8 +220,7 @@
 
 기능 분업을 시작하기 전에 아래 순서를 완료합니다.
 
-1. [7단계] nginx + docker-compose dev 배포 초안
-2. [8단계] GitHub Actions CI/CD 초안
+1. [8단계] GitHub Actions CI/CD 초안
 
 ## 5. 현재 아직 하지 않은 것
 
@@ -211,9 +237,9 @@
 - 신고/제재 기능
 - 테스트 코드
 - GitHub Actions
-- nginx 설정
+- prod nginx 설정
 - Oracle VM 실제 접속/배포
-- docker-compose dev/prod 배포 구성
+- prod docker-compose 배포 구성
 - prod 배포
 
 ## 6. 현재까지 생성/수정된 주요 파일
@@ -247,6 +273,9 @@
 - `frontend/public/icons/placeholder.svg`
 - `frontend/.env.local.example`
 - `frontend/.env.production.example`
+- `infra/docker/docker-compose.dev.yml`
+- `infra/nginx/default.dev.conf`
+- `infra/env/.env.dev.example`
 - `README.md`
 - `AGENTS.md`
 - `CLAUDE.md`
