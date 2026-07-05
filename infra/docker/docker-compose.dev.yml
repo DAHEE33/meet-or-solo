@@ -20,7 +20,7 @@ services:
       retries: 5
 
   backend:
-    image: eclipse-temurin:17-jre-alpine
+    image: eclipse-temurin:17-jre-jammy
     container_name: meet-or-solo-backend-dev
     restart: unless-stopped
     depends_on:
