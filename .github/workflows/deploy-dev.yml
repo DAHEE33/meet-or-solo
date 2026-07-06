@@ -1,6 +1,9 @@
 name: Deploy Dev
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -86,5 +89,5 @@ jobs:
           fi
 
           mkdir -p logs/backend logs/nginx data/postgres
-          docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d
+          docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d --force-recreate
           EOF

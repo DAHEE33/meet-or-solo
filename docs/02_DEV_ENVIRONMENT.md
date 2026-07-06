@@ -277,11 +277,11 @@ backend/build/libs/*.jar -> backend/app.jar
 frontend/dist -> frontend/dist
 ```
 
-위 산출물은 8단계 CI/CD 또는 수동 배포 시 서버로 복사합니다. 현재 단계에서는 실제 Oracle VM에 접속하거나 배포하지 않습니다.
+위 산출물은 dev CD workflow에서 서버로 복사합니다. 현재 dev 배포는 `dev` 브랜치에 push되면 자동으로 실행하고, 필요 시 GitHub Actions 화면에서 수동으로도 실행할 수 있습니다.
 
-8-2단계 dev CD 초안은 GitHub Actions `workflow_dispatch` 수동 실행 기준입니다. workflow는 산출물을 서버로 업로드하는 초안만 제공하며, 실제 서버 `.env`는 생성하지 않습니다. Oracle VM의 `DEV_DEPLOY_PATH/.env`는 서버 관리자가 직접 생성하고 관리합니다.
+8-2단계 dev CD는 GitHub Actions 기준입니다. workflow는 산출물을 서버로 업로드하며, 실제 서버 `.env`는 생성하지 않습니다. Oracle VM의 `DEV_DEPLOY_PATH/.env`는 서버 관리자가 직접 생성하고 관리합니다.
 
-`workflow_dispatch`는 수동 실행 trigger이므로 `git push`만으로 dev 서버에 자동 반영되지 않습니다. GitHub Actions 화면에서 `Deploy Dev` workflow를 최신 commit 기준으로 실행해야 서버에 배포 패키지가 업로드됩니다.
+`dev` 브랜치에 push하면 `Deploy Dev` workflow가 자동 실행되어 dev 서버에 배포 패키지가 업로드됩니다. `workflow_dispatch`는 장애 대응이나 재배포가 필요할 때 수동 실행용으로 유지합니다.
 
 ## 팀원 로컬 실행 가이드
 

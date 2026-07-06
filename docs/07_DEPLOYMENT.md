@@ -320,10 +320,17 @@ CI workflow:
 
 trigger:
 
+- `pull_request` to `dev`
 - `pull_request` to `main`
+- `push` to `dev`
 - `push` to `main`
 
-현재 `develop` 브랜치는 확정 전이므로 `main` 중심으로 작성합니다. 추후 `develop` 브랜치 운영이 확정되면 trigger 대상에 `develop`을 추가할 수 있습니다.
+협업 브랜치 기준:
+
+- `dev`: 기능 개발과 dev 서버 자동 배포 기준 브랜치입니다.
+- `main`: 운영 또는 안정 버전 기준 브랜치입니다.
+- 팀원은 기능별 작업 브랜치에서 작업하고 PR로 `dev`에 병합합니다.
+- `dev`에서 충분히 검증한 뒤 필요한 시점에 `main`으로 병합합니다.
 
 CI job:
 
@@ -352,9 +359,9 @@ frontend CI 기준:
 
 8-1단계에서는 Oracle VM 접속, SSH 배포, `docker compose up`, 서버 `.env` 생성, GitHub Secrets 사용을 하지 않습니다.
 
-## 8-2단계: GitHub Actions dev CD 초안
+## 8-2단계: GitHub Actions dev CD
 
-8-2단계에서는 dev 서버 배포 자동화 초안을 `workflow_dispatch` 수동 실행 기준으로 작성합니다. 실제 server, domain, Secrets 값은 문서나 repository에 기록하지 않고 placeholder와 GitHub Secrets 이름만 다룹니다.
+8-2단계에서는 dev 서버 배포 자동화를 `dev` 브랜치 push 기준으로 작성합니다. 실제 server, domain, Secrets 값은 문서나 repository에 기록하지 않고 placeholder와 GitHub Secrets 이름만 다룹니다.
 
 dev CD workflow:
 
@@ -365,12 +372,11 @@ dev CD workflow:
 trigger:
 
 ```text
+push to dev
 workflow_dispatch
 ```
 
-자동 `push` 배포는 이번 단계에서 사용하지 않습니다. 처음에는 GitHub Actions 화면에서 수동으로 실행하는 기준만 둡니다.
-
-`workflow_dispatch`는 수동 실행 trigger이므로 `git push`만으로 dev 서버에 자동 반영되지 않습니다. GitHub Actions 화면에서 `Deploy Dev` workflow를 최신 commit 기준으로 실행해야 서버에 배포 패키지가 업로드됩니다.
+`dev` 브랜치에 push하면 `Deploy Dev` workflow가 자동 실행됩니다. `workflow_dispatch`는 GitHub Actions 화면에서 수동 재배포가 필요할 때 사용합니다.
 
 필요한 GitHub Secrets 이름:
 
@@ -397,7 +403,7 @@ workflow 동작 흐름:
 10. 배포 패키지 업로드
 11. dev 서버에서 압축 해제
 12. 서버 `.env` 존재 여부 확인
-13. `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d`
+13. `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d --force-recreate`
 
 배포 패키지 포함 항목:
 

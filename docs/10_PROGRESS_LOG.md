@@ -198,7 +198,9 @@
 완료 항목:
 
 - `.github/workflows/ci.yml` 추가
+- `pull_request` to `dev` trigger 추가
 - `pull_request` to `main` trigger 추가
+- `push` to `dev` trigger 추가
 - `push` to `main` trigger 추가
 - `backend-build` job 추가
 - backend CI에서 Java 17 설정
@@ -228,8 +230,8 @@
 완료 항목:
 
 - `.github/workflows/deploy-dev.yml` 추가
-- `workflow_dispatch` 수동 실행 trigger만 사용
-- 자동 `push` 배포는 제외
+- `push` to `dev` 자동 실행 trigger 추가
+- `workflow_dispatch` 수동 재배포 trigger 유지
 - backend를 Java 17로 `bootJar -x test` 빌드하는 단계 추가
 - frontend를 Node.js 20으로 `npm ci`, `npm run build`하는 단계 추가
 - backend jar를 `backend/app.jar` 이름으로 배포 패키지에 포함
@@ -244,7 +246,7 @@
 - `DEV_DEPLOY_PATH`
 - 서버 `.env`는 GitHub Actions가 만들지 않고 Oracle VM에서 서버 관리자가 직접 생성하는 기준으로 문서화
 - 서버 `.env`가 없으면 workflow가 실패하도록 초안 작성
-- `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d` 실행 초안 포함
+- `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d --force-recreate` 실행 기준으로 배포 후 컨테이너 재생성
 - CD 실행 전 Oracle VM 준비 항목과 실패 시 확인 항목 문서화
 - Oracle VM에서 dev compose 수동 검증 중 `eclipse-temurin:17-jre-alpine`의 ARM64 manifest 문제를 확인해 `eclipse-temurin:17-jre-jammy` 기준으로 정리
 - 기존 운영 nginx가 host `80`을 사용 중인 VM에서 dev compose nginx는 host `18080`으로 검증하는 기준으로 정리
@@ -295,6 +297,25 @@ dev 서버 기준:
 - 실제 DB 비밀번호, Secret, API Key는 작성하지 않았다.
 - backend/frontend 기능 코드, DB migration, 실제 서비스 테이블, docker-compose, nginx 설정, GitHub Actions workflow는 수정하지 않았다.
 - prod 배포는 아직 하지 않았다.
+
+### [8-4단계] 협업 브랜치와 dev 자동 배포 기준 정리 완료
+
+상태: 완료
+
+완료 항목:
+
+- `main`은 운영 또는 안정 버전 기준 브랜치로 둔다.
+- `dev`는 개발 통합과 dev 서버 자동 배포 기준 브랜치로 둔다.
+- 기능 작업은 작업자별 feature 브랜치에서 진행하고 PR로 `dev`에 병합한다.
+- `dev`에 push되면 `Deploy Dev` workflow가 자동 실행된다.
+- `Deploy Dev`는 수동 재배포를 위해 `workflow_dispatch`도 유지한다.
+- dev 배포 시 `docker compose up -d --force-recreate`를 사용해 새 backend jar와 frontend dist가 컨테이너에 반영되도록 한다.
+
+주의:
+
+- prod 자동 배포는 아직 하지 않는다.
+- 실제 GitHub collaborator 초대는 repository Settings에서 사용자가 직접 수행한다.
+- 실제 IP, 도메인, DB 계정, 비밀번호, API Key, Secret은 작성하지 않았다.
 
 ### [9-1단계] 실제 서비스 DB 설계 검토/확정
 
