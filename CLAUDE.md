@@ -13,6 +13,7 @@ Claude Code는 제안, 파일 생성, 파일 수정 전에 아래 문서를 먼�
 자세한 AI 작업 규칙은 [docs/08_AI_WORKING_RULES.md](docs/08_AI_WORKING_RULES.md)를 따른다.
 테스트 전략은 [docs/09_TEST_AND_QUALITY_STRATEGY.md](docs/09_TEST_AND_QUALITY_STRATEGY.md)를 따른다.
 새 작업을 시작하기 전에는 [docs/10_PROGRESS_LOG.md](docs/10_PROGRESS_LOG.md)를 확인하고, 현재 WBS 단계에 맞는 작업만 수행한다.
+브랜치 생성과 PR 흐름은 [docs/12_GIT_BRANCH_RULES.md](docs/12_GIT_BRANCH_RULES.md)를 따른다.
 
 ## 프로젝트 요약
 

@@ -17,6 +17,7 @@
 - [AI 작업 규칙](docs/08_AI_WORKING_RULES.md)
 - [테스트/품질 전략](docs/09_TEST_AND_QUALITY_STRATEGY.md)
 - [진행 상태 기록](docs/10_PROGRESS_LOG.md)
+- [Git 브랜치 규칙](docs/12_GIT_BRANCH_RULES.md)
 
 ## 문서 작성 언어
 
