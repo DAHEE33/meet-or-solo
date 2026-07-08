@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 데스크톱에서는 가운데 모바일 앱 프레임처럼 보이도록 바깥 배경을 어둡게 */
+body {
+  margin: 0;
+  background: #efeae0;
+  font-family: Pretendard, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
