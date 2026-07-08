@@ -8,7 +8,6 @@
 meet-or-solo/
 ├─ .github/
 ├─ backend/
-├─ db/
 ├─ frontend/
 ├─ infra/
 ├─ docs/
@@ -136,7 +135,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -205,7 +203,7 @@ set +a
 SPRING_PROFILES_ACTIVE=local ./gradlew bootRun
 ```
 
-Spring Boot 실행 시 Flyway가 `db/migration`의 migration을 적용합니다. 현재 `V1__init.sql`은 실제 도메인 테이블이 아니라 schema 검증용 placeholder 테이블만 생성합니다.
+Spring Boot 실행 시 Flyway가 `backend/src/main/resources/db/migration`의 migration을 classpath에서 적용합니다. Flyway location은 `classpath:db/migration` 기준이며, migration SQL은 backend jar 내부에 포함됩니다. 현재 `V1__init.sql`은 실제 도메인 테이블이 아니라 schema 검증용 placeholder 테이블만 생성합니다.
 
 실행 로그에서 `Flyway` 또는 `Migrating schema` 관련 메시지를 확인해 migration 적용 여부를 확인합니다.
 
@@ -334,7 +332,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -434,7 +431,7 @@ workflow 동작 방향:
 
 1. backend를 Java 17로 `bootJar -x test` 빌드합니다.
 2. frontend를 Node.js 20으로 `npm ci`, `npm run build` 합니다.
-3. `backend/app.jar`, `frontend/dist`, `infra/docker/docker-compose.dev.yml`, `infra/nginx/default.dev.conf`, `db/migration`을 배포 패키지로 묶습니다.
+3. `backend/app.jar`, `frontend/dist`, `infra/docker/docker-compose.dev.yml`, `infra/nginx/default.dev.conf`를 배포 패키지로 묶습니다.
 4. GitHub Secrets의 SSH 정보로 dev 서버에 패키지를 업로드합니다.
 5. `DEV_DEPLOY_PATH`에서 압축을 풀고 서버 `.env` 존재 여부를 확인합니다.
 6. 서버 `.env`가 있으면 `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d`를 실행하는 초안입니다.
@@ -623,7 +620,32 @@ health endpoint를 확인합니다.
 curl http://localhost:8080/api/health
 ```
 
-Flyway는 Spring Boot 실행 시 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다. 현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이며, 실제 서비스 테이블은 9-2단계에서 `V2`, `V3`, `V4` 파일로 추가합니다. DB 설계 기준은 [docs/11_DATABASE_DESIGN.md](docs/11_DATABASE_DESIGN.md)를 따릅니다.
+Flyway는 Spring Boot 실행 시 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다. 표준 migration 위치는 `backend/src/main/resources/db/migration`이며 Spring Boot/Flyway 기본 classpath 경로인 `classpath:db/migration`을 사용합니다. 현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이며, 실제 서비스 테이블은 `V2`, `V3`, `V4` 파일로 추가되어 있습니다. DB 설계 기준은 [docs/11_DATABASE_DESIGN.md](docs/11_DATABASE_DESIGN.md)를 따릅니다.
+
+backend jar에 migration SQL이 포함되는지 확인합니다.
+
+```bash
+cd backend
+./gradlew clean build -x test
+jar tf build/libs/*.jar | grep db/migration
+```
+
+기대 결과:
+
+```text
+BOOT-INF/classes/db/migration/V1__init.sql
+BOOT-INF/classes/db/migration/V2__create_core_tables.sql
+BOOT-INF/classes/db/migration/V3__create_matching_tables.sql
+BOOT-INF/classes/db/migration/V4__create_safety_admin_recommendation_tables.sql
+```
+
+dev 서버 재배포 후 backend 로그에서 Flyway 인식 여부를 확인합니다.
+
+```bash
+docker logs meet-or-solo-backend-dev --tail=300
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i flyway
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i "migrating schema"
+```
 
 PostgreSQL 컨테이너에 접속해 Flyway 적용 이력을 확인합니다.
 
@@ -635,7 +657,22 @@ docker exec -it meet-or-solo-postgres-local psql -U <LOCAL_DB_USERNAME> -d <LOCA
 select * from flyway_schema_history;
 ```
 
-이미 적용된 `V1`, `V2` 같은 migration 파일은 수정하지 않습니다. 변경이 필요하면 `V3`, `V4`처럼 새 migration 파일을 추가합니다.
+dev DB에서 Flyway 적용 이력과 테이블 목록은 아래 SQL로 확인합니다.
+
+```sql
+select installed_rank, version, description, script, success
+from flyway_schema_history
+order by installed_rank;
+```
+
+```sql
+select table_schema, table_name
+from information_schema.tables
+where table_schema not in ('pg_catalog', 'information_schema')
+order by table_schema, table_name;
+```
+
+이미 적용된 `V1`~`V4` migration 파일은 수정하지 않습니다. 변경이 필요하면 `V5__...sql`처럼 새 migration 파일을 추가합니다. 루트 `db/migration`은 더 이상 사용하지 않으며, dev 배포 시 migration SQL을 별도로 서버에 복사하거나 mount하지 않습니다.
 
 ### 아직 구현하지 않은 기능
 

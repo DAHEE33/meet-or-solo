@@ -47,7 +47,6 @@ jobs:
           mkdir -p deploy-package/frontend
           mkdir -p deploy-package/infra/docker
           mkdir -p deploy-package/infra/nginx
-          mkdir -p deploy-package/db
 
           JAR_PATH="$(find backend/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*plain.jar' | head -n 1)"
           if [ -z "$JAR_PATH" ]; then
@@ -59,7 +58,6 @@ jobs:
           cp -R frontend/dist deploy-package/frontend/dist
           cp infra/docker/docker-compose.dev.yml deploy-package/infra/docker/docker-compose.dev.yml
           cp infra/nginx/default.dev.conf deploy-package/infra/nginx/default.dev.conf
-          cp -R db/migration deploy-package/db/migration
 
           tar -czf deploy-dev.tar.gz -C deploy-package .
 

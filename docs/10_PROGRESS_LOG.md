@@ -238,7 +238,7 @@
 - frontend `dist`를 배포 패키지에 포함
 - `infra/docker/docker-compose.dev.yml`을 배포 패키지에 포함
 - `infra/nginx/default.dev.conf`를 배포 패키지에 포함
-- `db/migration`을 배포 패키지에 포함
+- Flyway migration은 `backend/src/main/resources/db/migration`에서 backend jar에 포함하는 기준으로 정리
 - GitHub Secrets 이름 후보 사용
 - `DEV_SERVER_HOST`
 - `DEV_SERVER_USER`
@@ -335,9 +335,8 @@ dev 서버 기준:
 
 주의:
 
-- 실제 Flyway migration SQL 파일은 생성하지 않았다.
-- `db/migration/V2~` 파일은 생성하지 않았다.
-- 이미 적용된 `db/migration/V1__init.sql`은 수정하지 않았다.
+- 실제 DB migration을 적용하지 않았다.
+- `backend/src/main/resources/db/migration/V1__init.sql`은 수정하지 않았다.
 - backend/frontend 기능 코드, nginx, docker-compose, GitHub Actions workflow는 수정하지 않았다.
 - 실제 Oracle VM에 접속하지 않았다.
 - 실제 DB migration을 적용하지 않았다.
@@ -345,14 +344,18 @@ dev 서버 기준:
 
 ### [9-2단계] 실제 서비스 DB 테이블/Flyway migration
 
-상태: 예정
+상태: 파일 작성 완료, dev DB 적용 확인 필요
 
 - 9-1단계에서 확정한 `docs/11_DATABASE_DESIGN.md` 기준으로 `V2` 이후 migration 작성
-- `db/migration/V2__create_core_tables.sql` 생성 후보
-- `db/migration/V3__create_matching_tables.sql` 생성 후보
-- `db/migration/V4__create_safety_admin_recommendation_tables.sql` 생성 후보
+- `backend/src/main/resources/db/migration/V2__create_core_tables.sql` 작성
+- `backend/src/main/resources/db/migration/V3__create_matching_tables.sql` 작성
+- `backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql` 작성
+- Spring Boot/Flyway 기본 classpath 경로인 `classpath:db/migration` 기준으로 migration 위치 단일화
+- backend jar에 migration SQL이 포함되도록 `backend/src/main/resources/db/migration`을 표준 위치로 사용
+- dev 배포 시 migration SQL을 별도 디렉터리로 서버에 복사하거나 컨테이너에 mount하지 않음
 - 이미 적용된 migration은 수정하지 않고 새 버전으로 추가
 - local/dev DB 모두 Flyway로 동일한 schema를 적용
+- 실제 dev DB 적용 여부는 재배포 후 backend 로그, `flyway_schema_history`, `information_schema.tables`로 확인
 
 ### [10단계] 풀스택 A/B 기능 분업 시작
 
@@ -368,13 +371,12 @@ dev 서버 기준:
 기능 분업을 시작하기 전에 공통 개발환경, dev 배포 초안, CI/CD 초안 정리를 완료했습니다. 다음 작업은 별도 승인 후 아래 중 하나로 진행합니다.
 
 1. 기능 분업 전 최종 점검
-2. [9-2단계] 실제 서비스 DB 테이블/Flyway migration
+2. dev 서버 재배포 후 Flyway V1~V4 인식 및 dev DB 적용 확인
 3. [10단계] 풀스택 A/B 기능 분업 시작
 
 ## 5. 현재 아직 하지 않은 것
 
-- 실제 서비스 DB 테이블 생성
-- `V2` 이상의 Flyway migration 작성
+- dev DB에서 V1~V4 Flyway migration 적용 확인
 - 실제 서비스 React 화면 구현
 - Kakao OAuth 로그인
 - JWT 인증/인가
@@ -404,7 +406,10 @@ dev 서버 기준:
 - `backend/src/main/java/.../global/exception/BusinessException.java`
 - `backend/src/main/java/.../global/exception/GlobalExceptionHandler.java`
 - `backend/src/main/java/.../global/config/CorsConfig.java`
-- `db/migration/V1__init.sql`
+- `backend/src/main/resources/db/migration/V1__init.sql`
+- `backend/src/main/resources/db/migration/V2__create_core_tables.sql`
+- `backend/src/main/resources/db/migration/V3__create_matching_tables.sql`
+- `backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql`
 - `frontend/package.json`
 - `frontend/package-lock.json`
 - `frontend/vite.config.ts`

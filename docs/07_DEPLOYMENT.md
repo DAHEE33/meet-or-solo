@@ -142,7 +142,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -240,7 +239,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -411,11 +409,11 @@ workflow 동작 흐름:
 - `frontend/dist/`
 - `infra/docker/docker-compose.dev.yml`
 - `infra/nginx/default.dev.conf`
-- `db/migration/`
 
 배포 패키지에 포함하지 않는 항목:
 
 - 서버 `.env`
+- 별도 `db/migration/` 디렉터리
 - DB password
 - SSH private key
 - 실제 IP/domain
@@ -446,9 +444,41 @@ CD 실행 전 Oracle VM 준비 항목:
 - Oracle VM의 SSH 접근이 허용되어 있는지 확인합니다.
 - `DEV_DEPLOY_PATH/.env`가 서버에 존재하는지 확인합니다.
 - 서버에 Docker와 Docker Compose plugin이 설치되어 있는지 확인합니다.
-- `frontend/dist`, `backend/app.jar`, `db/migration`이 배포 패키지에 포함되었는지 확인합니다.
+- `frontend/dist`, `backend/app.jar`, dev compose, nginx 설정이 배포 패키지에 포함되었는지 확인합니다.
+- `backend/app.jar` 안에 `BOOT-INF/classes/db/migration/V1__init.sql`부터 `V4__create_safety_admin_recommendation_tables.sql`까지 포함되었는지 확인합니다.
 - dev compose nginx `18080` 접근이 가능하고 backend `8080`, PostgreSQL `5432`가 외부 공개되지 않았는지 확인합니다.
 - 기존 운영 nginx가 host `80`을 사용 중인 VM에서는 운영 nginx를 중지하지 않고 dev compose를 별도 포트로 검증합니다.
+
+backend jar 내부 Flyway migration 확인:
+
+```bash
+cd backend
+./gradlew clean build -x test
+jar tf build/libs/*.jar | grep db/migration
+```
+
+dev 서버 재배포 후 backend 로그 확인:
+
+```bash
+docker logs meet-or-solo-backend-dev --tail=300
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i flyway
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i "migrating schema"
+```
+
+dev DB 적용 이력 확인:
+
+```sql
+select installed_rank, version, description, script, success
+from flyway_schema_history
+order by installed_rank;
+```
+
+```sql
+select table_schema, table_name
+from information_schema.tables
+where table_schema not in ('pg_catalog', 'information_schema')
+order by table_schema, table_name;
+```
 
 테스트 자동화와 prod 자동 배포는 추후 단계에서 확장합니다. 실제 운영/prod 자동 배포는 현재 범위가 아닙니다.
 

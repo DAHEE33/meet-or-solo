@@ -209,7 +209,7 @@ dev 최신화
 
 - Secret, 비밀번호, API Key, 실제 서버 IP, 실제 도메인을 커밋하지 않았는지 확인한다.
 - Flyway migration 파일은 이미 적용된 버전을 수정하지 않고 새 버전으로 추가한다.
-- DB schema 변경이 포함되면 `db/migration` 파일이 배포 패키지에 포함되는지 확인한다.
+- DB schema 변경이 포함되면 `backend/src/main/resources/db/migration` 파일이 backend jar에 포함되는지 확인한다.
 - 문서만 수정한 PR도 `dev` 병합 시 배포 workflow가 실행될 수 있음을 인지한다.
 - 개발계 DB 확인은 SSH tunnel 기준 DB에 접속 중인지 확인한다.
 

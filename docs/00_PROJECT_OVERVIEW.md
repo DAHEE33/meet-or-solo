@@ -90,8 +90,7 @@ React PWA를 선택하는 이유:
 모노레포는 책임 기준으로 나눕니다.
 
 - `frontend`: React + TypeScript + Vite + PWA 사용자/관리자 화면
-- `backend`: Spring Boot API, 보안, Scheduler, 매칭 상태, WebSocket STOMP
-- `db`: Flyway migration 및 DB 초기화 자산
+- `backend`: Spring Boot API, 보안, Scheduler, 매칭 상태, WebSocket STOMP, Flyway migration
 - `infra`: nginx, certbot, 배포 인프라 설정 초안
 - `.github`: GitHub Actions workflow 초안
 - `docs`: 프로젝트 규칙, 설계, 정책 문서
