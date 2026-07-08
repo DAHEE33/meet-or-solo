@@ -6,7 +6,6 @@
 meet-or-solo/
 ├─ .github/
 ├─ backend/
-├─ db/
 ├─ frontend/
 ├─ infra/
 ├─ docs/
@@ -20,8 +19,7 @@ meet-or-solo/
 | 경로 | 역할 |
 | --- | --- |
 | `frontend/` | React + TypeScript + Vite + PWA 소스. 운영 빌드 결과는 `dist`로 생성한다. |
-| `backend/` | Spring Boot API, 인증, 매칭, Scheduler, WebSocket STOMP를 담당한다. |
-| `db/` | Flyway migration SQL과 필요한 DB 초기화 파일을 둔다. |
+| `backend/` | Spring Boot API, 인증, 매칭, Scheduler, WebSocket STOMP, Flyway migration을 담당한다. |
 | `infra/` | nginx reverse proxy, certbot, 운영 배포 설정 초안을 둔다. |
 | `.github/` | GitHub Actions workflow 초안을 둔다. GitHub 원격 연결 전까지 placeholder만 사용한다. |
 | `docs/` | 프로젝트 규칙, 아키텍처, 정책, 구현 방향 문서를 둔다. |

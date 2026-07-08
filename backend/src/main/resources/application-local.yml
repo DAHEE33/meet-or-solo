@@ -12,7 +12,7 @@ spring:
         format_sql: true
   flyway:
     enabled: true
-    locations: ${FLYWAY_LOCATIONS:filesystem:../db/migration}
+    locations: classpath:db/migration
     baseline-on-migrate: false
 
 logging:

@@ -2,7 +2,7 @@
 
 이 문서는 9-1단계 실제 서비스 DB 테이블 설계 검토/확정 결과를 기록합니다.
 
-이번 단계에서는 Flyway migration SQL을 생성하지 않습니다. 이미 적용된 `db/migration/V1__init.sql`은 수정하지 않으며, 다음 9-2단계에서 이 문서를 기준으로 `V2` 이후 migration을 새로 추가합니다.
+이번 단계에서는 Flyway migration SQL을 생성하지 않습니다. 이미 적용된 `backend/src/main/resources/db/migration/V1__init.sql`은 수정하지 않으며, 다음 9-2단계에서 이 문서를 기준으로 `V2` 이후 migration을 새로 추가합니다.
 
 ## 1. 설계 범위
 
@@ -23,7 +23,7 @@
 이번 단계에서 하지 않는 작업:
 
 - Flyway SQL 파일 생성
-- `db/migration/V2~` 파일 생성
+- `backend/src/main/resources/db/migration/V2~` 파일 생성
 - `V1__init.sql` 수정
 - backend/frontend 코드 수정
 - nginx, docker-compose, GitHub Actions 수정
@@ -683,9 +683,9 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 다음 단계에서 생성할 Flyway SQL 파일 후보:
 
 ```text
-db/migration/V2__create_core_tables.sql
-db/migration/V3__create_matching_tables.sql
-db/migration/V4__create_safety_admin_recommendation_tables.sql
+backend/src/main/resources/db/migration/V2__create_core_tables.sql
+backend/src/main/resources/db/migration/V3__create_matching_tables.sql
+backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql
 ```
 
 9-2단계에서는 이 문서를 기준으로 실제 DDL, FK, CHECK constraint, UNIQUE constraint, index를 작성한다.
