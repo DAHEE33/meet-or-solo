@@ -32,12 +32,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.vite/
-frontend_prototype/node_modules/
-frontend_prototype/dist/
-frontend_prototype/build/
-frontend_prototype/.vite/
-frontend_prototype/.thumbnail
-frontend_prototype/*미리보기*.html
+*.tsbuildinfo
 
 # Database local files
 db/data/

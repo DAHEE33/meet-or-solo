@@ -22,8 +22,8 @@ export async function apiClient<T>(path: string, options: ApiClientOptions = {})
     ...options,
     headers: {
       Accept: 'application/json',
-      ...options.headers
-    }
+      ...options.headers,
+    },
   });
 
   let body: ApiResponse<T> | null = null;

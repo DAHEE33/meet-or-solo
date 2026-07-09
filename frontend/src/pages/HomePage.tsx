@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MapPin } from 'lucide-react';
-import type { TourSpot, UserSummary } from '../types';
+import type { TourSpot, UserProfile } from '../types';
 import { getCurrentUser, getTodaySpot, getNearbySpots } from '../api/home';
 import MobileLayout from '../components/layout/MobileLayout';
 import AppHeader from '../components/layout/AppHeader';
@@ -9,7 +9,7 @@ import CtaBanner from '../components/home/CtaBanner';
 import NearbySpotItem from '../components/home/NearbySpotItem';
 
 export default function HomePage() {
-  const [user, setUser] = useState<UserSummary | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [todaySpot, setTodaySpot] = useState<TourSpot | null>(null);
   const [nearbySpots, setNearbySpots] = useState<TourSpot[]>([]);
 
