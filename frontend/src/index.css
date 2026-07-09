@@ -1,22 +1,13 @@
-:root {
-  color: #111827;
-  background: #f8fafc;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
-
+/* 데스크톱에서는 가운데 모바일 앱 프레임처럼 보이도록 바깥 배경을 어둡게 */
 body {
-  min-width: 320px;
-  min-height: 100vh;
   margin: 0;
+  background: #efeae0;
+  font-family: Pretendard, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -40,6 +31,8 @@ code {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  color: #111827;
+  background: #f8fafc;
 }
 
 .health-panel {
@@ -50,27 +43,27 @@ code {
   background: #ffffff;
 }
 
-.eyebrow {
+.health-eyebrow {
   margin: 0 0 8px;
   color: #2563eb;
   font-size: 0.85rem;
   font-weight: 700;
 }
 
-h1 {
+.health-page h1 {
   margin: 0;
   color: #0f172a;
   font-size: 2rem;
   line-height: 1.15;
 }
 
-.description {
+.health-description {
   margin: 16px 0 24px;
   color: #4b5563;
   line-height: 1.6;
 }
 
-.status-box {
+.health-status-box {
   display: grid;
   gap: 12px;
   min-height: 140px;
@@ -80,48 +73,48 @@ h1 {
   background: #f9fafb;
 }
 
-.status-loading {
+.health-status-loading {
   border-color: #bfdbfe;
 }
 
-.status-success {
+.health-status-success {
   border-color: #86efac;
   background: #f0fdf4;
 }
 
-.status-error {
+.health-status-error {
   border-color: #fecaca;
   background: #fef2f2;
 }
 
-.status-label {
+.health-status-label {
   font-weight: 700;
 }
 
-dl {
+.health-status-box dl {
   display: grid;
   gap: 10px;
   margin: 0;
 }
 
-dl > div {
+.health-status-box dl > div {
   display: grid;
   grid-template-columns: 88px 1fr;
   gap: 12px;
 }
 
-dt {
+.health-status-box dt {
   color: #4b5563;
   font-weight: 700;
 }
 
-dd {
+.health-status-box dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.hint {
+.health-hint {
   margin: 0;
   color: #4b5563;
   line-height: 1.5;
@@ -137,11 +130,11 @@ dd {
     padding: 22px;
   }
 
-  h1 {
+  .health-page h1 {
     font-size: 1.75rem;
   }
 
-  dl > div {
+  .health-status-box dl > div {
     grid-template-columns: 1fr;
     gap: 4px;
   }

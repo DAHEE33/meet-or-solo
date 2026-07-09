@@ -22,7 +22,7 @@ export function HealthCheckPage() {
         if (!ignore) {
           setHealth({
             status: 'error',
-            message: error instanceof Error ? error.message : '알 수 없는 오류'
+            message: error instanceof Error ? error.message : '알 수 없는 오류',
           });
         }
       });
@@ -35,17 +35,17 @@ export function HealthCheckPage() {
   return (
     <main className="health-page">
       <section className="health-panel" aria-labelledby="health-title">
-        <p className="eyebrow">개발 연결 확인</p>
+        <p className="health-eyebrow">개발 연결 확인</p>
         <h1 id="health-title">meet-or-solo</h1>
-        <p className="description">
+        <p className="health-description">
           현재 화면은 frontend에서 backend <code>GET /api/health</code> 연결만 확인하는 개발용 화면입니다.
         </p>
 
-        <div className={`status-box status-${health.status}`} role="status" aria-live="polite">
+        <div className={`health-status-box health-status-${health.status}`} role="status" aria-live="polite">
           {health.status === 'loading' && <p>요청 중입니다.</p>}
           {health.status === 'success' && (
             <>
-              <span className="status-label">연결 성공</span>
+              <span className="health-status-label">연결 성공</span>
               <dl>
                 <div>
                   <dt>status</dt>
@@ -60,11 +60,9 @@ export function HealthCheckPage() {
           )}
           {health.status === 'error' && (
             <>
-              <span className="status-label">연결 실패</span>
+              <span className="health-status-label">연결 실패</span>
               <p>{health.message}</p>
-              <p className="hint">
-                backend local profile 실행 여부와 Vite proxy 설정을 확인합니다.
-              </p>
+              <p className="health-hint">backend local profile 실행 여부와 Vite proxy 설정을 확인합니다.</p>
             </>
           )}
         </div>

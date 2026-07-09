@@ -7,9 +7,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
-        changeOrigin: true
-      }
-    }
+        changeOrigin: true,
+      },
+    },
   },
   plugins: [
     react(),
@@ -30,13 +30,13 @@ export default defineConfig({
             src: '/icons/placeholder.svg',
             sizes: 'any',
             type: 'image/svg+xml',
-            purpose: 'any maskable'
-          }
-        ]
+            purpose: 'any maskable',
+          },
+        ],
       },
       workbox: {
-        navigateFallback: '/index.html'
-      }
-    })
-  ]
+        navigateFallback: '/index.html',
+      },
+    }),
+  ],
 });
