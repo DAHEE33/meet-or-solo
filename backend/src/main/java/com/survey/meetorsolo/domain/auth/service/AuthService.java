@@ -10,6 +10,9 @@ import com.survey.meetorsolo.global.time.SeoulDateTime;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.kakao.dto.KakaoTokenResponse;
 import com.survey.meetorsolo.external.kakao.dto.KakaoUserResponse;
+import com.survey.meetorsolo.external.naver.NaverOAuthClient;
+import com.survey.meetorsolo.external.naver.dto.NaverTokenResponse;
+import com.survey.meetorsolo.external.naver.dto.NaverUserResponse;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.net.URI;
@@ -21,17 +24,20 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
 
     private final KakaoOAuthClient kakaoOAuthClient;
+    private final NaverOAuthClient naverOAuthClient;
     private final MemberRepository memberRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProvider jwtProvider;
 
     public AuthService(
             KakaoOAuthClient kakaoOAuthClient,
+            NaverOAuthClient naverOAuthClient,
             MemberRepository memberRepository,
             RefreshTokenRepository refreshTokenRepository,
             JwtProvider jwtProvider
     ) {
         this.kakaoOAuthClient = kakaoOAuthClient;
+        this.naverOAuthClient = naverOAuthClient;
         this.memberRepository = memberRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtProvider = jwtProvider;
@@ -39,6 +45,10 @@ public class AuthService {
 
     public URI getKakaoAuthorizeUri(String state) {
         return kakaoOAuthClient.buildAuthorizeUri(state);
+    }
+
+    public URI getNaverAuthorizeUri(String state) {
+        return naverOAuthClient.buildAuthorizeUri(state);
     }
 
     @Transactional
@@ -49,7 +59,21 @@ public class AuthService {
 
         KakaoTokenResponse kakaoToken = kakaoOAuthClient.requestToken(code);
         KakaoUserResponse kakaoUser = kakaoOAuthClient.requestUserInfo(kakaoToken.accessToken());
-        Member member = upsertKakaoMember(kakaoUser);
+        return issueTokens(upsertKakaoMember(kakaoUser));
+    }
+
+    @Transactional
+    public AuthTokenResponse loginWithNaver(String code, String state) {
+        if (code == null || code.isBlank() || state == null || state.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+
+        NaverTokenResponse naverToken = naverOAuthClient.requestToken(code, state);
+        NaverUserResponse naverUser = naverOAuthClient.requestUserInfo(naverToken.accessToken());
+        return issueTokens(upsertNaverMember(naverUser));
+    }
+
+    private AuthTokenResponse issueTokens(Member member) {
 
         String accessToken = jwtProvider.createAccessToken(member);
         String refreshToken = jwtProvider.createRefreshToken(member);
@@ -68,6 +92,19 @@ public class AuthService {
                 member.getId(),
                 member.getStatus()
         );
+    }
+
+    private Member upsertNaverMember(NaverUserResponse naverUser) {
+        return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, naverUser.providerUserId())
+                .map(member -> {
+                    member.updateNaverProfile(naverUser.nickname(), naverUser.profileImageUrl());
+                    return member;
+                })
+                .orElseGet(() -> memberRepository.save(Member.createNaverMember(
+                        naverUser.providerUserId(),
+                        naverUser.nickname(),
+                        naverUser.profileImageUrl()
+                )));
     }
 
     private Member upsertKakaoMember(KakaoUserResponse kakaoUser) {

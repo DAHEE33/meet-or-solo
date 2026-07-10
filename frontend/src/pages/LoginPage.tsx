@@ -1,12 +1,17 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import MobileLayout from '../components/layout/MobileLayout';
+import { getOAuthLoginPath, type OAuthProvider } from '../utils/oauth';
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const oauthError = searchParams.get('oauthError');
+  const [loadingProvider, setLoadingProvider] = useState<OAuthProvider | null>(null);
 
-  const handleLogin = () => {
-    window.location.href = '/api/auth/kakao/login';
+  const handleLogin = (provider: OAuthProvider) => {
+    if (loadingProvider) return;
+    setLoadingProvider(provider);
+    window.location.href = getOAuthLoginPath(provider);
   };
 
   return (
@@ -24,15 +29,26 @@ export default function LoginPage() {
         <div className="mt-10 flex flex-col gap-3">
           {oauthError && (
             <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
-              카카오 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.
+              소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.
             </p>
           )}
           <button
             type="button"
-            onClick={handleLogin}
+            onClick={() => handleLogin('kakao')}
+            disabled={loadingProvider !== null}
+            aria-label="카카오로 로그인"
             className="h-14 w-full rounded-2xl bg-[#FEE500] px-5 text-[15px] font-bold text-black transition-transform active:scale-[0.99]"
           >
-            카카오로 시작하기
+            {loadingProvider === 'kakao' ? '카카오로 이동 중...' : '카카오로 시작하기'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLogin('naver')}
+            disabled={loadingProvider !== null}
+            aria-label="네이버로 로그인"
+            className="h-14 w-full rounded-2xl bg-[#03C75A] px-5 text-[15px] font-bold text-white transition-transform active:scale-[0.99] disabled:opacity-70"
+          >
+            {loadingProvider === 'naver' ? '네이버로 이동 중...' : '네이버로 시작하기'}
           </button>
         </div>
 

@@ -1,5 +1,12 @@
 # 보안 정책
 
+## OAuth 계정 식별과 연결 정책
+
+- 소셜 회원 식별 기준은 `(provider, provider_user_id)`이다.
+- 동일 이메일이어도 Kakao/Naver 회원을 별도 생성하며 자동 병합하지 않는다.
+- MVP에서는 계정 연결을 제공하지 않는다. 추후 `member_social_accounts`와 명시적 재인증 기반 연결을 검토한다.
+- OAuth state는 HttpOnly, `SameSite=Lax`, 환경별 Secure 정책의 짧은 수명 쿠키로 검증하고 일회 사용 후 삭제한다.
+
 ## 핵심 원칙
 
 - Secret을 source control에 넣지 않는다.
@@ -77,6 +84,8 @@ DB_PASSWORD
 JWT_SECRET
 KAKAO_CLIENT_ID
 KAKAO_CLIENT_SECRET
+NAVER_CLIENT_ID
+NAVER_CLIENT_SECRET
 TOUR_API_KEY
 VAPID_PUBLIC_KEY
 VAPID_PRIVATE_KEY

@@ -1,5 +1,16 @@
 # 진행 상태 기록
 
+## [10-C] Naver OAuth 로그인 추가
+
+상태: 코드 및 테스트 작성 완료, Java 17 환경의 backend 테스트 실행 필요
+
+- 기존 Kakao OAuth, JWT, Refresh Token, 프로필/여행 스타일 흐름을 유지하고 Naver OAuth를 같은 `domain/auth` 흐름에 연결
+- `external/naver` client와 DTO 추가, connect/read timeout 및 안전한 오류 로그 적용
+- provider별 HttpOnly state 쿠키와 callback 검증/즉시 삭제 적용
+- `(provider, provider_user_id)` 식별을 유지하고 동일 이메일 자동 병합을 하지 않음
+- 기존 migration을 수정하지 않고 `V6__allow_naver_oauth_provider.sql`로 provider CHECK에 `NAVER` 추가
+- 로그인 화면에 모바일 대응 네이버 텍스트 버튼과 중복 클릭 방지 상태 추가
+
 이 문서는 `meet-or-solo`의 현재 진행 상태와 다음 작업 순서를 기록합니다. 새 작업을 시작하기 전에 반드시 이 문서를 확인하고, 현재 단계에 맞는 작업만 수행합니다.
 
 ## 1. WBS 기준 전체 단계

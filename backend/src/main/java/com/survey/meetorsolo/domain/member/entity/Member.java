@@ -23,6 +23,7 @@ import java.time.OffsetDateTime;
 public class Member {
 
     public static final String PROVIDER_KAKAO = "KAKAO";
+    public static final String PROVIDER_NAVER = "NAVER";
     public static final String ROLE_USER = "USER";
     public static final String STATUS_PROFILE_REQUIRED = "PROFILE_REQUIRED";
     public static final String STATUS_ACTIVE = "ACTIVE";
@@ -84,12 +85,33 @@ public class Member {
     }
 
     public static Member createKakaoMember(String providerUserId, String nickname, String profileImageUrl) {
-        Member member = new Member(PROVIDER_KAKAO, providerUserId, nickname, profileImageUrl);
+        return createSocialMember(PROVIDER_KAKAO, providerUserId, nickname, profileImageUrl);
+    }
+
+    public static Member createNaverMember(String providerUserId, String nickname, String profileImageUrl) {
+        return createSocialMember(PROVIDER_NAVER, providerUserId, nickname, profileImageUrl);
+    }
+
+    private static Member createSocialMember(
+            String provider,
+            String providerUserId,
+            String nickname,
+            String profileImageUrl
+    ) {
+        Member member = new Member(provider, providerUserId, nickname, profileImageUrl);
         member.markLoggedIn();
         return member;
     }
 
     public void updateKakaoProfile(String nickname, String profileImageUrl) {
+        updateSocialProfile(nickname, profileImageUrl);
+    }
+
+    public void updateNaverProfile(String nickname, String profileImageUrl) {
+        updateSocialProfile(nickname, profileImageUrl);
+    }
+
+    private void updateSocialProfile(String nickname, String profileImageUrl) {
         this.nickname = nickname;
         this.profileImageUrl = profileImageUrl;
         markLoggedIn();
@@ -152,5 +174,9 @@ public class Member {
 
     public byte[] getAgeRangeEncrypted() {
         return ageRangeEncrypted;
+    }
+
+    public OffsetDateTime getLastLoginAt() {
+        return lastLoginAt;
     }
 }
