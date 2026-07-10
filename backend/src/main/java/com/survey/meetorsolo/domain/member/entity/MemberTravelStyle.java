@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.member.entity;
 
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -55,7 +56,7 @@ public class MemberTravelStyle {
 
     @PrePersist
     void prePersist() {
-        this.createdAt = OffsetDateTime.now();
+        this.createdAt = SeoulDateTime.now();
     }
 
     public TravelStyleCode getStyleCode() {

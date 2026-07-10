@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.auth.entity;
 
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -62,13 +63,13 @@ public class RefreshToken {
 
     @PrePersist
     void prePersist() {
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = SeoulDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
     }
 
     @PreUpdate
     void preUpdate() {
-        this.updatedAt = OffsetDateTime.now();
+        this.updatedAt = SeoulDateTime.now();
     }
 }

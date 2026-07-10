@@ -188,6 +188,16 @@ DB volume을 초기화하면 `flyway_schema_history`도 함께 사라집니다. 
 
 PostgreSQL은 MVP의 단일 신뢰 원천입니다.
 
+### 날짜·시간 저장 및 API 기준
+
+- Flyway의 기존 `TIMESTAMPTZ` 컬럼을 유지합니다.
+- Entity의 `OffsetDateTime` 값은 `Asia/Seoul` 기준 `+09:00` offset으로 생성합니다.
+- JVM 기본 timezone과 `hibernate.jdbc.time_zone`을 `Asia/Seoul`로 고정합니다.
+- HikariCP가 연결을 만들 때 `SET TIME ZONE 'Asia/Seoul'`을 실행해 애플리케이션 DB session 기준도 고정합니다.
+- Jackson은 `Asia/Seoul` 기준 ISO-8601 문자열과 `+09:00` offset을 사용하며 epoch timestamp로 직렬화하지 않습니다.
+- frontend는 API의 절대 시점을 KST 형식으로 렌더링할 뿐 9시간을 수동으로 더하지 않습니다.
+- PostgreSQL server/session timezone은 Flyway migration으로 관리하지 않습니다.
+
 관리 대상:
 
 - 사용자 데이터

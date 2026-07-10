@@ -6,13 +6,7 @@ import { mockUser } from '../data/mock/user';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}.${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(
-    d.getMinutes(),
-  ).padStart(2, '0')}`;
-}
+import { formatSeoulDateTime } from '../utils/dateTime';
 
 export default function CheckInPage() {
   const [records, setRecords] = useState<CheckInRecord[]>(checkInRecords);
@@ -62,7 +56,7 @@ export default function CheckInPage() {
                   {r.memo && <span className="text-xs text-ink/50">{r.memo}</span>}
                 </div>
                 <span className="shrink-0 text-xs text-ink/45 tabular-nums">
-                  {formatDate(r.checkedInAt)}
+                  {formatSeoulDateTime(r.checkedInAt)}
                 </span>
               </div>
             ))}

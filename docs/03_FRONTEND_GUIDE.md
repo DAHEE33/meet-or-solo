@@ -98,6 +98,16 @@ frontend API 호출은 `src/api/apiClient.ts`의 공통 `apiClient`를 기본으
 
 공통 타입은 `src/api/types.ts`에 둡니다.
 
+## 날짜·시간 표시
+
+- API의 ISO-8601 시각 문자열은 원본 계약을 유지합니다.
+- 화면 표시가 필요하면 `src/utils/dateTime.ts`의 `formatSeoulDateTime`을 사용합니다.
+- formatter는 브라우저 기본 timezone에 의존하지 않고 `Asia/Seoul`을 명시합니다.
+- 기본 표시 형식은 `yyyy-MM-dd HH:mm:ss`이며 밀리초와 offset은 화면에 노출하지 않습니다.
+- API가 `+09:00` offset으로 반환한 값도 `Date`가 동일한 절대 시점으로 해석한 뒤 KST로 표시하므로 9시간이 중복 가산되지 않습니다.
+- null, 빈 문자열, 유효하지 않은 값은 `-`로 표시합니다.
+- `plusHours(9)` 같은 수동 보정은 사용하지 않습니다.
+
 ```ts
 export type FieldError = {
   field: string;
