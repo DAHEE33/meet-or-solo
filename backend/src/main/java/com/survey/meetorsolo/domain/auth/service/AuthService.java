@@ -36,8 +36,8 @@ public class AuthService {
         this.jwtProvider = jwtProvider;
     }
 
-    public URI getKakaoAuthorizeUri() {
-        return kakaoOAuthClient.buildAuthorizeUri();
+    public URI getKakaoAuthorizeUri(String state) {
+        return kakaoOAuthClient.buildAuthorizeUri(state);
     }
 
     @Transactional

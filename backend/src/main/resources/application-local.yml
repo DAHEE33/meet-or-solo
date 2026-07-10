@@ -20,6 +20,12 @@ logging:
     org.hibernate.SQL: debug
 
 app:
+  frontend:
+    base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+  auth:
+    cookie-secure: ${AUTH_COOKIE_SECURE:false}
+  profile:
+    encryption-key: ${PROFILE_ENCRYPTION_KEY:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   oauth:

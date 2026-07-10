@@ -1,0 +1,28 @@
+package com.survey.meetorsolo.domain.member.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import java.util.List;
+import org.hibernate.validator.constraints.UniqueElements;
+
+public record UpdateMemberProfileRequest(
+        @NotBlank
+        @Size(max = 50)
+        String nickname,
+
+        @NotBlank
+        @Pattern(regexp = "MALE|FEMALE|OTHER")
+        String gender,
+
+        @NotBlank
+        @Pattern(regexp = "10S|20S|30S|40S|50S|60_PLUS")
+        String ageRange,
+
+        @NotNull
+        @Size(min = 1, max = 3)
+        @UniqueElements
+        List<@NotBlank @Pattern(regexp = "RELAXED|ACTIVE|FOOD|PHOTO|CULTURE") String> travelStyles
+) {
+}

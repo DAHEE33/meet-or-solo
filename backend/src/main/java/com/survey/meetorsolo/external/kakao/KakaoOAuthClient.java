@@ -5,6 +5,8 @@ import com.survey.meetorsolo.external.kakao.dto.KakaoUserResponse;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.net.URI;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -13,10 +15,13 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class KakaoOAuthClient {
+
+    private static final Logger log = LoggerFactory.getLogger(KakaoOAuthClient.class);
 
     private static final String KAKAO_AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize";
     private static final String KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token";
@@ -38,13 +43,14 @@ public class KakaoOAuthClient {
         this.redirectUri = redirectUri;
     }
 
-    public URI buildAuthorizeUri() {
+    public URI buildAuthorizeUri(String state) {
         validateRequired("KAKAO_CLIENT_ID", clientId);
         validateRequired("KAKAO_REDIRECT_URI", redirectUri);
         return UriComponentsBuilder.fromHttpUrl(KAKAO_AUTHORIZE_URL)
                 .queryParam("response_type", "code")
                 .queryParam("client_id", clientId)
                 .queryParam("redirect_uri", redirectUri)
+                .queryParam("state", state)
                 .build()
                 .toUri();
     }
@@ -71,6 +77,15 @@ public class KakaoOAuthClient {
                 throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
             }
             return response;
+        } catch (RestClientResponseException exception) {
+            log.warn(
+                    "Kakao token API request failed. status={}, body={}, redirect_uri={}, client_id={}",
+                    exception.getStatusCode(),
+                    exception.getResponseBodyAsString(),
+                    redirectUri,
+                    maskClientId(clientId)
+            );
+            throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
         } catch (RestClientException exception) {
             throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
         }
@@ -87,6 +102,13 @@ public class KakaoOAuthClient {
                 throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
             }
             return response;
+        } catch (RestClientResponseException exception) {
+            log.warn(
+                    "Kakao user info API request failed. status={}, body={}",
+                    exception.getStatusCode(),
+                    exception.getResponseBodyAsString()
+            );
+            throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
         } catch (RestClientException exception) {
             throw new BusinessException(ErrorCode.OAUTH_LOGIN_FAILED);
         }
@@ -96,5 +118,15 @@ public class KakaoOAuthClient {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException(envName + " 환경변수가 필요합니다.");
         }
+    }
+
+    private String maskClientId(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        if (value.length() <= 6) {
+            return "*".repeat(value.length());
+        }
+        return value.substring(0, 6) + "*".repeat(value.length() - 6);
     }
 }

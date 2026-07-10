@@ -17,6 +17,12 @@ logging:
     root: info
 
 app:
+  frontend:
+    base-url: ${FRONTEND_BASE_URL}
+  auth:
+    cookie-secure: ${AUTH_COOKIE_SECURE:true}
+  profile:
+    encryption-key: ${PROFILE_ENCRYPTION_KEY}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   oauth:

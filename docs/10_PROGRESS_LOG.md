@@ -359,12 +359,26 @@ dev 서버 기준:
 
 ### [10단계] 풀스택 A/B 기능 분업 시작
 
-상태: 예정
+상태: 진행 중
 
 - A/B가 공통 환경 기준으로 기능 개발 시작
 - A 예시: 관광 API, 축제 목록/상세, 추천/솔로코스, 매칭 일부
 - B 예시: Kakao OAuth, JWT, 회원/프로필, 체크인, 신고/평가
 - 실제 담당 범위는 WBS에 맞춰 조정
+
+#### [10-B] Kakao 로그인 프로필 여행 스타일 저장 보완
+
+상태: 코드 작성 완료, 실제 dev DB 적용 제외
+
+- 기존 `V1`~`V4` migration을 수정하지 않고 `V5__create_member_travel_styles.sql` 추가
+- `member_travel_styles`에 회원별 여행 스타일 code 저장
+- 프로필 완료 요청의 `travelStyles`를 1~3개로 검증하고 중복·미허용 code를 거절
+- 여행 스타일 code를 `RELAXED`, `ACTIVE`, `FOOD`, `PHOTO`, `CULTURE`로 고정
+- 프로필 완료 트랜잭션에서 기존 스타일 삭제 후 새 스타일 저장 및 `ACTIVE` 상태 변경
+- 기존 `GET /api/members/me` 응답에 여행 스타일 code와 label 포함
+- 성별·연령대 AES-256-GCM 암호화 정책 유지
+- frontend 프로필 설정 화면은 화면 label과 API code를 분리하고 code 배열을 전송
+- nginx, docker-compose, GitHub Actions, Oracle VM, 실제 dev DB migration은 수정하거나 실행하지 않음
 
 ## 4. 기능 분업 전까지 남은 작업
 

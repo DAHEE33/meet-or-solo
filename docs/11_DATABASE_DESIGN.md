@@ -50,7 +50,7 @@
 
 | 영역 | 테이블 |
 | --- | --- |
-| 회원/인증 | `members`, `member_consents`, `refresh_tokens` |
+| 회원/인증 | `members`, `member_travel_styles`, `member_consents`, `refresh_tokens` |
 | 관광/축제 | `festivals`, `festival_images`, `tour_places`, `tour_api_call_logs` |
 | 체크인 | `festival_checkins` |
 | 매칭 | `user_blocks`, `match_pools`, `match_attempts`, `match_attempt_members`, `match_proposals`, `match_responses`, `match_groups`, `match_group_members`, `match_events`, `match_cooldowns`, `match_penalty_events` |
@@ -233,6 +233,21 @@ DATA_CORRECTION
 | UNIQUE | `(provider, provider_user_id)` |
 | INDEX | `idx_members_status`, `idx_members_role`, `idx_members_created_at` |
 | 개인정보/보안 | 성별/연령대는 암호화 저장 전제로 `BYTEA` 후보를 사용한다. 탈퇴 시 닉네임/이미지/민감정보를 익명화한다. |
+| MVP 필수 | 필수 |
+
+### member_travel_styles
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 프로필 설정에서 선택한 여행 스타일을 안정적인 코드값으로 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `style_code`, `created_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, 기존 회원 FK 정책과 동일하게 `ON DELETE RESTRICT` 적용 |
+| 상태값 | `RELAXED`, `ACTIVE`, `FOOD`, `PHOTO`, `CULTURE` |
+| CHECK | 허용된 `style_code`만 저장한다. |
+| UNIQUE | `(member_id, style_code)` |
+| INDEX | `idx_member_travel_styles_member_id` |
+| 개인정보/보안 | 화면 표시 문구가 아닌 코드값만 저장하며 성별·연령대 암호화 정책과 분리한다. |
 | MVP 필수 | 필수 |
 
 ### member_consents
@@ -620,6 +635,7 @@ DATA_CORRECTION
 - `members.provider IN ('KAKAO')`
 - `members.role IN ('USER','ADMIN')`
 - `members.manner_temperature BETWEEN 0 AND 100`
+- `member_travel_styles.style_code IN ('RELAXED','ACTIVE','FOOD','PHOTO','CULTURE')`
 - `match_pools.preferred_group_size IN (2,3,4)`
 - `match_pools.search_expires_at > match_pools.entered_at`
 - `match_attempts.target_group_size IN (2,3,4)`
@@ -632,6 +648,7 @@ DATA_CORRECTION
 ### 주요 UNIQUE constraint 후보
 
 - `members(provider, provider_user_id)`
+- `member_travel_styles(member_id, style_code)`
 - `refresh_tokens(token_hash)`
 - `festivals(content_id)`
 - `tour_places(content_id)`
@@ -678,16 +695,15 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN` 또는 `DELETED`로 변경한다.
 - 패널티/매칭 이벤트 등 운영 로그는 30일 보관 후 삭제 또는 집계 전환 정책을 별도 구현한다.
 
-## 10. 9-2단계 SQL 생성 대상
+## 10. Flyway migration 이력
 
-다음 단계에서 생성할 Flyway SQL 파일 후보:
+회원 여행 스타일 저장은 이미 적용된 migration을 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
 backend/src/main/resources/db/migration/V2__create_core_tables.sql
 backend/src/main/resources/db/migration/V3__create_matching_tables.sql
 backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql
+backend/src/main/resources/db/migration/V5__create_member_travel_styles.sql
 ```
 
-9-2단계에서는 이 문서를 기준으로 실제 DDL, FK, CHECK constraint, UNIQUE constraint, index를 작성한다.
-
-`V1__init.sql`은 이미 적용된 migration이므로 수정하지 않는다.
+`V1`~`V4`는 이미 적용된 migration이므로 수정하지 않는다. `V5`는 코드 작성까지만 수행하며 실제 dev DB 적용은 별도 작업으로 남긴다.

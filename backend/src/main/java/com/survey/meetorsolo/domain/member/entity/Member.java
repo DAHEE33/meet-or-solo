@@ -24,6 +24,7 @@ public class Member {
     public static final String PROVIDER_KAKAO = "KAKAO";
     public static final String ROLE_USER = "USER";
     public static final String STATUS_PROFILE_REQUIRED = "PROFILE_REQUIRED";
+    public static final String STATUS_ACTIVE = "ACTIVE";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -40,6 +41,12 @@ public class Member {
 
     @Column(name = "profile_image_url", length = 1000)
     private String profileImageUrl;
+
+    @Column(name = "gender_encrypted")
+    private byte[] genderEncrypted;
+
+    @Column(name = "age_range_encrypted")
+    private byte[] ageRangeEncrypted;
 
     @Column(name = "manner_temperature", nullable = false, precision = 5, scale = 2)
     private BigDecimal mannerTemperature = new BigDecimal("36.50");
@@ -91,6 +98,13 @@ public class Member {
         this.lastLoginAt = OffsetDateTime.now();
     }
 
+    public void completeProfile(String nickname, byte[] genderEncrypted, byte[] ageRangeEncrypted) {
+        this.nickname = nickname;
+        this.genderEncrypted = genderEncrypted;
+        this.ageRangeEncrypted = ageRangeEncrypted;
+        this.status = STATUS_ACTIVE;
+    }
+
     @PrePersist
     void prePersist() {
         OffsetDateTime now = OffsetDateTime.now();
@@ -129,5 +143,13 @@ public class Member {
 
     public String getStatus() {
         return status;
+    }
+
+    public byte[] getGenderEncrypted() {
+        return genderEncrypted;
+    }
+
+    public byte[] getAgeRangeEncrypted() {
+        return ageRangeEncrypted;
     }
 }

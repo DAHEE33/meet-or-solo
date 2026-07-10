@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,13 +43,22 @@ public class JwtProvider {
     }
 
     public String createAccessToken(Member member) {
+        return createAccessToken(member.getId(), member.getProvider(), member.getRole(), member.getStatus());
+    }
+
+    public String createAccessToken(Long memberId, String status) {
+        return createAccessToken(memberId, Member.PROVIDER_KAKAO, Member.ROLE_USER, status);
+    }
+
+    private String createAccessToken(Long memberId, String provider, String role, String status) {
         Instant now = Instant.now();
         Map<String, Object> claims = new LinkedHashMap<>();
-        claims.put("sub", String.valueOf(member.getId()));
+        claims.put("sub", String.valueOf(memberId));
         claims.put("typ", "access");
-        claims.put("provider", member.getProvider());
-        claims.put("role", member.getRole());
-        claims.put("status", member.getStatus());
+        claims.put("jti", UUID.randomUUID().toString());
+        claims.put("provider", provider);
+        claims.put("role", role);
+        claims.put("status", status);
         claims.put("iat", now.getEpochSecond());
         claims.put("exp", now.plus(accessTokenDuration).getEpochSecond());
         return createToken(claims);
@@ -59,6 +69,7 @@ public class JwtProvider {
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("sub", String.valueOf(member.getId()));
         claims.put("typ", "refresh");
+        claims.put("jti", UUID.randomUUID().toString());
         claims.put("iat", now.getEpochSecond());
         claims.put("exp", now.plus(refreshTokenDuration).getEpochSecond());
         return createToken(claims);
@@ -80,6 +91,39 @@ public class JwtProvider {
 
     public long getRefreshTokenExpiresInSeconds() {
         return refreshTokenDuration.toSeconds();
+    }
+
+    public Long getMemberIdFromAccessToken(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length != 3) {
+                throw new IllegalArgumentException("Invalid JWT format");
+            }
+
+            String signingInput = parts[0] + "." + parts[1];
+            if (!MessageDigest.isEqual(
+                    sign(signingInput).getBytes(StandardCharsets.UTF_8),
+                    parts[2].getBytes(StandardCharsets.UTF_8)
+            )) {
+                throw new IllegalArgumentException("Invalid JWT signature");
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> claims = objectMapper.readValue(
+                    Base64.getUrlDecoder().decode(parts[1]),
+                    Map.class
+            );
+            if (!"access".equals(claims.get("typ"))) {
+                throw new IllegalArgumentException("Invalid token type");
+            }
+            Object expiresAt = claims.get("exp");
+            if (!(expiresAt instanceof Number) || ((Number) expiresAt).longValue() <= Instant.now().getEpochSecond()) {
+                throw new IllegalArgumentException("Expired JWT");
+            }
+            return Long.valueOf(String.valueOf(claims.get("sub")));
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
     }
 
     private String createToken(Map<String, Object> claims) {
