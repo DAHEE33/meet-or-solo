@@ -19,6 +19,7 @@ function getErrorMessage(response: ApiResponse<unknown>, fallbackMessage: string
 
 export async function apiClient<T>(path: string, options: ApiClientOptions = {}): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
+    credentials: 'include',
     ...options,
     headers: {
       Accept: 'application/json',
