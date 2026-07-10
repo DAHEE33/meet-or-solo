@@ -1,12 +1,6 @@
 import { Users, HeartHandshake, MapPinCheck } from 'lucide-react';
 import { adminStats } from '../data/mock/adminStats';
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}.${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(
-    d.getMinutes(),
-  ).padStart(2, '0')}`;
-}
+import { formatSeoulDateTime } from '../utils/dateTime';
 
 /** 관리자 대시보드 — 유일하게 데스크톱 폭 레이아웃 사용 */
 export default function AdminDashboardPage() {
@@ -76,7 +70,7 @@ export default function AdminDashboardPage() {
                     {r.type}
                   </span>
                   <p className="flex-1 text-[13px] leading-relaxed text-ink/70">{r.content}</p>
-                  <span className="shrink-0 text-xs text-ink/40 tabular-nums">{formatDate(r.createdAt)}</span>
+                  <span className="shrink-0 text-xs text-ink/40 tabular-nums">{formatSeoulDateTime(r.createdAt)}</span>
                 </div>
               ))}
             </div>

@@ -6,6 +6,7 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.kakao.dto.KakaoTokenResponse;
 import com.survey.meetorsolo.external.kakao.dto.KakaoUserResponse;
@@ -53,7 +54,7 @@ public class AuthService {
         String accessToken = jwtProvider.createAccessToken(member);
         String refreshToken = jwtProvider.createRefreshToken(member);
         String refreshTokenHash = jwtProvider.hashToken(refreshToken);
-        OffsetDateTime refreshTokenExpiresAt = OffsetDateTime.now()
+        OffsetDateTime refreshTokenExpiresAt = SeoulDateTime.now()
                 .plusSeconds(jwtProvider.getRefreshTokenExpiresInSeconds());
 
         refreshTokenRepository.save(RefreshToken.issue(member, refreshTokenHash, refreshTokenExpiresAt));

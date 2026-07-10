@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.member.entity;
 
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -95,7 +96,7 @@ public class Member {
     }
 
     public void markLoggedIn() {
-        this.lastLoginAt = OffsetDateTime.now();
+        this.lastLoginAt = SeoulDateTime.now();
     }
 
     public void completeProfile(String nickname, byte[] genderEncrypted, byte[] ageRangeEncrypted) {
@@ -107,14 +108,14 @@ public class Member {
 
     @PrePersist
     void prePersist() {
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = SeoulDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
     }
 
     @PreUpdate
     void preUpdate() {
-        this.updatedAt = OffsetDateTime.now();
+        this.updatedAt = SeoulDateTime.now();
     }
 
     public Long getId() {

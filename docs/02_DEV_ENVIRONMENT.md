@@ -39,6 +39,15 @@
 
 Redis는 초기 개발환경과 MVP 초기 `docker-compose`에 추가하지 않습니다.
 
+## 날짜·시간 환경 기준
+
+- local/dev PostgreSQL과 backend container는 `TZ=Asia/Seoul`을 사용합니다.
+- PostgreSQL client session은 `PGTZ=Asia/Seoul`을 사용합니다.
+- backend JVM, Hibernate JDBC, Jackson 및 PostgreSQL 애플리케이션 session도 `Asia/Seoul`로 통일합니다.
+- 기존 local/dev DB에는 각각 `ALTER DATABASE meet_or_solo_local SET timezone TO 'Asia/Seoul';`, `ALTER DATABASE meet_or_solo_dev SET timezone TO 'Asia/Seoul';`을 수동 실행하고 재접속합니다.
+- `TIMESTAMPTZ`의 기존 값을 UPDATE하거나 9시간을 더하지 않습니다. timezone 변경은 동일한 절대 시점의 조회 표현만 `+09:00`으로 바꿉니다.
+- prod는 실제 운영 DB 이름과 환경을 확인한 후 동일 정책을 별도로 적용합니다.
+
 예정 서비스:
 
 ```text

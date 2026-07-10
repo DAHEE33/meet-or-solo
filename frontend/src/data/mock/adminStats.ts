@@ -11,8 +11,8 @@ export const adminStats: AdminStats = {
     { name: '전동성당', count: 190 },
   ],
   reports: [
-    { id: 501, type: '신고', content: '매칭 상대가 약속 장소에 나타나지 않았어요.', createdAt: '2026-07-06T09:12:00' },
-    { id: 502, type: '문의', content: '체크인 위치 인식이 안 됩니다.', createdAt: '2026-07-05T21:44:00' },
-    { id: 503, type: '문의', content: '솔로 코스에 다른 지역도 추가되나요?', createdAt: '2026-07-05T14:03:00' },
+    { id: 501, type: '신고', content: '매칭 상대가 약속 장소에 나타나지 않았어요.', createdAt: '2026-07-06T00:12:00Z' },
+    { id: 502, type: '문의', content: '체크인 위치 인식이 안 됩니다.', createdAt: '2026-07-05T12:44:00Z' },
+    { id: 503, type: '문의', content: '솔로 코스에 다른 지역도 추가되나요?', createdAt: '2026-07-05T05:03:00Z' },
   ],
 };

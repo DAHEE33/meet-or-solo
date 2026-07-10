@@ -380,6 +380,19 @@ dev 서버 기준:
 - frontend 프로필 설정 화면은 화면 label과 API code를 분리하고 code 배열을 전송
 - nginx, docker-compose, GitHub Actions, Oracle VM, 실제 dev DB migration은 수정하거나 실행하지 않음
 
+#### [10-공통] 날짜·시간 저장 및 한국 시간 표시 기준 정리
+
+상태: 코드 작성 및 로컬 테스트 완료
+
+- 기존 Flyway `TIMESTAMPTZ` 컬럼과 실제 저장 시점을 유지
+- Entity `OffsetDateTime` 생성 기준을 `Asia/Seoul`로 통일
+- JVM, Hibernate JDBC, Jackson의 timezone을 `Asia/Seoul`로 명시
+- local/dev container에 `TZ=Asia/Seoul`, PostgreSQL client session에 `PGTZ=Asia/Seoul` 적용
+- REST API는 KST offset의 ISO-8601 계약을 사용하고 frontend에서 중복 보정 없이 표시
+- frontend 공통 formatter를 `yyyy-MM-dd HH:mm:ss` 형식과 null 안전 처리로 구성
+- 기존 migration 수정 및 신규 migration 추가 없음
+- dev Database timezone 영구 기본값은 `scripts/set-dev-db-timezone.sql`로 수동 적용
+
 ## 4. 기능 분업 전까지 남은 작업
 
 기능 분업을 시작하기 전에 공통 개발환경, dev 배포 초안, CI/CD 초안 정리를 완료했습니다. 다음 작업은 별도 승인 후 아래 중 하나로 진행합니다.
