@@ -20,7 +20,8 @@ import java.time.OffsetDateTime;
 @Table(
         name = "refresh_tokens",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_refresh_tokens_token_hash", columnNames = "token_hash")
+                @UniqueConstraint(name = "uq_refresh_tokens_token_hash", columnNames = "token_hash"),
+                @UniqueConstraint(name = "uq_refresh_tokens_member", columnNames = "member_id")
         }
 )
 public class RefreshToken {
@@ -59,6 +60,12 @@ public class RefreshToken {
 
     public static RefreshToken issue(Member member, String tokenHash, OffsetDateTime expiresAt) {
         return new RefreshToken(member, tokenHash, expiresAt);
+    }
+
+    public void rotate(String tokenHash, OffsetDateTime expiresAt) {
+        this.tokenHash = tokenHash;
+        this.expiresAt = expiresAt;
+        this.revokedAt = null;
     }
 
     @PrePersist

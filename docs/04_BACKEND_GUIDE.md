@@ -7,6 +7,8 @@
 - 네이버 `response.id`만 필수 식별값이며 선택 프로필 값의 null은 정상 처리한다.
 - OAuth state는 provider별 HttpOnly callback 전용 쿠키로 5분간 보관하고 callback에서 즉시 제거한다.
 - 네이버 외부 API는 connect/read timeout을 명시하며 token, code, secret, 프로필 원문을 로그에 남기지 않는다.
+- Refresh Token은 회원당 1개를 유지하고 재로그인 시 원문이 아닌 hash와 만료시각을 rotation한다.
+- OAuth email은 nullable, non-unique 참고 정보로만 저장하며 회원 식별이나 계정 병합에 사용하지 않는다.
 
 ## 백엔드 방향
 

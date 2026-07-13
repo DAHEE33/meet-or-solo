@@ -81,7 +81,13 @@ public class AuthService {
         OffsetDateTime refreshTokenExpiresAt = SeoulDateTime.now()
                 .plusSeconds(jwtProvider.getRefreshTokenExpiresInSeconds());
 
-        refreshTokenRepository.save(RefreshToken.issue(member, refreshTokenHash, refreshTokenExpiresAt));
+        RefreshToken storedRefreshToken = refreshTokenRepository.findByMemberId(member.getId())
+                .map(existingToken -> {
+                    existingToken.rotate(refreshTokenHash, refreshTokenExpiresAt);
+                    return existingToken;
+                })
+                .orElseGet(() -> RefreshToken.issue(member, refreshTokenHash, refreshTokenExpiresAt));
+        refreshTokenRepository.save(storedRefreshToken);
 
         return new AuthTokenResponse(
                 "Bearer",
@@ -97,11 +103,12 @@ public class AuthService {
     private Member upsertNaverMember(NaverUserResponse naverUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, naverUser.providerUserId())
                 .map(member -> {
-                    member.updateNaverProfile(naverUser.nickname(), naverUser.profileImageUrl());
+                    member.updateNaverProfile(naverUser.email(), naverUser.nickname(), naverUser.profileImageUrl());
                     return member;
                 })
                 .orElseGet(() -> memberRepository.save(Member.createNaverMember(
                         naverUser.providerUserId(),
+                        naverUser.email(),
                         naverUser.nickname(),
                         naverUser.profileImageUrl()
                 )));
@@ -110,11 +117,12 @@ public class AuthService {
     private Member upsertKakaoMember(KakaoUserResponse kakaoUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_KAKAO, kakaoUser.providerUserId())
                 .map(member -> {
-                    member.updateKakaoProfile(kakaoUser.nickname(), kakaoUser.profileImageUrl());
+                    member.updateKakaoProfile(kakaoUser.email(), kakaoUser.nickname(), kakaoUser.profileImageUrl());
                     return member;
                 })
                 .orElseGet(() -> memberRepository.save(Member.createKakaoMember(
                         kakaoUser.providerUserId(),
+                        kakaoUser.email(),
                         kakaoUser.nickname(),
                         kakaoUser.profileImageUrl()
                 )));

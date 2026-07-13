@@ -1,5 +1,21 @@
 # 진행 상태 기록
 
+## [10-C 보완] MyPage 프로필 수정
+
+- 기존 MyPage 레이아웃과 하단 탭바를 유지하고 프로필 카드에 수정 진입 버튼 추가
+- `/profile/edit` 화면을 기존 프로필 설정 화면의 입력·Chip·색상 체계로 구성
+- nickname, nullable email, nullable 한 줄 소개, 성별, 연령대, 여행 스타일 수정 지원
+- `V8__add_member_intro.sql`로 `members.intro` nullable 컬럼 추가
+- MyPage에서 email/소개 미등록 안내 문구 표시
+
+## [10-C 보완] 회원 프로필 표시 및 Refresh Token rotation
+
+- 회원당 Refresh Token 1개 정책으로 변경하고 재로그인 시 기존 row의 hash와 만료시각을 갱신
+- `V7__single_refresh_token_and_member_email.sql`에서 기존 중복 token row는 최신 1개만 보존하고 `UNIQUE(member_id)` 추가
+- `members.email`을 nullable, non-unique 참고 정보로 추가하며 이메일 기반 조회·병합은 하지 않음
+- ACTIVE 회원 재로그인 시 프로필 설정 nickname을 OAuth nickname으로 덮어쓰지 않도록 보완
+- Home/MyPage의 `mockUser` 표시를 `/api/members/me` 실제 프로필 응답으로 교체
+
 ## [10-C] Naver OAuth 로그인 추가
 
 상태: 코드 및 테스트 작성 완료, Java 17 환경의 backend 테스트 실행 필요

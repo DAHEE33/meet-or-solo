@@ -17,6 +17,7 @@ import com.survey.meetorsolo.external.naver.NaverOAuthClient;
 import com.survey.meetorsolo.external.naver.dto.NaverTokenResponse;
 import com.survey.meetorsolo.external.naver.dto.NaverUserResponse;
 import java.util.Optional;
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -72,6 +73,22 @@ class AuthServiceTest {
         verify(memberRepository, never()).save(any(Member.class));
         assertThat(member.getNickname()).isEqualTo("after");
         assertThat(member.getLastLoginAt()).isAfterOrEqualTo(previousLoginAt);
+    }
+
+    @Test
+    void 재로그인하면_기존_RefreshToken_row를_rotation한다() {
+        Member member = Member.createNaverMember("naver-id", "nickname", null);
+        RefreshToken existingToken = RefreshToken.issue(member, "old-hash", SeoulDateTime.now().plusDays(1));
+        when(naverClient.requestToken("code", "state"))
+                .thenReturn(new NaverTokenResponse("naver-access", "bearer", "3600", null, null));
+        when(naverClient.requestUserInfo("naver-access")).thenReturn(user("naver-id", "nickname", null));
+        when(memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, "naver-id"))
+                .thenReturn(Optional.of(member));
+        when(refreshTokenRepository.findByMemberId(member.getId())).thenReturn(Optional.of(existingToken));
+
+        authService.loginWithNaver("code", "state");
+
+        verify(refreshTokenRepository).save(existingToken);
     }
 
     private NaverUserResponse user(String id, String nickname, String email) {

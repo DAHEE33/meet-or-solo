@@ -48,11 +48,13 @@ class MemberProfileServiceTest {
 
         MemberProfileResponse response = service.completeProfile(
                 1L,
-                new UpdateMemberProfileRequest("새닉네임", "FEMALE", "20S", List.of("FOOD", "PHOTO"))
+                new UpdateMemberProfileRequest("새닉네임", "user@example.com", "한 줄 소개", "FEMALE", "20S", List.of("FOOD", "PHOTO"))
         );
 
         assertThat(response.status()).isEqualTo(Member.STATUS_ACTIVE);
         assertThat(response.nickname()).isEqualTo("새닉네임");
+        assertThat(response.email()).isEqualTo("user@example.com");
+        assertThat(response.intro()).isEqualTo("한 줄 소개");
         assertThat(response.gender()).isEqualTo("FEMALE");
         assertThat(response.ageRange()).isEqualTo("20S");
         assertThat(response.travelStyles())
@@ -74,13 +76,13 @@ class MemberProfileServiceTest {
     void 프로필을_재저장하면_기존_여행_스타일을_삭제한_뒤_새_값을_저장한다() {
         ProfileFieldCrypto crypto = crypto();
         Member member = Member.createKakaoMember("provider-user-id", "기존닉네임", null);
-        member.completeProfile("기존닉네임", crypto.encrypt("MALE"), crypto.encrypt("30S"));
+        member.completeProfile("기존닉네임", null, null, crypto.encrypt("MALE"), crypto.encrypt("30S"));
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         MemberProfileService service = service(crypto);
 
         service.completeProfile(
                 1L,
-                new UpdateMemberProfileRequest("새닉네임", "FEMALE", "20S", List.of("CULTURE"))
+                new UpdateMemberProfileRequest("새닉네임", null, null, "FEMALE", "20S", List.of("CULTURE"))
         );
 
         InOrder inOrder = inOrder(memberTravelStyleRepository);
@@ -99,7 +101,7 @@ class MemberProfileServiceTest {
 
         assertThatThrownBy(() -> service.completeProfile(
                 1L,
-                new UpdateMemberProfileRequest("새닉네임", "FEMALE", "20S", List.of("FOOD"))
+                new UpdateMemberProfileRequest("새닉네임", null, null, "FEMALE", "20S", List.of("FOOD"))
         )).isInstanceOf(IllegalStateException.class);
     }
 

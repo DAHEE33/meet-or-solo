@@ -8,6 +8,7 @@ import java.net.URI;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -31,6 +32,7 @@ public class NaverOAuthClient {
     private final String tokenUri;
     private final String userInfoUri;
 
+    @Autowired
     public NaverOAuthClient(
             @Value("${app.oauth.naver.client-id}") String clientId,
             @Value("${app.oauth.naver.client-secret}") String clientSecret,

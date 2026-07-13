@@ -47,6 +47,8 @@ public class MemberProfileService {
 
         member.completeProfile(
                 request.nickname().trim(),
+                normalize(request.email()),
+                normalize(request.intro()),
                 profileFieldCrypto.encrypt(request.gender()),
                 profileFieldCrypto.encrypt(request.ageRange())
         );
@@ -74,6 +76,8 @@ public class MemberProfileService {
         return new MemberProfileResponse(
                 member.getId(),
                 member.getNickname(),
+                member.getEmail(),
+                member.getIntro(),
                 profileFieldCrypto.decrypt(member.getGenderEncrypted()),
                 profileFieldCrypto.decrypt(member.getAgeRangeEncrypted()),
                 member.getStatus(),
@@ -82,5 +86,9 @@ public class MemberProfileService {
                         .map(TravelStyleResponse::from)
                         .toList()
         );
+    }
+
+    private String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

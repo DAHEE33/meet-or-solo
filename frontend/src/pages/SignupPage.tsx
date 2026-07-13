@@ -35,6 +35,8 @@ const AGE_RANGES: { value: AgeRange; label: string }[] = [
 export default function SignupPage() {
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
+  const [email, setEmail] = useState<string | null>(null);
+  const [intro, setIntro] = useState<string | null>(null);
   const [gender, setGender] = useState<Gender | ''>('');
   const [ageRange, setAgeRange] = useState<AgeRange | ''>('');
   const [styles, setStyles] = useState<TravelStyleCode[]>([]);
@@ -54,6 +56,8 @@ export default function SignupPage() {
           return;
         }
         setNickname(profile.nickname ?? '');
+        setEmail(profile.email);
+        setIntro(profile.intro);
         setGender(profile.gender ?? '');
         setAgeRange(profile.ageRange ?? '');
         setStyles(profile.travelStyles.map((style) => style.code));
@@ -91,6 +95,8 @@ export default function SignupPage() {
     try {
       const profile = await memberProfileApi.complete({
         nickname: nickname.trim(),
+        email,
+        intro,
         gender,
         ageRange,
         travelStyles: styles,

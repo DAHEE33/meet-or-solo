@@ -41,6 +41,12 @@ public class Member {
     @Column(length = 50)
     private String nickname;
 
+    @Column(length = 255)
+    private String email;
+
+    @Column(length = 160)
+    private String intro;
+
     @Column(name = "profile_image_url", length = 1000)
     private String profileImageUrl;
 
@@ -77,43 +83,70 @@ public class Member {
     protected Member() {
     }
 
-    private Member(String provider, String providerUserId, String nickname, String profileImageUrl) {
+    private Member(String provider, String providerUserId, String email, String nickname, String profileImageUrl) {
         this.provider = provider;
         this.providerUserId = providerUserId;
+        this.email = email;
         this.nickname = nickname;
         this.profileImageUrl = profileImageUrl;
     }
 
     public static Member createKakaoMember(String providerUserId, String nickname, String profileImageUrl) {
-        return createSocialMember(PROVIDER_KAKAO, providerUserId, nickname, profileImageUrl);
+        return createKakaoMember(providerUserId, null, nickname, profileImageUrl);
+    }
+
+    public static Member createKakaoMember(
+            String providerUserId, String email, String nickname, String profileImageUrl) {
+        return createSocialMember(PROVIDER_KAKAO, providerUserId, email, nickname, profileImageUrl);
     }
 
     public static Member createNaverMember(String providerUserId, String nickname, String profileImageUrl) {
-        return createSocialMember(PROVIDER_NAVER, providerUserId, nickname, profileImageUrl);
+        return createNaverMember(providerUserId, null, nickname, profileImageUrl);
+    }
+
+    public static Member createNaverMember(
+            String providerUserId, String email, String nickname, String profileImageUrl) {
+        return createSocialMember(PROVIDER_NAVER, providerUserId, email, nickname, profileImageUrl);
     }
 
     private static Member createSocialMember(
             String provider,
             String providerUserId,
+            String email,
             String nickname,
             String profileImageUrl
     ) {
-        Member member = new Member(provider, providerUserId, nickname, profileImageUrl);
+        Member member = new Member(provider, providerUserId, email, nickname, profileImageUrl);
         member.markLoggedIn();
         return member;
     }
 
     public void updateKakaoProfile(String nickname, String profileImageUrl) {
-        updateSocialProfile(nickname, profileImageUrl);
+        updateKakaoProfile(null, nickname, profileImageUrl);
+    }
+
+    public void updateKakaoProfile(String email, String nickname, String profileImageUrl) {
+        updateSocialProfile(email, nickname, profileImageUrl);
     }
 
     public void updateNaverProfile(String nickname, String profileImageUrl) {
-        updateSocialProfile(nickname, profileImageUrl);
+        updateNaverProfile(null, nickname, profileImageUrl);
     }
 
-    private void updateSocialProfile(String nickname, String profileImageUrl) {
-        this.nickname = nickname;
-        this.profileImageUrl = profileImageUrl;
+    public void updateNaverProfile(String email, String nickname, String profileImageUrl) {
+        updateSocialProfile(email, nickname, profileImageUrl);
+    }
+
+    private void updateSocialProfile(String email, String nickname, String profileImageUrl) {
+        if (email != null && !email.isBlank()) {
+            this.email = email;
+        }
+        if (STATUS_PROFILE_REQUIRED.equals(status) && nickname != null && !nickname.isBlank()) {
+            this.nickname = nickname;
+        }
+        if (profileImageUrl != null && !profileImageUrl.isBlank()) {
+            this.profileImageUrl = profileImageUrl;
+        }
         markLoggedIn();
     }
 
@@ -121,8 +154,16 @@ public class Member {
         this.lastLoginAt = SeoulDateTime.now();
     }
 
-    public void completeProfile(String nickname, byte[] genderEncrypted, byte[] ageRangeEncrypted) {
+    public void completeProfile(
+            String nickname,
+            String email,
+            String intro,
+            byte[] genderEncrypted,
+            byte[] ageRangeEncrypted
+    ) {
         this.nickname = nickname;
+        this.email = email;
+        this.intro = intro;
         this.genderEncrypted = genderEncrypted;
         this.ageRangeEncrypted = ageRangeEncrypted;
         this.status = STATUS_ACTIVE;
@@ -154,6 +195,14 @@ public class Member {
 
     public String getNickname() {
         return nickname;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public String getIntro() {
+        return intro;
     }
 
     public String getProfileImageUrl() {
