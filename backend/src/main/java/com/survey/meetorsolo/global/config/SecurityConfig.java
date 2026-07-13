@@ -21,7 +21,7 @@ public class SecurityConfig {
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/kakao/**", "/api/health").permitAll()
+                        .requestMatchers("/api/auth/kakao/**", "/api/auth/naver/**", "/api/health").permitAll()
                         .anyRequest().permitAll()
                 )
                 .build();

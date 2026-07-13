@@ -12,6 +12,8 @@ export type TravelStyle = {
 export type MemberProfile = {
   memberId: number;
   nickname: string;
+  email: string | null;
+  intro: string | null;
   gender: Gender | null;
   ageRange: AgeRange | null;
   status: string;
@@ -20,6 +22,8 @@ export type MemberProfile = {
 
 export type UpdateMemberProfileRequest = {
   nickname: string;
+  email?: string | null;
+  intro?: string | null;
   gender: Gender;
   ageRange: AgeRange;
   travelStyles: TravelStyleCode[];

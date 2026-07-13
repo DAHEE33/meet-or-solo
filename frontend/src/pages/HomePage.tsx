@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { MapPin } from 'lucide-react';
-import type { TourSpot, UserProfile } from '../types';
-import { getCurrentUser, getTodaySpot, getNearbySpots } from '../api/home';
+import type { TourSpot } from '../types';
+import type { MemberProfile } from '../api/memberProfile';
+import { memberProfileApi } from '../api/memberProfile';
+import { getTodaySpot, getNearbySpots } from '../api/home';
 import MobileLayout from '../components/layout/MobileLayout';
 import AppHeader from '../components/layout/AppHeader';
 import TodaySpotCard from '../components/home/TodaySpotCard';
@@ -9,16 +11,16 @@ import CtaBanner from '../components/home/CtaBanner';
 import NearbySpotItem from '../components/home/NearbySpotItem';
 
 export default function HomePage() {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [todaySpot, setTodaySpot] = useState<TourSpot | null>(null);
   const [nearbySpots, setNearbySpots] = useState<TourSpot[]>([]);
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([getCurrentUser(), getTodaySpot(), getNearbySpots()]).then(
-      ([u, spot, spots]) => {
+    Promise.all([memberProfileApi.getMine(), getTodaySpot(), getNearbySpots()]).then(
+      ([memberProfile, spot, spots]) => {
         if (!mounted) return;
-        setUser(u);
+        setProfile(memberProfile);
         setTodaySpot(spot);
         setNearbySpots(spots);
       },
@@ -37,10 +39,10 @@ export default function HomePage() {
         <section className="flex flex-col gap-1.5">
           <span className="flex w-fit items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-medium text-ink/60 shadow-sm">
             <MapPin size={13} className="text-coral" />
-            {user ? user.currentAreaName : '위치 확인 중…'}
+            현재 위치 확인 전
           </span>
           <h1 className="text-[22px] font-bold leading-snug text-ink">
-            {user ? `${user.nickname}님,` : '여행자님,'}
+            {profile?.nickname ? `${profile.nickname}님,` : '여행자님,'}
             <br />
             오늘은 어디로 떠나볼까요?
           </h1>

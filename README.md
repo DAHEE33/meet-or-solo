@@ -2,6 +2,23 @@
 
 강원도 축제 현장에서 혼자 방문한 사용자를 2~4인 소그룹으로 즉석 매칭하는 PWA 서비스입니다.
 
+## 네이버 OAuth 환경변수
+
+네이버 로그인은 backend의 `GET /api/auth/naver/login`, `GET /api/auth/naver/callback`을 사용합니다. frontend는 네이버 authorize URL을 직접 만들지 않습니다.
+
+```text
+NAVER_CLIENT_ID
+NAVER_CLIENT_SECRET
+NAVER_REDIRECT_URI
+NAVER_AUTHORIZATION_URI
+NAVER_TOKEN_URI
+NAVER_USER_INFO_URI
+NAVER_CONNECT_TIMEOUT
+NAVER_READ_TIMEOUT
+```
+
+local callback은 `http://localhost:8080/api/auth/naver/callback`입니다. dev는 현재 공개 도메인 없이 `http://<DEV_SERVER_HOST>:18080/api/auth/naver/callback` placeholder를 사용하며, prod URL은 운영 도메인이 확정된 뒤 정확히 등록합니다. 실제 Secret과 서버 주소는 저장소에 기록하지 않습니다.
+
 이 저장소는 모노레포 구조로 관리합니다.
 
 ```text

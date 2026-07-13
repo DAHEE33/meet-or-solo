@@ -1,5 +1,11 @@
 # 프론트엔드 가이드
 
+## 소셜 로그인 버튼
+
+로그인 화면은 기존 카카오 버튼과 네이버 텍스트 버튼을 함께 제공한다. 두 버튼 모두 backend의 `/api/auth/{provider}/login`으로 이동하며 authorize URL을 frontend에서 조립하지 않는다. 이동 중에는 중복 클릭을 막고 OAuth 실패는 provider 공통 안내로 표시한다.
+
+Home과 MyPage의 회원 nickname, email, 여행 스타일은 mock이 아니라 `GET /api/members/me` 응답을 사용한다. OAuth email이 제공되지 않은 회원은 이메일 미등록 안내를 표시한다.
+
 ## 프론트엔드 방향
 
 프론트엔드는 React + TypeScript + Vite 기반 PWA입니다. 모바일 축제 방문자를 우선하고, 관리자 화면은 같은 코드베이스에서 확장합니다.

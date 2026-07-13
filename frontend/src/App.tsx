@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import ProfileEditPage from './pages/ProfileEditPage';
 import TourSpotListPage from './pages/TourSpotListPage';
 import TourSpotDetailPage from './pages/TourSpotDetailPage';
 import MatchingConditionPage from './pages/MatchingConditionPage';
@@ -15,11 +16,13 @@ import { HealthCheckPage } from './pages/HealthCheckPage';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/logn" element={<Navigate to="/login" replace />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/profile/edit" element={<ProfileEditPage />} />
         <Route path="/spots" element={<TourSpotListPage />} />
         <Route path="/spots/:spotId" element={<TourSpotDetailPage />} />
         <Route path="/matching" element={<MatchingConditionPage />} />

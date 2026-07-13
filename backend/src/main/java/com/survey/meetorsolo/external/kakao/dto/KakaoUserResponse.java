@@ -20,6 +20,10 @@ public record KakaoUserResponse(
         return kakaoAccount.profile.nickname;
     }
 
+    public String email() {
+        return kakaoAccount == null ? null : kakaoAccount.email;
+    }
+
     public String profileImageUrl() {
         if (kakaoAccount == null || kakaoAccount.profile == null) {
             return null;
@@ -28,6 +32,7 @@ public record KakaoUserResponse(
     }
 
     public record KakaoAccount(
+            String email,
             Profile profile
     ) {
     }

@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.member.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -11,6 +12,13 @@ public record UpdateMemberProfileRequest(
         @NotBlank
         @Size(max = 50)
         String nickname,
+
+        @Email
+        @Size(max = 255)
+        String email,
+
+        @Size(max = 160)
+        String intro,
 
         @NotBlank
         @Pattern(regexp = "MALE|FEMALE|OTHER")
