@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   memberProfileApi,
@@ -10,6 +10,7 @@ import Chip from '../components/common/Chip';
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import { NICKNAME_MAX_LENGTH, NICKNAME_RULE_MESSAGE, validateNickname } from '../utils/nickname';
 
 const TRAVEL_STYLES: { code: TravelStyleCode; label: string }[] = [
   { code: 'RELAXED', label: '느긋하게' },
@@ -40,6 +41,9 @@ export default function ProfileEditPage() {
   const [gender, setGender] = useState<Gender | ''>('');
   const [ageRange, setAgeRange] = useState<AgeRange | ''>('');
   const [styles, setStyles] = useState<TravelStyleCode[]>([]);
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -54,6 +58,7 @@ export default function ProfileEditPage() {
       setGender(profile.gender ?? '');
       setAgeRange(profile.ageRange ?? '');
       setStyles(profile.travelStyles.map((style) => style.code));
+      setProfileImageUrl(profile.profileImageUrl);
       setIsLoading(false);
     }).catch(() => {
       if (!cancelled) {
@@ -63,6 +68,29 @@ export default function ProfileEditPage() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+  }, [imagePreviewUrl]);
+
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setErrorMessage(null);
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setErrorMessage('JPEG, PNG, WEBP 이미지만 선택할 수 있습니다.');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage('프로필 이미지는 5MB 이하만 업로드할 수 있습니다.');
+      event.target.value = '';
+      return;
+    }
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  };
 
   const toggleStyle = (style: TravelStyleCode) => {
     setErrorMessage(null);
@@ -77,7 +105,12 @@ export default function ProfileEditPage() {
   };
 
   const handleSave = async () => {
-    if (!nickname.trim() || !gender || !ageRange || styles.length === 0) {
+    const nicknameError = validateNickname(nickname);
+    if (nicknameError) {
+      setErrorMessage(nicknameError);
+      return;
+    }
+    if (!gender || !ageRange || styles.length === 0) {
       setErrorMessage('닉네임, 성별, 연령대, 여행 스타일을 모두 입력해 주세요.');
       return;
     }
@@ -92,6 +125,7 @@ export default function ProfileEditPage() {
         ageRange,
         travelStyles: styles,
       });
+      if (imageFile) await memberProfileApi.uploadImage(imageFile);
       navigate('/mypage', { replace: true });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '프로필 저장에 실패했습니다.');
@@ -108,9 +142,38 @@ export default function ProfileEditPage() {
       <PageHeader title="프로필 수정" />
       <main className="flex flex-col gap-6 px-5 pb-10 pt-2">
         {isLoading ? <p className="py-10 text-center text-sm text-ink/50">프로필을 불러오는 중...</p> : <>
+          <section className="flex flex-col items-center gap-3">
+            {imagePreviewUrl || profileImageUrl ? (
+              <img
+                src={imagePreviewUrl ?? profileImageUrl ?? undefined}
+                alt="프로필 이미지 미리보기"
+                className="h-24 w-24 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-coral/10 text-2xl font-bold text-coral">
+                {nickname.slice(0, 1) || '?'}
+              </div>
+            )}
+            <label className="cursor-pointer rounded-xl border border-line bg-white px-4 py-2 text-sm font-semibold text-ink/65 active:bg-sand">
+              이미지 선택
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleImageChange}
+                className="sr-only"
+              />
+            </label>
+            <p className="text-center text-xs text-ink/45">JPEG, PNG, WEBP · 최대 5MB</p>
+          </section>
           <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
             닉네임
-            <input value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={50} className={inputClass} />
+            <input
+              value={nickname}
+              onChange={(event) => setNickname(event.target.value)}
+              maxLength={NICKNAME_MAX_LENGTH}
+              className={inputClass}
+            />
+            <span className="text-xs font-normal text-ink/45">{NICKNAME_RULE_MESSAGE}</span>
           </label>
           <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
             이메일 <span className="text-xs font-normal text-ink/45">비워 두어도 괜찮아요.</span>

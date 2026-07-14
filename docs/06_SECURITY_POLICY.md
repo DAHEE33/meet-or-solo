@@ -186,3 +186,11 @@ MVP 초기 방향:
 - 불필요한 개인정보
 
 운영 로그는 문제 해결에 필요한 정보를 제공하되 사용자 정보를 과도하게 노출하지 않아야 합니다.
+
+## Private 프로필 이미지
+
+- OCI bucket은 Private으로 유지하고 frontend에 OCI 자격 증명이나 직접 object URL을 제공하지 않습니다.
+- 업로드 API는 인증된 본인에게만 허용하며 허용 MIME 타입, 파일 시그니처, 파일 크기를 검증합니다.
+- 조회 API도 인증된 본인의 `profile_image_object_key`만 사용하고 요청에서 임의 object key를 받지 않습니다.
+- 응답은 `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`를 사용합니다.
+- OCI Customer Secret Key와 endpoint의 실제 namespace는 코드, 문서, example 파일에 기록하지 않습니다.

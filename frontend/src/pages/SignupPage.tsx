@@ -10,6 +10,7 @@ import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
 import Chip from '../components/common/Chip';
+import { NICKNAME_MAX_LENGTH, NICKNAME_RULE_MESSAGE, validateNickname } from '../utils/nickname';
 
 const TRAVEL_STYLES: { code: TravelStyleCode; label: string }[] = [
   { code: 'RELAXED', label: '느긋하게' },
@@ -85,7 +86,12 @@ export default function SignupPage() {
   };
 
   const handleComplete = async () => {
-    if (!nickname.trim() || !gender || !ageRange || styles.length === 0) {
+    const nicknameError = validateNickname(nickname);
+    if (nicknameError) {
+      setErrorMessage(nicknameError);
+      return;
+    }
+    if (!gender || !ageRange || styles.length === 0) {
       setErrorMessage('닉네임, 성별, 연령대, 여행 스타일을 모두 입력해 주세요.');
       return;
     }
@@ -131,9 +137,10 @@ export default function SignupPage() {
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             placeholder="닉네임"
-            maxLength={50}
+            maxLength={NICKNAME_MAX_LENGTH}
             className={inputClass}
           />
+          <p className="-mt-1 text-xs text-ink/45">{NICKNAME_RULE_MESSAGE}</p>
         </div>
 
         <section className="flex flex-col gap-3">

@@ -1,4 +1,8 @@
 spring:
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:meet_or_solo_local}
     username: ${POSTGRES_USER:meet_user}
@@ -20,6 +24,14 @@ logging:
     org.hibernate.SQL: debug
 
 app:
+  object-storage:
+    endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT:http://localhost:9000}
+    region: ${OCI_OBJECT_STORAGE_REGION:us-ashburn-1}
+    access-key: ${OCI_OBJECT_STORAGE_ACCESS_KEY:LOCAL_PLACEHOLDER_ACCESS_KEY}
+    secret-key: ${OCI_OBJECT_STORAGE_SECRET_KEY:LOCAL_PLACEHOLDER_SECRET_KEY}
+    bucket: ${OCI_OBJECT_STORAGE_BUCKET:meet-or-solo-assets}
+    profile-prefix: ${OCI_OBJECT_STORAGE_PROFILE_PREFIX:profiles/local}
+    max-file-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
   frontend:
     base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
   auth:
@@ -45,5 +57,5 @@ app:
   jwt:
     secret: ${JWT_SECRET:}
     access-token-expires-minutes: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES:30}
-    refresh-token-expires-days: ${JWT_REFRESH_TOKEN_EXPIRES_DAYS:14}
+    refresh-token-expires-minutes: ${JWT_REFRESH_TOKEN_EXPIRES_MINUTES:30}
 

@@ -17,6 +17,14 @@ logging:
     root: info
 
 app:
+  object-storage:
+    endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT}
+    region: ${OCI_OBJECT_STORAGE_REGION}
+    access-key: ${OCI_OBJECT_STORAGE_ACCESS_KEY}
+    secret-key: ${OCI_OBJECT_STORAGE_SECRET_KEY}
+    bucket: ${OCI_OBJECT_STORAGE_BUCKET:meet-or-solo-assets}
+    profile-prefix: ${OCI_OBJECT_STORAGE_PROFILE_PREFIX:profiles/prod}
+    max-file-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
   frontend:
     base-url: ${FRONTEND_BASE_URL}
   auth:
@@ -42,4 +50,4 @@ app:
   jwt:
     secret: ${JWT_SECRET}
     access-token-expires-minutes: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES:30}
-    refresh-token-expires-days: ${JWT_REFRESH_TOKEN_EXPIRES_DAYS:14}
+    refresh-token-expires-minutes: ${JWT_REFRESH_TOKEN_EXPIRES_MINUTES:20160}

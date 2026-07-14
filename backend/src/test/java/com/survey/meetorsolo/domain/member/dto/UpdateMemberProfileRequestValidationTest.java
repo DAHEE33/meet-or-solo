@@ -58,6 +58,36 @@ class UpdateMemberProfileRequestValidationTest {
     }
 
     @Test
+    void 닉네임이_두_글자보다_짧으면_검증에_실패한다() {
+        var request = new UpdateMemberProfileRequest(
+                "가", null, null, "FEMALE", "20S", List.of("FOOD")
+        );
+
+        assertThat(validator.validate(request))
+                .anyMatch(violation -> violation.getPropertyPath().toString().equals("nickname"));
+    }
+
+    @Test
+    void 닉네임이_열두_글자를_초과하면_검증에_실패한다() {
+        var request = new UpdateMemberProfileRequest(
+                "열두글자를넘는닉네임", null, null, "FEMALE", "20S", List.of("FOOD")
+        );
+
+        assertThat(validator.validate(request))
+                .anyMatch(violation -> violation.getPropertyPath().toString().equals("nickname"));
+    }
+
+    @Test
+    void 닉네임에_공백이나_특수문자가_있으면_검증에_실패한다() {
+        var request = new UpdateMemberProfileRequest(
+                "여행자!", null, null, "FEMALE", "20S", List.of("FOOD")
+        );
+
+        assertThat(validator.validate(request))
+                .anyMatch(violation -> violation.getPropertyPath().toString().equals("nickname"));
+    }
+
+    @Test
     void 허용된_여행_스타일_한_개에서_세_개는_검증에_성공한다() {
         var request = new UpdateMemberProfileRequest(
                 "닉네임", "user@example.com", "소개", "FEMALE", "20S", List.of("RELAXED", "FOOD", "PHOTO")

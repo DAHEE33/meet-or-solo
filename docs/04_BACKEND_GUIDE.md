@@ -21,6 +21,13 @@
 - Scheduler 기반 background job
 - Flyway 기반 DB schema 관리
 
+## 회원 프로필 validation
+
+- 닉네임은 `2~12자`로 제한한다.
+- 닉네임은 한글, 영문 대소문자, 숫자만 허용한다.
+- 공백, 이모지, 특수문자는 backend validation에서 거절한다.
+- frontend 입력 제한과 관계없이 backend의 `UpdateMemberProfileRequest` validation을 최종 기준으로 둔다.
+
 ## 패키지 방향
 
 권장 패키지 구조:
@@ -198,6 +205,18 @@ DB volume을 초기화하면 `flyway_schema_history`도 함께 사라집니다. 
 
 PostgreSQL은 MVP의 단일 신뢰 원천입니다.
 
+## 프로필 이미지 Object Storage
+
+- `members.profile_image_url`은 Kakao/Naver OAuth가 제공한 외부 URL 용도로 유지합니다.
+- `V9__add_member_profile_image_object_key.sql`은 직접 업로드한 이미지의 object key를 저장하는 nullable `profile_image_object_key`를 추가합니다.
+- object key 형식은 `{OCI_OBJECT_STORAGE_PROFILE_PREFIX}/{memberId}/{uuid}.{extension}`이며 local 기본값은 `profiles/local`입니다.
+- `POST /api/members/me/profile-image`는 인증 cookie와 multipart `file`을 받아 JPEG, PNG, WEBP 및 최대 크기를 검증합니다. MIME 타입과 파일 시그니처를 함께 확인합니다.
+- 새 object 업로드와 DB flush가 성공한 뒤 transaction commit 시 기존 object를 삭제합니다. DB transaction이 rollback되면 새 object를 정리합니다.
+- `GET /api/members/me`의 `profileImageUrl`은 직접 업로드 object가 있으면 `/api/members/me/profile-image`, 없으면 OAuth URL, 둘 다 없으면 `null`입니다.
+- `GET /api/members/me/profile-image`는 본인 object key만 조회해 private bucket의 bytes를 `no-store` 응답으로 중계합니다.
+- Object Storage 장애 응답에는 endpoint, access key, secret key, object key 같은 내부 정보를 노출하지 않습니다.
+- OCI S3 Compatibility API는 `aws-chunked` content encoding을 지원하지 않으므로 S3 client의 `chunkedEncodingEnabled`를 `false`, `requestChecksumCalculation`을 `WHEN_REQUIRED`로 설정합니다.
+
 ### 날짜·시간 저장 및 API 기준
 
 - Flyway의 기존 `TIMESTAMPTZ` 컬럼을 유지합니다.
@@ -206,7 +225,7 @@ PostgreSQL은 MVP의 단일 신뢰 원천입니다.
 - HikariCP가 연결을 만들 때 `SET TIME ZONE 'Asia/Seoul'`을 실행해 애플리케이션 DB session 기준도 고정합니다.
 - Jackson은 `Asia/Seoul` 기준 ISO-8601 문자열과 `+09:00` offset을 사용하며 epoch timestamp로 직렬화하지 않습니다.
 - frontend는 API의 절대 시점을 KST 형식으로 렌더링할 뿐 9시간을 수동으로 더하지 않습니다.
-- PostgreSQL server/session timezone은 Flyway migration으로 관리하지 않습니다.
+- PostgreSQL server/session timezone은 Flyway migration으로 관리하지 않고 local/dev compose의 `postgres -c timezone=Asia/Seoul`과 기존 DB용 수동 `ALTER DATABASE` script로 관리합니다.
 
 관리 대상:
 
@@ -253,6 +272,13 @@ GET /api/health
 4단계에서 `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 현재 frontend `healthApi`와 `HealthCheckPage`는 기존 health 응답 형태를 기준으로 작성되어 있으므로, 5단계 Frontend 공통 코드화에서 새 `ApiResponse` 포맷에 맞게 수정해야 합니다.
 
 ## 추후 보안 기능
+
+### JWT 만료시간 설정
+
+- `JWT_ACCESS_TOKEN_EXPIRES_MINUTES`는 DB에 저장하지 않는 Access Token의 JWT `exp`와 cookie 수명을 설정합니다.
+- `JWT_REFRESH_TOKEN_EXPIRES_MINUTES`는 DB `refresh_tokens.expires_at`과 Refresh Token cookie 수명을 설정합니다.
+- dev/prod의 Access Token 기본값은 30분이고 Refresh Token 기본값 `20160`분은 14일입니다. 현재 local 기본값과 개인 `.env`는 만료 동작 확인을 위해 Access Token과 Refresh Token을 각각 30분으로 설정합니다.
+- 만료시간 변경은 기존 token에 소급 적용되지 않으므로 backend 재시작 후 다시 로그인해 token을 재발급해야 합니다.
 
 1단계 이후 구현 예정:
 

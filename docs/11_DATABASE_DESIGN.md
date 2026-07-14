@@ -225,7 +225,7 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | Kakao OAuth 기반 회원과 프로필, 서비스 상태를 관리한다. |
-| 주요 컬럼 | `id`, `provider`, `provider_user_id`, `nickname`, `profile_image_url`, `gender_encrypted`, `age_range_encrypted`, `manner_temperature`, `penalty_score`, `role`, `status`, `last_login_at`, `withdrawn_at`, `created_at`, `updated_at` |
+| 주요 컬럼 | `id`, `provider`, `provider_user_id`, `nickname`, `profile_image_url`, `profile_image_object_key`, `gender_encrypted`, `age_range_encrypted`, `manner_temperature`, `penalty_score`, `role`, `status`, `last_login_at`, `withdrawn_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | 없음 |
 | 상태값 | `status`, `role` |

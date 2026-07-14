@@ -17,6 +17,10 @@ spring:
     serialization:
       write-dates-as-timestamps: false
       write-dates-with-context-time-zone: true
+  servlet:
+    multipart:
+      max-file-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
+      max-request-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
 
 server:
   port: ${SERVER_PORT:8080}

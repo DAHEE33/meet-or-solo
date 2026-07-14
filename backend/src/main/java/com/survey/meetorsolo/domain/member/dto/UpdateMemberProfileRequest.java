@@ -10,7 +10,8 @@ import org.hibernate.validator.constraints.UniqueElements;
 
 public record UpdateMemberProfileRequest(
         @NotBlank
-        @Size(max = 50)
+        @Size(min = 2, max = 12)
+        @Pattern(regexp = "^[가-힣A-Za-z0-9]+$")
         String nickname,
 
         @Email

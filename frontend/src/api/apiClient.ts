@@ -6,7 +6,7 @@ type ApiClientOptions = Omit<RequestInit, 'headers'> & {
   headers?: HeadersInit;
 };
 
-function buildApiUrl(path: string): string {
+export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const baseUrl = API_BASE_URL.replace(/\/$/, '');
 
@@ -32,10 +32,12 @@ export async function apiClient<T>(path: string, options: ApiClientOptions = {})
   try {
     body = (await response.json()) as ApiResponse<T>;
   } catch {
+    redirectToLoginIfUnauthorized(response.status);
     throw new Error(`API 응답을 해석할 수 없습니다. HTTP ${response.status}`);
   }
 
   if (!response.ok) {
+    redirectToLoginIfUnauthorized(response.status);
     throw new Error(getErrorMessage(body, `API 요청 실패: HTTP ${response.status}`));
   }
 
@@ -48,4 +50,9 @@ export async function apiClient<T>(path: string, options: ApiClientOptions = {})
   }
 
   return body.data;
+}
+
+function redirectToLoginIfUnauthorized(status: number): void {
+  if (status !== 401 || window.location.pathname === '/login') return;
+  window.location.replace('/login');
 }

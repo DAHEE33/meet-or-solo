@@ -6,6 +6,28 @@
 
 Home과 MyPage의 회원 nickname, email, 여행 스타일은 mock이 아니라 `GET /api/members/me` 응답을 사용한다. OAuth email이 제공되지 않은 회원은 이메일 미등록 안내를 표시한다.
 
+## 닉네임 입력 제한
+
+- 닉네임은 `2~12자`로 제한한다.
+- 허용 문자는 한글, 영문 대소문자, 숫자만 사용한다.
+- 공백, 이모지, 특수문자는 허용하지 않는다.
+- `SignupPage`와 `ProfileEditPage`는 같은 안내 문구와 client 선검증을 사용한다.
+- backend validation이 최종 기준이며 frontend 제한은 사용자 편의를 위한 사전 안내다.
+
+## 프로필 이미지 표시와 업로드
+
+- MyPage와 ProfileEditPage는 `profileImageUrl`이 있으면 이미지를 표시하고, `null`이면 기존 닉네임 기반 placeholder를 표시합니다.
+- ProfileEditPage는 JPEG, PNG, WEBP 파일 선택과 미리보기를 제공하며 최대 5MB를 client에서도 선검증합니다.
+- 저장 시 프로필 정보 갱신 후 선택한 파일을 `POST /api/members/me/profile-image`의 `file` 필드로 전송합니다.
+- `Content-Type`은 브라우저가 multipart boundary와 함께 만들도록 직접 지정하지 않습니다.
+- backend 상대 이미지 URL은 `VITE_API_BASE_URL` 설정을 반영해 표시합니다.
+
+## 인증 만료 이동
+
+- 공통 `apiClient`가 backend의 `401 UNAUTHORIZED` 응답을 받으면 `/login` 페이지로 이동합니다.
+- 이미 `/login`에 있는 경우에는 다시 이동하지 않아 redirect loop를 방지합니다.
+- `window.location.replace`를 사용해 만료 직전의 인증 필요 화면이 browser 뒤로가기에 남지 않게 합니다.
+
 ## 프론트엔드 방향
 
 프론트엔드는 React + TypeScript + Vite 기반 PWA입니다. 모바일 축제 방문자를 우선하고, 관리자 화면은 같은 코드베이스에서 확장합니다.
