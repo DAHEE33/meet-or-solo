@@ -78,6 +78,7 @@ public class MemberProfileService {
                 member.getNickname(),
                 member.getEmail(),
                 member.getIntro(),
+                resolveProfileImageUrl(member),
                 profileFieldCrypto.decrypt(member.getGenderEncrypted()),
                 profileFieldCrypto.decrypt(member.getAgeRangeEncrypted()),
                 member.getStatus(),
@@ -86,6 +87,13 @@ public class MemberProfileService {
                         .map(TravelStyleResponse::from)
                         .toList()
         );
+    }
+
+    private String resolveProfileImageUrl(Member member) {
+        if (member.getProfileImageObjectKey() != null && !member.getProfileImageObjectKey().isBlank()) {
+            return "/api/members/me/profile-image";
+        }
+        return normalize(member.getProfileImageUrl());
     }
 
     private String normalize(String value) {

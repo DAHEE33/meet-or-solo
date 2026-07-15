@@ -50,6 +50,9 @@ public class Member {
     @Column(name = "profile_image_url", length = 1000)
     private String profileImageUrl;
 
+    @Column(name = "profile_image_object_key", length = 1000)
+    private String profileImageObjectKey;
+
     @Column(name = "gender_encrypted")
     private byte[] genderEncrypted;
 
@@ -207,6 +210,14 @@ public class Member {
 
     public String getProfileImageUrl() {
         return profileImageUrl;
+    }
+
+    public String getProfileImageObjectKey() {
+        return profileImageObjectKey;
+    }
+
+    public void updateProfileImageObjectKey(String profileImageObjectKey) {
+        this.profileImageObjectKey = profileImageObjectKey;
     }
 
     public String getRole() {

@@ -39,12 +39,27 @@
 
 Redis는 초기 개발환경과 MVP 초기 `docker-compose`에 추가하지 않습니다.
 
+## 프로필 이미지 Object Storage 환경변수
+
+프로필 이미지는 private OCI Object Storage bucket `meet-or-solo-assets`에 S3 compatible API로 저장합니다. frontend는 OCI에 직접 접근하지 않고 backend의 multipart API만 호출합니다.
+
+- `OCI_OBJECT_STORAGE_ENDPOINT`: `<namespace>.compat.objectstorage.<region>.oraclecloud.com` 형식의 endpoint
+- `OCI_OBJECT_STORAGE_REGION`: OCI region
+- `OCI_OBJECT_STORAGE_ACCESS_KEY`, `OCI_OBJECT_STORAGE_SECRET_KEY`: OCI Customer Secret Key 자격 증명
+- `OCI_OBJECT_STORAGE_BUCKET`: 기본값 `meet-or-solo-assets`
+- `OCI_OBJECT_STORAGE_PROFILE_PREFIX`: local 기본값 `profiles/local`, dev 예시 `profiles/dev`
+- `PROFILE_IMAGE_MAX_SIZE`: 기본값 `5MB`
+
+실제 자격 증명은 개인 `.env` 또는 서버 `.env`에서만 주입합니다. 저장소의 example 파일에는 placeholder만 둡니다. local profile은 실행 작업 디렉터리 차이를 고려해 `.env`와 `../.env`를 optional config로 읽습니다. local에서 실제 OCI bucket을 사용하려면 `.env.example`을 복사한 루트 `.env`에 값을 설정하고 backend를 재시작합니다.
+
 ## 날짜·시간 환경 기준
 
 - local/dev PostgreSQL과 backend container는 `TZ=Asia/Seoul`을 사용합니다.
+- local/dev PostgreSQL은 container 실행 시 `postgres -c timezone=Asia/Seoul`을 적용해 기존 volume을 사용하는 경우에도 server와 신규 session의 기본 표시 timezone을 KST로 고정합니다.
 - PostgreSQL client session은 `PGTZ=Asia/Seoul`을 사용합니다.
 - backend JVM, Hibernate JDBC, Jackson 및 PostgreSQL 애플리케이션 session도 `Asia/Seoul`로 통일합니다.
 - 기존 local/dev DB에는 각각 `ALTER DATABASE meet_or_solo_local SET timezone TO 'Asia/Seoul';`, `ALTER DATABASE meet_or_solo_dev SET timezone TO 'Asia/Seoul';`을 수동 실행하고 재접속합니다.
+- IntelliJ Database 등 이미 연결된 client session은 설정 변경 전 timezone을 유지할 수 있으므로 datasource 연결을 끊고 다시 연결한 뒤 `SHOW TIME ZONE;`이 `Asia/Seoul`인지 확인합니다.
 - `TIMESTAMPTZ`의 기존 값을 UPDATE하거나 9시간을 더하지 않습니다. timezone 변경은 동일한 절대 시점의 조회 표현만 `+09:00`으로 바꿉니다.
 - prod는 실제 운영 DB 이름과 환경을 확인한 후 동일 정책을 별도로 적용합니다.
 
@@ -217,7 +232,7 @@ cd backend
 ./gradlew bootRun
 ```
 
-Spring Boot `bootRun`은 `.env`를 자동으로 읽지 않습니다. Git Bash에서 `source .env`를 했다면 같은 Git Bash 터미널에서 `./gradlew bootRun`까지 실행해야 합니다. PowerShell과 Git Bash의 환경변수는 서로 공유되지 않습니다.
+Spring Boot local profile은 루트 `.env`를 optional config로 읽습니다. 환경변수로 같은 이름의 값을 별도 주입하면 환경변수가 우선합니다. `.env` 값을 변경한 뒤에는 backend를 재시작해야 합니다.
 
 PowerShell에서 실행할 경우 `application-local.yml` fallback 기본값으로 실행하거나, PowerShell 환경변수를 직접 설정합니다.
 

@@ -43,9 +43,17 @@ export default function MyPage() {
           >
             <Pencil size={15} />
           </Link>
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-coral/10 text-lg font-bold text-coral">
-            {profile?.nickname?.slice(0, 1) ?? '?'}
-          </div>
+          {profile?.profileImageUrl ? (
+            <img
+              src={profile.profileImageUrl}
+              alt={`${profile.nickname} 프로필`}
+              className="h-14 w-14 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-coral/10 text-lg font-bold text-coral">
+              {profile?.nickname?.slice(0, 1) ?? '?'}
+            </div>
+          )}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-[17px] font-bold text-ink">
               {profile?.nickname ?? '프로필 불러오는 중...'}

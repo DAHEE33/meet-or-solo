@@ -1,5 +1,31 @@
 # 진행 상태 기록
 
+## [10-C 보완] 닉네임 제한과 local access token 만료 테스트 설정
+
+상태: 코드 작성 및 frontend build 완료, Gradle wrapper 다운로드 승인 후 backend validation 테스트 실행 필요
+
+- 프로필 설정/수정 닉네임을 `2~12자`로 제한
+- 한글, 영문 대소문자, 숫자만 허용하고 공백/특수문자는 거절
+- `SignupPage`, `ProfileEditPage`에 동일한 닉네임 안내 문구와 client 선검증 추가
+- backend `UpdateMemberProfileRequest` validation에 닉네임 길이와 허용 문자 제한 추가
+- local profile의 access token 기본 만료 시간을 테스트용 `1분`으로 변경
+- dev/prod profile의 access token 기본 만료 시간은 기존 `30분` 유지
+
+## [10-C 보완] 프로필 이미지 업로드/조회
+
+상태: 코드·문서 작성 및 frontend build 완료, Java 17 환경의 backend 테스트 실행 필요
+
+- `V9__add_member_profile_image_object_key.sql`로 `members.profile_image_object_key` nullable 컬럼 추가
+- 기존 `profile_image_url`은 Kakao/Naver OAuth 외부 URL로 유지하고 직접 업로드 object를 우선 표시
+- OCI Object Storage S3 compatible client와 private bucket backend 중계 조회 구현
+- JPEG/PNG/WEBP, MIME/file signature, 기본 5MB 제한 검증
+- 새 업로드 성공 및 DB commit 후 기존 object 삭제, rollback 시 새 object 정리
+- MyPage/ProfileEditPage 이미지 표시, placeholder fallback, 파일 선택·미리보기·업로드 UI 구현
+- `.env.example`, `infra/env/.env.dev.example`, dev compose에 placeholder 환경변수 추가
+- 실제 OCI secret과 dev 서버 값은 추가하지 않음
+- local 실행 시 루트 `.env`를 optional Spring config로 읽도록 보완하고 Object Storage SDK 예외 cause를 서버 로그에 보존
+- OCI가 반환한 `AWS chunked encoding not supported` 501 오류에 맞춰 S3 client의 chunked encoding을 비활성화하고 request checksum 계산을 required 요청으로 제한
+
 ## [10-C 보완] MyPage 프로필 수정
 
 - 기존 MyPage 레이아웃과 하단 탭바를 유지하고 프로필 카드에 수정 진입 버튼 추가
@@ -15,6 +41,8 @@
 - `members.email`을 nullable, non-unique 참고 정보로 추가하며 이메일 기반 조회·병합은 하지 않음
 - ACTIVE 회원 재로그인 시 프로필 설정 nickname을 OAuth nickname으로 덮어쓰지 않도록 보완
 - Home/MyPage의 `mockUser` 표시를 `/api/members/me` 실제 프로필 응답으로 교체
+- Refresh Token 만료 설정을 분 단위 `JWT_REFRESH_TOKEN_EXPIRES_MINUTES`로 변경해 local에서 1분 만료 테스트를 지원하고 dev/prod 기본값은 14일에 해당하는 `20160`분으로 유지
+- local token 만료 테스트 값을 Access/Refresh 각각 30분으로 조정하고 frontend 공통 `apiClient`가 `401 UNAUTHORIZED`를 받으면 `/login`으로 이동하도록 보완
 
 ## [10-C] Naver OAuth 로그인 추가
 
@@ -419,6 +447,7 @@ dev 서버 기준:
 - frontend 공통 formatter를 `yyyy-MM-dd HH:mm:ss` 형식과 null 안전 처리로 구성
 - 기존 migration 수정 및 신규 migration 추가 없음
 - dev Database timezone 영구 기본값은 `scripts/set-dev-db-timezone.sql`로 수동 적용
+- local/dev PostgreSQL compose 실행 명령에 `-c timezone=Asia/Seoul`을 추가해 server와 신규 client session의 기본 표시 timezone을 KST로 강제
 
 ## 4. 기능 분업 전까지 남은 작업
 

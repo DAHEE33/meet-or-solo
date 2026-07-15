@@ -34,12 +34,12 @@ public class JwtProvider {
             ObjectMapper objectMapper,
             @Value("${app.jwt.secret}") String secret,
             @Value("${app.jwt.access-token-expires-minutes}") long accessTokenExpiresMinutes,
-            @Value("${app.jwt.refresh-token-expires-days}") long refreshTokenExpiresDays
+            @Value("${app.jwt.refresh-token-expires-minutes}") long refreshTokenExpiresMinutes
     ) {
         this.objectMapper = objectMapper;
         this.secret = secret == null ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
         this.accessTokenDuration = Duration.ofMinutes(accessTokenExpiresMinutes);
-        this.refreshTokenDuration = Duration.ofDays(refreshTokenExpiresDays);
+        this.refreshTokenDuration = Duration.ofMinutes(refreshTokenExpiresMinutes);
     }
 
     public String createAccessToken(Member member) {

@@ -14,7 +14,7 @@ class JwtProviderTest {
             new ObjectMapper(),
             "test-jwt-secret-that-is-long-enough",
             30,
-            14
+            20160
     );
 
     @Test

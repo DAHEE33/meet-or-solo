@@ -7,6 +7,7 @@ public record MemberProfileResponse(
         String nickname,
         String email,
         String intro,
+        String profileImageUrl,
         String gender,
         String ageRange,
         String status,
