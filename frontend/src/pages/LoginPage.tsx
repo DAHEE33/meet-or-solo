@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import MobileLayout from '../components/layout/MobileLayout';
 import { getOAuthLoginPath, type OAuthProvider } from '../utils/oauth';
@@ -7,6 +7,13 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const oauthError = searchParams.get('oauthError');
   const [loadingProvider, setLoadingProvider] = useState<OAuthProvider | null>(null);
+
+  useEffect(() => {
+    const resetLoadingProvider = () => setLoadingProvider(null);
+
+    window.addEventListener('pageshow', resetLoadingProvider);
+    return () => window.removeEventListener('pageshow', resetLoadingProvider);
+  }, []);
 
   const handleLogin = (provider: OAuthProvider) => {
     if (loadingProvider) return;
