@@ -1,5 +1,21 @@
 # 진행 상태 기록
 
+## [10-공통 설계 보완] 매칭 제안 회차와 회원 취향 임베딩 DB 반영
+
+상태: 문서 및 Flyway migration 작성 완료, 애플리케이션 코드와 실제 local/dev DB 적용 제외
+
+- 기존 `V1`~`V9` migration을 수정하지 않고 `V10__add_matching_proposal_rounds.sql`, `V11__add_member_preference_embeddings.sql` 추가
+- 동일 후보의 인원 미달 재확인은 같은 `attempt_id`에서 새로운 `proposal_id`, `proposal_round`로 저장
+- 기존 attempt 종료 후 새로운 상대를 찾는 완전한 재매칭은 새로운 `attempt_id`를 생성
+- `match_proposals`에 `proposal_type`, `proposal_round`를 추가하고 유일성을 `(attempt_id, member_id, proposal_round)`로 변경
+- `match_responses(proposal_id, member_id)` 유일성은 한 질문의 중복 응답 방지 목적으로 유지
+- 회원별 최신 자연어 취향과 임베딩을 저장하는 `member_preference_embeddings` 추가
+- `member_travel_styles`는 정형 점수, `preference_text` 임베딩은 보조 유사도 점수로 분리
+- `member_consents.consent_type`에 `AI_PROCESSING`, `OVERSEAS_TRANSFER` 추가
+- PostgreSQL 비관적 행 잠금과 `lock_token`/`locked_at`의 애플리케이션 소유권 표시 역할을 구분해 문서화
+- pgvector가 설치되지 않은 PostgreSQL 이미지에서는 `V11` 적용이 실패하므로 local/dev/prod DB 이미지와 확장 준비를 먼저 확인
+- Java, frontend, docker-compose, 배포 설정, 실제 DB에는 변경을 적용하지 않음
+
 ## [10-C 보완] 닉네임 제한과 local access token 만료 테스트 설정
 
 상태: 코드 작성 및 frontend build 완료, Gradle wrapper 다운로드 승인 후 backend validation 테스트 실행 필요

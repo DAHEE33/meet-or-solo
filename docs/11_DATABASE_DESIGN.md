@@ -1,8 +1,8 @@
 # 데이터베이스 설계
 
-이 문서는 9-1단계 실제 서비스 DB 테이블 설계 검토/확정 결과를 기록합니다.
+이 문서는 실제 서비스 DB 테이블 설계와 이후 추가된 Flyway migration 반영 내용을 기록합니다.
 
-이번 단계에서는 Flyway migration SQL을 생성하지 않습니다. 이미 적용된 `backend/src/main/resources/db/migration/V1__init.sql`은 수정하지 않으며, 다음 9-2단계에서 이 문서를 기준으로 `V2` 이후 migration을 새로 추가합니다.
+이미 적용된 migration은 수정하지 않고, 스키마 변경은 다음 버전의 Flyway migration으로 추가합니다.
 
 ## 1. 설계 범위
 
@@ -15,6 +15,7 @@
 - 관광공사 축제/장소 캐시
 - GPS 체크인 결과
 - PostgreSQL 기반 매칭 상태
+- 회원 자연어 취향과 임베딩
 - 제한형 상태 동기화 이벤트
 - 패널티/쿨다운
 - 차단/신고/평가/관리자 조치
@@ -22,9 +23,6 @@
 
 이번 단계에서 하지 않는 작업:
 
-- Flyway SQL 파일 생성
-- `backend/src/main/resources/db/migration/V2~` 파일 생성
-- `V1__init.sql` 수정
 - backend/frontend 코드 수정
 - nginx, docker-compose, GitHub Actions 수정
 - 실제 DB migration 적용
@@ -42,6 +40,8 @@
 - 원본 GPS 좌표는 저장하지 않는다.
 - 자유 채팅 테이블은 만들지 않는다.
 - Redis 없이 PostgreSQL의 `status`, `expires_at`, `locked_at`, transaction lock, partial unique index로 상태를 관리한다.
+- 매칭 후보 선점은 최종 후보 `match_pools` row에만 `SELECT ... FOR UPDATE SKIP LOCKED`를 짧게 적용한다.
+- `lock_token`, `locked_at`은 낙관적 락이 아니라 선점 실행 추적과 stale lock 복구를 위한 보조 정보다.
 - 관광공사 OpenAPI 원본 응답은 감사와 캐시 보강이 필요한 테이블에 한해 `raw_data JSONB`로 저장할 수 있다.
 
 ## 3. 테이블 분류
@@ -50,7 +50,7 @@
 
 | 영역 | 테이블 |
 | --- | --- |
-| 회원/인증 | `members`, `member_travel_styles`, `member_consents`, `refresh_tokens` |
+| 회원/인증 | `members`, `member_travel_styles`, `member_preference_embeddings`, `member_consents`, `refresh_tokens` |
 | 관광/축제 | `festivals`, `festival_images`, `tour_places`, `tour_api_call_logs` |
 | 체크인 | `festival_checkins` |
 | 매칭 | `user_blocks`, `match_pools`, `match_attempts`, `match_attempt_members`, `match_proposals`, `match_responses`, `match_groups`, `match_group_members`, `match_events`, `match_cooldowns`, `match_penalty_events` |
@@ -176,6 +176,21 @@ TIMEOUT
 EXPIRED
 ```
 
+### match_proposals.proposal_type
+
+```text
+INITIAL_MATCH
+INSUFFICIENT_MEMBERS_CONFIRMATION
+```
+
+### member_preference_embeddings.embedding_status
+
+```text
+PENDING
+COMPLETED
+FAILED
+```
+
 ### match_responses.response
 
 ```text
@@ -250,16 +265,35 @@ DATA_CORRECTION
 | 개인정보/보안 | 화면 표시 문구가 아닌 코드값만 저장하며 성별·연령대 암호화 정책과 분리한다. |
 | MVP 필수 | 필수 |
 
+### member_preference_embeddings
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 입력한 최신 자연어 여행 취향과 외부 임베딩 API로 생성한 벡터를 회원 레벨에서 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `preference_text`, `embedding`, `embedding_model`, `embedding_status`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, 기존 회원 FK 정책과 동일하게 `ON DELETE RESTRICT` 적용 |
+| 상태값 | `PENDING`, `COMPLETED`, `FAILED` |
+| CHECK | 공백만 있는 `preference_text` 금지, `COMPLETED`이면 `embedding`, `embedding_model` 필수 |
+| UNIQUE | `member_id` |
+| INDEX | `idx_member_preference_embeddings_status` |
+| 개인정보/보안 | 외부 API 전송 전 AI 처리와 국외 이전 동의 여부를 확인한다. 원문 보관 기간과 탈퇴·취향 삭제 시 삭제 정책을 적용한다. |
+| MVP 필수 | AI 임베딩 기능 사용 시 필수 |
+
+`member_travel_styles`는 `RELAXED`, `ACTIVE`, `FOOD`, `PHOTO`, `CULTURE` 같은 정형 코드 점수에 사용합니다. `member_preference_embeddings`는 자연어 의미 유사도 점수에 사용하며, 둘 중 하나가 다른 하나를 대체하지 않습니다.
+
+회원이 `preference_text`를 최초 입력하거나 실제 수정했을 때만 임베딩을 생성합니다. 매칭풀 진입이나 Scheduler 실행 때마다 외부 API를 다시 호출하지 않습니다. 취향 미입력 또는 임베딩 실패 시 정형 코드 점수만으로 매칭을 계속합니다.
+
 ### member_consents
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 서비스 약관, 개인정보, 위치정보 동의 이력을 관리한다. |
+| 목적 | 서비스 약관, 개인정보, 위치정보, AI 처리와 국외 이전 동의 이력을 관리한다. |
 | 주요 컬럼 | `id`, `member_id`, `consent_type`, `version`, `agreed`, `agreed_at`, `revoked_at`, `created_at` |
 | PK | `id` |
 | FK | `member_id -> members.id` |
 | 상태값 | `consent_type` |
-| CHECK | `consent_type IN ('TERMS','PRIVACY','LOCATION','MARKETING')` |
+| CHECK | `consent_type IN ('TERMS','PRIVACY','LOCATION','MARKETING','AI_PROCESSING','OVERSEAS_TRANSFER')` |
 | UNIQUE | `(member_id, consent_type, version)` |
 | INDEX | `idx_member_consents_member_id`, `idx_member_consents_type` |
 | 개인정보/보안 | 법적 증빙 목적의 최소 이력만 저장한다. |
@@ -419,16 +453,18 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 각 후보 사용자에게 보낸 30초 매칭 제안 상태를 저장한다. |
-| 주요 컬럼 | `id`, `attempt_id`, `member_id`, `status`, `sent_at`, `expires_at`, `responded_at`, `created_at`, `updated_at` |
+| 목적 | 각 후보 사용자에게 보낸 최초 매칭 제안과 인원 미달 재확인 제안 상태를 저장한다. |
+| 주요 컬럼 | `id`, `attempt_id`, `member_id`, `proposal_type`, `proposal_round`, `status`, `sent_at`, `expires_at`, `responded_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `match_proposals.status` |
-| CHECK | `expires_at > sent_at`, `responded_at IS NULL OR responded_at >= sent_at`, `status IN (...)` |
-| UNIQUE | `(attempt_id, member_id)` |
-| INDEX | `idx_match_proposals_member_status`, `idx_match_proposals_expires_status`, `idx_match_proposals_attempt_status` |
+| CHECK | `proposal_type IN (...)`, `proposal_round > 0`, `expires_at > sent_at`, `responded_at IS NULL OR responded_at >= sent_at`, `status IN (...)` |
+| UNIQUE | `(attempt_id, member_id, proposal_round)` |
+| INDEX | `idx_match_proposals_member_status`, `idx_match_proposals_expires_status`, `idx_match_proposals_attempt_status`, `idx_match_proposals_attempt_type_round` |
 | 개인정보/보안 | 제안 자체에는 메시지 본문을 저장하지 않는다. |
 | MVP 필수 | 필수 |
+
+동일 후보 구성에서 인원 미달 재확인이 필요하면 `attempt_id`는 유지하고 새로운 `proposal_id`와 다음 `proposal_round`를 생성합니다. 새로운 상대를 탐색하는 완전한 재매칭에서는 기존 attempt를 종료하고 새로운 `attempt_id`를 생성합니다.
 
 ### match_responses
 
@@ -617,16 +653,18 @@ DATA_CORRECTION
 3. 사용자가 희망 인원, 태그, `allow_minimum_two`를 선택하면 `match_pools`에 `WAITING` row를 만든다.
 4. `match_pools`는 active 상태의 사용자 중복 진입을 partial unique index로 막는다.
 5. Scheduler는 같은 `festival_id`, `WAITING`, `search_expires_at > now()` 조건으로 후보를 조회한다.
-6. 후보 조회는 구현 단계에서 `SELECT ... FOR UPDATE SKIP LOCKED`를 사용한다.
+6. 후보 조회는 구현 단계에서 `SELECT ... FOR UPDATE SKIP LOCKED`를 사용하며, 최종 후보 `match_pools` row만 짧게 잠근다.
 7. 차단 관계는 `user_blocks`에서 양방향으로 제외한다.
-8. 후보가 정해지면 `match_attempts`, `match_attempt_members`, `match_proposals`를 생성한다.
-9. 각 proposal은 `sent_at`, `expires_at`으로 30초 응답 제한을 표현한다.
+8. 후보가 정해지면 `match_attempts`, `match_attempt_members`, `INITIAL_MATCH` 유형의 `match_proposals`를 생성한다.
+9. 각 proposal은 `proposal_round`, `sent_at`, `expires_at`으로 질문 회차와 30초 응답 제한을 표현한다.
 10. 사용자의 수락/거절/타임아웃은 `match_responses`와 `match_proposals.status`로 저장한다.
 11. 응답 중복은 `(proposal_id, member_id)` unique constraint로 막는다.
-12. 최소 2명 이상 수락하고 정책을 만족하면 `match_groups`, `match_group_members`를 생성한다.
-13. active group 중복 참여는 `match_group_members.member_id` partial unique index 후보로 막는다.
-14. 상태 변경은 `match_events`에 append-only로 기록한다.
-15. 거절, 타임아웃, 확정 후 취소, 노쇼는 `match_penalty_events`와 `match_cooldowns`에 기록한다.
+12. 목표 인원 미달이지만 최소 2명이 수락하면 같은 attempt에 `INSUFFICIENT_MEMBERS_CONFIRMATION` 유형의 다음 round proposal을 생성한다.
+13. 인원 미달 재확인은 새로운 `proposal_id`를 사용하고, 기존 attempt 실패 후 새로운 상대를 찾는 재매칭만 새로운 `attempt_id`를 사용한다.
+14. 최소 2명 이상이 최종 진행에 동의하면 `match_groups`, `match_group_members`를 생성한다.
+15. active group 중복 참여는 `match_group_members.member_id` partial unique index 후보로 막는다.
+16. 상태 변경은 `match_events`에 append-only로 기록한다.
+17. 거절, 타임아웃, 확정 후 취소, 노쇼는 `match_penalty_events`와 `match_cooldowns`에 기록한다.
 
 ## 8. 주요 제약조건과 인덱스 요약
 
@@ -636,9 +674,12 @@ DATA_CORRECTION
 - `members.role IN ('USER','ADMIN')`
 - `members.manner_temperature BETWEEN 0 AND 100`
 - `member_travel_styles.style_code IN ('RELAXED','ACTIVE','FOOD','PHOTO','CULTURE')`
+- `member_preference_embeddings.embedding_status IN ('PENDING','COMPLETED','FAILED')`
 - `match_pools.preferred_group_size IN (2,3,4)`
 - `match_pools.search_expires_at > match_pools.entered_at`
 - `match_attempts.target_group_size IN (2,3,4)`
+- `match_proposals.proposal_type IN ('INITIAL_MATCH','INSUFFICIENT_MEMBERS_CONFIRMATION')`
+- `match_proposals.proposal_round > 0`
 - `match_proposals.expires_at > match_proposals.sent_at`
 - `match_groups.confirmed_member_count BETWEEN 2 AND 4`
 - `match_group_members.arrival_minutes IN (0,5,10,20,30)`
@@ -649,13 +690,14 @@ DATA_CORRECTION
 
 - `members(provider, provider_user_id)`
 - `member_travel_styles(member_id, style_code)`
+- `member_preference_embeddings(member_id)`
 - `refresh_tokens(token_hash)`
 - `festivals(content_id)`
 - `tour_places(content_id)`
 - `festival_images(festival_id, origin_image_url)`
 - `user_blocks(blocker_member_id, blocked_member_id)`
 - `match_attempt_members(attempt_id, member_id)`
-- `match_proposals(attempt_id, member_id)`
+- `match_proposals(attempt_id, member_id, proposal_round)`
 - `match_responses(proposal_id, member_id)`
 - `match_groups(attempt_id)`
 - `match_group_members(group_id, member_id)`
@@ -674,6 +716,8 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 
 - `match_pools(festival_id, status, search_expires_at)`
 - `match_proposals(expires_at, status)`
+- `match_proposals(attempt_id, proposal_type, proposal_round)`
+- `member_preference_embeddings(embedding_status)`
 - `match_attempts(festival_id, status)`
 - `match_events(group_id, created_at)`
 - `user_blocks(blocker_member_id)`
@@ -694,16 +738,27 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - `match_events.payload`, `admin_actions.metadata`, `tour_api_call_logs`에는 Secret과 원본 GPS 좌표를 넣지 않는다.
 - 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN` 또는 `DELETED`로 변경한다.
 - 패널티/매칭 이벤트 등 운영 로그는 30일 보관 후 삭제 또는 집계 전환 정책을 별도 구현한다.
+- `preference_text`를 외부 임베딩 API로 보내기 전에 `AI_PROCESSING`, `OVERSEAS_TRANSFER` 동의와 고지 요건을 확인한다.
+- 임베딩 요청에는 취향 문장 외의 OAuth 식별자, 닉네임, 성별, 연령대 등 불필요한 개인정보를 포함하지 않는다.
+- 회원 탈퇴 또는 취향 삭제 시 `preference_text`와 `embedding`도 삭제 또는 정책에 따라 익명화한다.
 
 ## 10. Flyway migration 이력
 
-회원 여행 스타일 저장은 이미 적용된 migration을 변경하지 않고 다음 버전으로 추가한다.
+이미 적용된 migration은 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
 backend/src/main/resources/db/migration/V2__create_core_tables.sql
 backend/src/main/resources/db/migration/V3__create_matching_tables.sql
 backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql
 backend/src/main/resources/db/migration/V5__create_member_travel_styles.sql
+backend/src/main/resources/db/migration/V6__allow_naver_oauth_provider.sql
+backend/src/main/resources/db/migration/V7__single_refresh_token_and_member_email.sql
+backend/src/main/resources/db/migration/V8__add_member_intro.sql
+backend/src/main/resources/db/migration/V9__add_member_profile_image_object_key.sql
+backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
+backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
 ```
 
-`V1`~`V4`는 이미 적용된 migration이므로 수정하지 않는다. `V5`는 코드 작성까지만 수행하며 실제 dev DB 적용은 별도 작업으로 남긴다.
+`V1`~`V9`는 수정하지 않는다. `V10`, `V11`은 코드와 문서 작성까지만 수행하며 실제 local/dev DB 적용은 별도 작업으로 남긴다.
+
+`V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.

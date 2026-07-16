@@ -27,9 +27,12 @@
 대상:
 
 - 매칭 점수 계산
+- 정형 여행 스타일 점수와 임베딩 유사도 점수 결합
+- `preference_text` 미입력 또는 임베딩 실패 시 정형 점수 fallback
 - 희망 인원 `2/3/4` 판단
 - 2명 진행 허용 여부
 - 인원 미달 팝업 조건
+- 최초 제안과 인원 미달 재확인 proposal 회차 판단
 - 패널티/쿨타임 계산
 - 차단 사용자 제외 판단
 - 이미 매칭 중인 사용자 제외 판단
@@ -87,7 +90,9 @@
 - 실제 PostgreSQL 환경에서 Flyway migration 적용 확인
 - 매칭 제안 생성부터 응답 저장까지 흐름 검증
 - unique constraint 기반 중복 응답 방지 검증
+- 동일 attempt에서 회원별 proposal round 생성 검증
 - `SELECT FOR UPDATE SKIP LOCKED` 기반 후보 선점 동시성 검증
+- pgvector extension과 `vector(1536)` migration 적용 검증
 - Scheduler 기반 만료 proposal `TIMEOUT` 처리 검증
 - Refresh Token 저장/재발급/폐기 흐름 검증
 
@@ -97,7 +102,13 @@
 
 - Flyway migration이 빈 PostgreSQL Container에 정상 적용된다.
 - 동일 proposal에 대해 두 번 수락 요청이 들어오면 unique constraint로 중복 응답을 막는다.
+- 동일 attempt와 회원에 대해 round가 같은 proposal은 중복 생성되지 않는다.
+- 동일 attempt와 회원이라도 다음 round의 인원 미달 재확인 proposal은 생성할 수 있다.
+- 인원 미달 재확인은 같은 `attempt_id`와 새로운 `proposal_id`를 사용한다.
+- 기존 attempt 종료 후 새로운 상대를 탐색하는 재매칭은 새로운 `attempt_id`를 사용한다.
 - 동시에 여러 Scheduler worker가 후보를 조회해도 `FOR UPDATE SKIP LOCKED`로 같은 사용자를 중복 선점하지 않는다.
+- 잠금 구간에서는 후보 상태 재검증과 선점만 수행하고 임베딩 계산은 수행하지 않는다.
+- 임베딩 생성 실패 또는 미입력 시에도 정형 여행 스타일 기반 매칭은 정상 동작한다.
 - `expires_at`이 지난 proposal은 Scheduler에 의해 `TIMEOUT`으로 전이된다.
 - Refresh Token은 저장, 재발급, 폐기가 일관되게 처리된다.
 

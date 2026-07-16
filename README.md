@@ -398,6 +398,8 @@ dev compose 구성:
 - 서버 내부 loopback 전용: PostgreSQL tunnel 목적지 `127.0.0.1:15432`
 - 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않습니다.
 
+AI 임베딩용 `V11__add_member_preference_embeddings.sql`은 pgvector extension을 사용합니다. 현재 compose 이미지는 아직 `postgres:16-alpine`이므로 V11 실제 적용 전에 PostgreSQL 16 호환 pgvector 이미지 전환이 필요하며, 이번 변경에서는 compose와 실제 DB를 수정하지 않습니다.
+
 배포 산출물 기준:
 
 - backend는 `backend/build/libs/*.jar` 산출물을 dev 서버의 `backend/app.jar`로 배치합니다.
