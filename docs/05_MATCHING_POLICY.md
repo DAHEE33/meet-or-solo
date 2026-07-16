@@ -72,13 +72,16 @@ allow_minimum_two = true | false
 
 - 같은 축제 여부
 - 희망 인원 호환성
-- 태그 교집합
+- `member_travel_styles`와 매칭 태그 같은 정형 코드 교집합
+- 회원 레벨 `preference_text` 임베딩 cosine similarity
 - 희망 시간 유사성
 - 체크인 시각 근접성
 - 매너온도
 - 관광공사 데이터 기반 축제/동선 태그
 
 첫 구현에서는 정교한 scoring보다 상태 정확성과 중복 방지가 중요합니다.
+
+자연어 임베딩은 정형 여행 스타일을 대체하지 않는 보조 점수입니다. `preference_text`가 없거나 임베딩 생성에 실패하면 정형 태그 점수만으로 매칭을 계속합니다. 임베딩 API는 취향 문장의 최초 입력 또는 실제 수정 시 호출하고, Scheduler 실행 때마다 다시 호출하지 않습니다.
 
 ## 매칭 흐름
 
@@ -93,9 +96,10 @@ allow_minimum_two = true | false
 8. 사용자는 30초 안에 수락/거절한다.
 9. 미응답 사용자는 자동 거절된다.
 10. 목표 인원이 모두 수락하면 매칭을 확정한다.
-11. 목표 인원에는 미달하지만 2명 이상 수락했고 수락자가 모두 2명 진행을 허용하면 인원 미달 팝업을 보낸다.
+11. 목표 인원에는 미달하지만 2명 이상 수락했고 수락자가 모두 2명 진행을 허용하면 같은 attempt 안에서 인원 미달 재확인 proposal을 새로 생성한다.
 12. 현재 인원으로 시작을 선택하면 매칭을 확정한다.
-13. 조건을 만족하지 못하면 실패 처리하고 재대기, cooldown, penalty를 적용한다.
+13. 조건을 만족하지 못하면 기존 attempt를 실패 처리하고 재대기, cooldown, penalty를 적용한다.
+14. 새로운 상대를 다시 탐색하는 완전한 재매칭에서는 새 attempt를 생성한다.
 ```
 
 ## 상태값 후보
@@ -135,6 +139,13 @@ TIMEOUT
 EXPIRED
 ```
 
+매칭 제안 유형:
+
+```text
+INITIAL_MATCH
+INSUFFICIENT_MEMBERS_CONFIRMATION
+```
+
 매칭 그룹 상태:
 
 ```text
@@ -157,6 +168,20 @@ CANCELLED
 - 그렇지 않으면 attempt를 실패 처리한다.
 
 인원 미달 팝업에서 몇 명의 추가 동의가 필요한지는 구현 시 확정합니다. 기본 원칙은 수락자 전원 동의입니다.
+
+인원 미달 재확인은 최초 제안과 다른 질문이므로 새로운 `proposal_id`를 사용합니다. 다만 기존 후보 구성의 후속 단계이므로 `attempt_id`는 유지합니다.
+
+```text
+동일 후보의 인원 미달 재확인
+-> 같은 attempt_id
+-> 새로운 proposal_id와 다음 proposal_round
+
+기존 attempt 종료 후 새로운 상대 탐색
+-> 새로운 attempt_id
+-> 새로운 proposal_id
+```
+
+`match_proposals`는 `(attempt_id, member_id, proposal_round)` 단위로 유일하게 저장합니다. `match_responses`는 각 질문에 한 번만 답하도록 `(proposal_id, member_id)` 유일성을 유지합니다.
 
 ## penalty/cooldown
 
@@ -205,6 +230,10 @@ WHERE festival_id = :festivalId
 FOR UPDATE SKIP LOCKED;
 ```
 
+이 잠금은 DB 전체나 `match_pools` 테이블 전체가 아니라 최종 후보 row에만 적용합니다. 후보 필터링과 점수 계산은 잠금 밖에서 수행하고, 잠금 안에서는 후보가 여전히 `WAITING`인지 재검증한 뒤 상태 변경과 attempt/proposal 생성을 짧게 처리합니다.
+
+`lock_token`, `locked_at`은 비관적 transaction lock을 대체하지 않습니다. 선점 실행 추적과 stale lock 복구에 사용하는 보조 정보입니다.
+
 추가 안전장치:
 
 - 사용자별 active pool unique constraint
@@ -227,6 +256,7 @@ match_group_members
 match_events
 match_penalties
 match_cooldowns
+member_preference_embeddings
 ```
 
 ## MatchRoomPage 상태방 구조
