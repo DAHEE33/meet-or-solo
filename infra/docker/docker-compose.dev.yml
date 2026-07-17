@@ -2,7 +2,7 @@ name: meet-or-solo-dev
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: meet-or-solo-postgres-dev
     command: ["postgres", "-c", "timezone=Asia/Seoul"]
     restart: unless-stopped

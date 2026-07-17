@@ -387,7 +387,7 @@ infra/
 
 dev compose 구성:
 
-- `postgres`: `postgres:16-alpine`, compose 내부 network 전용, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` 환경변수 주입
+- `postgres`: `pgvector/pgvector:pg16`, compose 내부 network 전용, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` 환경변수 주입
 - `backend`: Spring Boot jar를 `/app/app.jar`로 mount해 실행, `SPRING_PROFILES_ACTIVE=dev`, `DB_URL`은 `postgres` service name 기준
 - `nginx`: `frontend/dist` 정적 파일 서빙, `/api` 요청을 `backend:8080`으로 reverse proxy, 외부 `18080` 포트만 publish
 
@@ -398,7 +398,7 @@ dev compose 구성:
 - 서버 내부 loopback 전용: PostgreSQL tunnel 목적지 `127.0.0.1:15432`
 - 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않습니다.
 
-AI 임베딩용 `V11__add_member_preference_embeddings.sql`은 pgvector extension을 사용합니다. 현재 compose 이미지는 아직 `postgres:16-alpine`이므로 V11 실제 적용 전에 PostgreSQL 16 호환 pgvector 이미지 전환이 필요하며, 이번 변경에서는 compose와 실제 DB를 수정하지 않습니다.
+AI 임베딩용 `V11__add_member_preference_embeddings.sql`은 pgvector extension을 사용합니다. local/dev compose는 PostgreSQL 16 호환 `pgvector/pgvector:pg16` 이미지를 사용합니다. 기존 DB에서 전환할 때는 data volume을 삭제하지 않고 컨테이너만 재생성한 뒤 pgvector extension과 Flyway 적용 이력을 확인합니다.
 
 배포 산출물 기준:
 

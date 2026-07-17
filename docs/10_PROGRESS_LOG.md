@@ -1,5 +1,15 @@
 # 진행 상태 기록
 
+## [10-공통 환경 보완] local/dev PostgreSQL pgvector 이미지 전환
+
+상태: compose 및 문서 변경 완료, dev 서버 재배포와 Flyway 적용 확인 필요
+
+- local/dev PostgreSQL 이미지를 PostgreSQL 16 호환 `pgvector/pgvector:pg16`으로 통일
+- 기존 PostgreSQL data volume을 삭제하지 않고 컨테이너만 재생성하는 기준 명시
+- 로컬 backend와 서버 backend가 같은 dev DB를 사용하는 경우 실제 dev PostgreSQL 컨테이너에 pgvector 이미지가 적용되어야 함을 반영
+- 재기동 후 `vector.control`, `CREATE EXTENSION vector`, Flyway `V11__add_member_preference_embeddings.sql` 적용 이력을 확인하는 절차 정리
+- 기존 Flyway migration과 실제 DB data는 수정하지 않음
+
 ## [10-공통 설계 보완] 매칭 제안 회차와 회원 취향 임베딩 DB 반영
 
 상태: 문서 및 Flyway migration 작성 완료, 애플리케이션 코드와 실제 local/dev DB 적용 제외
@@ -232,7 +242,7 @@
 
 - `infra/docker/docker-compose.dev.yml` 추가
 - `postgres`, `backend`, `nginx` service를 compose 내부 network로 연결
-- `postgres`는 `postgres:16-alpine` 기준으로 작성
+- `postgres`는 최초 `postgres:16-alpine` 기준으로 작성했으며, 이후 `V11` pgvector 요구사항에 맞춰 `pgvector/pgvector:pg16`으로 전환
 - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`는 환경변수로 주입
 - PostgreSQL data volume 후보를 `data/postgres`로 구성
 - 팀원 dev DB 확인을 위한 SSH tunnel 고정 목적지로 PostgreSQL을 host loopback `127.0.0.1:15432`에만 publish
