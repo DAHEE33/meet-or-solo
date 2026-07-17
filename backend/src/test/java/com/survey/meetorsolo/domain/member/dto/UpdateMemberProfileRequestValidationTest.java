@@ -70,11 +70,20 @@ class UpdateMemberProfileRequestValidationTest {
     @Test
     void 닉네임이_열두_글자를_초과하면_검증에_실패한다() {
         var request = new UpdateMemberProfileRequest(
-                "열두글자를넘는닉네임", null, null, "FEMALE", "20S", List.of("FOOD")
+                "가나다라마바사아자차카타파", null, null, "FEMALE", "20S", List.of("FOOD")
         );
 
         assertThat(validator.validate(request))
                 .anyMatch(violation -> violation.getPropertyPath().toString().equals("nickname"));
+    }
+
+    @Test
+    void 닉네임이_열두_글자이면_검증에_성공한다() {
+        var request = new UpdateMemberProfileRequest(
+                "가나다라마바사아자차카타", null, null, "FEMALE", "20S", List.of("FOOD")
+        );
+
+        assertThat(validator.validate(request)).isEmpty();
     }
 
     @Test
