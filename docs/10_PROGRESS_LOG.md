@@ -1,5 +1,43 @@
 # 진행 상태 기록
 
+## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
+
+상태: fixture와 테스트 계약 작성 및 현재 실행 가능한 단위 테스트 완료
+
+- 운영 matching engine, repository, Scheduler 구현 전에 재사용할 결정적 시나리오 fixture 추가
+- 고정 KST 기준 시각과 V1~V11 상태값을 사용해 후보 포함/제외, 인원 미달 proposal 회차, Scheduler 만료 대상을 표현
+- 격리된 PostgreSQL 통합 테스트 DB에서 transaction rollback을 전제로 사용할 `matching-engine-foundation.sql` 추가
+- SQL seed는 `src/test/resources/fixtures`에만 두고 운영 profile, 운영 jar 초기화, Flyway migration에서 실행하지 않음
+- 운영 코드에 mock service, mock profile, fixture 분기를 추가하지 않음
+- 기존 V1~V11 migration과 frontend는 수정하지 않음
+
+실제 실행 완료:
+
+- `MatchingScenarioFixtureTest`에서 후보 포함/제외 데이터 구성 검증
+- 같은 `attempt_id`에서 인원 미달 재확인이 새 `proposal_id`, `proposal_round=2`를 사용하는 fixture 계약 검증
+- 만료된 `SENT` proposal만 Scheduler timeout 대상인 fixture 계약 검증
+- SQL seed가 test classpath에 존재하고 V10 최초 제안/인원 미달 회차 데이터를 포함하는지 검증
+- 실행 명령: `gradlew.bat test --tests com.survey.meetorsolo.domain.matching.fixture.MatchingScenarioFixtureTest`
+- 위 targeted test는 총 4건 모두 통과
+- 전체 backend `gradlew.bat test`도 실행했으며 총 42건 중 41건 통과, 기존 `UpdateMemberProfileRequestValidationTest`의 닉네임 최대 길이 검증 1건 실패
+- 전체 suite 실패는 이번 fixture 파일이 아니라 기존 `UpdateMemberProfileRequestValidationTest.java:77`에서 발생했으며 이번 범위에서는 해당 운영/회원 코드를 수정하지 않음
+
+matching engine 단계로 이월:
+
+- SQL seed를 실제 `pgvector/pgvector:pg16` Testcontainers DB에 적용하고 V1~V11 호환성을 검증하는 통합 테스트
+- 같은 축제, `WAITING`, 유효한 `search_expires_at` 후보 조회와 차단·cooldown·상태 제외 repository 테스트
+- `SELECT FOR UPDATE SKIP LOCKED` 동시 선점 테스트
+- active pool/group/cooldown 및 proposal response unique constraint 테스트
+- 후보 선점부터 attempt/proposal 생성까지의 transaction 테스트
+- 수락/거절/timeout, 인원 미달 재확인, 완전 재매칭, 그룹 단일 확정 engine 테스트
+- 60초 pool 만료, 30초 proposal timeout, stale lock 회수와 재실행 멱등성 Scheduler 테스트
+- 정형 여행 스타일 점수, 임베딩 보조 점수, 임베딩 실패 fallback 테스트
+
+주의:
+
+- 이 단계에서는 실제 matching engine, repository, Scheduler 운영 구현을 추가하지 않았다.
+- 운영 구현 없이 실행할 수 없는 시나리오를 통과시키기 위한 mock service를 만들지 않았다.
+
 ## [10-공통 환경 보완] local/dev PostgreSQL pgvector 이미지 전환
 
 상태: compose 및 문서 변경 완료, dev 서버 재배포와 Flyway 적용 확인 필요
