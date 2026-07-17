@@ -1,5 +1,43 @@
 # 진행 상태 기록
 
+## [10-매칭 1차] MatchPool 후보 조회 repository와 PostgreSQL 통합 테스트
+
+상태: 최소 운영 구현과 실제 PostgreSQL 통합 검증 완료
+
+- `MatchPool` 최소 JPA entity와 `MatchPoolRepository` 추가
+- 후보 조회 기준 시각을 `OffsetDateTime now` parameter로 전달해 테스트와 실행 결과를 결정적으로 구성
+- 같은 축제의 `WAITING` pool 중 유효한 체크인을 가진 후보만 조회
+- 요청자 자신, 다른 축제, `WAITING`이 아닌 pool, 만료 pool, 만료 또는 비활성 체크인 제외
+- 해당 시각에 active인 cooldown 회원 제외
+- 요청자가 차단한 회원과 요청자를 차단한 회원을 양방향으로 제외
+- 결과를 `entered_at`, `id` 오름차순으로 정렬
+- `pgvector/pgvector:pg16` Testcontainers와 기존 V1~V11 Flyway migration을 그대로 사용
+- Testcontainers 1.21.0과 Docker Engine 29의 최소 API 호환을 위해 test JVM에 `api.version=1.44` 기본값 적용
+- `matching-engine-foundation.sql`을 test resource로 연결하고 만료/비활성 체크인과 역방향 차단 fixture 보강
+- 운영 코드에는 mock profile, mock service, fixture 의존성, mock 조건 분기를 추가하지 않음
+- 기존 V1~V11 migration과 frontend는 수정하지 않음
+
+실제 검증 완료:
+
+- `MatchPoolRepositoryIntegrationTest` 13건 통과
+- 빈 PostgreSQL 16 + pgvector 컨테이너에 Flyway V1~V11 적용 및 `vector` extension 생성 확인
+- 후보 포함과 각 제외 조건을 실제 PostgreSQL native query로 검증
+- `entered_at`, `id` 순서의 결정적 정렬 검증
+- `uq_match_pools_member_active` 이름까지 확인해 동일 회원 active pool 중복 차단 검증
+- 종료 상태 pool 이후 같은 회원의 새 active pool 생성 허용 검증
+- 기존 `MatchingScenarioFixtureTest` 4건 재실행 통과
+- 전체 backend test 총 56건, failure 0, error 0, skipped 0
+
+다음 단계로 이월:
+
+- `FOR UPDATE SKIP LOCKED` 기반 후보 동시 선점
+- Scheduler의 pool/proposal 만료와 stale lock 회수
+- 후보 점수 계산과 2~4인 그룹 조합
+- attempt/proposal/response 상태 전이와 그룹 확정
+- 임베딩 cosine similarity와 정형 점수 결합
+- active group/cooldown 및 proposal response의 나머지 unique constraint 통합 테스트
+- Redis, WebSocket 상태 동기화, frontend 연동
+
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 
 상태: fixture와 테스트 계약 작성 및 현재 실행 가능한 단위 테스트 완료
