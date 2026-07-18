@@ -1,5 +1,24 @@
 # 진행 상태 기록
 
+## [10-A] 축제 전체 페이지 DB 동기화와 Scheduler
+
+상태: 코드·설정·문서·단위 테스트 작성 완료, 실제 Scheduler 활성화 및 dev DB 동기화 제외
+
+- `Festival` Entity와 `FestivalRepository`를 기존 `festivals` schema에 매핑
+- `searchFestival2` 전체 페이지를 수신한 뒤에만 DB 저장 단계로 이동
+- 응답 페이지 누락, 중간 호출 실패, 최대 페이지 초과 시 writer를 호출하지 않고 기존 DB 데이터 유지
+- 외부 DTO의 날짜, 좌표, 주소, 법정동 코드를 `FestivalSyncData`로 변환하고 `content_id` 중복 제거
+- `FestivalSyncWriter`의 단일 transaction에서 `content_id` 기준 신규/기존 축제 upsert
+- `last_synced_at`과 API DTO 기반 `raw_data` JSONB 저장
+- `FESTIVAL_SYNC_ENABLED=true`일 때 시작 후 최초 실행 및 `fixedDelay` 반복 실행
+- 최초 실패이며 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 안전하게 기록하고 다음 주기에 재시도
+- 기본 조회 범위 KST 오늘 기준 이전 30일~이후 365일, 강원 코드 `51`, 분류 `EV/EV01`
+- Scheduler 기본 비활성화로 일반 test와 backend 시작 시 의도하지 않은 외부 API 호출 방지
+- 축제 동기화 단위 테스트 10건과 PostgreSQL rollback 통합 테스트 1건 통과
+- 전체 backend test 60건 통과, opt-in live test 1건은 기본 skip
+- 기존 Flyway migration과 `GlobalExceptionHandler`는 수정하지 않음
+- `festival_images`, 축제 목록/상세 Controller, `tour_api_call_logs` DB 적재는 후속 작업으로 분리
+
 ## [10-A] 한국관광공사 TourAPI 공통 Client와 searchFestival2 조회
 
 상태: 코드·문서·테스트 작성 및 실제 API smoke test 완료, DB 저장·Scheduler·서비스 API 제외
@@ -16,7 +35,7 @@
 - `MockRestServiceServer` 단위 테스트 5건 통과
 - Spring local profile이 실제 `.env` 키를 읽는 opt-in live smoke test로 강원도 `51`, 축제 분류 `EV/EV01` 조회 성공
 - 전체 backend test 통과
-- 축제 DB upsert, 페이지 전체 순회, API 호출 로그 저장, 캐시 fallback, Scheduler, Controller, frontend는 후속 작업으로 분리
+- API 호출 로그 DB 저장, Controller, frontend는 후속 작업으로 분리
 
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 

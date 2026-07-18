@@ -33,3 +33,15 @@ app:
     mobile-app: ${TOUR_API_MOBILE_APP:SoloIn}
     connect-timeout: ${TOUR_API_CONNECT_TIMEOUT:3s}
     read-timeout: ${TOUR_API_READ_TIMEOUT:10s}
+  festival:
+    sync:
+      enabled: ${FESTIVAL_SYNC_ENABLED:true}
+      initial-delay: ${FESTIVAL_SYNC_INITIAL_DELAY:10s}
+      fixed-delay: ${FESTIVAL_SYNC_FIXED_DELAY:6h}
+      page-size: ${FESTIVAL_SYNC_PAGE_SIZE:100}
+      max-pages: ${FESTIVAL_SYNC_MAX_PAGES:100}
+      lookback-days: ${FESTIVAL_SYNC_LOOKBACK_DAYS:30}
+      lookahead-days: ${FESTIVAL_SYNC_LOOKAHEAD_DAYS:365}
+      region-code: ${FESTIVAL_SYNC_REGION_CODE:51}
+      classification-system-1: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1:EV}
+      classification-system-2: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2:EV01}

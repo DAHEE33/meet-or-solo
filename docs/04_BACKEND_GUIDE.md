@@ -81,10 +81,49 @@ external/tourapi
 - `searchFestival2`의 실패를 빈 목록으로 바꾸지 않습니다. 정상 0건만 빈 목록으로 반환하고, 외부 API 실패는 `TourApiClientException`으로 전달합니다.
 - 기술 오류의 기본 메시지는 `TourApiErrorType`에 모으고, 원격 오류 코드와 HTTP status는 `TourApiClientException`의 별도 필드로 보존합니다.
 - `TourApiClientException`은 client 경계의 기술 예외입니다. 축제 service가 캐시 fallback, 재시도 또는 `BusinessException` 변환 여부를 결정합니다.
-- 공통 client는 한 페이지 조회만 담당합니다. 전체 페이지 순회, DB upsert, API 호출 로그, 캐시 fallback, Scheduler는 축제 domain 후속 단계에서 처리합니다.
+- 공통 client는 한 페이지 조회만 담당합니다. 전체 페이지 순회, DB upsert, 마지막 정상 데이터 유지와 Scheduler는 축제 domain이 담당합니다.
 - 강원도 축제 조회 시 법정동 시도 코드 `51`과 분류 `EV/EV01`을 사용하되, 해당 필터는 공통 client가 아니라 호출하는 service가 결정합니다.
 
 실제 API smoke test는 기본 test 실행에서 제외하고 `TOUR_API_LIVE_TEST=true`일 때만 실행합니다.
+
+## 축제 데이터 동기화
+
+축제 화면 API는 관광공사 API를 사용자 요청마다 호출하지 않고 PostgreSQL의 `festivals`를 조회하는 방향으로 구성합니다. 관광공사 API 호출은 `FestivalSyncScheduler`가 `FestivalSyncService`를 통해 수행합니다.
+
+```text
+FestivalSyncScheduler
+  → FestivalSyncService
+  → TourApiClient.searchFestivals
+  → FestivalSyncMapper
+  → FestivalSyncWriter
+  → FestivalRepository
+  → PostgreSQL festivals
+```
+
+- `FestivalSyncService`는 설정된 기간의 `searchFestival2` 전체 페이지를 먼저 메모리에 수집합니다.
+- 한 페이지라도 실패하거나 페이지 계약이 불완전하면 `FestivalSyncWriter`를 호출하지 않습니다.
+- 전체 페이지 수신 후에만 `FestivalSyncWriter`의 단일 transaction으로 `content_id` 기준 upsert합니다.
+- 동기화 실패 시 기존 `festivals` row를 삭제하거나 변경하지 않습니다. 기존 row가 있으면 `STALE_DATA`, 하나도 없으면 `NO_DATA` 상태로 Scheduler 로그에 기록하고 다음 주기에 다시 시도합니다.
+- Scheduler는 `fixedDelay`를 사용하므로 한 인스턴스 안에서 이전 실행이 끝난 뒤 다음 실행 시간을 계산합니다.
+- Scheduler는 `FESTIVAL_SYNC_ENABLED=true`일 때만 생성됩니다. 기본값은 외부 API와 DB를 의도치 않게 변경하지 않도록 `false`입니다.
+- 기본 조회 조건은 KST 오늘 기준 이전 30일부터 이후 365일까지, 강원 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`, 페이지 크기 100입니다.
+- API가 정상 0건을 반환한 경우 기존 데이터를 삭제하지 않습니다. 최초 실행도 0건이면 DB는 빈 상태로 유지됩니다.
+- `festival_images`, 사용자용 Controller, `tour_api_call_logs` DB 적재는 별도 후속 작업입니다.
+
+주요 환경변수:
+
+```text
+FESTIVAL_SYNC_ENABLED
+FESTIVAL_SYNC_INITIAL_DELAY
+FESTIVAL_SYNC_FIXED_DELAY
+FESTIVAL_SYNC_PAGE_SIZE
+FESTIVAL_SYNC_MAX_PAGES
+FESTIVAL_SYNC_LOOKBACK_DAYS
+FESTIVAL_SYNC_LOOKAHEAD_DAYS
+FESTIVAL_SYNC_REGION_CODE
+FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1
+FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2
+```
 
 ## 공통 응답 포맷
 
