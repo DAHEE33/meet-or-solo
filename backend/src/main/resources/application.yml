@@ -24,3 +24,12 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+
+app:
+  tour-api:
+    base-url: ${TOUR_API_BASE_URL:https://apis.data.go.kr/B551011/KorService2}
+    service-key: ${TOUR_API_KEY:${TOURISM-API-KEY:}}
+    mobile-os: ${TOUR_API_MOBILE_OS:ETC}
+    mobile-app: ${TOUR_API_MOBILE_APP:SoloIn}
+    connect-timeout: ${TOUR_API_CONNECT_TIMEOUT:3s}
+    read-timeout: ${TOUR_API_READ_TIMEOUT:10s}

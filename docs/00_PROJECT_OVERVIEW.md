@@ -38,10 +38,10 @@
 
 예정 활용 API:
 
-- `searchFestival1`: 강원도 축제 목록, 일정, 지역, 좌표 조회
-- `detailCommon1`: 축제 상세, 주소, 개요, 기본 정보 조회
-- `detailImage1`: 축제 및 주변 장소 이미지 조회
-- `locationBasedList1`: 주변 관광지, 음식점, 카페, 액티비티 조회
+- `searchFestival2`: 강원도 축제 목록, 일정, 지역, 좌표 조회
+- `detailCommon2`: 축제 상세, 주소, 개요, 기본 정보 조회
+- `detailImage2`: 축제 및 주변 장소 이미지 조회
+- `locationBasedList2`: 주변 관광지, 음식점, 카페, 액티비티 조회
 
 활용 목적:
 

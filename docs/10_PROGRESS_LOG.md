@@ -1,5 +1,23 @@
 # 진행 상태 기록
 
+## [10-A] 한국관광공사 TourAPI 공통 Client와 searchFestival2 조회
+
+상태: 코드·문서·테스트 작성 및 실제 API smoke test 완료, DB 저장·Scheduler·서비스 API 제외
+
+- Spring MVC의 `RestClient` 기반 한국관광공사 공통 HTTP client 추가
+- `external/tourapi`를 `client`, `config`, `dto`, `exception`, `support` 책임별 package로 분리
+- 국문 `KorService2/searchFestival2` 한 페이지 조회와 요청 계층 검증 구현
+- 루트 `.env`의 기존 `TOURISM-API-KEY`와 표준 `TOUR_API_KEY` 환경변수 지원
+- 디코딩 키와 인코딩 키를 모두 한 번만 query parameter 인코딩하도록 처리
+- 성공 JSON의 `resultCode=0000`, 빈 `items`, HTTP 200 XML 공공데이터포털 오류 응답 처리
+- API Key와 전체 요청 URL을 로그와 예외 메시지에 남기지 않음
+- `TourApiErrorType`에 기술 오류 기본 메시지를 모으고 원격 오류 코드와 HTTP status는 예외 필드로 분리
+- `GlobalExceptionHandler` 직접 연결 없이 축제 service가 fallback 또는 `BusinessException` 변환을 결정하도록 경계 유지
+- `MockRestServiceServer` 단위 테스트 5건 통과
+- Spring local profile이 실제 `.env` 키를 읽는 opt-in live smoke test로 강원도 `51`, 축제 분류 `EV/EV01` 조회 성공
+- 전체 backend test 통과
+- 축제 DB upsert, 페이지 전체 순회, API 호출 로그 저장, 캐시 fallback, Scheduler, Controller, frontend는 후속 작업으로 분리
+
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 
 상태: fixture와 테스트 계약 작성 및 현재 실행 가능한 단위 테스트 완료

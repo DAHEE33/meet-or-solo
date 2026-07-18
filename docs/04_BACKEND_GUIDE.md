@@ -60,6 +60,32 @@ com.survey.meetorsolo
 └─ domain
 ```
 
+## 한국관광공사 TourAPI Client
+
+풀스택 A의 관광 API 연동은 `external/tourapi`에 둡니다. 현재 첫 오퍼레이션은 국문 `KorService2`의 `searchFestival2`입니다.
+
+```text
+external/tourapi
+├─ client      # 외부 호출 인터페이스와 RestClient 구현
+├─ config      # 설정값과 전용 RestClient bean
+├─ dto         # 관광공사 요청·응답 계약
+├─ exception   # 외부 연동 기술 예외와 오류 분류
+└─ support     # JSON/XML 응답 해석
+```
+
+- HTTP client는 기존 Spring MVC 의존성의 `RestClient`를 사용합니다.
+- 공통 파라미터인 `serviceKey`, `MobileOS`, `MobileApp`, `_type=json`은 client가 추가합니다.
+- local에서는 루트 `.env`의 기존 `TOURISM-API-KEY`를 지원하고, 표준 환경변수는 `TOUR_API_KEY`를 사용합니다.
+- 서비스키는 URI에 한 번만 인코딩하며 로그, 예외 메시지, `tour_api_call_logs`에 저장하지 않습니다.
+- 성공 JSON의 `resultCode=0000`을 확인하고, 공공데이터포털이 HTTP 200으로 반환할 수 있는 XML 오류 응답도 구분합니다.
+- `searchFestival2`의 실패를 빈 목록으로 바꾸지 않습니다. 정상 0건만 빈 목록으로 반환하고, 외부 API 실패는 `TourApiClientException`으로 전달합니다.
+- 기술 오류의 기본 메시지는 `TourApiErrorType`에 모으고, 원격 오류 코드와 HTTP status는 `TourApiClientException`의 별도 필드로 보존합니다.
+- `TourApiClientException`은 client 경계의 기술 예외입니다. 축제 service가 캐시 fallback, 재시도 또는 `BusinessException` 변환 여부를 결정합니다.
+- 공통 client는 한 페이지 조회만 담당합니다. 전체 페이지 순회, DB upsert, API 호출 로그, 캐시 fallback, Scheduler는 축제 domain 후속 단계에서 처리합니다.
+- 강원도 축제 조회 시 법정동 시도 코드 `51`과 분류 `EV/EV01`을 사용하되, 해당 필터는 공통 client가 아니라 호출하는 service가 결정합니다.
+
+실제 API smoke test는 기본 test 실행에서 제외하고 `TOUR_API_LIVE_TEST=true`일 때만 실행합니다.
+
 ## 공통 응답 포맷
 
 REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.

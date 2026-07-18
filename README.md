@@ -153,7 +153,10 @@ POSTGRES_PASSWORD
 DB_HOST
 DB_PORT
 SPRING_PROFILES_ACTIVE
+TOUR_API_KEY
 ```
+
+기존 local `.env`에 `TOURISM-API-KEY`가 있으면 관광공사 client가 해당 이름도 읽습니다. 신규 dev/prod 환경은 `TOUR_API_KEY`를 사용합니다. 실제 키는 `.env`와 서버 Secret에만 두고 커밋하지 않습니다.
 
 `dev`와 `prod` profile은 다음 환경변수를 사용하도록 placeholder로만 구성되어 있습니다.
 
@@ -256,6 +259,28 @@ curl http://localhost:8080/api/health
 ```
 
 4단계에서 backend `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 5단계에서 frontend `apiClient`, `ApiResponse<T>` 타입, `healthApi`, `HealthCheckPage`를 새 응답 구조에 맞게 수정했습니다.
+
+### 관광공사 `searchFestival2` 실제 호출 확인
+
+기본 test는 외부 네트워크를 사용하지 않고 mock 응답으로 client 계약을 검증합니다.
+
+TourAPI 연동 코드는 `backend/src/main/java/com/survey/meetorsolo/external/tourapi` 아래에서 `client`, `config`, `dto`, `exception`, `support` 책임으로 분리합니다. 외부 연동 기술 예외는 축제 service가 fallback 또는 비즈니스 예외 변환 여부를 결정할 때까지 `TourApiClientException`으로 유지합니다.
+
+```powershell
+cd backend
+.\gradlew.bat test --tests "com.survey.meetorsolo.external.tourapi.client.KoreaTourApiRestClientTest"
+```
+
+루트 `.env`의 `TOUR_API_KEY` 또는 `TOURISM-API-KEY`로 실제 강원도 축제 조회를 확인할 때만 live smoke test를 명시적으로 켭니다.
+
+```powershell
+cd backend
+$env:TOUR_API_LIVE_TEST='true'
+.\gradlew.bat test --tests "com.survey.meetorsolo.external.tourapi.client.TourApiLiveSmokeTest"
+Remove-Item Env:TOUR_API_LIVE_TEST
+```
+
+live smoke test는 `KorService2/searchFestival2`, 강원특별자치도 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`을 사용합니다. API Key와 전체 요청 URL은 로그에 남기지 않습니다.
 
 ## 로컬 frontend 개발환경
 
