@@ -6,9 +6,12 @@ import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalRequest;
 import com.survey.meetorsolo.external.tourapi.dto.TourApiPage;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiClientException;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiErrorType;
+import com.survey.meetorsolo.external.tourapi.log.TourApiCallLogRecorder;
 import com.survey.meetorsolo.external.tourapi.support.TourApiResponseParser;
+import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -34,20 +37,25 @@ public class KoreaTourApiRestClient implements TourApiClient {
     private final RestClient restClient;
     private final TourApiProperties properties;
     private final TourApiResponseParser responseParser;
+    private final TourApiCallLogRecorder callLogRecorder;
 
     public KoreaTourApiRestClient(
             @Qualifier("tourApiRestClient") RestClient restClient,
             TourApiProperties properties,
-            TourApiResponseParser responseParser
+            TourApiResponseParser responseParser,
+            TourApiCallLogRecorder callLogRecorder
     ) {
         this.restClient = restClient;
         this.properties = properties;
         this.responseParser = responseParser;
+        this.callLogRecorder = callLogRecorder;
     }
 
     @Override
     public TourApiPage<SearchFestivalItem> searchFestivals(SearchFestivalRequest request) {
         URI uri = buildSearchFestivalUri(request);
+        String requestKey = searchFestivalRequestKey(request);
+        OffsetDateTime calledAt = SeoulDateTime.now();
         long startedAt = System.nanoTime();
         String responseBody;
 
@@ -64,11 +72,22 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     : TourApiErrorType.HTTP;
             log.warn("Tour API request failed. operation={}, status={}",
                     SEARCH_FESTIVAL_OPERATION, status);
-            throw TourApiClientException.forHttpError(errorType, status, exception);
+            TourApiClientException clientException = TourApiClientException.forHttpError(
+                    errorType,
+                    status,
+                    exception
+            );
+            safeRecordFailure(requestKey, status, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
         } catch (RestClientException exception) {
             log.warn("Tour API request failed. operation={}, cause={}",
                     SEARCH_FESTIVAL_OPERATION, exception.getClass().getSimpleName());
-            throw new TourApiClientException(TourApiErrorType.NETWORK, exception);
+            TourApiClientException clientException = new TourApiClientException(
+                    TourApiErrorType.NETWORK,
+                    exception
+            );
+            safeRecordFailure(requestKey, null, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
         }
 
         try {
@@ -76,7 +95,8 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     responseBody,
                     SearchFestivalItem.class
             );
-            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            int elapsedMs = elapsedMs(startedAt);
+            safeRecordSuccess(requestKey, elapsedMs, page.items().size(), calledAt);
             log.debug("Tour API request succeeded. operation={}, pageNo={}, itemCount={}, elapsedMs={}",
                     SEARCH_FESTIVAL_OPERATION, page.pageNo(), page.items().size(), elapsedMs);
             return page;
@@ -85,7 +105,66 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     SEARCH_FESTIVAL_OPERATION,
                     exception.getErrorType(),
                     exception.getRemoteCode());
+            safeRecordFailure(requestKey, 200, elapsedMs(startedAt), exception, calledAt);
             throw exception;
+        }
+    }
+
+    private String searchFestivalRequestKey(SearchFestivalRequest request) {
+        return "start=" + request.eventStartDate()
+                + ";end=" + request.eventEndDate()
+                + ";region=" + request.regionCode()
+                + ";class=" + request.classificationSystem1() + "/"
+                + request.classificationSystem2()
+                + ";page=" + request.pageNo()
+                + ";rows=" + request.numOfRows();
+    }
+
+    private int elapsedMs(long startedAt) {
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(0L, elapsedMs));
+    }
+
+    private void safeRecordSuccess(
+            String requestKey,
+            int elapsedMs,
+            int resultCount,
+            OffsetDateTime calledAt
+    ) {
+        try {
+            callLogRecorder.recordSuccess(
+                    SEARCH_FESTIVAL_OPERATION,
+                    requestKey,
+                    200,
+                    elapsedMs,
+                    resultCount,
+                    calledAt
+            );
+        } catch (RuntimeException exception) {
+            log.error("Tour API call log save failed. operation={}, cause={}",
+                    SEARCH_FESTIVAL_OPERATION, exception.getClass().getSimpleName());
+        }
+    }
+
+    private void safeRecordFailure(
+            String requestKey,
+            Integer statusCode,
+            int elapsedMs,
+            TourApiClientException clientException,
+            OffsetDateTime calledAt
+    ) {
+        try {
+            callLogRecorder.recordFailure(
+                    SEARCH_FESTIVAL_OPERATION,
+                    requestKey,
+                    statusCode,
+                    elapsedMs,
+                    clientException,
+                    calledAt
+            );
+        } catch (RuntimeException exception) {
+            log.error("Tour API call log save failed. operation={}, cause={}",
+                    SEARCH_FESTIVAL_OPERATION, exception.getClass().getSimpleName());
         }
     }
 

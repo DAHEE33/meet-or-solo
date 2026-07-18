@@ -154,10 +154,11 @@ DB_HOST
 DB_PORT
 SPRING_PROFILES_ACTIVE
 TOUR_API_KEY
-FESTIVAL_SYNC_ENABLED
 ```
 
 기존 local `.env`에 `TOURISM-API-KEY`가 있으면 관광공사 client가 해당 이름도 읽습니다. 신규 dev/prod 환경은 `TOUR_API_KEY`를 사용합니다. 실제 키는 `.env`와 서버 Secret에만 두고 커밋하지 않습니다.
+
+축제 Scheduler는 profile별로 소유권을 고정합니다. `local`과 `prod`에서는 항상 비활성화하고, `dev`에서만 기본 활성화합니다. 따라서 local `.env`에는 `FESTIVAL_SYNC_ENABLED`를 두지 않습니다.
 
 `dev`와 `prod` profile은 다음 환경변수를 사용하도록 placeholder로만 구성되어 있습니다.
 
@@ -287,15 +288,20 @@ live smoke test는 `KorService2/searchFestival2`, 강원특별자치도 법정�
 
 축제 동기화는 `FestivalSyncScheduler → FestivalSyncService → TourApiClient → FestivalRepository` 순서로 실행됩니다. 사용자용 축제 조회는 추후 관광공사 API가 아니라 PostgreSQL의 `festivals`를 조회합니다.
 
-기본값에서는 외부 API 호출과 DB 변경을 방지하기 위해 Scheduler가 비활성화되어 있습니다. local에서 실제 동기화를 실행하려면 루트 `.env`에 다음을 명시하고 backend를 시작합니다.
+축제 Scheduler는 `local=false`, `dev=true`, `prod=false`로 고정했습니다. 자동 동기화는 dev backend 한 인스턴스만 담당하며, local 실행은 dev와 같은 DB를 보더라도 관광공사 API를 자동 호출하지 않습니다. dev 서버 설정은 다음 값을 사용합니다.
 
 ```text
 FESTIVAL_SYNC_ENABLED=true
 FESTIVAL_SYNC_INITIAL_DELAY=10s
 FESTIVAL_SYNC_FIXED_DELAY=6h
+FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS=3
+FESTIVAL_SYNC_RETRY_INITIAL_DELAY=1s
+FESTIVAL_SYNC_RETRY_MAX_DELAY=10s
 ```
 
-Scheduler는 시작 후 최초 동기화를 시도하고 이후 실행 완료 시점부터 `fixedDelay`를 적용합니다. 전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert하며, 실패하면 기존 DB 데이터를 그대로 유지합니다. 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 재시도합니다.
+Scheduler는 시작 후 최초 동기화를 시도하고 이후 실행 완료 시점부터 `fixedDelay`를 적용합니다. 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함) 지수 지연으로 재시도하며 다른 4xx와 응답 형식 오류는 즉시 실패 처리합니다. 각 실제 호출 시도는 `tour_api_call_logs`에 성공 여부, HTTP status, 응답 시간, 결과 건수와 안전한 오류 분류를 저장합니다. API Key와 전체 URL은 저장하지 않습니다.
+
+전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert하며, 실패하면 기존 DB 데이터를 그대로 유지합니다. 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
 
 ## 로컬 frontend 개발환경
 

@@ -2,7 +2,7 @@
 
 ## [10-A] 축제 전체 페이지 DB 동기화와 Scheduler
 
-상태: 코드·설정·문서·단위 테스트 작성 완료, 실제 Scheduler 활성화 및 dev DB 동기화 제외
+상태: 코드·설정·문서·테스트 작성 완료, 실제 dev 재배포 확인 제외
 
 - `Festival` Entity와 `FestivalRepository`를 기존 `festivals` schema에 매핑
 - `searchFestival2` 전체 페이지를 수신한 뒤에만 DB 저장 단계로 이동
@@ -10,21 +10,25 @@
 - 외부 DTO의 날짜, 좌표, 주소, 법정동 코드를 `FestivalSyncData`로 변환하고 `content_id` 중복 제거
 - `FestivalSyncWriter`의 단일 transaction에서 `content_id` 기준 신규/기존 축제 upsert
 - `last_synced_at`과 API DTO 기반 `raw_data` JSONB 저장
-- `FESTIVAL_SYNC_ENABLED=true`일 때 시작 후 최초 실행 및 `fixedDelay` 반복 실행
+- Scheduler 소유권을 `local=false`, `dev=true`, `prod=false`로 고정하고 dev backend 한 인스턴스만 자동 동기화
+- 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함), 1초부터 지수 지연으로 제한 재시도
+- 실제 API 호출 시도마다 기존 `tour_api_call_logs`에 operation, 안전한 request key, status, 성공 여부, 응답 시간, 결과 건수, 오류 분류 저장
+- 호출 로그에는 API Key, 전체 URL, 응답 본문과 원본 예외 메시지를 저장하지 않으며 로그 저장 실패가 원래 API 결과를 변경하지 않음
+- dev 시작 후 최초 실행 및 `fixedDelay` 반복 실행
 - 최초 실패이며 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 안전하게 기록하고 다음 주기에 재시도
 - 기본 조회 범위 KST 오늘 기준 이전 30일~이후 365일, 강원 코드 `51`, 분류 `EV/EV01`
-- Scheduler 기본 비활성화로 일반 test와 backend 시작 시 의도하지 않은 외부 API 호출 방지
-- 축제 동기화 단위 테스트 10건과 PostgreSQL rollback 통합 테스트 1건 통과
-- 전체 backend test 60건 통과, opt-in live test 1건은 기본 skip
+- local/prod Scheduler 비활성화로 일반 test와 local backend 시작 시 의도하지 않은 외부 API 호출 방지
+- 축제 동기화, 재시도, 호출 로그 단위 테스트와 PostgreSQL rollback 통합 테스트 작성
+- 전체 backend test 67건 중 66건 통과, opt-in live test 1건 기본 skip
 - 기존 Flyway migration과 `GlobalExceptionHandler`는 수정하지 않음
-- `festival_images`, 축제 목록/상세 Controller, `tour_api_call_logs` DB 적재는 후속 작업으로 분리
+- `festival_images`, 축제 목록/상세 Controller는 후속 작업으로 분리
 
 ## [10-A] 한국관광공사 TourAPI 공통 Client와 searchFestival2 조회
 
-상태: 코드·문서·테스트 작성 및 실제 API smoke test 완료, DB 저장·Scheduler·서비스 API 제외
+상태: 코드·문서·테스트 작성, 실제 API smoke test와 호출 로그 DB 저장 완료, 서비스 API 제외
 
 - Spring MVC의 `RestClient` 기반 한국관광공사 공통 HTTP client 추가
-- `external/tourapi`를 `client`, `config`, `dto`, `exception`, `support` 책임별 package로 분리
+- `external/tourapi`를 `client`, `config`, `dto`, `exception`, `log`, `support` 책임별 package로 분리
 - 국문 `KorService2/searchFestival2` 한 페이지 조회와 요청 계층 검증 구현
 - 루트 `.env`의 기존 `TOURISM-API-KEY`와 표준 `TOUR_API_KEY` 환경변수 지원
 - 디코딩 키와 인코딩 키를 모두 한 번만 query parameter 인코딩하도록 처리
@@ -35,7 +39,7 @@
 - `MockRestServiceServer` 단위 테스트 5건 통과
 - Spring local profile이 실제 `.env` 키를 읽는 opt-in live smoke test로 강원도 `51`, 축제 분류 `EV/EV01` 조회 성공
 - 전체 backend test 통과
-- API 호출 로그 DB 저장, Controller, frontend는 후속 작업으로 분리
+- Controller와 frontend는 후속 작업으로 분리
 
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 

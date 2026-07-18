@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,6 +21,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +38,9 @@ class FestivalSyncServiceTest {
     @Mock
     private FestivalSyncWriter writer;
 
+    @Mock
+    private FestivalSyncRetryWaiter retryWaiter;
+
     private FestivalSyncService service;
 
     @BeforeEach
@@ -50,13 +55,17 @@ class FestivalSyncServiceTest {
                 365,
                 "51",
                 "EV",
-                "EV01"
+                "EV01",
+                3,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(10)
         );
         service = new FestivalSyncService(
                 tourApiClient,
                 properties,
                 new FestivalSyncMapper(new ObjectMapper()),
-                writer
+                writer,
+                retryWaiter
         );
     }
 
@@ -125,6 +134,84 @@ class FestivalSyncServiceTest {
 
         assertThatThrownBy(service::synchronizeFestivals)
                 .isInstanceOf(TourApiClientException.class);
+        verify(tourApiClient, times(4)).searchFestivals(any(SearchFestivalRequest.class));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(1));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(2));
+        verify(writer, never()).upsert(any(), any(LocalDate.class));
+    }
+
+    @Test
+    void 네트워크_오류가_일시적이면_대기_후_재시도한다() {
+        AtomicInteger attempts = new AtomicInteger();
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenAnswer(invocation -> {
+                    if (attempts.incrementAndGet() == 1) {
+                        throw new TourApiClientException(TourApiErrorType.NETWORK);
+                    }
+                    return new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제")));
+                });
+        when(writer.upsert(any(), any(LocalDate.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, true));
+
+        FestivalSyncResult result = service.synchronizeFestivals();
+
+        assertThat(result.synchronizedCount()).isEqualTo(1);
+        verify(tourApiClient, times(2)).searchFestivals(any(SearchFestivalRequest.class));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(1));
+    }
+
+    @Test
+    void HTTP_503은_최대_시도_횟수까지만_재시도한다() {
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenThrow(TourApiClientException.forHttpError(
+                        TourApiErrorType.HTTP,
+                        503,
+                        null
+                ));
+
+        assertThatThrownBy(service::synchronizeFestivals)
+                .isInstanceOfSatisfying(TourApiClientException.class, exception ->
+                        assertThat(exception.getHttpStatus()).isEqualTo(503));
+
+        verify(tourApiClient, times(3)).searchFestivals(any(SearchFestivalRequest.class));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(1));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(2));
+        verify(writer, never()).upsert(any(), any(LocalDate.class));
+    }
+
+    @Test
+    void HTTP_429는_대기_후_재시도한다() {
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenThrow(TourApiClientException.forHttpError(
+                        TourApiErrorType.RATE_LIMIT,
+                        429,
+                        null
+                ))
+                .thenReturn(new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제"))));
+        when(writer.upsert(any(), any(LocalDate.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, true));
+
+        FestivalSyncResult result = service.synchronizeFestivals();
+
+        assertThat(result.synchronizedCount()).isEqualTo(1);
+        verify(tourApiClient, times(2)).searchFestivals(any(SearchFestivalRequest.class));
+        verify(retryWaiter).waitFor(Duration.ofSeconds(1));
+    }
+
+    @Test
+    void HTTP_400은_재시도하지_않는다() {
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenThrow(TourApiClientException.forHttpError(
+                        TourApiErrorType.HTTP,
+                        400,
+                        null
+                ));
+
+        assertThatThrownBy(service::synchronizeFestivals)
+                .isInstanceOf(TourApiClientException.class);
+
+        verify(tourApiClient).searchFestivals(any(SearchFestivalRequest.class));
+        verify(retryWaiter, never()).waitFor(any(Duration.class));
         verify(writer, never()).upsert(any(), any(LocalDate.class));
     }
 

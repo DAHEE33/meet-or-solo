@@ -10,6 +10,7 @@ import com.survey.meetorsolo.external.tourapi.dto.TourApiPage;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiClientException;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiErrorType;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -29,17 +30,20 @@ public class FestivalSyncService {
     private final FestivalSyncProperties properties;
     private final FestivalSyncMapper mapper;
     private final FestivalSyncWriter writer;
+    private final FestivalSyncRetryWaiter retryWaiter;
 
     public FestivalSyncService(
             TourApiClient tourApiClient,
             FestivalSyncProperties properties,
             FestivalSyncMapper mapper,
-            FestivalSyncWriter writer
+            FestivalSyncWriter writer,
+            FestivalSyncRetryWaiter retryWaiter
     ) {
         this.tourApiClient = tourApiClient;
         this.properties = properties;
         this.mapper = mapper;
         this.writer = writer;
+        this.retryWaiter = retryWaiter;
     }
 
     public FestivalSyncResult synchronizeFestivals() {
@@ -130,7 +134,7 @@ public class FestivalSyncService {
             LocalDate eventStartDate,
             LocalDate eventEndDate
     ) {
-        return tourApiClient.searchFestivals(new SearchFestivalRequest(
+        SearchFestivalRequest request = new SearchFestivalRequest(
                 eventStartDate,
                 eventEndDate,
                 null,
@@ -142,7 +146,54 @@ public class FestivalSyncService {
                 properties.classificationSystem1(),
                 properties.classificationSystem2(),
                 null
-        ));
+        );
+
+        for (int attempt = 1; attempt <= properties.retryMaxAttempts(); attempt++) {
+            try {
+                return tourApiClient.searchFestivals(request);
+            } catch (TourApiClientException exception) {
+                if (!isRetryable(exception) || attempt == properties.retryMaxAttempts()) {
+                    throw exception;
+                }
+                Duration delay = retryDelay(attempt);
+                log.warn(
+                        "Festival API page request will be retried. pageNo={}, attempt={}/{}, type={}, httpStatus={}, nextDelayMs={}",
+                        pageNo,
+                        attempt,
+                        properties.retryMaxAttempts(),
+                        exception.getErrorType(),
+                        exception.getHttpStatus(),
+                        delay.toMillis()
+                );
+                retryWaiter.waitFor(delay);
+            }
+        }
+        throw new IllegalStateException("축제 API 재시도 흐름이 정상적으로 종료되지 않았습니다.");
+    }
+
+    private boolean isRetryable(TourApiClientException exception) {
+        if (exception.getErrorType() == TourApiErrorType.NETWORK
+                || exception.getErrorType() == TourApiErrorType.RATE_LIMIT) {
+            return true;
+        }
+        Integer status = exception.getHttpStatus();
+        return exception.getErrorType() == TourApiErrorType.HTTP
+                && status != null
+                && status >= 500
+                && status <= 599;
+    }
+
+    private Duration retryDelay(int failedAttempt) {
+        Duration delay = properties.retryInitialDelay();
+        for (int exponent = 1; exponent < failedAttempt; exponent++) {
+            if (delay.compareTo(properties.retryMaxDelay()) >= 0) {
+                return properties.retryMaxDelay();
+            }
+            delay = delay.multipliedBy(2);
+        }
+        return delay.compareTo(properties.retryMaxDelay()) > 0
+                ? properties.retryMaxDelay()
+                : delay;
     }
 
     private void validatePage(TourApiPage<SearchFestivalItem> page, int requestedPageNo) {

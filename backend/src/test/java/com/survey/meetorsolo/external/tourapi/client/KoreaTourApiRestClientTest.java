@@ -2,6 +2,11 @@ package com.survey.meetorsolo.external.tourapi.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -11,6 +16,7 @@ import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalRequest;
 import com.survey.meetorsolo.external.tourapi.dto.TourApiArrange;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiClientException;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiErrorType;
+import com.survey.meetorsolo.external.tourapi.log.TourApiCallLogRecorder;
 import com.survey.meetorsolo.external.tourapi.support.TourApiResponseParser;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -20,6 +26,8 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 class KoreaTourApiRestClientTest {
+
+    private final TourApiCallLogRecorder callLogRecorder = mock(TourApiCallLogRecorder.class);
 
     @Test
     void searchFestival2_성공_응답을_매핑한다() {
@@ -40,6 +48,14 @@ class KoreaTourApiRestClientTest {
         assertThat(page.items().get(0).contentTypeId()).isEqualTo("15");
         assertThat(page.items().get(0).title()).isEqualTo("테스트 축제");
         assertThat(page.items().get(0).classificationSystem2()).isEqualTo("EV01");
+        verify(callLogRecorder).recordSuccess(
+                eq("searchFestival2"),
+                eq("start=2026-07-01;end=2026-07-31;region=51;class=EV/EV01;page=1;rows=10"),
+                eq(200),
+                anyInt(),
+                eq(1),
+                any()
+        );
         server.verify();
     }
 
@@ -96,6 +112,14 @@ class KoreaTourApiRestClientTest {
                     assertThat(exception.getMessage())
                             .isEqualTo(TourApiErrorType.AUTHORIZATION.getDefaultMessage());
                 });
+        verify(callLogRecorder).recordFailure(
+                eq("searchFestival2"),
+                eq("start=2026-07-01;end=2026-07-31;region=51;class=EV/EV01;page=1;rows=10"),
+                eq(200),
+                anyInt(),
+                any(TourApiClientException.class),
+                any()
+        );
         server.verify();
     }
 
@@ -142,7 +166,8 @@ class KoreaTourApiRestClientTest {
         return new KoreaTourApiRestClient(
                 restClient,
                 properties,
-                new TourApiResponseParser(new ObjectMapper())
+                new TourApiResponseParser(new ObjectMapper()),
+                callLogRecorder
         );
     }
 
