@@ -16,6 +16,7 @@ import org.hibernate.type.SqlTypes;
 public class MatchPool {
 
     public static final String STATUS_WAITING = "WAITING";
+    public static final String STATUS_LOCKED = "LOCKED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -149,5 +150,28 @@ public class MatchPool {
 
     public OffsetDateTime getSearchExpiresAt() {
         return searchExpiresAt;
+    }
+
+    public OffsetDateTime getLockedAt() {
+        return lockedAt;
+    }
+
+    public String getLockToken() {
+        return lockToken;
+    }
+
+    public OffsetDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void lock(OffsetDateTime lockedAt, String lockToken) {
+        if (!STATUS_WAITING.equals(status)) {
+            throw new IllegalStateException("WAITING 상태의 match pool만 선점할 수 있습니다.");
+        }
+
+        this.status = STATUS_LOCKED;
+        this.lockedAt = lockedAt;
+        this.lockToken = lockToken;
+        this.updatedAt = lockedAt;
     }
 }
