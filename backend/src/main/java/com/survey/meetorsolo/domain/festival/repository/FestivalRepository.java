@@ -36,6 +36,44 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
             @Param("updatedAt") OffsetDateTime updatedAt
     );
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update Festival festival
+            set festival.status = :inactiveStatus,
+                festival.updatedAt = :updatedAt
+            where festival.status = :activeStatus
+              and festival.eventStartDate between :eventStartDate and :eventEndDate
+              and festival.areaCode = :regionCode
+              and festival.contentId not in :observedContentIds
+            """)
+    int markActiveMissingInScopeInactive(
+            @Param("observedContentIds") Collection<String> observedContentIds,
+            @Param("eventStartDate") LocalDate eventStartDate,
+            @Param("eventEndDate") LocalDate eventEndDate,
+            @Param("regionCode") String regionCode,
+            @Param("activeStatus") FestivalStatus activeStatus,
+            @Param("inactiveStatus") FestivalStatus inactiveStatus,
+            @Param("updatedAt") OffsetDateTime updatedAt
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update Festival festival
+            set festival.status = :inactiveStatus,
+                festival.updatedAt = :updatedAt
+            where festival.status = :activeStatus
+              and festival.eventStartDate between :eventStartDate and :eventEndDate
+              and festival.areaCode = :regionCode
+            """)
+    int markAllActiveInScopeInactive(
+            @Param("eventStartDate") LocalDate eventStartDate,
+            @Param("eventEndDate") LocalDate eventEndDate,
+            @Param("regionCode") String regionCode,
+            @Param("activeStatus") FestivalStatus activeStatus,
+            @Param("inactiveStatus") FestivalStatus inactiveStatus,
+            @Param("updatedAt") OffsetDateTime updatedAt
+    );
+
     @Query("""
             select festival
             from Festival festival

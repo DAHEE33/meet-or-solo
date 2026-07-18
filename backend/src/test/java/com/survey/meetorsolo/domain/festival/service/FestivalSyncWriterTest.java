@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -47,6 +48,15 @@ class FestivalSyncWriterTest {
                 eq(FestivalStatus.HIDDEN),
                 any(OffsetDateTime.class)
         )).thenReturn(0);
+        when(festivalRepository.markActiveMissingInScopeInactive(
+                eq(Set.of("100", "200")),
+                eq(LocalDate.of(2026, 6, 18)),
+                eq(LocalDate.of(2027, 7, 18)),
+                eq("51"),
+                eq(FestivalStatus.ACTIVE),
+                eq(FestivalStatus.INACTIVE),
+                any(OffsetDateTime.class)
+        )).thenReturn(1);
         FestivalSyncWriter writer = new FestivalSyncWriter(
                 festivalRepository,
                 festivalImageRepository
@@ -54,13 +64,14 @@ class FestivalSyncWriterTest {
 
         FestivalSyncWriteResult result = writer.upsert(
                 List.of(syncData("100", "변경 제목"), syncData("200", "신규 축제")),
-                syncDate
+                scope(syncDate, "100", "200")
         );
 
         assertThat(result.insertedCount()).isEqualTo(1);
         assertThat(result.updatedCount()).isEqualTo(1);
         assertThat(result.synchronizedImageCount()).isZero();
         assertThat(result.endedCount()).isZero();
+        assertThat(result.inactiveCount()).isEqualTo(1);
         assertThat(result.initialLoad()).isFalse();
         assertThat(existing.getTitle()).isEqualTo("변경 제목");
 
@@ -82,16 +93,28 @@ class FestivalSyncWriterTest {
                 eq(FestivalStatus.HIDDEN),
                 any(OffsetDateTime.class)
         )).thenReturn(2);
+        when(festivalRepository.markAllActiveInScopeInactive(
+                eq(LocalDate.of(2026, 6, 18)),
+                eq(LocalDate.of(2027, 7, 18)),
+                eq("51"),
+                eq(FestivalStatus.ACTIVE),
+                eq(FestivalStatus.INACTIVE),
+                any(OffsetDateTime.class)
+        )).thenReturn(1);
         FestivalSyncWriter writer = new FestivalSyncWriter(
                 festivalRepository,
                 festivalImageRepository
         );
 
-        FestivalSyncWriteResult result = writer.upsert(List.of(), LocalDate.of(2026, 7, 18));
+        FestivalSyncWriteResult result = writer.upsert(
+                List.of(),
+                scope(LocalDate.of(2026, 7, 18))
+        );
 
         assertThat(result.initialLoad()).isTrue();
         assertThat(result.insertedCount()).isZero();
         assertThat(result.endedCount()).isEqualTo(2);
+        assertThat(result.inactiveCount()).isEqualTo(1);
         verify(festivalRepository, never()).findAllByContentIdIn(anyList());
         verify(festivalRepository, never()).saveAll(anyList());
         verify(festivalRepository, never()).flush();
@@ -121,7 +144,7 @@ class FestivalSyncWriterTest {
 
         FestivalSyncWriteResult result = writer.upsert(
                 List.of(syncDataWithImage("100", "변경 축제")),
-                syncDate
+                scope(syncDate, "100")
         );
 
         assertThat(result.synchronizedImageCount()).isEqualTo(1);
@@ -155,6 +178,16 @@ class FestivalSyncWriterTest {
                 null,
                 OffsetDateTime.parse("2026-07-18T10:00:00+09:00"),
                 Map.of("contentid", contentId)
+        );
+    }
+
+    private FestivalSyncScope scope(LocalDate syncDate, String... observedContentIds) {
+        return new FestivalSyncScope(
+                syncDate,
+                syncDate.minusDays(30),
+                syncDate.plusDays(365),
+                "51",
+                Set.of(observedContentIds)
         );
     }
 

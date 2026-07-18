@@ -7,6 +7,9 @@
 - `Festival` Entity와 `FestivalRepository`를 기존 `festivals` schema에 매핑
 - `searchFestival2` 전체 페이지를 수신한 뒤에만 DB 저장 단계로 이동
 - 응답 페이지 누락, 중간 호출 실패, 최대 페이지 초과 시 writer를 호출하지 않고 기존 DB 데이터 유지
+- 전체 페이지 조회 성공 시 같은 조회 기간·지역 범위에서 응답에 없는 기존 `ACTIVE` 축제를 `INACTIVE`로 변경
+- 빈 정상 응답도 해당 조회 범위의 `ACTIVE` 축제를 `INACTIVE`로 변경하며 `HIDDEN`, `ENDED` 상태는 보존
+- 누락 비교에는 매핑 성공 건뿐 아니라 응답에서 확인한 유효한 `contentId` 전체를 사용해 일부 항목 매핑 실패에 따른 오판 방지
 - 외부 DTO의 날짜, 좌표, 주소, 법정동 코드를 `FestivalSyncData`로 변환하고 `content_id` 중복 제거
 - `FestivalSyncWriter`의 단일 transaction에서 `content_id` 기준 신규/기존 축제 upsert
 - `last_synced_at`과 API DTO 기반 `raw_data` JSONB 저장
@@ -19,7 +22,7 @@
 - 기본 조회 범위 KST 오늘 기준 이전 30일~이후 365일, 강원 코드 `51`, 분류 `EV/EV01`
 - local/prod Scheduler 비활성화로 일반 test와 local backend 시작 시 의도하지 않은 외부 API 호출 방지
 - 축제 동기화, 재시도, 호출 로그 단위 테스트와 PostgreSQL rollback 통합 테스트 작성
-- 전체 backend test 74건 중 73건 통과, opt-in live test 1건 기본 skip
+- 전체 backend test 75건 중 74건 통과, opt-in live test 1건 기본 skip
 - 기존 Flyway migration과 `GlobalExceptionHandler`는 수정하지 않음
 
 ## [10-A] 축제 종료 상태·대표 이미지·목록 조회 API

@@ -5,6 +5,7 @@ record FestivalSyncWriteResult(
         int updatedCount,
         int synchronizedImageCount,
         int endedCount,
+        int inactiveCount,
         boolean initialLoad
 ) {
 }

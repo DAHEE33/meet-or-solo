@@ -15,8 +15,10 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -54,7 +56,11 @@ public class FestivalSyncService {
         List<SearchFestivalItem> fetchedItems = fetchAllPages(eventStartDate, eventEndDate);
         OffsetDateTime syncedAt = SeoulDateTime.now();
         Map<String, FestivalSyncData> uniqueSyncData = new LinkedHashMap<>();
+        Set<String> observedContentIds = new LinkedHashSet<>();
         for (SearchFestivalItem item : fetchedItems) {
+            if (item != null && item.contentId() != null && !item.contentId().isBlank()) {
+                observedContentIds.add(item.contentId().trim());
+            }
             mapper.toSyncData(item, syncedAt)
                     .ifPresent(data -> uniqueSyncData.put(data.contentId(), data));
         }
@@ -68,7 +74,14 @@ public class FestivalSyncService {
             log.warn("Festival sync skipped invalid or duplicate items. count={}", skippedCount);
         }
 
-        FestivalSyncWriteResult writeResult = writer.upsert(uniqueSyncData.values(), syncDate);
+        FestivalSyncScope syncScope = new FestivalSyncScope(
+                syncDate,
+                eventStartDate,
+                eventEndDate,
+                properties.regionCode(),
+                observedContentIds
+        );
+        FestivalSyncWriteResult writeResult = writer.upsert(uniqueSyncData.values(), syncScope);
         return new FestivalSyncResult(
                 fetchedItems.size(),
                 uniqueSyncData.size(),
@@ -76,6 +89,7 @@ public class FestivalSyncService {
                 writeResult.updatedCount(),
                 writeResult.synchronizedImageCount(),
                 writeResult.endedCount(),
+                writeResult.inactiveCount(),
                 skippedCount,
                 writeResult.initialLoad(),
                 syncedAt

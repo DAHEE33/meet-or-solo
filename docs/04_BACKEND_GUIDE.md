@@ -106,6 +106,7 @@ FestivalSyncScheduler
 - `FestivalSyncService`는 설정된 기간의 `searchFestival2` 전체 페이지를 먼저 메모리에 수집합니다.
 - 한 페이지라도 실패하거나 페이지 계약이 불완전하면 `FestivalSyncWriter`를 호출하지 않습니다.
 - 전체 페이지 수신 후에만 `FestivalSyncWriter`의 단일 transaction으로 `content_id` 기준 upsert합니다.
+- 전체 페이지 수신에 성공하면 같은 조회 기간·지역 범위에서 응답에 없는 기존 `ACTIVE` 축제를 `INACTIVE`로 변경합니다. 매핑이 실패한 항목도 유효한 `contentId`가 응답에 있으면 누락으로 판단하지 않습니다.
 - `firstimage`, `firstimage2`는 축제별 `display_order=0` 대표 이미지로 저장·갱신합니다. 이미지 URL은 HTTP/HTTPS만 허용하며 응답에서 이미지가 누락되면 마지막 정상 이미지를 유지합니다.
 - 성공한 동기화 transaction에서는 KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제를 `ENDED`로 일괄 정리합니다. 종료 당일은 `ACTIVE`로 유지하고 운영자가 숨긴 `HIDDEN`은 변경하지 않습니다.
 - 동기화 실패 시 기존 `festivals` row를 삭제하거나 변경하지 않습니다. 기존 row가 있으면 `STALE_DATA`, 하나도 없으면 `NO_DATA` 상태로 Scheduler 로그에 기록하고 다음 주기에 다시 시도합니다.
@@ -114,8 +115,8 @@ FestivalSyncScheduler
 - 네트워크 오류, HTTP 5xx, 429는 페이지별로 최대 3회(최초 호출 포함) 재시도합니다. 기본 지연은 1초, 2초의 지수 증가이며 최대 10초로 제한합니다.
 - 인증/권한, 그 외 HTTP 4xx, 설정 오류, 잘못된 응답은 재시도하지 않습니다. 재시도를 모두 소진하면 전체 동기화를 실패 처리하여 기존 DB 데이터를 유지합니다.
 - 기본 조회 조건은 KST 오늘 기준 이전 30일부터 이후 365일까지, 강원 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`, 페이지 크기 100입니다.
-- API가 정상 0건을 반환한 경우 기존 데이터를 삭제하지 않습니다. 최초 실행도 0건이면 DB는 빈 상태로 유지됩니다.
-- API가 정상 0건이어도 기존 데이터의 종료 상태 정리는 수행합니다.
+- API가 정상 0건을 반환하면 row를 삭제하지 않고 같은 조회 기간·지역 범위의 기존 `ACTIVE` 축제를 `INACTIVE`로 변경합니다. 최초 실행도 0건이면 DB는 빈 상태로 유지됩니다.
+- API가 정상 0건이어도 기존 데이터의 종료 상태 정리를 먼저 수행하며 `HIDDEN`, `ENDED`는 누락 비교로 변경하지 않습니다.
 
 ## 축제 목록 조회 API
 

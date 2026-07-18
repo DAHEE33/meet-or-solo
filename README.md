@@ -300,7 +300,7 @@ FESTIVAL_SYNC_RETRY_MAX_DELAY=10s
 
 Scheduler는 시작 후 최초 동기화를 시도하고 이후 실행 완료 시점부터 `fixedDelay`를 적용합니다. 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함) 지수 지연으로 재시도하며 다른 4xx와 응답 형식 오류는 즉시 실패 처리합니다. 각 실제 호출 시도는 `tour_api_call_logs`에 성공 여부, HTTP status, 응답 시간, 결과 건수와 안전한 오류 분류를 저장합니다. API Key와 전체 URL은 저장하지 않습니다.
 
-전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert합니다. `firstimage`, `firstimage2`는 축제별 대표 이미지로 저장·갱신하며 API 응답에서 이미지가 비면 기존 대표 이미지를 유지합니다. KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제는 `ENDED`로 정리하고 `HIDDEN`은 유지합니다. API 호출 자체가 실패하면 기존 DB 데이터를 그대로 유지하며, 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
+전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert합니다. 같은 조회 기간·지역 범위에서 이번 정상 응답에 없는 기존 `ACTIVE` 축제는 `INACTIVE`로 변경하고, 운영자가 숨긴 `HIDDEN`은 유지합니다. `firstimage`, `firstimage2`는 축제별 대표 이미지로 저장·갱신하며 API 응답에서 이미지가 비면 기존 대표 이미지를 유지합니다. KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제는 `ENDED`로 정리합니다. API 호출 자체가 실패하면 기존 DB 데이터를 그대로 유지하며, 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
 
 ### 축제 목록 API
 

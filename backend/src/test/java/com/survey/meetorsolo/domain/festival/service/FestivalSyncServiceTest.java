@@ -89,8 +89,8 @@ class FestivalSyncServiceTest {
                             List.of(festivalItem("300", "세 번째"))
                     );
                 });
-        when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(3, 0, 3, 1, true));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(3, 0, 3, 1, 2, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -99,6 +99,7 @@ class FestivalSyncServiceTest {
         assertThat(result.insertedCount()).isEqualTo(3);
         assertThat(result.synchronizedImageCount()).isEqualTo(3);
         assertThat(result.endedCount()).isEqualTo(1);
+        assertThat(result.inactiveCount()).isEqualTo(2);
         assertThat(result.initialLoad()).isTrue();
 
         ArgumentCaptor<SearchFestivalRequest> requestCaptor =
@@ -114,8 +115,13 @@ class FestivalSyncServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<FestivalSyncData>> dataCaptor =
                 ArgumentCaptor.forClass(Collection.class);
-        verify(writer).upsert(dataCaptor.capture(), any(LocalDate.class));
+        ArgumentCaptor<FestivalSyncScope> scopeCaptor =
+                ArgumentCaptor.forClass(FestivalSyncScope.class);
+        verify(writer).upsert(dataCaptor.capture(), scopeCaptor.capture());
         assertThat(dataCaptor.getValue()).hasSize(3);
+        assertThat(scopeCaptor.getValue().observedContentIds())
+                .containsExactlyInAnyOrder("100", "200", "300");
+        assertThat(scopeCaptor.getValue().regionCode()).isEqualTo("51");
     }
 
     @Test
@@ -139,7 +145,7 @@ class FestivalSyncServiceTest {
         verify(tourApiClient, times(4)).searchFestivals(any(SearchFestivalRequest.class));
         verify(retryWaiter).waitFor(Duration.ofSeconds(1));
         verify(retryWaiter).waitFor(Duration.ofSeconds(2));
-        verify(writer, never()).upsert(any(), any(LocalDate.class));
+        verify(writer, never()).upsert(any(), any(FestivalSyncScope.class));
     }
 
     @Test
@@ -152,8 +158,8 @@ class FestivalSyncServiceTest {
                     }
                     return new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제")));
                 });
-        when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -178,7 +184,7 @@ class FestivalSyncServiceTest {
         verify(tourApiClient, times(3)).searchFestivals(any(SearchFestivalRequest.class));
         verify(retryWaiter).waitFor(Duration.ofSeconds(1));
         verify(retryWaiter).waitFor(Duration.ofSeconds(2));
-        verify(writer, never()).upsert(any(), any(LocalDate.class));
+        verify(writer, never()).upsert(any(), any(FestivalSyncScope.class));
     }
 
     @Test
@@ -190,8 +196,8 @@ class FestivalSyncServiceTest {
                         null
                 ))
                 .thenReturn(new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제"))));
-        when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -214,7 +220,7 @@ class FestivalSyncServiceTest {
 
         verify(tourApiClient).searchFestivals(any(SearchFestivalRequest.class));
         verify(retryWaiter, never()).waitFor(any(Duration.class));
-        verify(writer, never()).upsert(any(), any(LocalDate.class));
+        verify(writer, never()).upsert(any(), any(FestivalSyncScope.class));
     }
 
     @Test
@@ -230,8 +236,8 @@ class FestivalSyncServiceTest {
                                 festivalItem(null, "잘못된 항목")
                         )
                 ));
-        when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -242,7 +248,7 @@ class FestivalSyncServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<FestivalSyncData>> dataCaptor =
                 ArgumentCaptor.forClass(Collection.class);
-        verify(writer).upsert(dataCaptor.capture(), any(LocalDate.class));
+        verify(writer).upsert(dataCaptor.capture(), any(FestivalSyncScope.class));
         assertThat(dataCaptor.getValue())
                 .singleElement()
                 .extracting(FestivalSyncData::title)

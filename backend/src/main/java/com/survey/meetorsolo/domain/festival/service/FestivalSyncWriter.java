@@ -7,7 +7,7 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
-import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -33,7 +33,7 @@ public class FestivalSyncWriter {
     @Transactional
     public FestivalSyncWriteResult upsert(
             Collection<FestivalSyncData> syncData,
-            LocalDate syncDate
+            FestivalSyncScope syncScope
     ) {
         boolean initialLoad = festivalRepository.count() == 0;
         List<FestivalSyncData> dataList = List.copyOf(syncData);
@@ -55,10 +55,10 @@ public class FestivalSyncWriter {
         for (FestivalSyncData data : dataList) {
             Festival festival = existingByContentId.get(data.contentId());
             if (festival == null) {
-                festival = Festival.create(data, syncDate);
+                festival = Festival.create(data, syncScope.syncDate());
                 insertedCount++;
             } else {
-                festival.synchronize(data, syncDate);
+                festival.synchronize(data, syncScope.syncDate());
                 updatedCount++;
             }
             festivals.add(festival);
@@ -70,18 +70,46 @@ public class FestivalSyncWriter {
             festivalRepository.flush();
             synchronizedImageCount = synchronizeRepresentativeImages(dataList, festivals);
         }
+        OffsetDateTime statusUpdatedAt = SeoulDateTime.now();
         int endedCount = festivalRepository.markEndedBefore(
-                syncDate,
+                syncScope.syncDate(),
                 FestivalStatus.ENDED,
                 FestivalStatus.HIDDEN,
-                SeoulDateTime.now()
+                statusUpdatedAt
         );
+        int inactiveCount = markMissingFestivalsInactive(syncScope, statusUpdatedAt);
         return new FestivalSyncWriteResult(
                 insertedCount,
                 updatedCount,
                 synchronizedImageCount,
                 endedCount,
+                inactiveCount,
                 initialLoad
+        );
+    }
+
+    private int markMissingFestivalsInactive(
+            FestivalSyncScope syncScope,
+            OffsetDateTime updatedAt
+    ) {
+        if (syncScope.observedContentIds().isEmpty()) {
+            return festivalRepository.markAllActiveInScopeInactive(
+                    syncScope.eventStartDate(),
+                    syncScope.eventEndDate(),
+                    syncScope.regionCode(),
+                    FestivalStatus.ACTIVE,
+                    FestivalStatus.INACTIVE,
+                    updatedAt
+            );
+        }
+        return festivalRepository.markActiveMissingInScopeInactive(
+                syncScope.observedContentIds(),
+                syncScope.eventStartDate(),
+                syncScope.eventEndDate(),
+                syncScope.regionCode(),
+                FestivalStatus.ACTIVE,
+                FestivalStatus.INACTIVE,
+                updatedAt
         );
     }
 
