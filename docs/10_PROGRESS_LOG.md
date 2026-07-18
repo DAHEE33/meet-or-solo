@@ -1,5 +1,57 @@
 # 진행 상태 기록
 
+## [10-매칭 2차] PostgreSQL 기반 MatchPool 후보 동시 선점
+
+상태: 운영 코드 작성 및 Windows PowerShell + Docker Desktop 실제 PostgreSQL 통합 테스트 완료
+
+- 기존 일반 후보 조회 repository와 필터·정렬 테스트를 유지
+- 같은 축제의 유효한 `WAITING` 후보를 제한 개수만큼 조회하는 잠금 query 추가
+- 잠금 query에 `FOR UPDATE OF pool SKIP LOCKED` 적용
+- `MatchPoolClaimService`의 짧은 `@Transactional` 안에서 잠금 조회와 `WAITING -> LOCKED` 전이 수행
+- 선점 시 `locked_at`, `lock_token`, `updated_at`을 호출자가 전달한 기준 시각과 token으로 함께 기록
+- `limit`, `lockToken` 입력 검증과 후보가 없을 때 빈 결과 반환 계약 추가
+- test 전용 cleanup과 기존 fixture를 isolated transaction에서 commit한 뒤 worker transaction이 조회하도록 구성
+- 두 thread와 독립된 두 transaction을 latch로 제어해 첫 worker의 잠금이 유지되는 동안 두 번째 worker가 다른 row를 선점하는 테스트 작성
+- rollback 시 `WAITING` 상태와 null lock 정보가 유지되는 테스트 작성
+- 기존 V1~V11 migration, Scheduler, stale lock 회수, scoring, 그룹 조합, proposal, frontend, Redis, WebSocket은 수정하지 않음
+
+이번에 완료된 기능:
+
+- 같은 축제의 유효한 `WAITING` 후보 잠금 조회
+- PostgreSQL native query의 `FOR UPDATE OF pool SKIP LOCKED` 적용
+- 선점 후보의 `WAITING -> LOCKED` 상태 전이
+- 선점 시 `locked_at`, `lock_token`, `updated_at` 기록
+- `limit` 양수 검증과 `lockToken` 필수·최대 100자 검증
+- 상위 transaction rollback 시 상태와 lock 정보 원복
+
+Windows PowerShell + Docker Desktop 실제 테스트:
+
+- `MatchPoolClaimServiceIntegrationTest` 8건 통과
+  - 제한 개수 선점, `locked_at`/`lock_token` 기록, `WAITING -> LOCKED` 전이 검증
+  - `limit`, `lockToken` 입력값 검증과 후보 없음 시 빈 결과 계약 검증
+  - `LOCKED`/`PROPOSED` 후보 제외와 기존 정렬·limit 유지 검증
+  - 상위 transaction rollback 시 `WAITING`과 null lock 정보 유지 검증
+  - latch로 제어한 두 독립 transaction이 대기 없이 서로 다른 pool을 선점해 중복 선점이 발생하지 않음을 검증
+- `MatchPoolClaimServiceIntegrationTest`와 `MatchPoolRepositoryIntegrationTest` 회귀 실행 총 21건 통과
+  - 후보 선점 8건과 기존 유효 `WAITING` 후보 조회·제외 조건·정렬·partial unique index 13건을 함께 검증
+- 전체 backend test 총 64건 통과
+  - tests 64, failures 0, errors 0, skipped 0
+  - 빈 PostgreSQL 16 + pgvector Testcontainer에 Flyway V1~V11이 적용된 실제 PostgreSQL 환경에서 매칭 통합 테스트 통과
+
+실행 명령과 완료 판단:
+
+- `./gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.service.MatchPoolClaimServiceIntegrationTest" --rerun-tasks`: 후보 잠금 조회, 상태·lock 정보 전이, 입력 검증, rollback, 두 독립 transaction의 중복 없는 동시 선점을 검증하며, 성공 시 후보 선점 기능 범위를 완료로 판단
+- `./gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.service.MatchPoolClaimServiceIntegrationTest" --tests "com.survey.meetorsolo.domain.matching.repository.MatchPoolRepositoryIntegrationTest" --rerun-tasks`: 신규 선점 기능과 기존 후보 조회 조건·정렬·제약조건의 회귀 없음을 함께 검증
+- `./gradlew.bat test --rerun-tasks`: 전체 backend 64건을 재실행해 신규 매칭 선점 구현이 인증, 회원, 외부 연동, 시간 처리 등 기존 backend 테스트를 깨뜨리지 않았음을 검증
+
+다음 단계로 이월:
+
+- Scheduler의 pool/proposal 만료와 stale lock 회수
+- 후보 점수 계산과 2~4인 그룹 조합
+- attempt/proposal/response 상태 전이와 그룹 확정
+- 임베딩 cosine similarity와 정형 점수 결합
+- 실제 부하를 확인한 뒤 후보 잠금 query 인덱스 보완 여부 검토
+
 ## [10-매칭 1차] MatchPool 후보 조회 repository와 PostgreSQL 통합 테스트
 
 상태: 최소 운영 구현과 실제 PostgreSQL 통합 검증 완료
