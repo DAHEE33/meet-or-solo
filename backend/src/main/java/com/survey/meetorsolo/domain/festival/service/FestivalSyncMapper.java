@@ -6,6 +6,8 @@ import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalItem;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -55,6 +57,12 @@ public class FestivalSyncMapper {
                 return Optional.empty();
             }
 
+            String originImageUrl = normalizeImageUrl(item.firstImage());
+            String thumbnailUrl = normalizeImageUrl(item.firstImageThumbnail());
+            if (originImageUrl == null) {
+                originImageUrl = thumbnailUrl;
+            }
+
             return Optional.of(new FestivalSyncData(
                     contentId,
                     contentTypeId,
@@ -66,6 +74,8 @@ public class FestivalSyncMapper {
                     eventEndDate,
                     parseCoordinate(item.mapX(), new BigDecimal("-180"), new BigDecimal("180")),
                     parseCoordinate(item.mapY(), new BigDecimal("-90"), new BigDecimal("90")),
+                    originImageUrl,
+                    thumbnailUrl,
                     syncedAt,
                     rawData(item)
             ));
@@ -120,6 +130,24 @@ public class FestivalSyncMapper {
             return null;
         }
         return value.trim();
+    }
+
+    private String normalizeImageUrl(String value) {
+        String normalized = normalize(value);
+        if (normalized == null || normalized.length() > 1000) {
+            return null;
+        }
+        try {
+            URI uri = new URI(normalized);
+            String scheme = uri.getScheme();
+            if (uri.getHost() == null
+                    || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+                return null;
+            }
+            return normalized;
+        } catch (URISyntaxException exception) {
+            return null;
+        }
     }
 
     private String truncate(String value, int maxLength) {

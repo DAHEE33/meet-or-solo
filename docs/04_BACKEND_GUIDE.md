@@ -99,13 +99,15 @@ FestivalSyncScheduler
   → TourApiClient.searchFestivals
   → FestivalSyncMapper
   → FestivalSyncWriter
-  → FestivalRepository
-  → PostgreSQL festivals
+  → FestivalRepository / FestivalImageRepository
+  → PostgreSQL festivals / festival_images
 ```
 
 - `FestivalSyncService`는 설정된 기간의 `searchFestival2` 전체 페이지를 먼저 메모리에 수집합니다.
 - 한 페이지라도 실패하거나 페이지 계약이 불완전하면 `FestivalSyncWriter`를 호출하지 않습니다.
 - 전체 페이지 수신 후에만 `FestivalSyncWriter`의 단일 transaction으로 `content_id` 기준 upsert합니다.
+- `firstimage`, `firstimage2`는 축제별 `display_order=0` 대표 이미지로 저장·갱신합니다. 이미지 URL은 HTTP/HTTPS만 허용하며 응답에서 이미지가 누락되면 마지막 정상 이미지를 유지합니다.
+- 성공한 동기화 transaction에서는 KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제를 `ENDED`로 일괄 정리합니다. 종료 당일은 `ACTIVE`로 유지하고 운영자가 숨긴 `HIDDEN`은 변경하지 않습니다.
 - 동기화 실패 시 기존 `festivals` row를 삭제하거나 변경하지 않습니다. 기존 row가 있으면 `STALE_DATA`, 하나도 없으면 `NO_DATA` 상태로 Scheduler 로그에 기록하고 다음 주기에 다시 시도합니다.
 - Scheduler는 `fixedDelay`를 사용하므로 한 인스턴스 안에서 이전 실행이 끝난 뒤 다음 실행 시간을 계산합니다.
 - Scheduler 소유권은 `local=false`, `dev=true`, `prod=false`입니다. local과 dev가 같은 DB를 사용하더라도 자동 동기화는 dev backend 한 인스턴스만 수행합니다.
@@ -113,7 +115,19 @@ FestivalSyncScheduler
 - 인증/권한, 그 외 HTTP 4xx, 설정 오류, 잘못된 응답은 재시도하지 않습니다. 재시도를 모두 소진하면 전체 동기화를 실패 처리하여 기존 DB 데이터를 유지합니다.
 - 기본 조회 조건은 KST 오늘 기준 이전 30일부터 이후 365일까지, 강원 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`, 페이지 크기 100입니다.
 - API가 정상 0건을 반환한 경우 기존 데이터를 삭제하지 않습니다. 최초 실행도 0건이면 DB는 빈 상태로 유지됩니다.
-- `festival_images`와 사용자용 Controller는 별도 후속 작업입니다.
+- API가 정상 0건이어도 기존 데이터의 종료 상태 정리는 수행합니다.
+
+## 축제 목록 조회 API
+
+`GET /api/festivals?page=0&size=20`은 사용자 요청마다 관광공사 API를 호출하지 않고 PostgreSQL 캐시만 조회합니다.
+
+- 공개 API이며 현재 Security 설정에서 별도 인증을 요구하지 않습니다.
+- `status=ACTIVE`이고 `event_end_date`가 null이거나 KST 오늘 이상인 축제만 조회합니다.
+- `event_start_date`, `id` 오름차순으로 고정 정렬합니다.
+- `page`는 0 이상, `size`는 1~100으로 검증합니다.
+- 목록과 대표 이미지는 두 번의 일괄 query로 조회하여 축제별 이미지 N+1 query를 만들지 않습니다.
+- 응답은 공통 `ApiResponse<FestivalListResponse>` 형식이며 목록 항목에는 `id`, `contentId`, 제목, 주소, 지역 코드, 행사 기간, 상태, 원본/썸네일 URL을 포함합니다.
+- 종료 상태 Scheduler 반영이 지연되더라도 조회 query에서 종료일을 한 번 더 확인하여 지난 축제를 노출하지 않습니다.
 
 주요 환경변수:
 

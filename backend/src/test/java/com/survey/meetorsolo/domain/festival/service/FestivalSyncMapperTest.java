@@ -25,8 +25,51 @@ class FestivalSyncMapperTest {
         assertThat(result.orElseThrow().eventEndDate()).isEqualTo("2026-07-22");
         assertThat(result.orElseThrow().mapX()).isEqualByComparingTo(new BigDecimal("128.1234567890"));
         assertThat(result.orElseThrow().mapY()).isEqualByComparingTo(new BigDecimal("37.1234567890"));
+        assertThat(result.orElseThrow().originImageUrl())
+                .isEqualTo("https://example.com/image.jpg");
+        assertThat(result.orElseThrow().thumbnailUrl())
+                .isEqualTo("https://example.com/thumbnail.jpg");
         assertThat(result.orElseThrow().rawData()).containsEntry("contentid", "100");
         assertThat(result.orElseThrow().syncedAt()).isEqualTo(syncedAt);
+    }
+
+    @Test
+    void HTTP가_아닌_이미지_URL은_저장_대상에서_제외한다() {
+        SearchFestivalItem item = new SearchFestivalItem(
+                "강원특별자치도 테스트시",
+                null,
+                null,
+                "100",
+                "15",
+                null,
+                "20260720",
+                "20260722",
+                "javascript:alert(1)",
+                null,
+                null,
+                "128.1",
+                "37.1",
+                null,
+                null,
+                null,
+                "테스트 축제",
+                "51",
+                "110",
+                "EV",
+                "EV01",
+                null,
+                null,
+                null
+        );
+
+        var result = mapper.toSyncData(
+                item,
+                OffsetDateTime.parse("2026-07-18T10:00:00+09:00")
+        );
+
+        assertThat(result).isPresent();
+        assertThat(result.orElseThrow().originImageUrl()).isNull();
+        assertThat(result.orElseThrow().thumbnailUrl()).isNull();
     }
 
     @Test

@@ -57,7 +57,6 @@ meet-or-solo/
 - 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증
-- 관광공사 OpenAPI 실제 연동
 - GPS 체크인
 - 자동 매칭
 - WebSocket STOMP 이벤트 구현
@@ -266,7 +265,7 @@ curl http://localhost:8080/api/health
 
 기본 test는 외부 네트워크를 사용하지 않고 mock 응답으로 client 계약을 검증합니다.
 
-TourAPI 연동 코드는 `backend/src/main/java/com/survey/meetorsolo/external/tourapi` 아래에서 `client`, `config`, `dto`, `exception`, `support` 책임으로 분리합니다. 외부 연동 기술 예외는 축제 service가 fallback 또는 비즈니스 예외 변환 여부를 결정할 때까지 `TourApiClientException`으로 유지합니다.
+TourAPI 연동 코드는 `backend/src/main/java/com/survey/meetorsolo/external/tourapi` 아래에서 `client`, `config`, `dto`, `exception`, `log`, `support` 책임으로 분리합니다. 외부 연동 기술 예외는 축제 service가 fallback 또는 비즈니스 예외 변환 여부를 결정할 때까지 `TourApiClientException`으로 유지합니다.
 
 ```powershell
 cd backend
@@ -286,7 +285,7 @@ live smoke test는 `KorService2/searchFestival2`, 강원특별자치도 법정�
 
 ### 축제 DB 동기화 Scheduler
 
-축제 동기화는 `FestivalSyncScheduler → FestivalSyncService → TourApiClient → FestivalRepository` 순서로 실행됩니다. 사용자용 축제 조회는 추후 관광공사 API가 아니라 PostgreSQL의 `festivals`를 조회합니다.
+축제 동기화는 `FestivalSyncScheduler → FestivalSyncService → TourApiClient → FestivalRepository/FestivalImageRepository` 순서로 실행됩니다. 사용자용 축제 조회는 관광공사 API를 직접 호출하지 않고 PostgreSQL의 `festivals`, `festival_images`를 조회합니다.
 
 축제 Scheduler는 `local=false`, `dev=true`, `prod=false`로 고정했습니다. 자동 동기화는 dev backend 한 인스턴스만 담당하며, local 실행은 dev와 같은 DB를 보더라도 관광공사 API를 자동 호출하지 않습니다. dev 서버 설정은 다음 값을 사용합니다.
 
@@ -301,7 +300,19 @@ FESTIVAL_SYNC_RETRY_MAX_DELAY=10s
 
 Scheduler는 시작 후 최초 동기화를 시도하고 이후 실행 완료 시점부터 `fixedDelay`를 적용합니다. 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함) 지수 지연으로 재시도하며 다른 4xx와 응답 형식 오류는 즉시 실패 처리합니다. 각 실제 호출 시도는 `tour_api_call_logs`에 성공 여부, HTTP status, 응답 시간, 결과 건수와 안전한 오류 분류를 저장합니다. API Key와 전체 URL은 저장하지 않습니다.
 
-전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert하며, 실패하면 기존 DB 데이터를 그대로 유지합니다. 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
+전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert합니다. `firstimage`, `firstimage2`는 축제별 대표 이미지로 저장·갱신하며 API 응답에서 이미지가 비면 기존 대표 이미지를 유지합니다. KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제는 `ENDED`로 정리하고 `HIDDEN`은 유지합니다. API 호출 자체가 실패하면 기존 DB 데이터를 그대로 유지하며, 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
+
+### 축제 목록 API
+
+```text
+GET /api/festivals?page=0&size=20
+```
+
+- 인증 없이 조회 가능한 공개 API입니다.
+- `ACTIVE`이면서 KST 오늘 기준 종료되지 않은 축제만 반환합니다.
+- 정렬은 `eventStartDate`, `id` 오름차순입니다.
+- `size`는 1~100이며 기본값은 20입니다.
+- 응답에는 축제 기본 정보, 대표 원본/썸네일 URL, `page`, `size`, `totalElements`, `totalPages`, `hasNext`가 포함됩니다.
 
 ## 로컬 frontend 개발환경
 
@@ -757,7 +768,6 @@ order by table_schema, table_name;
 - 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증/인가
-- 관광공사 OpenAPI 실제 연동
 - GPS 체크인
 - 자동 매칭
 - WebSocket STOMP 상태 동기화

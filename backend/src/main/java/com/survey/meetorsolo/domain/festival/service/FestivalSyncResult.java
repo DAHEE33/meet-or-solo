@@ -7,6 +7,8 @@ public record FestivalSyncResult(
         int synchronizedCount,
         int insertedCount,
         int updatedCount,
+        int synchronizedImageCount,
+        int endedCount,
         int skippedCount,
         boolean initialLoad,
         OffsetDateTime syncedAt

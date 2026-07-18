@@ -19,9 +19,25 @@
 - 기본 조회 범위 KST 오늘 기준 이전 30일~이후 365일, 강원 코드 `51`, 분류 `EV/EV01`
 - local/prod Scheduler 비활성화로 일반 test와 local backend 시작 시 의도하지 않은 외부 API 호출 방지
 - 축제 동기화, 재시도, 호출 로그 단위 테스트와 PostgreSQL rollback 통합 테스트 작성
-- 전체 backend test 67건 중 66건 통과, opt-in live test 1건 기본 skip
+- 전체 backend test 74건 중 73건 통과, opt-in live test 1건 기본 skip
 - 기존 Flyway migration과 `GlobalExceptionHandler`는 수정하지 않음
-- `festival_images`, 축제 목록/상세 Controller는 후속 작업으로 분리
+
+## [10-A] 축제 종료 상태·대표 이미지·목록 조회 API
+
+상태: 코드·문서·테스트 작성 완료, 실제 dev 재배포 확인 제외
+
+- 성공한 동기화에서 KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제를 `ENDED`로 일괄 변경
+- 종료 당일 축제와 운영자가 숨긴 `HIDDEN` 상태는 유지
+- `searchFestival2`의 `firstimage`, `firstimage2`를 기존 `festival_images` 테이블의 대표 이미지 1건으로 저장·갱신
+- API 응답에서 이미지가 누락되면 기존 대표 이미지를 삭제하지 않고 마지막 정상 이미지 유지
+- HTTP/HTTPS가 아닌 이미지 URL은 저장 대상에서 제외
+- `GET /api/festivals?page=0&size=20` 공개 목록 API 추가
+- `ACTIVE`이면서 KST 기준 종료되지 않은 축제만 `event_start_date`, `id` 순으로 페이지 조회
+- 대표 이미지를 일괄 조회하여 목록 N+1 query 방지
+- `page >= 0`, `1 <= size <= 100` validation과 공통 `ApiResponse` 적용
+- 기존 `festival_images` schema를 사용하여 Flyway migration 추가·수정 없음
+- 전체 backend test 74건 중 73건 통과, opt-in live test 1건 기본 skip
+- 축제 상세 API와 frontend 연동은 후속 작업으로 분리
 
 ## [10-A] 한국관광공사 TourAPI 공통 Client와 searchFestival2 조회
 
@@ -39,7 +55,7 @@
 - `MockRestServiceServer` 단위 테스트 5건 통과
 - Spring local profile이 실제 `.env` 키를 읽는 opt-in live smoke test로 강원도 `51`, 축제 분류 `EV/EV01` 조회 성공
 - 전체 backend test 통과
-- Controller와 frontend는 후속 작업으로 분리
+- 축제 상세 Controller와 frontend는 후속 작업으로 분리
 
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 
@@ -568,7 +584,7 @@ dev 서버 기준:
 - 실제 서비스 React 화면 구현
 - Kakao OAuth 로그인
 - JWT 인증/인가
-- 축제 목록/상세 기능
+- 축제 상세 기능
 - 체크인 기능
 - 매칭 알고리즘
 - WebSocket STOMP

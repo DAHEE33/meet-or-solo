@@ -90,13 +90,15 @@ class FestivalSyncServiceTest {
                     );
                 });
         when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(3, 0, true));
+                .thenReturn(new FestivalSyncWriteResult(3, 0, 3, 1, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
         assertThat(result.fetchedCount()).isEqualTo(3);
         assertThat(result.synchronizedCount()).isEqualTo(3);
         assertThat(result.insertedCount()).isEqualTo(3);
+        assertThat(result.synchronizedImageCount()).isEqualTo(3);
+        assertThat(result.endedCount()).isEqualTo(1);
         assertThat(result.initialLoad()).isTrue();
 
         ArgumentCaptor<SearchFestivalRequest> requestCaptor =
@@ -151,7 +153,7 @@ class FestivalSyncServiceTest {
                     return new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제")));
                 });
         when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, true));
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -189,7 +191,7 @@ class FestivalSyncServiceTest {
                 ))
                 .thenReturn(new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제"))));
         when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, true));
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 
@@ -229,7 +231,7 @@ class FestivalSyncServiceTest {
                         )
                 ));
         when(writer.upsert(any(), any(LocalDate.class)))
-                .thenReturn(new FestivalSyncWriteResult(1, 0, true));
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, true));
 
         FestivalSyncResult result = service.synchronizeFestivals();
 

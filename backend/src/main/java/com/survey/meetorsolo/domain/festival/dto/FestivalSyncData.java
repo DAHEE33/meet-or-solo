@@ -19,6 +19,8 @@ public record FestivalSyncData(
         LocalDate eventEndDate,
         BigDecimal mapX,
         BigDecimal mapY,
+        String originImageUrl,
+        String thumbnailUrl,
         OffsetDateTime syncedAt,
         Map<String, Object> rawData
 ) {

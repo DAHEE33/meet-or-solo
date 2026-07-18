@@ -27,6 +27,8 @@ class FestivalSyncSchedulerTest {
                 3,
                 3,
                 0,
+                3,
+                0,
                 0,
                 true,
                 OffsetDateTime.parse("2026-07-18T10:00:00+09:00")

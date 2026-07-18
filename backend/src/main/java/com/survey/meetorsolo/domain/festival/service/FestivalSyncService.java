@@ -74,6 +74,8 @@ public class FestivalSyncService {
                 uniqueSyncData.size(),
                 writeResult.insertedCount(),
                 writeResult.updatedCount(),
+                writeResult.synchronizedImageCount(),
+                writeResult.endedCount(),
                 skippedCount,
                 writeResult.initialLoad(),
                 syncedAt
