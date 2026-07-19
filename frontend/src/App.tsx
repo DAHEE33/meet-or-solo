@@ -3,8 +3,9 @@ import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ProfileEditPage from './pages/ProfileEditPage';
-import TourSpotListPage from './pages/TourSpotListPage';
+import ExploreListPage from './pages/ExploreListPage';
 import TourSpotDetailPage from './pages/TourSpotDetailPage';
+import FestivalDetailPage from './pages/FestivalDetailPage';
 import MatchingConditionPage from './pages/MatchingConditionPage';
 import MatchingResultPage from './pages/MatchingResultPage';
 import MeetingPointPage from './pages/MeetingPointPage';
@@ -23,8 +24,9 @@ export default function App() {
         <Route path="/logn" element={<Navigate to="/login" replace />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/profile/edit" element={<ProfileEditPage />} />
-        <Route path="/spots" element={<TourSpotListPage />} />
+        <Route path="/spots" element={<ExploreListPage />} />
         <Route path="/spots/:spotId" element={<TourSpotDetailPage />} />
+        <Route path="/festivals/:festivalId" element={<FestivalDetailPage />} />
         <Route path="/matching" element={<MatchingConditionPage />} />
         <Route path="/matching/results" element={<MatchingResultPage />} />
         <Route path="/meeting-point" element={<MeetingPointPage />} />

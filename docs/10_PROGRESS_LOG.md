@@ -1,5 +1,24 @@
 # 진행 상태 기록
 
+## [10-A] 축제·탐색 화면 디자인 handoff 프론트엔드 구현 (mock 기반)
+
+상태: 코드 작성 및 frontend build 완료, 실제 backend 축제 API 연동 제외
+
+- `frontend/design_handoff_festival_matching/` 디자인 handoff 스펙 기준으로 홈/탐색/축제 상세/관광지 상세 4개 화면 재구성
+- 기존 관광지 추천 중심 홈 화면을 축제·매칭 중심 섹션 구성으로 교체 (`HomePage.tsx`)
+- 축제·관광지 탐색 화면을 유형 세그먼트 + 카테고리 + 검색 구조로 재구성하고 `TourSpotListPage.tsx`를 `ExploreListPage.tsx`로 이름 변경
+- 축제 상세 화면(`FestivalDetailPage.tsx`) 신규 추가: 매칭 현황 요약 카드, 이용 정보, 주요 프로그램, 하단 고정 매칭 CTA
+- 관광지 상세 화면(`TourSpotDetailPage.tsx`)을 방문 정보, 추천 포인트, 주변 축제, 포함 코스, 길찾기/주변 축제 보기 2버튼 액션으로 재구성
+- `Festival` 타입과 축제 mock 데이터(`data/mock/festivals.ts`), 관광지 상세 부가 mock 데이터(`data/mock/spotDetails.ts`) 추가
+- 데이터 접근은 기존 관례대로 각 페이지가 `data/mock/*`를 직접 참조하며, 홈 화면만 기존 `api/home.ts` wrapper를 경유
+- `tsc --noEmit`, `npm run build` 통과 확인
+
+주의:
+
+- 실제 backend 축제 목록/상세 API 연동은 이번 범위에서 하지 않았다 (mock 데이터만 사용).
+- 이 저장소에 아직 GPS 체크인/위치 권한 로직이 없어 위치 권한 없음 상태, 비동기 로딩/오류 상태 UI는 구현하지 않았다.
+- nginx, docker-compose, GitHub Actions, backend 코드는 수정하지 않았다.
+
 ## [10-A] 축제 전체 페이지 DB 동기화와 Scheduler
 
 상태: 코드·설정·문서·테스트 작성 완료, 실제 dev 재배포 확인 제외

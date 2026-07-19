@@ -6,7 +6,7 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
-export type SpotCategory = '문화재' | '자연' | '체험' | '맛집' | '카페' | '야경';
+export type SpotCategory = '역사' | '자연' | '체험' | '문화' | '액티비티' | '맛집' | '카페' | '쇼핑';
 
 export type TravelStyle = '느긋하게' | '액티브' | '맛집탐방' | '사진위주' | '문화답사';
 
@@ -68,6 +68,56 @@ export interface SoloCourse {
   reason: string; // 추천 이유
   tags: string[];
   stops: CourseStop[];
+}
+
+export type FestivalCategory =
+  | '문화관광'
+  | '문화예술'
+  | '지역특산'
+  | '전통역사'
+  | '생태자연'
+  | '기타';
+
+export type FestivalStatus = 'ongoing' | 'upcoming' | 'ended';
+
+export interface InfoRow {
+  label: string;
+  value: string;
+}
+
+export interface FestivalProgram {
+  name: string;
+  desc: string;
+  time: string;
+}
+
+/** 축제 상세 "축제와 함께 둘러보기"용 근접 관광지 관계 (관광지 id + 축제 기준 거리) */
+export interface FestivalNearbyPlace {
+  spotId: number;
+  distanceKm: number;
+}
+
+export interface Festival {
+  id: number;
+  name: string;
+  category: FestivalCategory;
+  status: FestivalStatus;
+  /** status가 'upcoming'일 때 노출되는 D-day 뱃지 문구 (예: 'D-3') */
+  ddayLabel: string;
+  periodShort: string; // 예: '7.24 – 7.28'
+  periodFull: string; // 예: '2026.07.24 – 2026.07.28'
+  place: string;
+  region: string;
+  distanceKm: number;
+  expectedAttendees?: number;
+  matchingCount: number;
+  matchSupported: boolean;
+  intro: string;
+  address: string;
+  imageCount: number;
+  infoItems: InfoRow[];
+  programs: FestivalProgram[];
+  nearbyPlaces: FestivalNearbyPlace[];
 }
 
 export interface CheckInRecord {
