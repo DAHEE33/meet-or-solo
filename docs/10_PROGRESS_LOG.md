@@ -1,5 +1,44 @@
 # 진행 상태 기록
 
+## [10-매칭 3차] 매칭풀 정리, 정형 점수 및 2~4인 그룹 조합
+
+상태: 운영 코드와 단위 테스트 완료, Docker Desktop 중지로 PostgreSQL 통합 테스트 재실행 필요
+
+- 호출자가 전달한 `now`, `staleBefore`를 사용하는 `MatchPoolCleanupService` 추가
+- `search_expires_at <= now`인 `WAITING`을 `EXPIRED`로 전환
+- `locked_at <= staleBefore`인 정상 lock 정보의 stale `LOCKED`를 유효 기간에 따라 `WAITING` 또는 `EXPIRED`로 전환
+- stale lock 회수 시 `locked_at`, `lock_token` 정리 및 상태 조건 기반 멱등성 보장
+- `TravelStyleCode` 집합의 Jaccard 점수를 `BigDecimal`, 소수점 둘째 자리, `HALF_UP`으로 계산
+- 한쪽 또는 양쪽 여행 스타일 입력이 비어 있으면 `0.00`으로 처리
+- 같은 축제와 같은 `preferred_group_size` 후보끼리 정확히 2~4인 그룹 조합 생성
+- 그룹 내부 모든 2인 pair 점수의 평균을 그룹 점수로 사용
+- 그룹 점수, 오래된 `entered_at`, 작은 `pool_id` 순의 결정적 greedy 배정
+- 최초 그룹 조합에서는 `allow_minimum_two`를 적용하지 않음
+- 기존 V1~V11 migration과 frontend, Scheduler, attempt/proposal/group 영속화는 수정하지 않음
+
+작성한 테스트:
+
+- PostgreSQL 16 + pgvector Testcontainers 기반 pool 만료, stale lock 회수, 경계값, lock 정보 정리, 멱등성 통합 테스트
+- Jaccard 동일/부분/무교집합, 빈 입력, 중복·순서 무관성 단위 테스트
+- 2/3/4인 조합, 모든 pair 평균, 중복 배정 방지, greedy 우선순위, 동점 규칙, 입력 순서 결정성 단위 테스트
+
+테스트 실행 결과:
+
+- 임시 Temurin JDK 17에서 Jaccard scoring과 그룹 조합 단위 테스트 총 15건 `BUILD SUCCESSFUL`
+- 운영 코드와 전체 test source의 Java compile 성공
+- Docker Desktop daemon 중지로 신규 cleanup과 기존 후보 조회·선점 Testcontainers 통합 테스트는 container 초기화 전에 실패
+- 전체 backend test는 61건 중 단위 테스트 57건이 통과하고, local PostgreSQL 연결 1건과 Testcontainers 초기화 3건이 실행 환경 때문에 실패
+- Docker Desktop과 local PostgreSQL을 실행한 환경에서 targeted matching 통합 테스트와 전체 backend test 재실행이 필요함
+
+다음 단계로 이월:
+
+- 실제 `@Scheduled`와 stale timeout 운영 설정
+- attempt/proposal/response 생성 및 상태 전이
+- 인원 미달 재확인과 `allow_minimum_two` 적용
+- 그룹 영속화와 확정
+- embedding cosine similarity와 정형 점수 결합
+- REST API, frontend, WebSocket STOMP, Redis
+
 ## [10-매칭 2차] PostgreSQL 기반 MatchPool 후보 동시 선점
 
 상태: 운영 코드 작성 및 Windows PowerShell + Docker Desktop 실제 PostgreSQL 통합 테스트 완료

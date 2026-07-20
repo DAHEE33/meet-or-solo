@@ -4,10 +4,50 @@ import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET status = 'EXPIRED', updated_at = :now
+            WHERE status = 'WAITING'
+              AND search_expires_at <= :now
+            """, nativeQuery = true)
+    int expireWaitingPools(@Param("now") OffsetDateTime now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET status = 'EXPIRED', locked_at = NULL, lock_token = NULL, updated_at = :now
+            WHERE status = 'LOCKED'
+              AND locked_at IS NOT NULL
+              AND lock_token IS NOT NULL
+              AND locked_at <= :staleBefore
+              AND search_expires_at <= :now
+            """, nativeQuery = true)
+    int expireStaleLockedPools(
+            @Param("now") OffsetDateTime now,
+            @Param("staleBefore") OffsetDateTime staleBefore
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET status = 'WAITING', locked_at = NULL, lock_token = NULL, updated_at = :now
+            WHERE status = 'LOCKED'
+              AND locked_at IS NOT NULL
+              AND lock_token IS NOT NULL
+              AND locked_at <= :staleBefore
+              AND search_expires_at > :now
+            """, nativeQuery = true)
+    int releaseStaleLockedPools(
+            @Param("now") OffsetDateTime now,
+            @Param("staleBefore") OffsetDateTime staleBefore
+    );
 
     @Query(value = """
             SELECT pool.*

@@ -234,6 +234,45 @@ FOR UPDATE SKIP LOCKED;
 
 `lock_token`, `locked_at`은 비관적 transaction lock을 대체하지 않습니다. 선점 실행 추적과 stale lock 복구에 사용하는 보조 정보입니다.
 
+## 매칭풀 정리 정책
+
+정리 작업은 호출자가 전달한 `now`, `staleBefore`를 기준으로 하나의 짧은 transaction에서 수행합니다.
+
+- `WAITING`이고 `search_expires_at <= now`이면 `EXPIRED`로 전환한다.
+- `LOCKED`이고 `locked_at <= staleBefore`이면서 아직 검색 시간이 유효하면 `WAITING`으로 복구한다.
+- stale `LOCKED`이면서 `search_expires_at <= now`이면 `EXPIRED`로 전환한다.
+- stale lock을 회수할 때 `locked_at`, `lock_token`을 모두 `NULL`로 정리한다.
+- `LOCKED`이지만 `locked_at` 또는 `lock_token`이 `NULL`인 비정상 row는 자동 복구하지 않는다.
+- 상태 조건을 포함한 update로 반복 실행 시 추가 변경이 없는 멱등성을 보장한다.
+
+stale timeout 운영값과 실제 `@Scheduled` 주기는 Scheduler 구현 단계에서 확정합니다.
+
+## 정형 여행 스타일 점수
+
+첫 버전은 `member_travel_styles`의 `TravelStyleCode` 집합에 Jaccard 점수를 적용합니다.
+
+```text
+교집합 코드 수 / 합집합 코드 수 * 100
+```
+
+- 점수 범위는 `0.00`~`100.00`이다.
+- 코드 순서와 중복은 점수에 영향을 주지 않는다.
+- 한쪽 또는 양쪽 입력이 비어 있으면 `0.00`이다.
+- `BigDecimal`을 사용하고 소수점 둘째 자리에서 `HALF_UP`으로 반올림한다.
+- 외부 API와 embedding 없이 계산한다.
+
+## 최초 그룹 조합 정책
+
+- 같은 축제와 같은 `preferred_group_size`를 선택한 후보끼리만 그룹을 구성한다.
+- 그룹의 실제 인원은 후보들이 선택한 `preferred_group_size`와 정확히 같아야 한다.
+- `allow_minimum_two`는 최초 그룹 조합에 사용하지 않고 인원 미달 재확인 단계에서만 사용한다.
+- 그룹 점수는 그룹 내부 모든 2인 pair의 정형 여행 스타일 점수 평균이다.
+- 모든 호환 조합을 계산한 뒤 그룹 점수 내림차순, 오래된 `entered_at`, 작은 `pool_id` 순으로 정렬한다.
+- 정렬된 조합부터 동일 회원과 pool의 중복 배정을 막으며 결정적 greedy 방식으로 선택한다.
+- 동일 입력은 입력 collection 순서와 관계없이 같은 그룹 결과를 생성해야 한다.
+
+후보 수 증가에 따른 전체 조합 생성 비용과 후보 batch 상한은 실제 부하를 확인한 뒤 보완합니다.
+
 추가 안전장치:
 
 - 사용자별 active pool unique constraint
