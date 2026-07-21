@@ -17,6 +17,7 @@ public class MatchPool {
 
     public static final String STATUS_WAITING = "WAITING";
     public static final String STATUS_LOCKED = "LOCKED";
+    public static final String STATUS_PROPOSED = "PROPOSED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -173,5 +174,15 @@ public class MatchPool {
         this.lockedAt = lockedAt;
         this.lockToken = lockToken;
         this.updatedAt = lockedAt;
+    }
+
+    public void propose(OffsetDateTime now) {
+        if (!STATUS_LOCKED.equals(status)) {
+            throw new IllegalStateException("LOCKED 상태의 match pool만 제안 상태로 전환할 수 있습니다.");
+        }
+        this.status = STATUS_PROPOSED;
+        this.lockedAt = null;
+        this.lockToken = null;
+        this.updatedAt = now;
     }
 }

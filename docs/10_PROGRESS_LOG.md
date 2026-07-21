@@ -1,5 +1,39 @@
 # 진행 상태 기록
 
+## [10-매칭 4차] Scheduler orchestration과 최초 proposal 생성
+
+상태: 운영 코드와 PostgreSQL 통합·전체 backend 회귀 테스트 완료
+
+- 기본 비활성화되는 설정 기반 Scheduler와 5초 실행 간격, 30초 stale/proposal timeout, batch 20 기본값 추가
+- cleanup, Scheduler 전용 `FOR UPDATE SKIP LOCKED` batch claim, row lock 밖 batch 조회·조합, 그룹별 생성, 미사용 lock release의 transaction 경계 분리
+- V1~V11의 `match_attempts`, `match_attempt_members`, `match_proposals` JPA mapping과 repository 추가
+- 생성 직전 pool ID 오름차순 row lock과 상태/token/만료/check-in/cooldown/모든 pair 차단 관계 재검증
+- 최초 attempt `WAITING_RESPONSES`, 최초 proposal `INITIAL_MATCH`/round 1/`SENT` 생성
+- attempt/member/proposal과 `LOCKED -> PROPOSED` 전이를 그룹별 하나의 transaction으로 원자 처리하고 임시 lock 정보 제거
+- 그룹 점수와 회원별 pair 평균 점수를 `BigDecimal` 소수점 둘째 자리로 저장
+- 미사용·실패한 동일 token의 `LOCKED`를 유효 기간에 따라 즉시 `WAITING` 또는 `EXPIRED`로 release
+- 고정 `Clock`과 token generator 주입이 가능한 구조 및 그룹별 실패 격리, finally release, suppressed release 오류 보존
+- `@EnableScheduling`을 `enabled=true` 조건부 configuration으로 분리해 비활성 환경에서는 scheduling infrastructure도 생성하지 않음
+- 실제 YAML 기본값·override·잘못된 Duration/batch 설정의 context binding 검증
+- PostgreSQL test trigger로 member/proposal insert와 pool 전이 flush 실패를 유도해 그룹별 생성 전체 rollback 검증
+- 외부 transaction과 내부 `REQUIRES_NEW`의 commit/rollback 독립성, 생성 실패 후 token-owned lock release 검증
+- Scheduler 전용 쿼리를 첫 worker의 row lock이 유지되는 latch 구조로 검증해 `SKIP LOCKED` 동작 고정
+- 신규 migration, frontend, REST API, WebSocket, Redis, embedding과 외부 scoring API는 추가하지 않음
+
+멱등성 범위:
+
+- 정상 중복 tick과 다중 인스턴스 실행은 PostgreSQL row lock, 상태 조건, `lock_token`, 단일 생성 transaction으로 중복 생성을 방지한다.
+- ambiguous commit 이후 기존 attempt를 명시적 key로 조회해 반환하는 기능은 없다.
+- 명시적 idempotency key와 V12는 완전 재매칭 정책과 함께 이월한다.
+
+다음 단계로 이월:
+
+- proposal 수락·거절·timeout과 penalty/cooldown
+- 인원 미달 재확인, `allowMinimumTwo`, 완전 재매칭
+- 그룹 확정과 match group/member 생성
+- 명시적 attempt idempotency key
+- REST API, frontend, WebSocket STOMP, Redis, embedding 및 외부 scoring API
+
 ## [10-매칭 3차] 매칭풀 정리, 정형 점수 및 2~4인 그룹 조합
 
 상태: 운영 코드와 단위 테스트 완료, Docker Desktop 중지로 PostgreSQL 통합 테스트 재실행 필요

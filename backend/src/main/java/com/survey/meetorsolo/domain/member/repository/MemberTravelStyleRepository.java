@@ -9,7 +9,11 @@ import org.springframework.data.repository.query.Param;
 
 public interface MemberTravelStyleRepository extends JpaRepository<MemberTravelStyle, Long> {
 
-    List<MemberTravelStyle> findAllByMemberIdOrderById(Long memberId);
+    @Query("select style from MemberTravelStyle style where style.member.id = :memberId order by style.id")
+    List<MemberTravelStyle> findAllByMemberIdOrderById(@Param("memberId") Long memberId);
+
+    @Query("select style from MemberTravelStyle style where style.member.id in :memberIds order by style.member.id, style.id")
+    List<MemberTravelStyle> findAllByMemberIds(@Param("memberIds") List<Long> memberIds);
 
     @Modifying(flushAutomatically = true)
     @Query("delete from MemberTravelStyle style where style.member.id = :memberId")

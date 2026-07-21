@@ -24,3 +24,12 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+
+app:
+  matching:
+    scheduler:
+      enabled: ${MATCHING_SCHEDULER_ENABLED:false}
+      fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:5s}
+      stale-timeout: ${MATCHING_STALE_TIMEOUT:30s}
+      proposal-timeout: ${MATCHING_PROPOSAL_TIMEOUT:30s}
+      batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}

@@ -273,6 +273,31 @@ stale timeout 운영값과 실제 `@Scheduled` 주기는 Scheduler 구현 단계
 
 후보 수 증가에 따른 전체 조합 생성 비용과 후보 batch 상한은 실제 부하를 확인한 뒤 보완합니다.
 
+## Scheduler와 최초 proposal 생성 정책
+
+- Scheduler는 기본 비활성화하며 `MATCHING_SCHEDULER_ENABLED=true`를 명시한 환경에서만 실행한다.
+- 기본 실행 간격은 5초, stale timeout은 30초, proposal timeout은 30초, 단일 tick batch 상한은 20이다.
+- 한 tick은 주입된 `Clock`에서 기준 시각을 한 번만 읽고 UUID 기반 실행 token 하나를 사용한다.
+- cleanup과 Scheduler batch claim은 각각 독립된 짧은 transaction이다.
+- claim은 유효한 `WAITING` pool만 `FOR UPDATE SKIP LOCKED`로 제한 선점하며 전역 requester를 만들지 않는다.
+- 여행 스타일과 차단 관계는 batch 조회하고 scoring과 그룹 조합은 row lock transaction 밖에서 수행한다.
+- 그룹 생성 직전 pool ID 오름차순으로 row를 잠그고 상태, token, pool/check-in 만료, cooldown과 모든 pair의 양방향 차단 관계를 재검증한다.
+- 그룹별 transaction에서 attempt, attempt member, 최초 proposal과 `LOCKED -> PROPOSED` 전이를 원자적으로 처리한다.
+- 최초 attempt는 `WAITING_RESPONSES`, 최초 proposal은 `INITIAL_MATCH`, round 1, `SENT`이다.
+- attempt와 proposal의 만료 시각은 같은 `now + proposalTimeout`이며, 성공한 pool의 `locked_at`, `lock_token`은 제거한다.
+- `member_score`는 해당 회원과 나머지 구성원 사이 pair 점수 평균을 소수점 둘째 자리 `HALF_UP`으로 저장한다.
+- 그룹 미사용 또는 생성 실패로 남은 동일 token의 `LOCKED` pool은 즉시 release한다. 유효하면 `WAITING`, 만료됐으면 `EXPIRED`이며 다른 token은 변경하지 않는다.
+- Scheduler 전체를 감싸는 transaction, JVM 전역 lock, 장시간 DB advisory lock은 사용하지 않는다.
+
+동시 실행 및 재실행 안전성은 PostgreSQL row lock, `SKIP LOCKED`, pool 상태, `lock_token`과 그룹별 단일 생성 transaction을 기준으로 한다. 정상적인 중복 tick과 다중 인스턴스 실행에서는 같은 pool의 attempt/proposal 중복 생성을 막는다. 커밋 성공 여부가 불명확한 장애 후 기존 attempt를 명시적 key로 찾아 반환하는 기능은 제공하지 않는다. 명시적 idempotency key와 V12 migration은 완전 재매칭 정책과 함께 다음 단계로 이월한다.
+
+동시 안전 상태 변경의 한계:
+
+- proposal 생성 직전에 check-in, cooldown, 그룹 내부 모든 pair의 차단 관계를 다시 검증한다.
+- 생성 transaction은 대상 pool row를 잠그지만 block/cooldown 테이블 전체를 직렬화하지는 않는다.
+- 최종 검증 직후 다른 transaction에서 block 또는 cooldown이 생성되는 극단적인 race를 강하게 직렬화하는 정책은 후속 보안·동시성 설계로 이월한다.
+- 후속 설계에서는 isolation level 강화, PostgreSQL advisory lock, 회원 단위 직렬화와 schema 변경의 처리량·교착·운영 복잡도 tradeoff를 함께 검토한다.
+
 추가 안전장치:
 
 - 사용자별 active pool unique constraint
