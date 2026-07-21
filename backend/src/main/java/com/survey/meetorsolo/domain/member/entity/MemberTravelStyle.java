@@ -62,4 +62,8 @@ public class MemberTravelStyle {
     public TravelStyleCode getStyleCode() {
         return styleCode;
     }
+
+    public Long getMemberId() {
+        return member.getId();
+    }
 }

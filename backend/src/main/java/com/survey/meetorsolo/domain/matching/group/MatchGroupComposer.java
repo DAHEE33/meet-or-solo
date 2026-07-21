@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiPredicate;
 
 public class MatchGroupComposer {
 
@@ -27,7 +28,15 @@ public class MatchGroupComposer {
     }
 
     public List<MatchGroupCombination> compose(Collection<MatchingCandidate> inputCandidates) {
+        return compose(inputCandidates, (left, right) -> true);
+    }
+
+    public List<MatchGroupCombination> compose(
+            Collection<MatchingCandidate> inputCandidates,
+            BiPredicate<MatchingCandidate, MatchingCandidate> compatibility
+    ) {
         Objects.requireNonNull(inputCandidates, "inputCandidates는 필수입니다.");
+        Objects.requireNonNull(compatibility, "compatibility는 필수입니다.");
         List<MatchingCandidate> candidates = inputCandidates.stream()
                 .map(candidate -> Objects.requireNonNull(candidate, "inputCandidates에는 null을 포함할 수 없습니다."))
                 .sorted(CANDIDATE_ORDER)
@@ -42,7 +51,7 @@ public class MatchGroupComposer {
 
         List<MatchGroupCombination> combinations = new ArrayList<>();
         compatibleBuckets.forEach((key, bucket) ->
-                generateCombinations(bucket, key.groupSize(), 0, new ArrayList<>(), combinations)
+                generateCombinations(bucket, key.groupSize(), 0, new ArrayList<>(), combinations, compatibility)
         );
         combinations.sort(this::compareCombinations);
 
@@ -70,7 +79,8 @@ public class MatchGroupComposer {
             int groupSize,
             int startIndex,
             List<MatchingCandidate> current,
-            List<MatchGroupCombination> combinations
+            List<MatchGroupCombination> combinations,
+            BiPredicate<MatchingCandidate, MatchingCandidate> compatibility
     ) {
         if (current.size() == groupSize) {
             combinations.add(new MatchGroupCombination(current, groupScore(current)));
@@ -78,8 +88,12 @@ public class MatchGroupComposer {
         }
         int remainingNeeded = groupSize - current.size();
         for (int index = startIndex; index <= candidates.size() - remainingNeeded; index++) {
-            current.add(candidates.get(index));
-            generateCombinations(candidates, groupSize, index + 1, current, combinations);
+            MatchingCandidate candidate = candidates.get(index);
+            if (current.stream().anyMatch(selected -> !compatibility.test(selected, candidate))) {
+                continue;
+            }
+            current.add(candidate);
+            generateCombinations(candidates, groupSize, index + 1, current, combinations, compatibility);
             current.remove(current.size() - 1);
         }
     }
