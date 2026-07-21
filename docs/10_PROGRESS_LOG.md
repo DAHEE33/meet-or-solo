@@ -1,5 +1,26 @@
 # 진행 상태 기록
 
+## [10-매칭 5차] 최초 proposal 응답과 최종 group 확정
+
+상태: 운영 코드와 테스트 작성 완료, Docker Desktop WSL integration 비활성으로 PostgreSQL 통합·전체 회귀 테스트 실행 필요
+
+- `INITIAL_MATCH`, round 1의 수락·거절·timeout과 `match_responses` 저장 구현
+- attempt row를 aggregate lock으로 사용하고 attempt, proposal, attempt member 순서로 잠금 고정
+- 동일 응답 반복 멱등성, 응답 변경 금지, `responded_at >= expires_at` timeout 경계 구현
+- 거절·timeout 시 attempt 실패, 남은 proposal/member 종료, 귀책·비귀책 pool 정리 구현
+- 전원 수락 시 group/member 생성, pool `MATCHED`, attempt `CONFIRMED`를 마지막 응답 transaction에서 처리
+- timeout 전용 service와 조건부 Scheduler 진입점 추가, 기존 fixed delay와 batch size 재사용
+- PostgreSQL trigger 기반 response·상태·group/member·pool·attempt rollback 테스트 작성
+- cooldown, penalty, 인원 미달 round 2, REST API, frontend, WebSocket, POOL_ENTRY는 제외
+- Java 17 compile 및 Docker 비의존 timeout/Scheduler 테스트는 `BUILD SUCCESSFUL`
+- PostgreSQL Testcontainers 실행은 현재 WSL 배포에서 `docker` 명령을 찾지 못해 container 초기화 전에 중단됨
+
+완료 판단 전 필수 재실행:
+
+- 신규 `MatchProposalResponseServiceIntegrationTest`
+- 전체 backend 회귀 테스트
+- failures, errors, skipped가 모두 0인 `BUILD SUCCESSFUL` 확인
+
 ## [10-매칭 4차] Scheduler orchestration과 최초 proposal 생성
 
 상태: 운영 코드와 PostgreSQL 통합·전체 backend 회귀 테스트 완료

@@ -195,6 +195,20 @@ penalty 또는 cooldown 적용 대상:
 
 MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로 확장할 수 있습니다.
 
+## 최초 proposal 응답 처리 정책
+
+`INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.
+
+- 사용자 응답은 `responded_at < expires_at`일 때만 허용하며 같은 시각이면 timeout이다.
+- 동일한 수락 또는 거절 반복은 기존 성공 결과를 반환하고, 최초 응답 이후 다른 응답으로 변경하지 않는다.
+- 거절 또는 timeout이 한 건이라도 발생하면 attempt를 즉시 `FAILED`로 종료한다.
+- 귀책 회원의 pool은 `CANCELLED`, 비귀책 회원의 pool은 기존 검색 시간이 유효하면 `WAITING`, 만료됐으면 `EXPIRED`로 전환한다.
+- 비귀책 pool의 `search_expires_at`은 연장하지 않고 임시 lock 정보는 제거한다.
+- 전원이 수락하면 마지막 응답 transaction에서 group, group member, pool `MATCHED`, attempt `CONFIRMED`를 원자적으로 생성·전환한다.
+- timeout Scheduler는 기존 matching Scheduler의 활성화 조건, fixed delay, batch size를 재사용하되 attempt별 독립 transaction으로 처리한다.
+- 거절·timeout cooldown과 penalty는 기간, 점수, 반복 거절 window 확정 전까지 생성하지 않는다.
+- 인원 미달 round 2와 `allow_minimum_two`는 후속 단계로 분리한다.
+
 ## PostgreSQL 기반 상태 관리
 
 Redis는 MVP 1단계에 필요하지 않습니다.

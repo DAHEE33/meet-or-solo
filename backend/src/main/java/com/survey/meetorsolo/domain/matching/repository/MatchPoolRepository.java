@@ -37,6 +37,9 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
 
     List<MatchPool> findAllByLockTokenOrderByEnteredAtAscIdAsc(String lockToken);
 
+    @Query(value = "SELECT * FROM match_pools WHERE id IN (:poolIds) ORDER BY id FOR UPDATE", nativeQuery = true)
+    List<MatchPool> findResponsePoolsForUpdate(@Param("poolIds") List<Long> poolIds);
+
     @Query(value = """
             SELECT * FROM match_pools
             WHERE id IN (:poolIds)
