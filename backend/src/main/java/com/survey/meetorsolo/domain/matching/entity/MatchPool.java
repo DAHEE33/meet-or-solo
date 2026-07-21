@@ -18,6 +18,9 @@ public class MatchPool {
     public static final String STATUS_WAITING = "WAITING";
     public static final String STATUS_LOCKED = "LOCKED";
     public static final String STATUS_PROPOSED = "PROPOSED";
+    public static final String STATUS_MATCHED = "MATCHED";
+    public static final String STATUS_EXPIRED = "EXPIRED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -184,5 +187,15 @@ public class MatchPool {
         this.lockedAt = null;
         this.lockToken = null;
         this.updatedAt = now;
+    }
+
+    public void match(OffsetDateTime now) { transitionFromProposed(STATUS_MATCHED, now); }
+    public void cancel(OffsetDateTime now) { transitionFromProposed(STATUS_CANCELLED, now); }
+    public void releaseAfterFailedAttempt(OffsetDateTime now) {
+        transitionFromProposed(searchExpiresAt.isAfter(now) ? STATUS_WAITING : STATUS_EXPIRED, now);
+    }
+    private void transitionFromProposed(String next, OffsetDateTime now) {
+        if (!STATUS_PROPOSED.equals(status)) throw new IllegalStateException("PROPOSED pool만 응답 결과로 변경할 수 있습니다.");
+        status = next; lockedAt = null; lockToken = null; updatedAt = now;
     }
 }

@@ -13,6 +13,10 @@ import java.time.OffsetDateTime;
 @Table(name = "match_attempt_members")
 public class MatchAttemptMember {
     public static final String STATUS_PROPOSED = "PROPOSED";
+    public static final String STATUS_ACCEPTED = "ACCEPTED";
+    public static final String STATUS_REJECTED = "REJECTED";
+    public static final String STATUS_TIMEOUT = "TIMEOUT";
+    public static final String STATUS_EXCLUDED = "EXCLUDED";
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(name = "attempt_id", nullable = false) private Long attemptId;
     @Column(name = "member_id", nullable = false) private Long memberId;
@@ -29,5 +33,17 @@ public class MatchAttemptMember {
         member.memberScore = memberScore; member.status = STATUS_PROPOSED;
         member.createdAt = now; member.updatedAt = now;
         return member;
+    }
+    public Long getId() { return id; }
+    public Long getAttemptId() { return attemptId; }
+    public Long getMemberId() { return memberId; }
+    public Long getPoolId() { return poolId; }
+    public String getStatus() { return status; }
+    public void respond(String response, OffsetDateTime now) {
+        if (!STATUS_PROPOSED.equals(status)) throw new IllegalStateException("PROPOSED member만 응답할 수 있습니다.");
+        status = response; updatedAt = now;
+    }
+    public void exclude(OffsetDateTime now) {
+        if (STATUS_PROPOSED.equals(status)) { status = STATUS_EXCLUDED; updatedAt = now; }
     }
 }

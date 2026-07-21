@@ -13,6 +13,10 @@ import java.time.OffsetDateTime;
 public class MatchProposal {
     public static final String TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     public static final String STATUS_SENT = "SENT";
+    public static final String STATUS_ACCEPTED = "ACCEPTED";
+    public static final String STATUS_REJECTED = "REJECTED";
+    public static final String STATUS_TIMEOUT = "TIMEOUT";
+    public static final String STATUS_EXPIRED = "EXPIRED";
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(name = "attempt_id", nullable = false) private Long attemptId;
     @Column(name = "member_id", nullable = false) private Long memberId;
@@ -31,5 +35,19 @@ public class MatchProposal {
         proposal.proposalType = TYPE_INITIAL_MATCH; proposal.proposalRound = 1; proposal.status = STATUS_SENT;
         proposal.sentAt = now; proposal.expiresAt = expiresAt; proposal.createdAt = now; proposal.updatedAt = now;
         return proposal;
+    }
+    public Long getId() { return id; }
+    public Long getAttemptId() { return attemptId; }
+    public Long getMemberId() { return memberId; }
+    public String getProposalType() { return proposalType; }
+    public Integer getProposalRound() { return proposalRound; }
+    public String getStatus() { return status; }
+    public OffsetDateTime getExpiresAt() { return expiresAt; }
+    public void respond(String response, OffsetDateTime now) {
+        if (!STATUS_SENT.equals(status)) throw new IllegalStateException("SENT proposal만 응답할 수 있습니다.");
+        status = response; respondedAt = now; updatedAt = now;
+    }
+    public void expire(OffsetDateTime now) {
+        if (STATUS_SENT.equals(status)) { status = STATUS_EXPIRED; updatedAt = now; }
     }
 }

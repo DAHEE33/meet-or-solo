@@ -14,6 +14,8 @@ import java.time.OffsetDateTime;
 public class MatchAttempt {
 
     public static final String STATUS_WAITING_RESPONSES = "WAITING_RESPONSES";
+    public static final String STATUS_CONFIRMED = "CONFIRMED";
+    public static final String STATUS_FAILED = "FAILED";
     public static final String CREATED_BY_SCHEDULER = "SCHEDULER";
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -48,4 +50,16 @@ public class MatchAttempt {
     }
 
     public Long getId() { return id; }
+    public Long getFestivalId() { return festivalId; }
+    public Integer getTargetGroupSize() { return targetGroupSize; }
+    public String getStatus() { return status; }
+    public void confirm(OffsetDateTime now) {
+        requireWaiting(); status = STATUS_CONFIRMED; confirmedAt = now; updatedAt = now;
+    }
+    public void fail(String reason, OffsetDateTime now) {
+        requireWaiting(); status = STATUS_FAILED; failedReason = reason; updatedAt = now;
+    }
+    private void requireWaiting() {
+        if (!STATUS_WAITING_RESPONSES.equals(status)) throw new IllegalStateException("응답 대기 중인 attempt만 변경할 수 있습니다.");
+    }
 }
