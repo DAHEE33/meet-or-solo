@@ -230,7 +230,7 @@ WHERE festival_id = :festivalId
 FOR UPDATE SKIP LOCKED;
 ```
 
-이 잠금은 DB 전체나 `match_pools` 테이블 전체가 아니라 최종 후보 row에만 적용합니다. 후보 필터링과 점수 계산은 잠금 밖에서 수행하고, 잠금 안에서는 후보가 여전히 `WAITING`인지 재검증한 뒤 상태 변경과 attempt/proposal 생성을 짧게 처리합니다.
+이 잠금은 DB 전체나 `match_pools` 테이블 전체가 아니라 대상 후보 row에만 적용합니다. 짧은 claim transaction에서 후보가 여전히 `WAITING`인지 확인하고 `LOCKED`로 전환한 뒤 잠금을 해제합니다. 후보 조회, 점수 계산과 그룹 조합은 row lock transaction 밖에서 수행합니다. 그룹별 최종 `REQUIRES_NEW` transaction에서는 pool을 다시 잠그고 `LOCKED` 상태와 `lock_token`, 안전 조건을 재검증한 뒤 attempt/proposal 생성과 `PROPOSED` 전환을 원자적으로 처리합니다.
 
 `lock_token`, `locked_at`은 비관적 transaction lock을 대체하지 않습니다. 선점 실행 추적과 stale lock 복구에 사용하는 보조 정보입니다.
 
@@ -245,7 +245,7 @@ FOR UPDATE SKIP LOCKED;
 - `LOCKED`이지만 `locked_at` 또는 `lock_token`이 `NULL`인 비정상 row는 자동 복구하지 않는다.
 - 상태 조건을 포함한 update로 반복 실행 시 추가 변경이 없는 멱등성을 보장한다.
 
-stale timeout 운영값과 실제 `@Scheduled` 주기는 Scheduler 구현 단계에서 확정합니다.
+현재 기본값은 stale timeout 30초, `@Scheduled` fixed delay 5초입니다. 운영 환경에서는 `MATCHING_STALE_TIMEOUT`, `MATCHING_SCHEDULER_FIXED_DELAY` 환경변수로 조정할 수 있습니다.
 
 ## 정형 여행 스타일 점수
 

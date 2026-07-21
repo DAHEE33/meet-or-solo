@@ -423,7 +423,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | Scheduler 또는 신규 진입 트리거가 만든 후보 그룹 시도를 저장한다. |
+| 목적 | Scheduler 또는 향후 application-level `POOL_ENTRY` 실행 경로가 만든 후보 그룹 시도를 저장한다. `POOL_ENTRY`는 현재 미구현이며 PostgreSQL DB trigger가 아니다. |
 | 주요 컬럼 | `id`, `festival_id`, `target_group_size`, `status`, `score`, `created_by`, `started_at`, `expires_at`, `confirmed_at`, `failed_reason`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `festival_id -> festivals.id` |
