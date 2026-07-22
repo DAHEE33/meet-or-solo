@@ -1,5 +1,28 @@
 # 진행 상태 기록
 
+## [10-매칭 6차] 인원 미달 round 2 재확인과 최소 인원 확정
+
+상태: 운영 코드와 PostgreSQL 통합 테스트 완료, 환경 의존 root context test를 제외한 backend 회귀 171건 완료
+
+- 3명 또는 4명 목표의 round 1 전체 응답 종료 후 수락자 2명 이상·목표 미달·수락자 전원 `allow_minimum_two=true` 조건 판정
+- 같은 attempt에 `INSUFFICIENT_MEMBERS_CONFIRMATION`, round 2 proposal을 수락자에게만 원자 생성
+- round 2 생성 시 attempt를 `INSUFFICIENT_MEMBERS`로 전환하고 기존 30초 timeout 기준으로 `expires_at` 갱신
+- `START_WITH_CURRENT_MEMBERS`, `CANCEL_CURRENT_MEMBERS`, `TIMEOUT` 응답과 proposal 상태 매핑 구현
+- 전원 진행 동의 시 실제 인원수로 group/member 생성, pool `MATCHED`, attempt `CONFIRMED` 처리
+- 취소·timeout 회원 pool `CANCELLED`, 비귀책 회원 pool `WAITING` 또는 `EXPIRED`, attempt `FAILED` 처리
+- attempt row aggregate lock과 기존 attempt → proposal → attempt member 잠금 순서 유지
+- round 2 중복 생성·중복 응답 방지, 응답 변경 금지, Scheduler timeout 재실행 멱등성 유지
+- 동시 진행 동의, 진행/취소 race, round 2 생성 중 DB 실패 rollback PostgreSQL 통합 테스트 추가
+- 기존 V1~V11 migration을 수정하지 않았고 신규 migration, penalty/cooldown, REST API, frontend, WebSocket은 제외
+
+targeted 검증:
+
+- `MatchProposalResponseServiceIntegrationTest` `BUILD SUCCESSFUL`
+- 3→2, 4→2, 4→3 진입과 제외 조건, 최소 인원 확정, 취소·timeout, 동시성, rollback을 실제 PostgreSQL 16 + pgvector에서 검증
+- `domain`, `external`, `global` 전체 171건, failures 0, errors 0, skipped 0, `BUILD SUCCESSFUL`
+- 전체 172건 실행에서는 개인 `.env`의 dev SSH tunnel `127.0.0.1:15432` 미연결로 기존 `MeetOrSoloApplicationTests.contextLoads()` 1건만 환경 실패
+- local PostgreSQL container는 healthy였으나 기존 volume의 초기 인증값과 개인 `.env` 값이 달라 root context test 완료를 위해 환경 정합성 확인이 필요
+
 ## [10-매칭 5차] 최초 proposal 응답과 최종 group 확정
 
 상태: 운영 코드와 테스트 작성 완료, Docker Desktop WSL integration 비활성으로 PostgreSQL 통합·전체 회귀 테스트 실행 필요
