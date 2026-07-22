@@ -169,6 +169,20 @@ CANCELLED
 
 인원 미달 팝업에서 몇 명의 추가 동의가 필요한지는 구현 시 확정합니다. 기본 원칙은 수락자 전원 동의입니다.
 
+구현 정책은 다음과 같이 확정합니다.
+
+- 목표 인원이 3명 또는 4명인 최초 제안만 인원 미달 재확인 대상이다.
+- 최초 제안의 모든 회원이 `ACCEPTED`, `REJECTED`, `TIMEOUT` 중 하나가 된 뒤 수락자 집합을 확정한다.
+- 수락자가 2명 이상이고 목표 인원보다 적으며 수락자 전원의 `allow_minimum_two`가 `true`일 때만 round 2를 생성한다.
+- round 2는 같은 `attempt_id`, 새로운 `proposal_id`, `proposal_round=2`, `INSUFFICIENT_MEMBERS_CONFIRMATION`을 사용한다.
+- round 2 timeout은 최초 제안과 같은 30초를 사용하고 `match_attempts.expires_at`을 round 2 만료 시각으로 갱신한다.
+- `responded_at < expires_at`만 유효하며 같은 시각은 timeout이다.
+- 전원이 `START_WITH_CURRENT_MEMBERS`를 선택하면 실제 수락 인원으로 group을 확정한다.
+- 한 명이라도 `CANCEL_CURRENT_MEMBERS`를 선택하거나 timeout이면 attempt를 `FAILED`로 종료한다.
+- round 2 취소·timeout 회원의 pool은 `CANCELLED`, 비귀책 회원의 pool은 검색 시간이 남으면 `WAITING`, 만료됐으면 `EXPIRED`로 전환한다.
+- 최초 제안의 거절·timeout 회원 pool도 `CANCELLED`로 전환하며 수락자 pool은 round 2 동안 `PROPOSED`를 유지한다.
+- 검색 만료 시각은 연장하지 않고 penalty/cooldown은 별도 정책 확정 전까지 생성하지 않는다.
+
 인원 미달 재확인은 최초 제안과 다른 질문이므로 새로운 `proposal_id`를 사용합니다. 다만 기존 후보 구성의 후속 단계이므로 `attempt_id`는 유지합니다.
 
 ```text

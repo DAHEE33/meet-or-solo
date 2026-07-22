@@ -11,6 +11,7 @@ public interface MatchProposalRepository extends JpaRepository<MatchProposal, Lo
     @Query(value="SELECT * FROM match_proposals WHERE id=:proposalId FOR UPDATE", nativeQuery=true)
     Optional<MatchProposal> findByIdForUpdate(@Param("proposalId") long proposalId);
     List<MatchProposal> findAllByAttemptIdOrderByIdAsc(long attemptId);
+    boolean existsByAttemptIdAndProposalRound(long attemptId, int proposalRound);
     Optional<MatchProposal> findFirstByAttemptIdAndStatusAndExpiresAtLessThanEqualOrderByExpiresAtAscIdAsc(
             long attemptId, String status, java.time.OffsetDateTime now);
 }

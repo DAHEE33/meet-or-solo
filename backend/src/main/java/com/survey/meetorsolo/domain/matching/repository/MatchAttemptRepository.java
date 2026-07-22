@@ -14,7 +14,7 @@ public interface MatchAttemptRepository extends JpaRepository<MatchAttempt, Long
 
     @Query(value = """
             SELECT a.id FROM match_attempts a
-            WHERE a.status='WAITING_RESPONSES'
+            WHERE a.status IN ('WAITING_RESPONSES', 'INSUFFICIENT_MEMBERS')
               AND EXISTS (SELECT 1 FROM match_proposals p WHERE p.attempt_id=a.id
                           AND p.status='SENT' AND p.expires_at<=:now)
             ORDER BY a.expires_at, a.id LIMIT :limit

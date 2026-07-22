@@ -12,6 +12,7 @@ import java.time.OffsetDateTime;
 @Table(name = "match_proposals")
 public class MatchProposal {
     public static final String TYPE_INITIAL_MATCH = "INITIAL_MATCH";
+    public static final String TYPE_INSUFFICIENT_MEMBERS_CONFIRMATION = "INSUFFICIENT_MEMBERS_CONFIRMATION";
     public static final String STATUS_SENT = "SENT";
     public static final String STATUS_ACCEPTED = "ACCEPTED";
     public static final String STATUS_REJECTED = "REJECTED";
@@ -30,9 +31,17 @@ public class MatchProposal {
     @Column(name = "updated_at", nullable = false) private OffsetDateTime updatedAt;
     protected MatchProposal() { }
     public static MatchProposal initial(long attemptId, long memberId, OffsetDateTime now, OffsetDateTime expiresAt) {
+        return create(attemptId, memberId, TYPE_INITIAL_MATCH, 1, now, expiresAt);
+    }
+    public static MatchProposal insufficientMembers(long attemptId, long memberId,
+            OffsetDateTime now, OffsetDateTime expiresAt) {
+        return create(attemptId, memberId, TYPE_INSUFFICIENT_MEMBERS_CONFIRMATION, 2, now, expiresAt);
+    }
+    private static MatchProposal create(long attemptId, long memberId, String type, int round,
+            OffsetDateTime now, OffsetDateTime expiresAt) {
         MatchProposal proposal = new MatchProposal();
         proposal.attemptId = attemptId; proposal.memberId = memberId;
-        proposal.proposalType = TYPE_INITIAL_MATCH; proposal.proposalRound = 1; proposal.status = STATUS_SENT;
+        proposal.proposalType = type; proposal.proposalRound = round; proposal.status = STATUS_SENT;
         proposal.sentAt = now; proposal.expiresAt = expiresAt; proposal.createdAt = now; proposal.updatedAt = now;
         return proposal;
     }
