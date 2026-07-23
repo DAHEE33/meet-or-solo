@@ -22,14 +22,18 @@ public class MatchProposalResponseService {
     private final MatchPoolRepository pools;
     private final MatchGroupRepository groups;
     private final MatchGroupMemberRepository groupMembers;
+    private final MatchPenaltyCooldownService penaltyCooldowns;
+    private final MatchingPenaltyPolicy penaltyPolicy;
     private final Duration proposalTimeout;
 
     public MatchProposalResponseService(MatchAttemptRepository attempts, MatchProposalRepository proposals,
             MatchAttemptMemberRepository members, MatchResponseRepository responses, MatchPoolRepository pools,
             MatchGroupRepository groups, MatchGroupMemberRepository groupMembers,
+            MatchPenaltyCooldownService penaltyCooldowns, MatchingPenaltyPolicy penaltyPolicy,
             MatchingSchedulerProperties properties) {
         this.attempts=attempts; this.proposals=proposals; this.members=members; this.responses=responses;
         this.pools=pools; this.groups=groups; this.groupMembers=groupMembers;
+        this.penaltyCooldowns=penaltyCooldowns; this.penaltyPolicy=penaltyPolicy;
         this.proposalTimeout=properties.proposalTimeout();
     }
 
@@ -78,6 +82,7 @@ public class MatchProposalResponseService {
         proposal.respond(proposalStatus(effective), now);
         if (isInitial(proposal)) member.respond(effective, now);
         responses.save(MatchResponse.of(proposalId, attempt.getId(), memberId, effective, now));
+        applyImmediatePenalty(proposal, effective, now);
 
         if (isInitial(proposal)) completeInitialRoundIfReady(attempt, now);
         else completeInsufficientRound(attempt, member, effective, now);
@@ -105,6 +110,7 @@ public class MatchProposalResponseService {
     private void completeInitialRoundIfReady(MatchAttempt attempt, OffsetDateTime now) {
         List<MatchAttemptMember> attemptMembers = members.findAllByAttemptIdOrderByIdAsc(attempt.getId());
         if (attemptMembers.stream().anyMatch(value -> MatchAttemptMember.STATUS_PROPOSED.equals(value.getStatus()))) return;
+        applyRoundOneRejectionCooldowns(attempt.getId(), now);
         List<MatchAttemptMember> accepted = attemptMembers.stream()
                 .filter(value -> MatchAttemptMember.STATUS_ACCEPTED.equals(value.getStatus())).toList();
         if (accepted.size() == attempt.getTargetGroupSize()) {
@@ -117,6 +123,29 @@ public class MatchProposalResponseService {
             return;
         }
         finishFailedAttempt(attempt, attemptMembers, lockedPools, "INITIAL_MATCH_INSUFFICIENT", now);
+    }
+
+    private void applyImmediatePenalty(MatchProposal proposal, String response, OffsetDateTime now) {
+        if (isInitial(proposal) && MatchProposal.STATUS_TIMEOUT.equals(response)) {
+            penaltyCooldowns.apply(proposal, penaltyPolicy.roundOneTimeout(), now);
+            return;
+        }
+        if (!isInsufficient(proposal)) {
+            return;
+        }
+        if ("CANCEL_CURRENT_MEMBERS".equals(response)) {
+            penaltyCooldowns.apply(proposal, penaltyPolicy.roundTwoCancelled(), now);
+        } else if (MatchProposal.STATUS_TIMEOUT.equals(response)) {
+            penaltyCooldowns.apply(proposal, penaltyPolicy.roundTwoTimeout(), now);
+        }
+    }
+
+    private void applyRoundOneRejectionCooldowns(long attemptId, OffsetDateTime now) {
+        proposals.findAllByAttemptIdOrderByIdAsc(attemptId).stream()
+                .filter(this::isInitial)
+                .filter(proposal -> MatchProposal.STATUS_REJECTED.equals(proposal.getStatus()))
+                .forEach(proposal -> penaltyCooldowns.apply(
+                        proposal, penaltyPolicy.roundOneRejected(), now));
     }
 
     private boolean canStartInsufficientRound(MatchAttempt attempt, List<MatchAttemptMember> accepted,

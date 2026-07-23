@@ -64,7 +64,8 @@ class MatchPoolRepositoryIntegrationTest {
                 Integer.class
         );
 
-        assertThat(successfulVersions).contains("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
+        assertThat(successfulVersions).contains(
+                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
         assertThat(vectorExtensionCount).isEqualTo(1);
     }
 

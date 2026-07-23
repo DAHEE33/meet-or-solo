@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.jdbc.*;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -55,6 +56,10 @@ class MatchProposalResponseServiceIntegrationTest {
         assertPool(9120006,"CANCELLED",NOW.plusMinutes(1));
         assertPool(9120002,"WAITING",NOW.plusMinutes(1));
         assertPool(9120010,"CANCELLED",NOW.plusMinutes(1));
+        assertCooldown(rejected,9110006,"REJECT",RESPONSE_AT.plusSeconds(2),Duration.ofSeconds(30));
+        assertCooldown(proposal(attempt,9110010),9110010,"REJECT",RESPONSE_AT.plusSeconds(2),Duration.ofSeconds(30));
+        assertThat(penaltyScore(9110006)).isZero();
+        assertThat(penaltyScore(9110010)).isZero();
     }
 
     @Test void 비귀책_pool이_만료됐으면_EXPIRED이며_search_expires_at을_연장하지_않는다() {
@@ -73,6 +78,8 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
         assertResponse(proposal,attempt,9110002,"TIMEOUT",NOW.plusSeconds(30));
         assertPool(9120002,"CANCELLED",NOW.plusMinutes(1)); assertPool(9120006,"WAITING",NOW.plusMinutes(1));
+        assertCooldown(proposal,9110002,"TIMEOUT",NOW.plusSeconds(30),Duration.ofMinutes(2));
+        assertPenalty(proposal,9110002,"TIMEOUT",1,"ROUND_1_TIMEOUT",NOW.plusSeconds(30));
     }
 
     @Test void timeout_service는_만료_SENT를_처리하고_반복_실행은_멱등하다() {
@@ -82,6 +89,9 @@ class MatchProposalResponseServiceIntegrationTest {
         var third=service.timeoutAttempt(attempt,NOW.plusSeconds(32));
         assertThat(first.response()).isEqualTo("TIMEOUT"); assertThat(second.response()).isEqualTo("TIMEOUT");
         assertThat(third).isNull(); assertThat(count("match_responses","attempt_id",attempt)).isEqualTo(2);
+        assertThat(count("match_cooldowns","member_id",9110002)).isOne();
+        assertThat(count("match_cooldowns","member_id",9110006)).isOne();
+        assertThat(count("match_penalty_events","related_attempt_id",attempt)).isEqualTo(2);
     }
 
     @ParameterizedTest @ValueSource(strings={"ACCEPTED","REJECTED"})
@@ -129,6 +139,8 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_group_members gm JOIN match_groups g ON g.id=gm.group_id WHERE g.attempt_id=? AND gm.status='JOINED'",Integer.class,attempt)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006,9120010) AND status='MATCHED'",Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT confirmed_at FROM match_attempts WHERE id=?",OffsetDateTime.class,attempt)).isEqualTo(RESPONSE_AT);
+        assertThat(count("match_cooldowns","member_id",9110002)).isZero();
+        assertThat(count("match_penalty_events","member_id",9110002)).isZero();
     }
 
     @Test void 세명_목표에서_두명_수락하면_수락자에게만_round2를_생성한다() {
@@ -194,6 +206,10 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
         assertPool(9120006,"CANCELLED",NOW.plusMinutes(1)); assertPool(9120002,"WAITING",NOW.plusMinutes(1));
         assertThat(count("match_groups","attempt_id",attempt)).isZero();
+        long cancelledProposal=proposal(attempt,9110006,2);
+        assertCooldown(cancelledProposal,9110006,"CANCEL",RESPONSE_AT.plusSeconds(3),Duration.ofMinutes(2));
+        assertPenalty(cancelledProposal,9110006,"CANCEL",1,"ROUND_2_CANCEL",RESPONSE_AT.plusSeconds(3));
+        assertThat(count("match_cooldowns","member_id",9110002)).isZero();
     }
 
     @Test void round2_timeout은_취소와_같이_attempt를_실패시키며_재실행은_멱등하다() {
@@ -202,6 +218,11 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(result.response()).isEqualTo("TIMEOUT"); assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
         assertThat(service.timeoutAttempt(attempt,RESPONSE_AT.plusSeconds(32))).isNull();
         assertThat(count("match_responses","attempt_id",attempt)).isEqualTo(4);
+        long timedOutProposal=jdbc.queryForObject(
+                "SELECT related_proposal_id FROM match_penalty_events WHERE related_attempt_id=?",
+                Long.class,attempt);
+        assertCooldown(timedOutProposal,9110002,"TIMEOUT",RESPONSE_AT.plusSeconds(31),Duration.ofMinutes(5));
+        assertPenalty(timedOutProposal,9110002,"TIMEOUT",2,"ROUND_2_TIMEOUT",RESPONSE_AT.plusSeconds(31));
     }
 
     @Test void round2_동일_응답은_멱등하고_응답_변경은_거부한다() {
@@ -250,6 +271,33 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
     }
 
+    @Test void 동일한_timeout_재처리는_cooldown과_penalty를_한건만_남긴다() {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long proposal=proposal(attempt,9110002);
+        service.timeoutAttempt(attempt,NOW.plusSeconds(30));
+        assertThatThrownBy(()->service.respond(proposal,9110002,"ACCEPTED",NOW.plusSeconds(31)))
+                .isInstanceOf(MatchProposalResponseException.class);
+
+        assertThat(count("match_cooldowns","related_proposal_id",proposal)).isOne();
+        assertThat(count("match_penalty_events","related_proposal_id",proposal)).isOne();
+        assertThat(penaltyScore(9110002)).isOne();
+    }
+
+    @Test void 새_cooldown_생성전에_만료된_ACTIVE를_lazy_EXPIRED_처리한다() {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long rejected=proposal(attempt,9110002);
+        jdbc.update("""
+                INSERT INTO match_cooldowns(member_id,reason,status,starts_at,expires_at)
+                VALUES (9110002,'REJECT','ACTIVE',?,?)
+                """,NOW.minusMinutes(2),NOW.minusMinutes(1));
+
+        service.respond(rejected,9110002,"REJECTED",RESPONSE_AT);
+        service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT.plusSeconds(1));
+
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM match_cooldowns WHERE member_id=9110002 AND status='EXPIRED'",
+                Integer.class)).isOne();
+        assertCooldown(rejected,9110002,"REJECT",RESPONSE_AT.plusSeconds(1),Duration.ofSeconds(30));
+    }
+
     @Test void 마지막_두_회원_동시_수락에도_group은_한개다() throws Exception {
         long attempt=prepare(3,NOW.plusMinutes(1)); service.respond(proposal(attempt,9110002),9110002,"ACCEPTED",RESPONSE_AT);
         runConcurrent(()->service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT),
@@ -280,6 +328,8 @@ class MatchProposalResponseServiceIntegrationTest {
                 ()->service.timeoutAttempt(attempt,NOW.plusSeconds(30)));
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
         assertThat(attemptStatus(attempt)).isIn("WAITING_RESPONSES","FAILED");
+        assertThat(count("match_cooldowns","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
+        assertThat(count("match_penalty_events","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
     }
 
     @Test void 서로_다른_attempt의_응답은_독립적으로_완료된다() throws Exception {
@@ -298,6 +348,25 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
     }
 
+    @Test void V12_unique_index가_같은_proposal의_cooldown과_penalty_event_중복을_차단한다() {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long proposal=proposal(attempt,9110002);
+        service.timeoutAttempt(attempt,NOW.plusSeconds(30));
+        jdbc.update("UPDATE match_cooldowns SET status='EXPIRED' WHERE related_proposal_id=?",proposal);
+
+        assertThatThrownBy(()->jdbc.update("""
+                INSERT INTO match_cooldowns(
+                    member_id,reason,status,starts_at,expires_at,related_proposal_id
+                ) VALUES (9110002,'TIMEOUT','EXPIRED',?,?,?)
+                """,NOW.plusMinutes(3),NOW.plusMinutes(4),proposal))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(()->jdbc.update("""
+                INSERT INTO match_penalty_events(
+                    member_id,event_type,score_delta,reason,related_attempt_id,related_proposal_id
+                ) VALUES (9110002,'TIMEOUT',1,'DUPLICATE_TEST',?,?)
+                """,attempt,proposal))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     @ParameterizedTest @ValueSource(strings={"match_responses","match_proposals","match_attempt_members","match_groups","match_group_members","match_pools","match_attempts"})
     void 확정_중간_DB실패는_마지막_응답과_전체_확정을_rollback한다(String table) {
         long attempt=prepare(2,NOW.plusMinutes(1)); long first=proposal(attempt,9110002), last=proposal(attempt,9110006);
@@ -311,6 +380,27 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(count("match_responses","attempt_id",attempt)).isOne();
         assertThat(count("match_groups","attempt_id",attempt)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006) AND status='PROPOSED'",Integer.class)).isEqualTo(2);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings={"match_cooldowns","match_penalty_events","members"})
+    void penalty_처리중_DB실패는_response_cooldown_penalty_score를_rollback한다(String table) {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long proposal=proposal(attempt,9110002);
+        String trigger="test_penalty_rollback";
+        installFailureTrigger(table,trigger,penaltyTriggerCondition(table));
+        try {
+            assertThatThrownBy(()->service.timeoutAttempt(attempt,NOW.plusSeconds(30)))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            dropFailureTrigger(table,trigger);
+        }
+
+        assertThat(status("match_proposals",attempt,9110002)).isEqualTo("SENT");
+        assertThat(status("match_attempt_members",attempt,9110002)).isEqualTo("PROPOSED");
+        assertThat(count("match_responses","proposal_id",proposal)).isZero();
+        assertThat(count("match_cooldowns","related_proposal_id",proposal)).isZero();
+        assertThat(count("match_penalty_events","related_proposal_id",proposal)).isZero();
+        assertThat(penaltyScore(9110002)).isZero();
     }
 
     private long prepare(int size, OffsetDateTime searchExpiresAt) {
@@ -337,8 +427,10 @@ class MatchProposalResponseServiceIntegrationTest {
     }
     private int roundTwoCount(long attempt) { return jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_round=2",Integer.class,attempt); }
     private void resetFoundation() {
+        jdbc.update("DELETE FROM match_penalty_events"); jdbc.update("DELETE FROM match_cooldowns");
         jdbc.update("DELETE FROM match_responses"); jdbc.update("DELETE FROM match_group_members"); jdbc.update("DELETE FROM match_groups");
         jdbc.update("DELETE FROM match_proposals"); jdbc.update("DELETE FROM match_attempt_members"); jdbc.update("DELETE FROM match_attempts");
+        jdbc.update("UPDATE members SET penalty_score=0");
         jdbc.update("UPDATE match_pools SET preferred_group_size=3,allow_minimum_two=false,status='WAITING',locked_at=NULL,lock_token=NULL,search_expires_at=?",NOW.plusMinutes(1));
     }
     private long proposal(long attempt,long member) { return proposal(attempt,member,1); }
@@ -346,6 +438,7 @@ class MatchProposalResponseServiceIntegrationTest {
     private String attemptStatus(long attempt) { return jdbc.queryForObject("SELECT status FROM match_attempts WHERE id=?",String.class,attempt); }
     private String status(String table,long attempt,long member) { return jdbc.queryForObject("SELECT status FROM "+table+" WHERE attempt_id=? AND member_id=?",String.class,attempt,member); }
     private int count(String table,String column,long id) { return jdbc.queryForObject("SELECT count(*) FROM "+table+" WHERE "+column+"=?",Integer.class,id); }
+    private int penaltyScore(long member) { return jdbc.queryForObject("SELECT penalty_score FROM members WHERE id=?",Integer.class,member); }
     private void assertResponse(long proposal,long attempt,long member,String response,OffsetDateTime at) {
         var row=jdbc.queryForMap("SELECT proposal_id,attempt_id,member_id,response,responded_at FROM match_responses WHERE proposal_id=?",proposal);
         assertThat(row).containsEntry("proposal_id",proposal).containsEntry("attempt_id",attempt)
@@ -356,6 +449,27 @@ class MatchProposalResponseServiceIntegrationTest {
         var row=jdbc.queryForMap("SELECT status,search_expires_at,locked_at,lock_token FROM match_pools WHERE id=?",id);
         assertThat(row).containsEntry("status",status).containsEntry("locked_at",null).containsEntry("lock_token",null);
         assertSameInstant(row.get("search_expires_at"),expiry);
+    }
+    private void assertCooldown(long proposal,long member,String reason,OffsetDateTime startsAt,Duration duration) {
+        var row=jdbc.queryForMap("""
+                SELECT member_id,reason,status,starts_at,expires_at,related_proposal_id
+                FROM match_cooldowns WHERE related_proposal_id=?
+                """,proposal);
+        assertThat(row).containsEntry("member_id",member).containsEntry("reason",reason)
+                .containsEntry("status","ACTIVE").containsEntry("related_proposal_id",proposal);
+        assertSameInstant(row.get("starts_at"),startsAt);
+        assertSameInstant(row.get("expires_at"),startsAt.plus(duration));
+    }
+    private void assertPenalty(long proposal,long member,String type,int delta,String reason,OffsetDateTime createdAt) {
+        var row=jdbc.queryForMap("""
+                SELECT member_id,event_type,score_delta,reason,related_proposal_id,created_at
+                FROM match_penalty_events WHERE related_proposal_id=?
+                """,proposal);
+        assertThat(row).containsEntry("member_id",member).containsEntry("event_type",type)
+                .containsEntry("score_delta",delta).containsEntry("reason",reason)
+                .containsEntry("related_proposal_id",proposal);
+        assertSameInstant(row.get("created_at"),createdAt);
+        assertThat(penaltyScore(member)).isEqualTo(delta);
     }
     private void assertSameInstant(Object actual,OffsetDateTime expected) {
         assertThat(actual).isInstanceOf(Timestamp.class);
@@ -374,6 +488,9 @@ class MatchProposalResponseServiceIntegrationTest {
         case "match_pools" -> "TG_OP='UPDATE' AND NEW.status='MATCHED'";
         case "match_attempts" -> "TG_OP='UPDATE' AND NEW.status='CONFIRMED'";
         default -> "TG_OP='INSERT'"; }; }
+    private String penaltyTriggerCondition(String table) { return switch(table) {
+        case "members" -> "TG_OP='UPDATE' AND NEW.id=9110002 AND NEW.penalty_score=1";
+        default -> "TG_OP='INSERT' AND NEW.member_id=9110002"; }; }
     private void installFailureTrigger(String table,String trigger,String condition) { jdbc.execute("CREATE OR REPLACE FUNCTION "+trigger+"_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF "+condition+" THEN RAISE EXCEPTION 'forced test failure'; END IF; RETURN NEW; END $$");
         jdbc.execute("CREATE TRIGGER "+trigger+" BEFORE INSERT OR UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+trigger+"_fn()"); }
     private void dropFailureTrigger(String table,String trigger) { jdbc.execute("DROP TRIGGER IF EXISTS "+trigger+" ON "+table); jdbc.execute("DROP FUNCTION IF EXISTS "+trigger+"_fn()"); }
