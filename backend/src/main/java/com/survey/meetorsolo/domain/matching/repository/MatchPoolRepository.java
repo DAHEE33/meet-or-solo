@@ -3,12 +3,42 @@ package com.survey.meetorsolo.domain.matching.repository;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
+
+    Optional<MatchPool> findFirstByMemberIdOrderByIdDesc(long memberId);
+
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1 FROM match_pools
+                WHERE member_id = :memberId
+                  AND status IN ('WAITING', 'LOCKED', 'PROPOSED')
+            )
+            """, nativeQuery = true)
+    boolean existsActiveByMemberId(@Param("memberId") long memberId);
+
+    @Query(value = """
+            SELECT checkin.id
+            FROM festival_checkins checkin
+            JOIN festivals festival ON festival.id = checkin.festival_id
+            WHERE checkin.member_id = :memberId
+              AND checkin.festival_id = :festivalId
+              AND checkin.status = 'ACTIVE'
+              AND checkin.expires_at > :now
+              AND festival.status = 'ACTIVE'
+            ORDER BY checkin.checked_in_at DESC, checkin.id DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<Long> findValidCheckinId(
+            @Param("memberId") long memberId,
+            @Param("festivalId") long festivalId,
+            @Param("now") OffsetDateTime now
+    );
 
     @Query(value = """
             SELECT pool.* FROM match_pools pool

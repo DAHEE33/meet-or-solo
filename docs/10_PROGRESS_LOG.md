@@ -1,5 +1,23 @@
 # 진행 상태 기록
 
+## [10-매칭 8차] matching 최소 REST API
+
+상태: 매칭 REST API 구현과 PostgreSQL Testcontainers 통합·matching 전체 회귀 테스트 완료
+
+- `access_token` HttpOnly cookie의 JWT 회원 ID를 사용하는 matching REST API 5개 추가
+- 매칭 신청, 내 최신 pool, 내 active proposal, proposal action, cooldown/penalty 조회 구현
+- 외부 action은 `ACCEPT`, `REJECT`, `CANCEL_CURRENT_MEMBERS`만 허용하고 proposal 유형별 기존 service 입력으로 변환
+- 다른 회원 proposal은 동일한 `MATCHING_RESOURCE_NOT_FOUND`로 처리해 존재 여부를 숨김
+- 회원 row lock과 기존 partial unique index를 함께 사용해 동일 회원 동시 pool 신청을 방어
+- pool entry는 유효한 본인 `ACTIVE` 체크인, `ACTIVE` 축제, 회원 상태, cooldown, active pool/group을 검증
+- pool `tags`는 scoring 계약이 확정되지 않아 요청에서 빈 배열만 허용하고 DB에도 빈 배열 저장
+- 기존 `MatchProposalResponseService`의 transaction, 잠금 순서, 멱등성, rollback 경계는 변경하지 않음
+- Swagger/OpenAPI, frontend, WebSocket, `POOL_ENTRY`, DB schema/Flyway 변경은 제외
+- Windows Git Bash + Docker Desktop에서 REST API/pool PostgreSQL 통합 테스트를 실행해 39초에 `BUILD SUCCESSFUL`
+- 같은 환경에서 Flyway V1~V12 적용 PostgreSQL Testcontainers 기반 matching 전체 회귀를 실행해 1분 24초에 `BUILD SUCCESSFUL`
+- WSL 작업 환경은 Docker integration 비활성으로 Testcontainers를 시작하지 못했지만 Windows 환경에서 최종 검증 완료
+- Postman/curl 직접 검증을 위한 실행 환경, 데이터 준비, API 요청, 예상 결과와 정리 절차를 `docs/13_MATCHING_ENGINE_IMPLEMENTATION.md`에 기록
+
 ## [10-매칭 7차] penalty/cooldown과 proposal 기반 멱등성
 
 상태: 운영 코드와 PostgreSQL Testcontainers 통합 테스트 완료

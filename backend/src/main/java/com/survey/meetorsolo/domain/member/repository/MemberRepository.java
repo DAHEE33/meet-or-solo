@@ -11,6 +11,9 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     Optional<Member> findByProviderAndProviderUserId(String provider, String providerUserId);
 
+    @Query(value = "SELECT * FROM members WHERE id = :memberId FOR UPDATE", nativeQuery = true)
+    Optional<Member> findByIdForUpdate(@Param("memberId") long memberId);
+
     @Modifying
     @Query("""
             UPDATE Member member

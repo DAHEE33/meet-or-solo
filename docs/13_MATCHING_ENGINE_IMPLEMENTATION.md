@@ -711,3 +711,751 @@ pool 생성 transaction commit
 | deterministic | 같은 논리 입력이면 입력 순서와 무관하게 같은 결과를 내는 성질 |
 | idempotency | 같은 작업을 반복해도 중복 부작용이 생기지 않는 성질 |
 | TOCTOU | 검사 시점과 사용 시점 사이 상태 변경 문제 |
+
+## 22. Matching 최소 REST API
+
+### 22.1 구현 범위
+
+Postman/curl에서 현재 matching engine을 직접 호출할 수 있도록 다음 endpoint를 추가했습니다.
+
+| Method | Endpoint | 목적 |
+| --- | --- | --- |
+| `POST` | `/api/matching/pools` | 유효한 본인 체크인으로 60초 `WAITING` pool 생성 |
+| `GET` | `/api/matching/pools/me/current` | 본인의 최신 pool과 상태 조회 |
+| `GET` | `/api/matching/proposals/me/active` | 아직 만료되지 않은 본인의 최신 `SENT` proposal 조회 |
+| `POST` | `/api/matching/proposals/{proposalId}/responses` | 최초 또는 인원 미달 proposal 응답 |
+| `GET` | `/api/matching/me/restrictions` | 현재 cooldown과 누적 penalty score 조회 |
+
+Swagger/OpenAPI, frontend, WebSocket은 이 단계에 추가하지 않았습니다. proposal 생성 알림도 아직 없으므로 client는 active proposal API를 polling해야 합니다.
+
+### 22.2 인증
+
+기존 `MemberProfileController`와 같은 인증 계약을 사용합니다.
+
+```text
+access_token HttpOnly cookie
+-> JwtProvider.getMemberIdFromAccessToken()
+-> memberId
+-> matching application service
+```
+
+요청 body, path, query parameter에서는 `memberId`를 받지 않습니다. cookie 누락, 빈 값, 서명 오류, access token 만료는 `401 UNAUTHORIZED`입니다.
+
+현재 `SecurityConfig`에는 JWT authentication filter가 없고 Controller가 cookie를 검증합니다. 따라서 신규 endpoint의 모든 진입점은 같은 `memberId(accessToken)` 검증을 거칩니다.
+
+### 22.3 pool 신청 계약
+
+요청:
+
+```http
+POST /api/matching/pools
+Cookie: access_token=<ACCESS_TOKEN>
+Content-Type: application/json
+```
+
+```json
+{
+  "festivalId": 1,
+  "preferredGroupSize": 2,
+  "allowMinimumTwo": false,
+  "tags": []
+}
+```
+
+- `preferredGroupSize`: `2`~`4`
+- `tags`: 현재는 반드시 빈 배열
+- `searchExpiresAt`: 서버 기준 `enteredAt + 60초`
+- 성공 status: `201 Created`
+
+`TravelStyleCode`라는 공식 회원 여행 스타일 코드는 존재하지만 pool의 `tags`와 같은 계약이라는 정책은 없습니다. 또한 현재 scoring은 `member_travel_styles`를 직접 읽으며 `match_pools.tags`를 사용하지 않습니다. 임의 문자열이나 잘못된 공식 코드 재사용을 피하기 위해 이번 최소 API는 `tags` 필드를 빈 배열로만 허용하고 DB에도 `[]`를 저장합니다.
+
+신청 service는 회원 row를 먼저 `FOR UPDATE`로 잠근 뒤 다음을 확인합니다.
+
+- 회원 존재 및 `ACTIVE`
+- 현재 active cooldown 없음
+- 기존 `WAITING`, `LOCKED`, `PROPOSED` pool 없음
+- 기존 active group member 상태 없음
+- 요청 축제가 `ACTIVE`
+- 로그인 회원과 요청 축제에 속한 `ACTIVE`, 미만료 체크인 존재
+
+동일 회원의 동시 요청은 회원 row lock으로 직렬화하고, `uq_match_pools_member_active` partial unique index를 마지막 방어선으로 유지합니다.
+
+성공 응답 예:
+
+```json
+{
+  "success": true,
+  "data": {
+    "poolId": 101,
+    "festivalId": 1,
+    "preferredGroupSize": 2,
+    "allowMinimumTwo": false,
+    "tags": [],
+    "status": "WAITING",
+    "enteredAt": "2026-07-23T15:00:00+09:00",
+    "searchExpiresAt": "2026-07-23T15:01:00+09:00"
+  },
+  "error": null
+}
+```
+
+### 22.4 조회 계약
+
+최신 pool:
+
+```http
+GET /api/matching/pools/me/current
+Cookie: access_token=<ACCESS_TOKEN>
+```
+
+pool이 한 번도 없으면 `200 OK`와 다음 응답을 반환합니다.
+
+```json
+{"success":true,"data":null,"error":null}
+```
+
+active proposal:
+
+```http
+GET /api/matching/proposals/me/active
+Cookie: access_token=<ACCESS_TOKEN>
+```
+
+조회 조건은 본인, `status=SENT`, `expires_at > now`이며 높은 round와 최신 ID를 우선합니다. active proposal이 없으면 동일하게 `200 OK`, `data:null`입니다.
+
+```json
+{
+  "success": true,
+  "data": {
+    "proposalId": 201,
+    "attemptId": 301,
+    "proposalType": "INITIAL_MATCH",
+    "proposalRound": 1,
+    "status": "SENT",
+    "targetGroupSize": 2,
+    "attemptStatus": "WAITING_RESPONSES",
+    "expiresAt": "2026-07-23T15:00:30+09:00"
+  },
+  "error": null
+}
+```
+
+restriction:
+
+```http
+GET /api/matching/me/restrictions
+Cookie: access_token=<ACCESS_TOKEN>
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "penaltyScore": 1,
+    "cooldown": {
+      "active": true,
+      "reason": "TIMEOUT",
+      "startsAt": "2026-07-23T15:00:30+09:00",
+      "expiresAt": "2026-07-23T15:02:30+09:00",
+      "remainingSeconds": 85
+    }
+  },
+  "error": null
+}
+```
+
+### 22.5 proposal action 계약
+
+```http
+POST /api/matching/proposals/{proposalId}/responses
+Cookie: access_token=<ACCESS_TOKEN>
+Content-Type: application/json
+```
+
+외부 action은 다음 세 값만 허용합니다.
+
+```text
+ACCEPT
+REJECT
+CANCEL_CURRENT_MEMBERS
+```
+
+내부 기존 service와의 매핑:
+
+| proposal type | 외부 action | 기존 service 입력 |
+| --- | --- | --- |
+| `INITIAL_MATCH` | `ACCEPT` | `ACCEPTED` |
+| `INITIAL_MATCH` | `REJECT` | `REJECTED` |
+| `INSUFFICIENT_MEMBERS_CONFIRMATION` | `ACCEPT` | `START_WITH_CURRENT_MEMBERS` |
+| `INSUFFICIENT_MEMBERS_CONFIRMATION` | `CANCEL_CURRENT_MEMBERS` | `CANCEL_CURRENT_MEMBERS` |
+
+round 1의 `CANCEL_CURRENT_MEMBERS`, round 2의 `REJECT`는 `400 MATCHING_INVALID_REQUEST`입니다. 변환은 Controller가 아니라 `MatchProposalActionService`가 담당하고, 실제 상태 변경은 기존 `MatchProposalResponseService` transaction이 처리합니다.
+
+동일 action 재전송은 기존 응답을 반환합니다. 최초 응답 후 다른 action으로 변경하면 `409 MATCHING_CONFLICT`입니다.
+
+다른 회원의 proposal ID로 요청하면 proposal 존재 여부와 소유자를 노출하지 않고 `404 MATCHING_RESOURCE_NOT_FOUND`를 반환합니다.
+
+### 22.6 오류 코드
+
+| HTTP | code | 주요 조건 |
+| ---: | --- | --- |
+| `400` | `MATCHING_INVALID_REQUEST` | 비활성 회원, 유효 체크인 없음, proposal 유형/action 불일치 |
+| `400` | `VALIDATION_ERROR` | 희망 인원 범위, non-empty tags, 필수 필드 오류 |
+| `400` | `INVALID_INPUT_VALUE` | 알 수 없는 enum, 읽을 수 없는 JSON |
+| `401` | `UNAUTHORIZED` | cookie 누락, 잘못된 JWT, 만료 JWT |
+| `404` | `MATCHING_RESOURCE_NOT_FOUND` | 회원 또는 본인 소유 proposal 없음 |
+| `409` | `MATCHING_CONFLICT` | active cooldown/pool/group, 종료된 proposal, 기존 응답 변경 |
+
+내부 stack trace, 다른 회원 ID, proposal 소유자 정보는 오류 응답에 포함하지 않습니다.
+
+## 23. 자동 테스트
+
+### 23.1 실행 명령
+
+Windows Git Bash + Docker Desktop 기준:
+
+```bash
+cd backend
+
+./gradlew.bat test \
+  --tests "com.survey.meetorsolo.domain.matching.controller.MatchingRestApiIntegrationTest" \
+  --tests "com.survey.meetorsolo.domain.matching.service.MatchPoolEntryServiceIntegrationTest" \
+  --rerun-tasks
+```
+
+기존 matching 회귀 포함:
+
+```bash
+cd backend
+
+./gradlew.bat test \
+  --tests "com.survey.meetorsolo.domain.matching.*" \
+  --rerun-tasks
+```
+
+### 23.2 현재 실행 결과
+
+2026-07-23 실행 환경별 결과:
+
+- WSL 작업 환경에서는 `docker` 명령과 `/var/run/docker.sock`을 찾지 못해 Testcontainers initialization 단계에서 `Could not find a valid Docker environment`로 중단됐습니다. 이 결과는 application assertion이나 PostgreSQL SQL 실패가 아닙니다.
+- Windows Git Bash + Docker Desktop에서 REST API와 pool 신청 통합 테스트 명령을 `--rerun-tasks`로 실행한 결과 39초에 `BUILD SUCCESSFUL`이었습니다.
+- 같은 Windows 환경에서 `com.survey.meetorsolo.domain.matching.*` 전체 회귀 명령을 `--rerun-tasks`로 실행한 결과 1분 24초에 `BUILD SUCCESSFUL`이었습니다.
+- PostgreSQL Testcontainers가 정상 실행됐고 빈 PostgreSQL 환경에 Flyway V1~V12를 적용한 상태에서 matching 전체 테스트가 실패 없이 완료됐습니다.
+
+최초 전체 실행에서 발견된 두 테스트 실패는 운영 코드가 아니라 테스트 구성 문제였습니다.
+
+- round 2 REST fixture에 attempt `9130001`의 `match_attempt_members`가 없어 첫 `ACCEPT`가 `409`였습니다. 테스트 클래스 내부에 두 수락 회원의 attempt member와 마지막 동의 조건을 준비해 첫 응답 후 attempt가 `CONFIRMED`된 상태에서도 동일 `ACCEPT` 재전송이 기존 `START_WITH_CURRENT_MEMBERS`를 반환하는지 검증했습니다.
+- pool 생성 응답의 `+09:00`과 PostgreSQL 조회 응답의 `Z`가 동일 절대 시각인데도 `OffsetDateTime` record 전체 equality로 비교해 실패했습니다. 일반 필드는 정확히 비교하고 시간은 `toInstant()`로 비교하며 `Duration.between(enteredAt, searchExpiresAt)`이 정확히 60초인지 검증하도록 수정했습니다.
+- 운영 matching 코드, transaction, 동시성, 멱등성 정책은 변경하지 않았습니다.
+
+최종 상태는 PostgreSQL REST/pool 통합 테스트와 matching 전체 회귀 테스트 완료입니다. WSL에서 직접 재실행하려면 Docker Desktop의 `Settings > Resources > WSL Integration`에서 현재 배포판을 활성화해야 합니다.
+
+PostgreSQL 통합 테스트가 검증하도록 작성된 항목:
+
+- 유효 체크인 pool 생성과 60초 만료
+- 유효/미만료 체크인 거절
+- cooldown 신청 거절
+- 회원 row lock 기반 동시 신청 한 건 성공
+- 현재 pool과 cooldown/penalty 조회
+- JWT 회원의 active round 2 proposal 조회
+- 다른 회원 proposal `404`
+- round 2 action 매핑과 동일 action 멱등성
+- 기존 `MatchProposalResponseServiceIntegrationTest`의 응답/penalty/rollback 회귀
+
+## 24. Postman/curl 직접 검증 절차
+
+아래 명령의 `<...>`만 로컬 값으로 교체합니다. 실제 비밀번호와 token은 문서나 Git에 저장하지 않습니다.
+
+### 24.1 PostgreSQL 실행
+
+프로젝트 루트의 `.env`를 준비한 뒤:
+
+```bash
+cd /c/dev/meet-or-solo
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  up -d postgres
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  ps
+```
+
+PostgreSQL timezone과 Flyway 확인:
+
+```bash
+set -a
+source .env
+set +a
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  exec -T postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "show timezone;" \
+  -c "select version, description, success from flyway_schema_history order by installed_rank;"
+```
+
+Flyway가 아직 적용되지 않았다면 backend를 한 번 실행한 뒤 다시 확인합니다.
+
+### 24.2 backend 실행
+
+OAuth와 profile 암호화에 필요한 실제 값은 개인 `.env`에만 둡니다.
+
+```text
+JWT_SECRET=<LOCAL_JWT_SECRET>
+PROFILE_ENCRYPTION_KEY=<LOCAL_BASE64_AES_256_KEY>
+KAKAO_CLIENT_ID=<KAKAO_CLIENT_ID>
+KAKAO_CLIENT_SECRET=<KAKAO_CLIENT_SECRET>
+KAKAO_REDIRECT_URI=http://localhost:8080/api/auth/kakao/callback
+FRONTEND_BASE_URL=http://localhost:5173
+AUTH_COOKIE_SECURE=false
+MATCHING_SCHEDULER_ENABLED=true
+MATCHING_SCHEDULER_FIXED_DELAY=5s
+MATCHING_PROPOSAL_TIMEOUT=30s
+```
+
+Git Bash:
+
+```bash
+cd /c/dev/meet-or-solo/backend
+
+export MATCHING_SCHEDULER_ENABLED=true
+export MATCHING_SCHEDULER_FIXED_DELAY=5s
+export MATCHING_PROPOSAL_TIMEOUT=30s
+
+./gradlew.bat bootRun
+```
+
+backend가 실행된 별도 terminal에서:
+
+```bash
+curl -i http://localhost:8080/api/health
+```
+
+예상 status는 `200`, 핵심 JSON은 `"status":"OK"`입니다.
+
+### 24.3 OAuth 회원과 cookie 준비
+
+회원 A와 B는 서로 다른 Kakao/Naver 계정이어야 합니다. 각 browser profile 또는 시크릿 창에서 다음 주소를 엽니다.
+
+```text
+http://localhost:8080/api/auth/kakao/login
+```
+
+로그인 후 Chrome DevTools에서 다음 순서로 확인합니다.
+
+```text
+Application
+-> Storage
+-> Cookies
+-> http://localhost:8080
+-> access_token
+```
+
+`HttpOnly`이므로 frontend JavaScript에서는 읽을 수 없지만 DevTools와 HTTP client cookie jar에서는 확인할 수 있습니다. 실제 token을 채팅, 문서, Git에 붙여 넣지 않습니다.
+
+curl용 Netscape cookie file:
+
+```bash
+COOKIE_DIR="$(mktemp -d)"
+
+printf 'localhost\tFALSE\t/\tFALSE\t0\taccess_token\t%s\n' \
+  '<MEMBER_A_ACCESS_TOKEN>' > "$COOKIE_DIR/member-a.cookies"
+
+printf 'localhost\tFALSE\t/\tFALSE\t0\taccess_token\t%s\n' \
+  '<MEMBER_B_ACCESS_TOKEN>' > "$COOKIE_DIR/member-b.cookies"
+
+chmod 600 "$COOKIE_DIR/member-a.cookies" "$COOKIE_DIR/member-b.cookies"
+```
+
+신규 OAuth 회원이 `PROFILE_REQUIRED`이면 각 cookie file을 갱신하면서 프로필을 완료합니다.
+
+```bash
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -c "$COOKIE_DIR/member-a.cookies" \
+  -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"nickname":"테스트A","email":null,"intro":"매칭 API 검증","gender":"FEMALE","ageRange":"20S","travelStyles":["PHOTO"]}' \
+  http://localhost:8080/api/members/me/profile
+
+curl -i -sS \
+  -b "$COOKIE_DIR/member-b.cookies" \
+  -c "$COOKIE_DIR/member-b.cookies" \
+  -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"nickname":"테스트B","email":null,"intro":"매칭 API 검증","gender":"MALE","ageRange":"20S","travelStyles":["PHOTO"]}' \
+  http://localhost:8080/api/members/me/profile
+```
+
+예상 status는 `200`, 핵심 값은 `"status":"ACTIVE"`입니다. 응답의 새 `Set-Cookie`를 `-c`가 같은 cookie file에 반영합니다.
+
+회원 ID 확인:
+
+```bash
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/members/me
+
+curl -sS -b "$COOKIE_DIR/member-b.cookies" \
+  http://localhost:8080/api/members/me
+```
+
+응답의 `data.memberId`를 각각 `<MEMBER_A_ID>`, `<MEMBER_B_ID>`로 사용합니다.
+
+Postman에서는 `localhost` cookie jar에 이름 `access_token`, Path `/`로 회원별 token을 저장합니다. 두 회원을 동시에 다룰 때는 별도 Postman environment 또는 별도 workspace/cookie 백업을 사용합니다.
+
+### 24.4 테스트 festival과 체크인 준비 SQL
+
+프로젝트 루트에서 회원 ID를 교체해 실행합니다.
+
+```bash
+cd /c/dev/meet-or-solo
+set -a
+source .env
+set +a
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  exec -T postgres \
+  psql -v ON_ERROR_STOP=1 \
+    -v member_a_id='<MEMBER_A_ID>' \
+    -v member_b_id='<MEMBER_B_ID>' \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" <<'SQL'
+BEGIN;
+
+INSERT INTO festivals(
+    content_id, content_type_id, title, address,
+    checkin_radius_meters, meeting_radius_meters,
+    status, created_at, updated_at
+) VALUES (
+    'matching-rest-manual-festival',
+    '15',
+    '매칭 REST 수동 검증 축제',
+    '테스트 주소',
+    500,
+    2000,
+    'ACTIVE',
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)
+ON CONFLICT (content_id) DO UPDATE
+SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP;
+
+UPDATE festival_checkins
+SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+WHERE member_id IN (:member_a_id, :member_b_id)
+  AND festival_id = (
+      SELECT id FROM festivals
+      WHERE content_id = 'matching-rest-manual-festival'
+  )
+  AND status = 'ACTIVE';
+
+INSERT INTO festival_checkins(
+    member_id, festival_id, distance_meters, status,
+    checked_in_at, expires_at, created_at, updated_at
+)
+SELECT
+    member_id,
+    (SELECT id FROM festivals WHERE content_id = 'matching-rest-manual-festival'),
+    100,
+    'ACTIVE',
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP + INTERVAL '2 hours',
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+FROM (VALUES (:member_a_id), (:member_b_id)) AS test_members(member_id);
+
+COMMIT;
+
+SELECT id, content_id, title
+FROM festivals
+WHERE content_id = 'matching-rest-manual-festival';
+
+SELECT id, member_id, festival_id, status, expires_at
+FROM festival_checkins
+WHERE member_id IN (:member_a_id, :member_b_id)
+ORDER BY member_id, id;
+SQL
+```
+
+마지막 festival 조회의 `id`를 `<TEST_FESTIVAL_ID>`로 사용합니다.
+
+### 24.5 WAITING → PROPOSED → MATCHED
+
+두 신청을 60초 안에 연속 실행합니다.
+
+```bash
+FESTIVAL_ID='<TEST_FESTIVAL_ID>'
+
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -H 'Content-Type: application/json' \
+  -d "{\"festivalId\":$FESTIVAL_ID,\"preferredGroupSize\":2,\"allowMinimumTwo\":false,\"tags\":[]}" \
+  http://localhost:8080/api/matching/pools
+
+curl -i -sS \
+  -b "$COOKIE_DIR/member-b.cookies" \
+  -H 'Content-Type: application/json' \
+  -d "{\"festivalId\":$FESTIVAL_ID,\"preferredGroupSize\":2,\"allowMinimumTwo\":false,\"tags\":[]}" \
+  http://localhost:8080/api/matching/pools
+```
+
+예상 status는 각각 `201`, 핵심 상태는 `"status":"WAITING"`입니다.
+
+현재 pool:
+
+```bash
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/matching/pools/me/current
+
+curl -sS -b "$COOKIE_DIR/member-b.cookies" \
+  http://localhost:8080/api/matching/pools/me/current
+```
+
+Scheduler fixed delay 5초를 기다린 뒤 proposal을 조회합니다.
+
+```bash
+sleep 6
+
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/matching/proposals/me/active
+
+curl -sS -b "$COOKIE_DIR/member-b.cookies" \
+  http://localhost:8080/api/matching/proposals/me/active
+```
+
+예상 status는 `200`, 핵심 값은 `"proposalType":"INITIAL_MATCH"`, `"proposalRound":1`, `"status":"SENT"`입니다. `data:null`이면 60초 pool 만료, Scheduler 비활성, 희망 인원 불일치를 확인합니다.
+
+`jq`가 설치된 경우 proposal ID를 변수에 저장합니다.
+
+```bash
+PROPOSAL_A_ID="$(
+  curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+    http://localhost:8080/api/matching/proposals/me/active |
+  jq -r '.data.proposalId'
+)"
+
+PROPOSAL_B_ID="$(
+  curl -sS -b "$COOKIE_DIR/member-b.cookies" \
+    http://localhost:8080/api/matching/proposals/me/active |
+  jq -r '.data.proposalId'
+)"
+```
+
+30초 안에 두 회원 모두 수락합니다.
+
+```bash
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"ACCEPT"}' \
+  "http://localhost:8080/api/matching/proposals/$PROPOSAL_A_ID/responses"
+
+curl -i -sS \
+  -b "$COOKIE_DIR/member-b.cookies" \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"ACCEPT"}' \
+  "http://localhost:8080/api/matching/proposals/$PROPOSAL_B_ID/responses"
+```
+
+예상 status는 `200`입니다. 마지막 응답의 핵심 값은 `"recordedResponse":"ACCEPTED"`, `"attemptStatus":"CONFIRMED"`입니다.
+
+```bash
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/matching/pools/me/current
+```
+
+핵심 pool 상태는 `"MATCHED"`입니다.
+
+### 24.6 REJECT → cooldown
+
+이 절차의 각 시나리오는 독립적으로 실행합니다. 앞의 `MATCHED` 시나리오를 완료했다면 24.9 정리 SQL을 먼저 실행하고 24.4의 festival/check-in 준비부터 다시 시작하거나, 별도 회원 C/D를 준비합니다. 새 체크인과 pool을 준비한 두 회원으로 동일하게 proposal을 만든 뒤 한 회원이 거절합니다.
+
+```bash
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"REJECT"}' \
+  "http://localhost:8080/api/matching/proposals/$PROPOSAL_A_ID/responses"
+```
+
+round 1은 전체 terminal 집계 후 실패하므로 상대 회원도 `ACCEPT` 또는 `REJECT`로 응답해야 합니다. 이후:
+
+```bash
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/matching/me/restrictions
+```
+
+예상 핵심 값:
+
+```json
+{
+  "penaltyScore": 0,
+  "cooldown": {
+    "active": true,
+    "reason": "REJECT"
+  }
+}
+```
+
+round 1 거절 cooldown은 전체 terminal 집계 시각부터 30초이며 penalty score는 증가하지 않습니다.
+
+### 24.7 TIMEOUT → penalty/cooldown
+
+이 시나리오도 24.9 정리 후 다시 준비하거나 별도 회원을 사용합니다. 새 proposal을 받은 뒤 아무 응답도 보내지 않고 Scheduler timeout을 기다립니다.
+
+```bash
+sleep 35
+
+curl -sS -b "$COOKIE_DIR/member-a.cookies" \
+  http://localhost:8080/api/matching/me/restrictions
+```
+
+round 1 timeout의 예상 핵심 값:
+
+```json
+{
+  "penaltyScore": 1,
+  "cooldown": {
+    "active": true,
+    "reason": "TIMEOUT"
+  }
+}
+```
+
+기존 score가 이미 있었다면 `penaltyScore`는 기존 값에서 `+1`입니다. cooldown은 timeout 처리 시각부터 2분입니다.
+
+### 24.8 오류 확인
+
+cookie 없음:
+
+```bash
+curl -i http://localhost:8080/api/matching/pools/me/current
+```
+
+예상: `401`, `UNAUTHORIZED`.
+
+non-empty tags:
+
+```bash
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -H 'Content-Type: application/json' \
+  -d "{\"festivalId\":$FESTIVAL_ID,\"preferredGroupSize\":2,\"allowMinimumTwo\":false,\"tags\":[\"PHOTO\"]}" \
+  http://localhost:8080/api/matching/pools
+```
+
+예상: `400`, `VALIDATION_ERROR`.
+
+round 1에서 잘못된 action:
+
+```bash
+curl -i -sS \
+  -b "$COOKIE_DIR/member-a.cookies" \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"CANCEL_CURRENT_MEMBERS"}' \
+  "http://localhost:8080/api/matching/proposals/$PROPOSAL_A_ID/responses"
+```
+
+예상: `400`, `MATCHING_INVALID_REQUEST`.
+
+### 24.9 테스트 데이터 정리
+
+아래 SQL은 테스트 festival에 연결된 matching 데이터만 FK 역순으로 제거하고 OAuth 회원은 삭제하지 않습니다.
+
+```bash
+cd /c/dev/meet-or-solo
+set -a
+source .env
+set +a
+
+docker compose \
+  --env-file .env \
+  -f docker-compose.local.yml \
+  exec -T postgres \
+  psql -v ON_ERROR_STOP=1 \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" <<'SQL'
+BEGIN;
+
+CREATE TEMP TABLE cleanup_attempts AS
+SELECT id FROM match_attempts
+WHERE festival_id = (
+    SELECT id FROM festivals
+    WHERE content_id = 'matching-rest-manual-festival'
+);
+
+CREATE TEMP TABLE cleanup_groups AS
+SELECT id FROM match_groups
+WHERE attempt_id IN (SELECT id FROM cleanup_attempts);
+
+DELETE FROM match_penalty_events
+WHERE related_attempt_id IN (SELECT id FROM cleanup_attempts)
+   OR related_group_id IN (SELECT id FROM cleanup_groups);
+
+DELETE FROM match_cooldowns
+WHERE related_proposal_id IN (
+    SELECT id FROM match_proposals
+    WHERE attempt_id IN (SELECT id FROM cleanup_attempts)
+);
+
+DELETE FROM match_events
+WHERE attempt_id IN (SELECT id FROM cleanup_attempts)
+   OR group_id IN (SELECT id FROM cleanup_groups);
+
+DELETE FROM match_responses
+WHERE attempt_id IN (SELECT id FROM cleanup_attempts);
+
+DELETE FROM match_group_members
+WHERE group_id IN (SELECT id FROM cleanup_groups);
+
+DELETE FROM match_groups
+WHERE id IN (SELECT id FROM cleanup_groups);
+
+DELETE FROM match_proposals
+WHERE attempt_id IN (SELECT id FROM cleanup_attempts);
+
+DELETE FROM match_attempt_members
+WHERE attempt_id IN (SELECT id FROM cleanup_attempts);
+
+DELETE FROM match_attempts
+WHERE id IN (SELECT id FROM cleanup_attempts);
+
+DELETE FROM match_pools
+WHERE festival_id = (
+    SELECT id FROM festivals
+    WHERE content_id = 'matching-rest-manual-festival'
+);
+
+DELETE FROM festival_checkins
+WHERE festival_id = (
+    SELECT id FROM festivals
+    WHERE content_id = 'matching-rest-manual-festival'
+);
+
+DELETE FROM festivals
+WHERE content_id = 'matching-rest-manual-festival';
+
+COMMIT;
+SQL
+
+rm -f "$COOKIE_DIR/member-a.cookies" "$COOKIE_DIR/member-b.cookies"
+rmdir "$COOKIE_DIR"
+```
+
+## 25. 현재 한계
+
+- frontend matching 화면이 없어 JSON으로만 확인합니다.
+- WebSocket이 없어 proposal과 상태 변경을 polling해야 합니다.
+- Scheduler는 기본 `false`이며 수동 검증 시 명시적으로 활성화해야 합니다.
+- check-in REST API가 없어 수동 검증용 `festival_checkins`는 SQL로 준비합니다.
+- `POOL_ENTRY` 즉시 orchestration이 없어 신청 후 Scheduler tick을 기다립니다.
+- Swagger/OpenAPI는 이번 범위에 없습니다.
+- 자유 채팅은 구현하지 않았습니다.
