@@ -34,6 +34,7 @@
 - 인원 미달 팝업 조건
 - 최초 제안과 인원 미달 재확인 proposal 회차 판단
 - 패널티/쿨타임 계산
+- 귀책 proposal 기반 cooldown/penalty 멱등성
 - 차단 사용자 제외 판단
 - 이미 매칭 중인 사용자 제외 판단
 
@@ -104,6 +105,9 @@
 - 동일 proposal에 대해 두 번 수락 요청이 들어오면 unique constraint로 중복 응답을 막는다.
 - 동일 attempt와 회원에 대해 round가 같은 proposal은 중복 생성되지 않는다.
 - 동일 attempt와 회원이라도 다음 round의 인원 미달 재확인 proposal은 생성할 수 있다.
+- 동일 귀책 proposal의 응답 재전송과 Scheduler timeout 재실행에도 cooldown과 penalty event는 각각 한 건만 생성된다.
+- response, cooldown, penalty event, 회원 점수, pool, attempt 중 하나가 실패하면 같은 transaction이 전체 rollback된다.
+- 사용자 응답과 timeout race에서도 proposal별 cooldown과 penalty event가 중복되지 않는다.
 - 인원 미달 재확인은 같은 `attempt_id`와 새로운 `proposal_id`를 사용한다.
 - 기존 attempt 종료 후 새로운 상대를 탐색하는 재매칭은 새로운 `attempt_id`를 사용한다.
 - 동시에 여러 Scheduler worker가 후보를 조회해도 `FOR UPDATE SKIP LOCKED`로 같은 사용자를 중복 선점하지 않는다.

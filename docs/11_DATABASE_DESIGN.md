@@ -531,12 +531,12 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 거절/미응답/취소 후 재매칭 제한 시간을 관리한다. |
-| 주요 컬럼 | `id`, `member_id`, `reason`, `starts_at`, `expires_at`, `created_at` |
+| 주요 컬럼 | `id`, `member_id`, `reason`, `status`, `starts_at`, `expires_at`, `related_proposal_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id` |
-| 상태값 | `reason` |
+| FK | `member_id -> members.id`, `related_proposal_id -> match_proposals.id` |
+| 상태값 | `reason`, `status` |
 | CHECK | `expires_at > starts_at`, `reason IN ('REJECT','TIMEOUT','CANCEL','NO_SHOW','REPORT')` |
-| UNIQUE | active 상태의 `member_id` partial unique index 후보 |
+| UNIQUE | active 상태의 `member_id` partial unique index, nullable `related_proposal_id` partial unique index |
 | INDEX | `idx_match_cooldowns_member_expires`, `idx_match_cooldowns_expires_at` |
 | 개인정보/보안 | 사유는 구조화된 코드만 저장한다. |
 | MVP 필수 | 필수 |
@@ -546,12 +546,12 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. |
-| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `created_at` |
+| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `related_proposal_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id` |
+| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id`, `related_proposal_id -> match_proposals.id` |
 | 상태값 | `event_type` |
 | CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','DECAY','ADMIN_ADJUST')` |
-| UNIQUE | 없음 |
+| UNIQUE | nullable `related_proposal_id` partial unique index |
 | INDEX | `idx_match_penalty_events_member_created_at`, `idx_match_penalty_events_type_created_at` |
 | 개인정보/보안 | 운영 이력은 30일 후 삭제 또는 집계 전환 후보로 둔다. |
 | MVP 필수 | 필수 |
@@ -757,8 +757,9 @@ backend/src/main/resources/db/migration/V8__add_member_intro.sql
 backend/src/main/resources/db/migration/V9__add_member_profile_image_object_key.sql
 backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
 backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
+backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
 ```
 
-`V1`~`V9`는 수정하지 않는다. `V10`, `V11`은 코드와 문서 작성까지만 수행하며 실제 local/dev DB 적용은 별도 작업으로 남긴다.
+기존 `V1`~`V11`은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반 멱등성은 `V12`에서 추가한다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.

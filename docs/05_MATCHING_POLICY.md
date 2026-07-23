@@ -209,6 +209,25 @@ penalty 또는 cooldown 적용 대상:
 
 MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로 확장할 수 있습니다.
 
+최초 구현 정책은 다음과 같이 확정합니다.
+
+| 원인 | cooldown 시작 | 기간 | penalty score |
+| --- | --- | ---: | ---: |
+| round 1 `REJECTED` | round 1 전체 응답이 terminal이 되어 최종 집계되는 시각 | 30초 | 없음 |
+| round 1 `TIMEOUT` | timeout 처리 시각 | 2분 | `+1` |
+| round 2 `CANCEL_CURRENT_MEMBERS` | 취소 처리 시각 | 2분 | `+1` |
+| round 2 `TIMEOUT` | timeout 처리 시각 | 5분 | `+2` |
+
+- 첫 1회 면제는 두지 않는다.
+- 반복 window, 가중치, score decay는 운영 데이터 확인 후 별도 정책으로 이월한다.
+- 귀책 pool은 `CANCELLED`로 유지하고, 회원의 재신청 제한은 `match_cooldowns`로 분리한다.
+- 비귀책 회원에게는 cooldown과 penalty score를 적용하지 않는다.
+- cooldown은 `starts_at <= now AND expires_at > now`일 때 active로 판단한다.
+- 신규 cooldown 생성 전 같은 회원의 `expires_at <= now`인 `ACTIVE` row를 `EXPIRED`로 lazy 전환한다.
+- 각 귀책 proposal의 `proposal_id`를 cooldown과 penalty event의 멱등성 원인 key로 사용한다.
+- response, cooldown, penalty event, `members.penalty_score`, pool, attempt 변경은 같은 transaction에서 처리한다.
+- 외부 API와 WebSocket 호출은 이 transaction에 포함하지 않는다.
+
 ## 최초 proposal 응답 처리 정책
 
 `INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.
@@ -220,7 +239,7 @@ MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로
 - 비귀책 pool의 `search_expires_at`은 연장하지 않고 임시 lock 정보는 제거한다.
 - 전원이 수락하면 마지막 응답 transaction에서 group, group member, pool `MATCHED`, attempt `CONFIRMED`를 원자적으로 생성·전환한다.
 - timeout Scheduler는 기존 matching Scheduler의 활성화 조건, fixed delay, batch size를 재사용하되 attempt별 독립 transaction으로 처리한다.
-- 거절·timeout cooldown과 penalty는 기간, 점수, 반복 거절 window 확정 전까지 생성하지 않는다.
+- 거절·timeout cooldown과 penalty는 위 확정 정책과 proposal 기반 멱등성 계약에 따라 생성한다.
 - 인원 미달 round 2와 `allow_minimum_two`는 후속 단계로 분리한다.
 
 ## PostgreSQL 기반 상태 관리

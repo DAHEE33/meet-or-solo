@@ -1,5 +1,23 @@
 # 진행 상태 기록
 
+## [10-매칭 7차] penalty/cooldown과 proposal 기반 멱등성
+
+상태: 운영 코드와 PostgreSQL Testcontainers 통합 테스트 완료
+
+- 기존 V1~V11을 수정하지 않고 `V12__add_matching_penalty_cooldown_idempotency.sql` 추가
+- `match_cooldowns`, `match_penalty_events`에 nullable `related_proposal_id` FK와 partial unique index 추가
+- round 1 거절은 전체 terminal 집계 시각부터 30초 cooldown을 적용하고 점수는 부과하지 않음
+- round 1 timeout은 처리 시각부터 2분 cooldown과 `penalty_score +1` 적용
+- round 2 취소는 2분 cooldown과 `+1`, timeout은 5분 cooldown과 `+2` 적용
+- 비귀책 회원은 cooldown과 penalty 대상에서 제외하고 귀책 pool은 `CANCELLED` 유지
+- 만료된 `ACTIVE` cooldown을 신규 생성 transaction에서 `EXPIRED`로 lazy 전환
+- response, cooldown, penalty event, 회원 점수, pool, attempt를 기존 응답 transaction에서 원자 처리
+- 기존 attempt → proposal → attempt member 잠금과 pool ID 오름차순 잠금 순서 유지
+- 동일 응답, Scheduler 재실행, 사용자 응답/timeout race의 중복 방지 테스트 보강
+- cooldown/penalty/member update 실패 rollback과 V1~V12 migration 검증 테스트 보강
+- Windows Git Bash + Docker Desktop에서 targeted PostgreSQL 통합 테스트 55건, failures 0, errors 0, skipped 0, `BUILD SUCCESSFUL`
+- matching REST API, 신청 API, frontend, WebSocket, `POOL_ENTRY`, 완전 재매칭, Redis, embedding scoring은 제외
+
 ## [10-매칭 6차] 인원 미달 round 2 재확인과 최소 인원 확정
 
 상태: 운영 코드와 PostgreSQL 통합 테스트 완료, 환경 의존 root context test를 제외한 backend 회귀 171건 완료
