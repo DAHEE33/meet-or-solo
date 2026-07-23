@@ -59,4 +59,16 @@ public class MatchCooldown {
         cooldown.createdAt = startsAt;
         return cooldown;
     }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public OffsetDateTime getStartsAt() {
+        return startsAt;
+    }
+
+    public OffsetDateTime getExpiresAt() {
+        return expiresAt;
+    }
 }

@@ -228,6 +228,10 @@ public class Member {
         return status;
     }
 
+    public Integer getPenaltyScore() {
+        return penaltyScore;
+    }
+
     public byte[] getGenderEncrypted() {
         return genderEncrypted;
     }
