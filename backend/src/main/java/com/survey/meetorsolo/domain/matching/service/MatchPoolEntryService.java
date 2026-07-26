@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.matching.service;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
+import com.survey.meetorsolo.domain.matching.event.MatchingPoolEnteredEvent;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
@@ -14,6 +15,7 @@ import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,19 +27,22 @@ public class MatchPoolEntryService {
     private final MatchPoolRepository pools;
     private final MatchCooldownRepository cooldowns;
     private final MatchGroupMemberRepository groupMembers;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MatchPoolEntryService(
             Clock clock,
             MemberRepository members,
             MatchPoolRepository pools,
             MatchCooldownRepository cooldowns,
-            MatchGroupMemberRepository groupMembers
+            MatchGroupMemberRepository groupMembers,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.clock = clock;
         this.members = members;
         this.pools = pools;
         this.cooldowns = cooldowns;
         this.groupMembers = groupMembers;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -74,7 +79,13 @@ public class MatchPoolEntryService {
                 now.plusSeconds(60)
         );
         try {
-            return MatchPoolResponse.from(pools.saveAndFlush(pool));
+            MatchPool savedPool = pools.saveAndFlush(pool);
+            eventPublisher.publishEvent(new MatchingPoolEnteredEvent(
+                    savedPool.getId(),
+                    savedPool.getMemberId(),
+                    savedPool.getFestivalId()
+            ));
+            return MatchPoolResponse.from(savedPool);
         } catch (DataIntegrityViolationException exception) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 진행 중인 match pool이 있습니다.");
         }

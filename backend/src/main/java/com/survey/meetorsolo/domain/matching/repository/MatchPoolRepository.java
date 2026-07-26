@@ -65,6 +65,56 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             @Param("limit") int limit
     );
 
+    @Query(value = """
+            SELECT pool.*
+            FROM match_pools pool
+            JOIN match_pools requester ON requester.id = :requesterPoolId
+            JOIN festival_checkins checkin ON checkin.id = pool.checkin_id
+            WHERE requester.member_id = :requesterMemberId
+              AND requester.festival_id = :festivalId
+              AND requester.status = 'WAITING'
+              AND requester.search_expires_at > :now
+              AND pool.festival_id = requester.festival_id
+              AND pool.preferred_group_size = requester.preferred_group_size
+              AND pool.status = 'WAITING'
+              AND pool.search_expires_at > :now
+              AND checkin.member_id = pool.member_id
+              AND checkin.festival_id = pool.festival_id
+              AND checkin.status = 'ACTIVE'
+              AND checkin.expires_at > :now
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM match_cooldowns cooldown
+                  WHERE cooldown.member_id = pool.member_id
+                    AND cooldown.status = 'ACTIVE'
+                    AND cooldown.starts_at <= :now
+                    AND cooldown.expires_at > :now
+              )
+              AND (
+                  pool.id = requester.id
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM user_blocks block
+                      WHERE (block.blocker_member_id = :requesterMemberId
+                             AND block.blocked_member_id = pool.member_id)
+                         OR (block.blocker_member_id = pool.member_id
+                             AND block.blocked_member_id = :requesterMemberId)
+                  )
+              )
+            ORDER BY CASE WHEN pool.id = :requesterPoolId THEN 0 ELSE 1 END,
+                     pool.entered_at ASC,
+                     pool.id ASC
+            LIMIT :limit
+            FOR UPDATE OF pool SKIP LOCKED
+            """, nativeQuery = true)
+    List<MatchPool> findPoolEntryClaimablePoolsForUpdate(
+            @Param("requesterPoolId") long requesterPoolId,
+            @Param("requesterMemberId") long requesterMemberId,
+            @Param("festivalId") long festivalId,
+            @Param("now") OffsetDateTime now,
+            @Param("limit") int limit
+    );
+
     List<MatchPool> findAllByLockTokenOrderByEnteredAtAscIdAsc(String lockToken);
 
     @Query(value = "SELECT * FROM match_pools WHERE id IN (:poolIds) ORDER BY id FOR UPDATE", nativeQuery = true)

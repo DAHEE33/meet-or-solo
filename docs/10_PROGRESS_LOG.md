@@ -1,5 +1,27 @@
 # 진행 상태 기록
 
+## [10-매칭 9차] pool 신청 AFTER_COMMIT 매칭 실행 trigger
+
+상태: application event 운영 코드와 PostgreSQL Testcontainers 통합·backend 전체 회귀 및 build 완료
+
+- `MatchPoolEntryService`가 `WAITING` pool을 저장한 뒤 `MatchingPoolEnteredEvent(poolId, memberId, festivalId)`를 publish하도록 연결
+- `MatchingPoolEnteredEventHandler`가 동기 `@TransactionalEventListener(AFTER_COMMIT)`로 pool-entry orchestration을 실행하도록 구성
+- 신청 transaction rollback 시 listener가 실행되지 않고, listener 예외는 내부에서 식별자와 함께 기록해 이미 commit된 신청 결과를 실패로 되돌리지 않도록 처리
+- requester pool을 우선 포함하고 같은 축제·같은 희망 인원인 유효 `WAITING` pool만 `FOR UPDATE SKIP LOCKED`로 선점하는 trigger 전용 claim 추가
+- trigger는 requester가 포함된 조합만 기존 scoring, batch reader, group composer, proposal 생성 pipeline으로 처리
+- trigger attempt는 `created_by=POOL_ENTRY`, 기존 Scheduler fallback attempt는 `created_by=SCHEDULER`로 구분
+- 후보 부족, proposal 생성 실패, 미사용 후보는 기존 token 기반 release로 검색 시간이 유효하면 `WAITING`, 만료됐으면 `EXPIRED` 처리
+- 기존 `MatchingScheduler`의 전체 batch fallback, 만료 `WAITING` 정리, stale `LOCKED` 복구, 미사용 lock release와 기존 5초 주기를 유지
+- 기존 `MatchProposalTimeoutScheduler`의 proposal/attempt timeout 책임 유지
+- 동일 event 재실행, 두 pool-entry trigger 동시 실행, trigger와 Scheduler 동시 실행에서 상태 조건과 `SKIP LOCKED`로 attempt 중복 생성을 방지하는 PostgreSQL 통합 테스트 추가
+- 기존 matching repository의 `festival_checkins` 유효성 조회와 SQL fixture만 사용하고 `domain/checkin/**`, 체크인 API, GPS 정책은 수정하지 않음
+- 신규 migration, queue/request table, DB Trigger, `@Async`, Redis, Kafka, frontend, WebSocket은 추가하지 않음
+- 신규 focused trigger 테스트 15건 `BUILD SUCCESSFUL` 25초
+- 최종 코드 기준 `PROFILE_ENCRYPTION_KEY`를 테스트 프로세스에 주입한 matching 전체 회귀 179건 `BUILD SUCCESSFUL` 1분 20초
+- 첫 backend 전체 실행은 local PostgreSQL 부재로 기존 `contextLoads()` 1건만 실패했고 나머지 215건은 통과
+- 임시 `pgvector/pgvector:pg16` local PostgreSQL을 사용한 최종 backend 전체 218건 `BUILD SUCCESSFUL` 1분 49초
+- backend `build` 최종 `BUILD SUCCESSFUL` 9초
+
 ## [10-매칭 8차] matching 최소 REST API
 
 상태: 매칭 REST API 구현과 PostgreSQL Testcontainers 통합·matching 전체 회귀 테스트 완료
