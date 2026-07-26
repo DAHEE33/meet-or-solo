@@ -63,7 +63,7 @@ class FestivalControllerTest {
 
     @Test
     void 축제_목록을_공통_응답_형식으로_반환한다() throws Exception {
-        when(festivalQueryService.getActiveFestivals(0, 20)).thenReturn(listResponse);
+        when(festivalQueryService.getActiveFestivals(0, 20, null)).thenReturn(listResponse);
 
         mockMvc.perform(get("/api/festivals"))
                 .andExpect(status().isOk())
@@ -73,7 +73,17 @@ class FestivalControllerTest {
                         .value("https://example.com/thumbnail.jpg"))
                 .andExpect(jsonPath("$.data.page").value(0))
                 .andExpect(jsonPath("$.data.totalElements").value(1));
-        verify(festivalQueryService).getActiveFestivals(0, 20);
+        verify(festivalQueryService).getActiveFestivals(0, 20, null);
+    }
+
+    @Test
+    void keyword_파라미터를_그대로_전달한다() throws Exception {
+        when(festivalQueryService.getActiveFestivals(0, 20, "봄")).thenReturn(listResponse);
+
+        mockMvc.perform(get("/api/festivals").param("keyword", "봄"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        verify(festivalQueryService).getActiveFestivals(0, 20, "봄");
     }
 
     @Test

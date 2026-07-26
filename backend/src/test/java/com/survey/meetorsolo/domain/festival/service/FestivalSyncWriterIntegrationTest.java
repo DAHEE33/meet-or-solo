@@ -114,6 +114,7 @@ class FestivalSyncWriterIntegrationTest {
         var page = festivalRepository.findVisibleFestivals(
                 FestivalStatus.ACTIVE,
                 today,
+                "",
                 PageRequest.of(0, 10_000)
         );
 

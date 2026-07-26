@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Search, ChevronDown, SlidersHorizontal, RotateCw } from 'lucide-react';
 import type { Festival } from '../types';
 import { festivalsApi } from '../api/festivals';
@@ -33,48 +33,57 @@ export default function ExploreListPage() {
   const [festivalsLoading, setFestivalsLoading] = useState(true);
   const [spots, setSpots] = useState<TourPlaceListItem[]>([]);
   const [spotsLoading, setSpotsLoading] = useState(true);
+  const isFestivalsFirstFetch = useRef(true);
+  const isSpotsFirstFetch = useRef(true);
+
+  // keyword 변경 시마다 매 타이핑마다 요청을 보내지 않도록, 최초 진입 시에는 즉시 조회하고
+  // 이후 keyword 변경분만 디바운스한다.
+  useEffect(() => {
+    let mounted = true;
+    const delay = isFestivalsFirstFetch.current ? 0 : 300;
+    isFestivalsFirstFetch.current = false;
+    setFestivalsLoading(true);
+    const timer = setTimeout(() => {
+      festivalsApi.getList(0, 100, keyword.trim() || undefined).then((list) => {
+        if (!mounted) return;
+        setFestivals(list.items.map(mapFestivalListItemToFestival));
+        setFestivalsLoading(false);
+      });
+    }, delay);
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+    };
+  }, [keyword]);
 
   useEffect(() => {
     let mounted = true;
-    festivalsApi.getList(0, 100).then((list) => {
-      if (!mounted) return;
-      setFestivals(list.items.map(mapFestivalListItemToFestival));
-      setFestivalsLoading(false);
-    });
-    spotsApi.getList(0, 100).then((list) => {
-      if (!mounted) return;
-      setSpots(list.items);
-      setSpotsLoading(false);
-    });
+    const delay = isSpotsFirstFetch.current ? 0 : 300;
+    isSpotsFirstFetch.current = false;
+    const contentTypeId = SPOT_CATEGORIES.find((c) => c.label === category)?.contentTypeId;
+    setSpotsLoading(true);
+    const timer = setTimeout(() => {
+      spotsApi.getList(0, 100, contentTypeId, keyword.trim() || undefined).then((list) => {
+        if (!mounted) return;
+        setSpots(list.items);
+        setSpotsLoading(false);
+      });
+    }, delay);
     return () => {
       mounted = false;
+      clearTimeout(timer);
     };
-  }, []);
+  }, [keyword, category]);
 
   const isFestival = segment === 'festival';
   // 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 축제 세그먼트는 카테고리 칩을 노출하지 않는다.
   const categoryChips = isFestival ? [] : SPOT_CATEGORIES;
   const filterLabels = isFestival ? FESTIVAL_FILTERS : SPOT_FILTERS;
 
-  const filteredFestivals = useMemo(() => {
-    const kw = keyword.trim();
-    return festivals.filter((f) => kw === '' || f.name.includes(kw));
-  }, [festivals, keyword]);
-
-  const filteredSpots = useMemo(() => {
-    const kw = keyword.trim();
-    const contentTypeId = SPOT_CATEGORIES.find((c) => c.label === category)?.contentTypeId;
-    return spots
-      .filter(
-        (s) =>
-          (contentTypeId === undefined || s.contentTypeId === contentTypeId) &&
-          (kw === '' || s.title.includes(kw)),
-      )
-      .map(mapTourPlaceListItemToTourSpot);
-  }, [spots, category, keyword]);
+  const visibleSpots = spots.map(mapTourPlaceListItemToTourSpot);
 
   const isLoadingCurrentSegment = isFestival ? festivalsLoading : spotsLoading;
-  const resultCount = isFestival ? filteredFestivals.length : filteredSpots.length;
+  const resultCount = isFestival ? festivals.length : visibleSpots.length;
   const isEmpty = !isLoadingCurrentSegment && resultCount === 0;
 
   function handleSegmentChange(next: Segment) {
@@ -180,8 +189,8 @@ export default function ExploreListPage() {
         {!isEmpty && !isLoadingCurrentSegment && (
           <div className="flex flex-col gap-2.5">
             {isFestival
-              ? filteredFestivals.map((f) => <FestivalListItem key={f.id} festival={f} />)
-              : filteredSpots.map((s) => <ExploreSpotItem key={s.id} spot={s} />)}
+              ? festivals.map((f) => <FestivalListItem key={f.id} festival={f} />)
+              : visibleSpots.map((s) => <ExploreSpotItem key={s.id} spot={s} />)}
           </div>
         )}
 

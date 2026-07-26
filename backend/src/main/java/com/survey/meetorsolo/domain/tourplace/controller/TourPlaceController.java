@@ -33,10 +33,11 @@ public class TourPlaceController {
             @RequestParam(defaultValue = "20")
             @Min(value = 1, message = "size는 1 이상이어야 합니다.")
             @Max(value = 100, message = "size는 100 이하여야 합니다.") int size,
-            @RequestParam(required = false) String contentTypeId
+            @RequestParam(required = false) String contentTypeId,
+            @RequestParam(required = false) String keyword
     ) {
         return ApiResponse.success(
-                tourPlaceQueryService.getVisiblePlaces(page, size, contentTypeId)
+                tourPlaceQueryService.getVisiblePlaces(page, size, contentTypeId, keyword)
         );
     }
 

@@ -26,10 +26,12 @@ public interface TourPlaceRepository extends JpaRepository<TourPlace, Long> {
             from TourPlace place
             where place.status = :status
               and (:contentTypeId is null or place.contentTypeId = :contentTypeId)
+              and lower(place.title) like lower(concat('%', :keyword, '%'))
             """)
     Page<TourPlace> findVisiblePlaces(
             @Param("status") TourPlaceStatus status,
             @Param("contentTypeId") String contentTypeId,
+            @Param("keyword") String keyword,
             Pageable pageable
     );
 

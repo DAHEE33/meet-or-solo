@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
@@ -58,10 +59,11 @@ class TourPlaceQueryServiceTest {
         when(tourPlaceRepository.findVisiblePlaces(
                 eq(TourPlaceStatus.ACTIVE),
                 isNull(),
+                eq(""),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(place), pageRequest, 1));
 
-        TourPlaceListResponse result = service().getVisiblePlaces(0, 20, null);
+        TourPlaceListResponse result = service().getVisiblePlaces(0, 20, null, null);
 
         assertThat(result.items())
                 .singleElement()
@@ -70,6 +72,38 @@ class TourPlaceQueryServiceTest {
                     assertThat(item.title()).isEqualTo("테스트 관광지");
                 });
         assertThat(result.totalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void keyword와_contentTypeId는_트림_후_전달되고_공백만_있으면_null로_전달한다() {
+        PageRequest pageRequest = PageRequest.of(0, 20);
+        when(tourPlaceRepository.findVisiblePlaces(
+                eq(TourPlaceStatus.ACTIVE),
+                eq("12"),
+                eq("관광지"),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+
+        service().getVisiblePlaces(0, 20, "  12  ", "  관광지  ");
+
+        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), eq("12"), eq("관광지"), any(Pageable.class));
+    }
+
+    @Test
+    void contentTypeId가_공백뿐이면_null로_keyword가_공백뿐이면_빈_문자열로_전달한다() {
+        // postgres가 lower(concat('%', :keyword, '%'))에서 null 파라미터의 타입을 추론하지 못해
+        // (bytea로 오판) 오류가 나므로, keyword는 null 대신 빈 문자열을 넘겨 항상 LIKE 패턴이 적용되게 한다.
+        PageRequest pageRequest = PageRequest.of(0, 20);
+        when(tourPlaceRepository.findVisiblePlaces(
+                eq(TourPlaceStatus.ACTIVE),
+                isNull(),
+                eq(""),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+
+        service().getVisiblePlaces(0, 20, "   ", "   ");
+
+        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), isNull(), eq(""), any(Pageable.class));
     }
 
     @Test

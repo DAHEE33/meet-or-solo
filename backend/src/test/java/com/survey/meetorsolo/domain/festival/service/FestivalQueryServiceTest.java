@@ -60,6 +60,7 @@ class FestivalQueryServiceTest {
         when(festivalRepository.findVisibleFestivals(
                 eq(FestivalStatus.ACTIVE),
                 any(LocalDate.class),
+                eq(""),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(festival), pageRequest, 21));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(10L)))
@@ -70,7 +71,7 @@ class FestivalQueryServiceTest {
                 tourPlaceRepository
         );
 
-        var result = service.getActiveFestivals(0, 20);
+        var result = service.getActiveFestivals(0, 20, null);
 
         assertThat(result.items())
                 .singleElement()
@@ -85,6 +86,36 @@ class FestivalQueryServiceTest {
         assertThat(result.totalPages()).isEqualTo(2);
         assertThat(result.hasNext()).isTrue();
         verify(festivalImageRepository).findAllByFestivalIdIn(List.of(10L));
+    }
+
+    @Test
+    void keyword는_트림_후_전달되고_공백뿐이면_빈_문자열로_전달한다() {
+        // postgres가 lower(concat('%', :keyword, '%'))에서 null 파라미터의 타입을 추론하지 못해
+        // (bytea로 오판) 오류가 나므로, null 대신 빈 문자열을 넘겨 항상 LIKE 패턴이 적용되게 한다.
+        PageRequest pageRequest = PageRequest.of(0, 20);
+        when(festivalRepository.findVisibleFestivals(
+                eq(FestivalStatus.ACTIVE),
+                any(LocalDate.class),
+                eq("축제"),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+        when(festivalRepository.findVisibleFestivals(
+                eq(FestivalStatus.ACTIVE),
+                any(LocalDate.class),
+                eq(""),
+                any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+        FestivalQueryService service = new FestivalQueryService(
+                festivalRepository,
+                festivalImageRepository,
+                tourPlaceRepository
+        );
+
+        service.getActiveFestivals(0, 20, "  축제  ");
+        service.getActiveFestivals(0, 20, "   ");
+
+        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq("축제"), any(Pageable.class));
+        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq(""), any(Pageable.class));
     }
 
     @Test

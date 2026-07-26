@@ -49,9 +49,10 @@ export type NearbyFestivalItem = {
 };
 
 export const spotsApi = {
-  getList: (page = 0, size = 20, contentTypeId?: string) => {
+  getList: (page = 0, size = 20, contentTypeId?: string, keyword?: string) => {
     const params = new URLSearchParams({ page: String(page), size: String(size) });
     if (contentTypeId) params.set('contentTypeId', contentTypeId);
+    if (keyword) params.set('keyword', keyword);
     return apiClient<TourPlaceListResponse>(`/api/spots?${params.toString()}`);
   },
   getDetail: (id: number) => apiClient<TourPlaceDetail>(`/api/spots/${id}`),

@@ -45,7 +45,7 @@ public class FestivalQueryService {
     }
 
     @Transactional(readOnly = true)
-    public FestivalListResponse getActiveFestivals(int page, int size) {
+    public FestivalListResponse getActiveFestivals(int page, int size, String keyword) {
         PageRequest pageRequest = PageRequest.of(
                 page,
                 size,
@@ -55,6 +55,7 @@ public class FestivalQueryService {
         Page<Festival> festivalPage = festivalRepository.findVisibleFestivals(
                 FestivalStatus.ACTIVE,
                 today,
+                normalize(keyword),
                 pageRequest
         );
 
@@ -151,6 +152,18 @@ public class FestivalQueryService {
             imagesByFestivalId.putIfAbsent(image.getFestivalId(), image);
         }
         return imagesByFestivalId;
+    }
+
+    /**
+     * PostgreSQL이 {@code lower(concat('%', :keyword, '%'))}에 바인딩되는 null 파라미터의
+     * 타입을 추론하지 못해 오류가 나므로(bytea로 오판), null 대신 빈 문자열을 사용해 항상
+     * LIKE 패턴을 적용한다. 빈 문자열이면 {@code '%%'}가 되어 모든 제목과 매칭된다.
+     */
+    private String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.trim();
     }
 
     private FestivalListItemResponse toResponse(Festival festival, FestivalImage image) {

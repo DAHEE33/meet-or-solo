@@ -43,7 +43,7 @@ public class TourPlaceQueryService {
     }
 
     @Transactional(readOnly = true)
-    public TourPlaceListResponse getVisiblePlaces(int page, int size, String contentTypeId) {
+    public TourPlaceListResponse getVisiblePlaces(int page, int size, String contentTypeId, String keyword) {
         PageRequest pageRequest = PageRequest.of(
                 page,
                 size,
@@ -51,7 +51,8 @@ public class TourPlaceQueryService {
         );
         Page<TourPlace> placePage = tourPlaceRepository.findVisiblePlaces(
                 TourPlaceStatus.ACTIVE,
-                contentTypeId,
+                normalizeOrNull(contentTypeId),
+                normalizeKeyword(keyword),
                 pageRequest
         );
 
@@ -147,5 +148,24 @@ public class TourPlaceQueryService {
                 place.getStatus(),
                 place.getImageUrl()
         );
+    }
+
+    private String normalizeOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    /**
+     * PostgreSQL이 {@code lower(concat('%', :keyword, '%'))}에 바인딩되는 null 파라미터의
+     * 타입을 추론하지 못해 오류가 나므로(bytea로 오판), null 대신 빈 문자열을 사용해 항상
+     * LIKE 패턴을 적용한다. 빈 문자열이면 {@code '%%'}가 되어 모든 제목과 매칭된다.
+     */
+    private String normalizeKeyword(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.trim();
     }
 }

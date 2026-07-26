@@ -79,10 +79,12 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
             from Festival festival
             where festival.status = :status
               and (festival.eventEndDate is null or festival.eventEndDate >= :today)
+              and lower(festival.title) like lower(concat('%', :keyword, '%'))
             """)
     Page<Festival> findVisibleFestivals(
             @Param("status") FestivalStatus status,
             @Param("today") LocalDate today,
+            @Param("keyword") String keyword,
             Pageable pageable
     );
 

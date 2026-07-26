@@ -23,7 +23,7 @@
 | 2. status/ddayLabel 매핑 유틸 + `HomePage`/`ExploreListPage`(축제) 실연동 | ✅ 완료 | `utils/festival.ts` |
 | 3. `tour_places` 도메인 신설 | ✅ 완료 | `domain/tourplace` 패키지, sync scheduler 포함 |
 | 4. 축제 ↔ 관광지 근접 관계 API + Explore(관광지)/`TourSpotDetailPage` 실연동 | ✅ 완료 | haversine 기반 |
-| 5. 목록 필터 확장(`category`/`keyword`/`sort`를 backend 쿼리 파라미터로) | ❌ 미구현 | 프론트 클라이언트 메모리 필터로 대체 (7장 참고) |
+| 5. 목록 필터 확장(`keyword`를 backend 쿼리 파라미터로) | ✅ 완료(`keyword`만) | `category`(contentTypeId)는 이미 구현돼 있었음. `region`/`sort`는 여전히 미구현 (7장 참고) |
 
 ## 3. Backend 구현 내용
 
@@ -61,16 +61,21 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 - `GET /api/spots/{id}/nearby-festivals?radiusMeters&limit` → `TourPlaceQueryService.getNearbyFestivals` → `NearbyFestivalResponse`(id, title, address, eventStartDate, eventEndDate, status, thumbnailUrl, distanceMeters).
 - 두 API 모두 좌표가 없는 기준 엔티티는 빈 목록을 반환하고, `radiusMeters` 초과 후보는 제외한 뒤 거리순으로 `limit`만큼 자릅니다.
 
-### 3.5 목록 필터 확장 — 미구현
+### 3.5 목록 필터 확장 — `keyword`만 구현
 
-당초 설계였던 `GET /api/festivals`, `GET /api/spots`의 `category`/`keyword`/`region`/`sort` 쿼리 파라미터 확장은 구현하지 않았습니다. 대신 `ExploreListPage`가 `page=0&size=100`으로 전체 목록을 가져온 뒤 프론트 메모리에서 `keyword`(제목 포함 검색)와 관광지 `contentTypeId` 카테고리만 필터링합니다. UI에 보이는 "지역/일정/정렬"(축제), "현재 위치/거리/정렬"(관광지) 칩은 현재 동작하지 않는 표시용 라벨입니다. 실제 배포 데이터 규모가 커지면 backend 필터 파라미터 도입이 필요합니다.
+당초 설계였던 `category`/`keyword`/`region`/`sort` 중 실제로 필요했던 건 `keyword`뿐이었습니다. `category`(관광지 `contentTypeId`)는 이미 3.3에서 구현돼 있었고, `region`/`sort`는 실제로 값을 넘길 UI(지역 선택 드롭다운, 정렬 기준)가 없는 장식용 칩이라 백엔드 파라미터만 먼저 만드는 건 미사용 코드가 되어 이번 범위에서 제외했습니다 (7장 참고).
+
+- `GET /api/festivals?keyword=`, `GET /api/spots?keyword=`: 제목 부분일치(대소문자 무관) 필터. `FestivalQueryService`/`TourPlaceQueryService`가 `keyword`를 trim하고 공백뿐이면 빈 문자열로 정규화해 repository에 넘깁니다.
+- **구현 시 발견한 이슈**: JPQL에서 `:keyword is null or lower(title) like lower(concat('%', :keyword, '%'))` 패턴을 쓰면, PostgreSQL이 `keyword`가 null로 바인딩될 때 파라미터 타입을 추론하지 못해(`bytea`로 오판) `function lower(bytea) does not exist` 오류가 납니다. 그래서 `is null` 분기를 없애고, keyword가 없으면 서비스 계층에서 빈 문자열(`""`)을 넘겨 항상 `LIKE '%%'` 패턴(모든 제목과 매칭)이 적용되도록 바꿨습니다. `contentTypeId`처럼 단순 동등 비교(`=`)만 하는 파라미터는 이 문제가 없어 `is null or` 패턴을 그대로 유지했습니다.
+- `ExploreListPage`는 여전히 `page=0&size=100`으로 가져오지만(페이지네이션 UI 자체가 없어 이번 범위 밖), `keyword`(300ms 디바운스)와 관광지 `contentTypeId` 카테고리를 서버 쿼리 파라미터로 보내고 클라이언트 필터링은 제거했습니다.
+- UI에 보이는 "지역/일정/정렬"(축제), "현재 위치/거리/정렬"(관광지) 칩은 여전히 동작하지 않는 표시용 라벨입니다. 실제 지역 선택 UI와 정렬 기준이 정해지면 backend 파라미터를 추가로 도입해야 합니다.
 
 ## 4. 화면별 연동 현황
 
 | 화면 | 연동 API | 상태 |
 | --- | --- | --- |
 | `HomePage` | `GET /api/festivals`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동 |
-| `ExploreListPage` | `GET /api/festivals`, `GET /api/spots` (필터는 클라이언트 처리) | ✅ mock 제거, 실 API 연동 / ❌ 서버 필터 파라미터는 미구현 |
+| `ExploreListPage` | `GET /api/festivals?keyword=`, `GET /api/spots?contentTypeId=&keyword=` | ✅ mock 제거, 실 API 연동, `keyword`/`category` 서버 필터 적용 / ❌ `region`/`sort`는 미구현 |
 | `FestivalDetailPage` | `GET /api/festivals/{id}`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동 |
 | `TourSpotDetailPage` | `GET /api/spots/{id}`, `GET /api/spots/{id}/nearby-festivals`, `GET /api/spots` | ✅ mock 제거, 실 API 연동 |
 
@@ -86,8 +91,9 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 
 ## 6. 테스트 커버리지
 
-- `FestivalControllerTest`, `FestivalQueryServiceTest` — 상세/근접 API 케이스 추가.
-- `TourPlaceControllerTest`, `TourPlaceQueryServiceTest`, `TourPlaceSyncMapperTest`, `TourPlaceSyncServiceTest`, `TourPlaceSyncWriterTest`, `TourPlaceSyncSchedulerTest` — 관광지 도메인 전체(조회, 동기화 매핑/쓰기/재시도, 스케줄러) 신규 작성.
+- `FestivalControllerTest`, `FestivalQueryServiceTest` — 상세/근접 API 케이스, `keyword` 파라미터 전달/정규화(trim, 공백뿐이면 빈 문자열) 케이스 추가.
+- `TourPlaceControllerTest`, `TourPlaceQueryServiceTest`, `TourPlaceSyncMapperTest`, `TourPlaceSyncServiceTest`, `TourPlaceSyncWriterTest`, `TourPlaceSyncSchedulerTest` — 관광지 도메인 전체(조회, 동기화 매핑/쓰기/재시도, 스케줄러) 신규 작성 + `keyword`/`contentTypeId` 정규화 케이스 추가.
+- `FestivalSyncWriterIntegrationTest` — 실제 PostgreSQL로 `findVisibleFestivals` 조회 검증(3.5절의 null 바인딩 이슈를 이 테스트에서 발견).
 - `GeoDistanceCalculator`에 대한 별도 단위 테스트는 확인되지 않았습니다 — 필요 시 후속 작업으로 추가 검토합니다.
 
 ## 7. 미해결 이슈
@@ -95,6 +101,6 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 - `distanceKm`(사용자 GPS 기준 거리)은 아직 GPS 체크인/위치 권한 로직이 없어 노출하지 않습니다. 현재 근접 API는 축제/관광지 좌표 간 거리(`distanceMeters`)만 제공합니다.
 - `matchingCount`, `matchSupported`는 매칭 도메인 구현 이후에 채워질 값입니다.
 - 축제 소개글(`intro`), 이용 정보(`infoItems`), 프로그램(`programs`)은 `detailCommon2`/`detailIntro2` 등 추가 TourAPI 호출이 필요하며, 여전히 범위 밖입니다.
-- 3.5절의 목록 필터 서버 확장(`category`/`keyword`/`region`/`sort` 쿼리 파라미터)은 미구현 상태로 남아 있습니다. `ExploreListPage`의 "지역/일정/정렬" 등 필터 칩은 현재 UI에만 존재하고 동작하지 않습니다.
+- 목록 필터 중 `region`(지역 선택)/`sort`(정렬 기준)는 여전히 미구현입니다. `ExploreListPage`의 "지역/일정/정렬" 등 필터 칩은 현재 UI에만 존재하고 동작하지 않는 표시용 라벨이며, 실제 지역 선택 UI·정렬 기준이 정해지기 전까지는 backend 파라미터를 추가하지 않기로 했습니다(`keyword`는 3.5절대로 구현 완료).
 - `data/mock/tourSpots.ts`는 완전히 제거되지 않고 일부 남아 있습니다. 정리 필요 여부 확인이 필요합니다.
-- 관광지 동기화가 관광공사 테스트 API 키(일일 1,000회 한도)를 축제 동기화와 공유하고 있어, `page-size`/`max-pages`/`fixed-delay` 조합에 따라 하루 호출량이 한도에 근접하거나 초과할 수 있습니다. 실제 강원도 4개 타입의 총 건수를 확인해 여유가 있는지 점검이 필요합니다.
+- ~~관광지 동기화가 관광공사 테스트 API 키(일일 1,000회 한도)를 축제 동기화와 공유하고 있어 한도 초과 가능성~~ — 실제 호출량 확인 결과 한도에 여유가 있음을 확인했습니다(배치 커밋 안전장치는 3.3절 참고).
