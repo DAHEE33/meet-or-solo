@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, ChevronDown, SlidersHorizontal, RotateCw } from 'lucide-react';
-import type { FestivalCategory, SpotCategory } from '../types';
-import { festivals } from '../data/mock/festivals';
-import { tourSpots } from '../data/mock/tourSpots';
+import type { Festival } from '../types';
+import { festivalsApi } from '../api/festivals';
+import { spotsApi, type TourPlaceListItem } from '../api/spots';
+import { mapFestivalListItemToFestival } from '../utils/festival';
+import { mapTourPlaceListItemToTourSpot } from '../utils/tourSpot';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import FestivalListItem from '../components/festival/FestivalListItem';
@@ -10,26 +12,14 @@ import ExploreSpotItem from '../components/explore/ExploreSpotItem';
 
 type Segment = 'festival' | 'spot';
 
-const FESTIVAL_CATEGORIES: (FestivalCategory | '전체')[] = [
-  '전체',
-  '문화관광',
-  '문화예술',
-  '지역특산',
-  '전통역사',
-  '생태자연',
-  '기타',
-];
-
-const SPOT_CATEGORIES: (SpotCategory | '전체')[] = [
-  '전체',
-  '역사',
-  '자연',
-  '체험',
-  '문화',
-  '액티비티',
-  '맛집',
-  '카페',
-  '쇼핑',
+/** 관광공사 contentTypeId 기준 카테고리. mock 시절의 SpotCategory(역사/자연/체험 등)는
+ * 실 동기화 데이터와 매핑할 근거가 없어 폐기하고, 실제로 구분 가능한 카테고리만 노출한다. */
+const SPOT_CATEGORIES: { label: string; contentTypeId?: string }[] = [
+  { label: '전체' },
+  { label: '관광지', contentTypeId: '12' },
+  { label: '문화시설', contentTypeId: '14' },
+  { label: '액티비티', contentTypeId: '28' },
+  { label: '맛집', contentTypeId: '39' },
 ];
 
 const FESTIVAL_FILTERS = ['지역', '일정', '정렬'];
@@ -39,27 +29,53 @@ export default function ExploreListPage() {
   const [segment, setSegment] = useState<Segment>('festival');
   const [category, setCategory] = useState<string>('전체');
   const [keyword, setKeyword] = useState('');
+  const [festivals, setFestivals] = useState<Festival[]>([]);
+  const [festivalsLoading, setFestivalsLoading] = useState(true);
+  const [spots, setSpots] = useState<TourPlaceListItem[]>([]);
+  const [spotsLoading, setSpotsLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    festivalsApi.getList(0, 100).then((list) => {
+      if (!mounted) return;
+      setFestivals(list.items.map(mapFestivalListItemToFestival));
+      setFestivalsLoading(false);
+    });
+    spotsApi.getList(0, 100).then((list) => {
+      if (!mounted) return;
+      setSpots(list.items);
+      setSpotsLoading(false);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const isFestival = segment === 'festival';
-  const categories = isFestival ? FESTIVAL_CATEGORIES : SPOT_CATEGORIES;
+  // 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 축제 세그먼트는 카테고리 칩을 노출하지 않는다.
+  const categoryChips = isFestival ? [] : SPOT_CATEGORIES;
   const filterLabels = isFestival ? FESTIVAL_FILTERS : SPOT_FILTERS;
 
   const filteredFestivals = useMemo(() => {
     const kw = keyword.trim();
-    return festivals.filter(
-      (f) => (category === '전체' || f.category === category) && (kw === '' || f.name.includes(kw)),
-    );
-  }, [category, keyword]);
+    return festivals.filter((f) => kw === '' || f.name.includes(kw));
+  }, [festivals, keyword]);
 
   const filteredSpots = useMemo(() => {
     const kw = keyword.trim();
-    return tourSpots.filter(
-      (s) => (category === '전체' || s.category === category) && (kw === '' || s.name.includes(kw)),
-    );
-  }, [category, keyword]);
+    const contentTypeId = SPOT_CATEGORIES.find((c) => c.label === category)?.contentTypeId;
+    return spots
+      .filter(
+        (s) =>
+          (contentTypeId === undefined || s.contentTypeId === contentTypeId) &&
+          (kw === '' || s.title.includes(kw)),
+      )
+      .map(mapTourPlaceListItemToTourSpot);
+  }, [spots, category, keyword]);
 
+  const isLoadingCurrentSegment = isFestival ? festivalsLoading : spotsLoading;
   const resultCount = isFestival ? filteredFestivals.length : filteredSpots.length;
-  const isEmpty = resultCount === 0;
+  const isEmpty = !isLoadingCurrentSegment && resultCount === 0;
 
   function handleSegmentChange(next: Segment) {
     setSegment(next);
@@ -103,21 +119,23 @@ export default function ExploreListPage() {
           ))}
         </div>
 
-        {/* 2Depth 카테고리 칩 */}
-        <div className="hscroll -mx-5 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none]">
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCategory(c)}
-              className={`shrink-0 rounded-full border px-4 py-1.5 text-[13px] font-medium ${
-                category === c ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink/60'
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
+        {/* 2Depth 카테고리 칩 (축제 세그먼트는 아직 카테고리 데이터가 없어 숨김) */}
+        {categoryChips.length > 0 && (
+          <div className="hscroll -mx-5 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none]">
+            {categoryChips.map((c) => (
+              <button
+                key={c.label}
+                type="button"
+                onClick={() => setCategory(c.label)}
+                className={`shrink-0 rounded-full border px-4 py-1.5 text-[13px] font-medium ${
+                  category === c.label ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink/60'
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 조건 필터 행 (연동 예정 — 현재는 표시만) */}
         <div className="-mt-1.5 flex items-center gap-1.5">
@@ -140,8 +158,13 @@ export default function ExploreListPage() {
           </button>
         </div>
 
+        {/* 로딩 */}
+        {isLoadingCurrentSegment && (
+          <p className="py-12 text-center text-[13px] text-ink/45">불러오는 중이에요...</p>
+        )}
+
         {/* 결과 요약 */}
-        {!isEmpty && (
+        {!isEmpty && !isLoadingCurrentSegment && (
           <div className="-mt-1 flex items-center justify-between">
             <span className="text-[13px] text-ink/60">
               {isFestival ? `현재 진행 중인 축제 ${resultCount}개` : `주변 장소 ${resultCount}개`}
@@ -154,7 +177,7 @@ export default function ExploreListPage() {
         )}
 
         {/* 결과 목록 */}
-        {!isEmpty && (
+        {!isEmpty && !isLoadingCurrentSegment && (
           <div className="flex flex-col gap-2.5">
             {isFestival
               ? filteredFestivals.map((f) => <FestivalListItem key={f.id} festival={f} />)

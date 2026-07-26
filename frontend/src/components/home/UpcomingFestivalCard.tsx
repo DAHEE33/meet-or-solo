@@ -22,8 +22,9 @@ export default function UpcomingFestivalCard({ festival }: UpcomingFestivalCardP
       <div className="flex flex-col gap-0.5 px-3 pb-3 pt-2.5">
         <span className="truncate text-sm font-semibold text-ink">{festival.name}</span>
         <span className="text-xs text-ink/60 tabular-nums">{festival.periodShort}</span>
-        <span className="text-xs text-ink/50">
-          {festival.region} · {festival.distanceKm}km
+        <span className="truncate text-xs text-ink/50">
+          {festival.region ?? festival.address}
+          {festival.distanceKm !== undefined && ` · ${festival.distanceKm}km`}
         </span>
       </div>
     </Link>

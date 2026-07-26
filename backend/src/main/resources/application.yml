@@ -47,3 +47,15 @@ app:
       retry-max-attempts: ${FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS:3}
       retry-initial-delay: ${FESTIVAL_SYNC_RETRY_INITIAL_DELAY:1s}
       retry-max-delay: ${FESTIVAL_SYNC_RETRY_MAX_DELAY:10s}
+  tour-place:
+    sync:
+      initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}
+      fixed-delay: ${TOUR_PLACE_SYNC_FIXED_DELAY:12h}
+      page-size: ${TOUR_PLACE_SYNC_PAGE_SIZE:100}
+      max-pages: ${TOUR_PLACE_SYNC_MAX_PAGES:100}
+      region-code: ${TOUR_PLACE_SYNC_REGION_CODE:51}
+      content-type-ids: ${TOUR_PLACE_SYNC_CONTENT_TYPE_IDS:12,14,28,39}
+      batch-size: ${TOUR_PLACE_SYNC_BATCH_SIZE:500}
+      retry-max-attempts: ${TOUR_PLACE_SYNC_RETRY_MAX_ATTEMPTS:3}
+      retry-initial-delay: ${TOUR_PLACE_SYNC_RETRY_INITIAL_DELAY:1s}
+      retry-max-delay: ${TOUR_PLACE_SYNC_RETRY_MAX_DELAY:10s}

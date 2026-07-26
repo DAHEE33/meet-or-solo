@@ -12,6 +12,12 @@ interface FestivalListItemProps {
 
 /** 세로 목록용 축제 카드 (탐색 목록, 관광지 상세 "주변에서 열리는 축제") */
 export default function FestivalListItem({ festival, distanceLabel }: FestivalListItemProps) {
+  const locationLabel =
+    distanceLabel ??
+    [festival.place ?? festival.address, festival.distanceKm !== undefined ? `${festival.distanceKm}km` : null]
+      .filter(Boolean)
+      .join(' · ');
+
   return (
     <Link
       to={`/festivals/${festival.id}`}
@@ -26,12 +32,15 @@ export default function FestivalListItem({ festival, distanceLabel }: FestivalLi
         </span>
         <span className="truncate text-[15px] font-semibold text-ink">{festival.name}</span>
         <span className="text-xs text-ink/60 tabular-nums">
-          {festival.periodShort} · {distanceLabel ?? `${festival.place} · ${festival.distanceKm}km`}
+          {festival.periodShort}
+          {locationLabel && ` · ${locationLabel}`}
         </span>
-        <span className="flex items-center gap-1 text-xs font-medium text-coral tabular-nums">
-          <HeartHandshake size={12} />
-          현재 {festival.matchingCount}명 매칭 중
-        </span>
+        {festival.matchingCount !== undefined && (
+          <span className="flex items-center gap-1 text-xs font-medium text-coral tabular-nums">
+            <HeartHandshake size={12} />
+            현재 {festival.matchingCount}명 매칭 중
+          </span>
+        )}
       </div>
     </Link>
   );

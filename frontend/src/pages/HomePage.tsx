@@ -4,9 +4,9 @@ import { MapPin, ChevronDown } from 'lucide-react';
 import type { Festival, TourSpot } from '../types';
 import type { MemberProfile } from '../api/memberProfile';
 import { memberProfileApi } from '../api/memberProfile';
-import { getHotFestival, getUpcomingFestivals, getHomeNearbyPlaces } from '../api/home';
-import type { HomeNearbyPlace } from '../data/mock/festivals';
-import { getSpotById } from '../data/mock/tourSpots';
+import { festivalsApi } from '../api/festivals';
+import { mapFestivalListItemToFestival } from '../utils/festival';
+import { mapNearbyTourPlaceToTourSpot, formatDistanceLabel, formatWalkMinutesLabel } from '../utils/tourSpot';
 import MobileLayout from '../components/layout/MobileLayout';
 import AppHeader from '../components/layout/AppHeader';
 import FestivalHeroCard from '../components/home/FestivalHeroCard';
@@ -15,26 +15,40 @@ import UpcomingFestivalCard from '../components/home/UpcomingFestivalCard';
 import CtaBanner from '../components/home/CtaBanner';
 import FestivalNearbyPlaceItem from '../components/home/FestivalNearbyPlaceItem';
 
+type NearbyPlace = { spot: TourSpot; distanceMeters: number };
+
 export default function HomePage() {
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [hotFestival, setHotFestival] = useState<Festival | null>(null);
   const [upcomingFestivals, setUpcomingFestivals] = useState<Festival[]>([]);
-  const [nearbyPlaces, setNearbyPlaces] = useState<HomeNearbyPlace[]>([]);
+  const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlace[]>([]);
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([
-      memberProfileApi.getMine(),
-      getHotFestival(),
-      getUpcomingFestivals(),
-      getHomeNearbyPlaces(),
-    ]).then(([memberProfile, festival, upcoming, places]) => {
-      if (!mounted) return;
-      setProfile(memberProfile);
-      setHotFestival(festival);
-      setUpcomingFestivals(upcoming);
-      setNearbyPlaces(places);
-    });
+    Promise.all([memberProfileApi.getMine(), festivalsApi.getList(0, 20)]).then(
+      ([memberProfile, festivalList]) => {
+        if (!mounted) return;
+        const mapped = festivalList.items.map(mapFestivalListItemToFestival);
+        const ongoing = mapped.filter((festival) => festival.status === 'ongoing');
+        const upcoming = mapped.filter((festival) => festival.status === 'upcoming');
+        const hot = ongoing[0] ?? upcoming[0] ?? null;
+        setProfile(memberProfile);
+        setHotFestival(hot);
+        setUpcomingFestivals(upcoming);
+
+        if (hot) {
+          festivalsApi.getNearbyTourPlaces(hot.id).then((places) => {
+            if (!mounted) return;
+            setNearbyPlaces(
+              places.map((place) => ({
+                spot: mapNearbyTourPlaceToTourSpot(place),
+                distanceMeters: place.distanceMeters,
+              })),
+            );
+          });
+        }
+      },
+    );
     return () => {
       mounted = false;
     };
@@ -92,28 +106,26 @@ export default function HomePage() {
         />
 
         {/* 축제와 함께 둘러보기 */}
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[17px] font-bold text-ink">축제와 함께 둘러보기</h2>
-            <Link to="/spots" className="text-[13px] font-medium text-coral">
-              전체 보기
-            </Link>
-          </div>
-          <div className="flex flex-col gap-2.5">
-            {nearbyPlaces.map((place) => {
-              const spot: TourSpot | undefined = getSpotById(place.spotId);
-              if (!spot) return null;
-              return (
+        {nearbyPlaces.length > 0 && (
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[17px] font-bold text-ink">축제와 함께 둘러보기</h2>
+              <Link to="/spots" className="text-[13px] font-medium text-coral">
+                전체 보기
+              </Link>
+            </div>
+            <div className="flex flex-col gap-2.5">
+              {nearbyPlaces.map(({ spot, distanceMeters }) => (
                 <FestivalNearbyPlaceItem
                   key={spot.id}
                   spot={spot}
-                  distanceLabel={place.distanceLabel}
-                  walkLabel={place.walkLabel}
+                  distanceLabel={formatDistanceLabel(distanceMeters)}
+                  walkLabel={formatWalkMinutesLabel(distanceMeters)}
                 />
-              );
-            })}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </MobileLayout>
   );

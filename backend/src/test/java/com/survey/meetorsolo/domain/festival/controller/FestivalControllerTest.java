@@ -6,11 +6,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
+import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
 import com.survey.meetorsolo.global.config.SecurityConfig;
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,5 +82,57 @@ class FestivalControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void 축제_상세를_공통_응답_형식으로_반환한다() throws Exception {
+        FestivalDetailResponse detail = new FestivalDetailResponse(
+                1L,
+                "100",
+                "테스트 축제",
+                "강원특별자치도 테스트시",
+                "51",
+                "110",
+                LocalDate.of(2026, 7, 20),
+                LocalDate.of(2026, 7, 22),
+                FestivalStatus.ACTIVE,
+                null,
+                null,
+                "https://example.com/origin.jpg",
+                "https://example.com/thumbnail.jpg"
+        );
+        when(festivalQueryService.getFestivalDetail(1L)).thenReturn(detail);
+
+        mockMvc.perform(get("/api/festivals/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.title").value("테스트 축제"))
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+        verify(festivalQueryService).getFestivalDetail(1L);
+    }
+
+    @Test
+    void 존재하지_않는_축제_상세_조회는_404를_반환한다() throws Exception {
+        when(festivalQueryService.getFestivalDetail(99L))
+                .thenThrow(new BusinessException(ErrorCode.NOT_FOUND, "축제를 찾을 수 없습니다."));
+
+        mockMvc.perform(get("/api/festivals/99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void 축제_주변_관광지를_거리순으로_반환한다() throws Exception {
+        when(festivalQueryService.getNearbyTourPlaces(1L, 5000, 10)).thenReturn(List.of(
+                new NearbyTourPlaceResponse(1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 300)
+        ));
+
+        mockMvc.perform(get("/api/festivals/1/nearby-spots"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].title").value("테스트 관광지"))
+                .andExpect(jsonPath("$.data[0].distanceMeters").value(300));
+        verify(festivalQueryService).getNearbyTourPlaces(1L, 5000, 10);
     }
 }

@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.festival.service;
 
+import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
@@ -7,8 +8,16 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
+import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
+import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
+import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
+import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
+import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,13 +32,16 @@ public class FestivalQueryService {
 
     private final FestivalRepository festivalRepository;
     private final FestivalImageRepository festivalImageRepository;
+    private final TourPlaceRepository tourPlaceRepository;
 
     public FestivalQueryService(
             FestivalRepository festivalRepository,
-            FestivalImageRepository festivalImageRepository
+            FestivalImageRepository festivalImageRepository,
+            TourPlaceRepository tourPlaceRepository
     ) {
         this.festivalRepository = festivalRepository;
         this.festivalImageRepository = festivalImageRepository;
+        this.tourPlaceRepository = tourPlaceRepository;
     }
 
     @Transactional(readOnly = true)
@@ -62,6 +74,68 @@ public class FestivalQueryService {
                 festivalPage.getTotalElements(),
                 festivalPage.getTotalPages(),
                 festivalPage.hasNext()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public FestivalDetailResponse getFestivalDetail(Long id) {
+        Festival festival = festivalRepository.findById(id)
+                .filter(found -> found.getStatus() != FestivalStatus.HIDDEN)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "축제를 찾을 수 없습니다."));
+
+        FestivalImage image = festivalImageRepository.findAllByFestivalIdIn(List.of(festival.getId()))
+                .stream()
+                .findFirst()
+                .orElse(null);
+
+        return new FestivalDetailResponse(
+                festival.getId(),
+                festival.getContentId(),
+                festival.getTitle(),
+                festival.getAddress(),
+                festival.getAreaCode(),
+                festival.getSigunguCode(),
+                festival.getEventStartDate(),
+                festival.getEventEndDate(),
+                festival.getStatus(),
+                festival.getMapX(),
+                festival.getMapY(),
+                image == null ? null : image.getOriginImageUrl(),
+                image == null ? null : image.getThumbnailUrl()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<NearbyTourPlaceResponse> getNearbyTourPlaces(Long festivalId, int radiusMeters, int limit) {
+        Festival festival = festivalRepository.findById(festivalId)
+                .filter(found -> found.getStatus() != FestivalStatus.HIDDEN)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "축제를 찾을 수 없습니다."));
+        if (festival.getMapX() == null || festival.getMapY() == null) {
+            return List.of();
+        }
+
+        return tourPlaceRepository.findAllVisibleWithCoordinates(TourPlaceStatus.ACTIVE).stream()
+                .map(place -> toNearbyResponse(festival, place))
+                .filter(response -> response.distanceMeters() <= radiusMeters)
+                .sorted(Comparator.comparingLong(NearbyTourPlaceResponse::distanceMeters))
+                .limit(limit)
+                .toList();
+    }
+
+    private NearbyTourPlaceResponse toNearbyResponse(Festival festival, TourPlace place) {
+        long distanceMeters = GeoDistanceCalculator.metersBetween(
+                festival.getMapY(),
+                festival.getMapX(),
+                place.getMapY(),
+                place.getMapX()
+        );
+        return new NearbyTourPlaceResponse(
+                place.getId(),
+                place.getTitle(),
+                place.getAddress(),
+                place.getContentTypeId(),
+                place.getImageUrl(),
+                distanceMeters
         );
     }
 

@@ -20,6 +20,9 @@ app:
   festival:
     sync:
       enabled: false
+  tour-place:
+    sync:
+      enabled: false
   object-storage:
     endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT}
     region: ${OCI_OBJECT_STORAGE_REGION}

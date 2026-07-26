@@ -23,7 +23,7 @@ export default function FestivalNearbyPlaceItem({
       <ImagePlaceholder label="사진" className="h-16 w-16 shrink-0 rounded-xl" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[15px] font-semibold text-ink">{spot.name}</span>
-        <span className="text-xs text-ink/50">{spot.category}</span>
+        {spot.category && <span className="text-xs text-ink/50">{spot.category}</span>}
         <span className="flex items-center gap-1 text-xs text-ink/60 tabular-nums">
           <MapPin size={12} />
           축제장에서 {distanceLabel} · {walkLabel}

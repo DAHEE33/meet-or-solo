@@ -20,7 +20,7 @@ export default function FestivalHeroCard({ festival }: FestivalHeroCardProps) {
           <span className="rounded-full bg-coral/10 px-2.5 py-0.5 text-xs font-semibold text-coral">
             지금 가장 핫한 축제
           </span>
-          <span className="text-xs text-ink/50">{festival.category}</span>
+          {festival.category && <span className="text-xs text-ink/50">{festival.category}</span>}
         </div>
         <h3 className="text-lg font-bold text-ink">{festival.name}</h3>
         <div className="flex flex-col gap-1 text-[13px] text-ink/60 tabular-nums">
@@ -30,19 +30,26 @@ export default function FestivalHeroCard({ festival }: FestivalHeroCardProps) {
           </span>
           <span className="flex items-center gap-1">
             <MapPin size={14} />
-            {festival.place} · 현재 위치에서 {festival.distanceKm}km
+            {festival.place ?? festival.address}
+            {festival.distanceKm !== undefined && ` · 현재 위치에서 ${festival.distanceKm}km`}
           </span>
         </div>
-        <div className="flex gap-1.5">
-          <span className="flex items-center gap-1 rounded-md bg-sand px-2 py-[3px] text-xs text-ink/60 tabular-nums">
-            <Users size={12} />
-            참가 예정 {(festival.expectedAttendees ?? 0).toLocaleString()}명
-          </span>
-          <span className="flex items-center gap-1 rounded-md bg-coral/[0.08] px-2 py-[3px] text-xs font-medium text-coral tabular-nums">
-            <HeartHandshake size={12} />
-            매칭 중 {festival.matchingCount}명
-          </span>
-        </div>
+        {(festival.expectedAttendees !== undefined || festival.matchingCount !== undefined) && (
+          <div className="flex gap-1.5">
+            {festival.expectedAttendees !== undefined && (
+              <span className="flex items-center gap-1 rounded-md bg-sand px-2 py-[3px] text-xs text-ink/60 tabular-nums">
+                <Users size={12} />
+                참가 예정 {festival.expectedAttendees.toLocaleString()}명
+              </span>
+            )}
+            {festival.matchingCount !== undefined && (
+              <span className="flex items-center gap-1 rounded-md bg-coral/[0.08] px-2 py-[3px] text-xs font-medium text-coral tabular-nums">
+                <HeartHandshake size={12} />
+                매칭 중 {festival.matchingCount}명
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-end gap-0.5 text-[13px] font-medium text-coral">
           축제 상세 보기
           <ChevronRight size={14} />

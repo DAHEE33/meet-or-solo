@@ -3,6 +3,8 @@ package com.survey.meetorsolo.external.tourapi.client;
 import com.survey.meetorsolo.external.tourapi.config.TourApiProperties;
 import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalItem;
 import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalRequest;
+import com.survey.meetorsolo.external.tourapi.dto.SearchTourPlaceItem;
+import com.survey.meetorsolo.external.tourapi.dto.SearchTourPlaceRequest;
 import com.survey.meetorsolo.external.tourapi.dto.TourApiPage;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiClientException;
 import com.survey.meetorsolo.external.tourapi.exception.TourApiErrorType;
@@ -31,6 +33,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
 
     private static final Logger log = LoggerFactory.getLogger(KoreaTourApiRestClient.class);
     private static final String SEARCH_FESTIVAL_OPERATION = "searchFestival2";
+    private static final String AREA_BASED_LIST_OPERATION = "areaBasedList2";
     private static final DateTimeFormatter API_DATE_FORMAT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Pattern PERCENT_ENCODED = Pattern.compile("%[0-9A-Fa-f]{2}");
 
@@ -77,7 +80,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     status,
                     exception
             );
-            safeRecordFailure(requestKey, status, elapsedMs(startedAt), clientException, calledAt);
+            safeRecordFailure(SEARCH_FESTIVAL_OPERATION, requestKey, status, elapsedMs(startedAt), clientException, calledAt);
             throw clientException;
         } catch (RestClientException exception) {
             log.warn("Tour API request failed. operation={}, cause={}",
@@ -86,7 +89,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     TourApiErrorType.NETWORK,
                     exception
             );
-            safeRecordFailure(requestKey, null, elapsedMs(startedAt), clientException, calledAt);
+            safeRecordFailure(SEARCH_FESTIVAL_OPERATION, requestKey, null, elapsedMs(startedAt), clientException, calledAt);
             throw clientException;
         }
 
@@ -96,7 +99,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     SearchFestivalItem.class
             );
             int elapsedMs = elapsedMs(startedAt);
-            safeRecordSuccess(requestKey, elapsedMs, page.items().size(), calledAt);
+            safeRecordSuccess(SEARCH_FESTIVAL_OPERATION, requestKey, elapsedMs, page.items().size(), calledAt);
             log.debug("Tour API request succeeded. operation={}, pageNo={}, itemCount={}, elapsedMs={}",
                     SEARCH_FESTIVAL_OPERATION, page.pageNo(), page.items().size(), elapsedMs);
             return page;
@@ -105,7 +108,66 @@ public class KoreaTourApiRestClient implements TourApiClient {
                     SEARCH_FESTIVAL_OPERATION,
                     exception.getErrorType(),
                     exception.getRemoteCode());
-            safeRecordFailure(requestKey, 200, elapsedMs(startedAt), exception, calledAt);
+            safeRecordFailure(SEARCH_FESTIVAL_OPERATION, requestKey, 200, elapsedMs(startedAt), exception, calledAt);
+            throw exception;
+        }
+    }
+
+    @Override
+    public TourApiPage<SearchTourPlaceItem> searchTourPlaces(SearchTourPlaceRequest request) {
+        URI uri = buildAreaBasedListUri(request);
+        String requestKey = searchTourPlaceRequestKey(request);
+        OffsetDateTime calledAt = SeoulDateTime.now();
+        long startedAt = System.nanoTime();
+        String responseBody;
+
+        try {
+            responseBody = restClient.get()
+                    .uri(uri)
+                    .accept(MediaType.APPLICATION_JSON, MediaType.APPLICATION_XML, MediaType.TEXT_XML)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException exception) {
+            int status = exception.getStatusCode().value();
+            TourApiErrorType errorType = status == 429
+                    ? TourApiErrorType.RATE_LIMIT
+                    : TourApiErrorType.HTTP;
+            log.warn("Tour API request failed. operation={}, status={}",
+                    AREA_BASED_LIST_OPERATION, status);
+            TourApiClientException clientException = TourApiClientException.forHttpError(
+                    errorType,
+                    status,
+                    exception
+            );
+            safeRecordFailure(AREA_BASED_LIST_OPERATION, requestKey, status, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
+        } catch (RestClientException exception) {
+            log.warn("Tour API request failed. operation={}, cause={}",
+                    AREA_BASED_LIST_OPERATION, exception.getClass().getSimpleName());
+            TourApiClientException clientException = new TourApiClientException(
+                    TourApiErrorType.NETWORK,
+                    exception
+            );
+            safeRecordFailure(AREA_BASED_LIST_OPERATION, requestKey, null, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
+        }
+
+        try {
+            TourApiPage<SearchTourPlaceItem> page = responseParser.parsePage(
+                    responseBody,
+                    SearchTourPlaceItem.class
+            );
+            int elapsedMs = elapsedMs(startedAt);
+            safeRecordSuccess(AREA_BASED_LIST_OPERATION, requestKey, elapsedMs, page.items().size(), calledAt);
+            log.debug("Tour API request succeeded. operation={}, pageNo={}, itemCount={}, elapsedMs={}",
+                    AREA_BASED_LIST_OPERATION, page.pageNo(), page.items().size(), elapsedMs);
+            return page;
+        } catch (TourApiClientException exception) {
+            log.warn("Tour API response failed. operation={}, type={}, remoteCode={}",
+                    AREA_BASED_LIST_OPERATION,
+                    exception.getErrorType(),
+                    exception.getRemoteCode());
+            safeRecordFailure(AREA_BASED_LIST_OPERATION, requestKey, 200, elapsedMs(startedAt), exception, calledAt);
             throw exception;
         }
     }
@@ -120,12 +182,20 @@ public class KoreaTourApiRestClient implements TourApiClient {
                 + ";rows=" + request.numOfRows();
     }
 
+    private String searchTourPlaceRequestKey(SearchTourPlaceRequest request) {
+        return "contentTypeId=" + request.contentTypeId()
+                + ";region=" + request.regionCode()
+                + ";page=" + request.pageNo()
+                + ";rows=" + request.numOfRows();
+    }
+
     private int elapsedMs(long startedAt) {
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
         return (int) Math.min(Integer.MAX_VALUE, Math.max(0L, elapsedMs));
     }
 
     private void safeRecordSuccess(
+            String operationName,
             String requestKey,
             int elapsedMs,
             int resultCount,
@@ -133,7 +203,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
     ) {
         try {
             callLogRecorder.recordSuccess(
-                    SEARCH_FESTIVAL_OPERATION,
+                    operationName,
                     requestKey,
                     200,
                     elapsedMs,
@@ -142,11 +212,12 @@ public class KoreaTourApiRestClient implements TourApiClient {
             );
         } catch (RuntimeException exception) {
             log.error("Tour API call log save failed. operation={}, cause={}",
-                    SEARCH_FESTIVAL_OPERATION, exception.getClass().getSimpleName());
+                    operationName, exception.getClass().getSimpleName());
         }
     }
 
     private void safeRecordFailure(
+            String operationName,
             String requestKey,
             Integer statusCode,
             int elapsedMs,
@@ -155,7 +226,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
     ) {
         try {
             callLogRecorder.recordFailure(
-                    SEARCH_FESTIVAL_OPERATION,
+                    operationName,
                     requestKey,
                     statusCode,
                     elapsedMs,
@@ -164,7 +235,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
             );
         } catch (RuntimeException exception) {
             log.error("Tour API call log save failed. operation={}, cause={}",
-                    SEARCH_FESTIVAL_OPERATION, exception.getClass().getSimpleName());
+                    operationName, exception.getClass().getSimpleName());
         }
     }
 
@@ -192,6 +263,29 @@ public class KoreaTourApiRestClient implements TourApiClient {
         addText(builder, "lclsSystm1", request.classificationSystem1());
         addText(builder, "lclsSystm2", request.classificationSystem2());
         addText(builder, "lclsSystm3", request.classificationSystem3());
+
+        return builder.build(true).toUri();
+    }
+
+    private URI buildAreaBasedListUri(SearchTourPlaceRequest request) {
+        String baseUrl = required(properties.baseUrl(), "TOUR_API_BASE_URL");
+        String serviceKey = encodedServiceKey(properties.serviceKey());
+        String mobileOs = required(properties.mobileOs(), "TOUR_API_MOBILE_OS");
+        String mobileApp = required(properties.mobileApp(), "TOUR_API_MOBILE_APP");
+
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl)
+                .pathSegment(AREA_BASED_LIST_OPERATION)
+                .queryParam("serviceKey", serviceKey)
+                .queryParam("numOfRows", request.numOfRows())
+                .queryParam("pageNo", request.pageNo())
+                .queryParam("MobileOS", mobileOs)
+                .queryParam("MobileApp", mobileApp)
+                .queryParam("_type", "json")
+                .queryParam("arrange", request.arrange().getCode())
+                .queryParam("contentTypeId", request.contentTypeId());
+
+        addText(builder, "lDongRegnCd", request.regionCode());
+        addText(builder, "lDongSignguCd", request.sigunguCode());
 
         return builder.build(true).toUri();
     }

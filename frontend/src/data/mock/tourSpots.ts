@@ -91,7 +91,3 @@ export const tourSpots: TourSpot[] = [
 ];
 
 export const nearbySpots: TourSpot[] = tourSpots.filter((s) => s.id !== 1).slice(0, 4);
-
-export function getSpotById(id: number): TourSpot | undefined {
-  return tourSpots.find((s) => s.id === id);
-}

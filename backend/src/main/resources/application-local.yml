@@ -26,7 +26,10 @@ logging:
 app:
   festival:
     sync:
-      enabled: true
+      enabled: false
+  tour-place:
+    sync:
+      enabled: false
   object-storage:
     endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT:http://localhost:9000}
     region: ${OCI_OBJECT_STORAGE_REGION:us-ashburn-1}

@@ -16,10 +16,14 @@ export default function ExploreSpotItem({ spot }: ExploreSpotItemProps) {
       <ImagePlaceholder label="사진" className="h-16 w-16 shrink-0 rounded-xl" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[15px] font-semibold text-ink">{spot.name}</span>
-        <span className="text-xs text-ink/60 tabular-nums">
-          {spot.category} · {spot.distanceKm}km
-        </span>
-        <span className="text-xs text-ink/50">전주시 완산구</span>
+        {(spot.category || spot.distanceKm !== undefined) && (
+          <span className="text-xs text-ink/60 tabular-nums">
+            {[spot.category, spot.distanceKm !== undefined ? `${spot.distanceKm}km` : null]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        )}
+        <span className="truncate text-xs text-ink/50">{spot.address}</span>
       </div>
     </Link>
   );

@@ -85,4 +85,17 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
             @Param("today") LocalDate today,
             Pageable pageable
     );
+
+    @Query("""
+            select festival
+            from Festival festival
+            where festival.status = :status
+              and (festival.eventEndDate is null or festival.eventEndDate >= :today)
+              and festival.mapX is not null
+              and festival.mapY is not null
+            """)
+    List<Festival> findAllVisibleWithCoordinates(
+            @Param("status") FestivalStatus status,
+            @Param("today") LocalDate today
+    );
 }

@@ -1,0 +1,151 @@
+package com.survey.meetorsolo.domain.tourplace.service;
+
+import com.survey.meetorsolo.domain.festival.dto.NearbyFestivalResponse;
+import com.survey.meetorsolo.domain.festival.entity.Festival;
+import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
+import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
+import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
+import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
+import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
+import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
+import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
+import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
+import com.survey.meetorsolo.global.time.SeoulDateTime;
+import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class TourPlaceQueryService {
+
+    private final TourPlaceRepository tourPlaceRepository;
+    private final FestivalRepository festivalRepository;
+    private final FestivalImageRepository festivalImageRepository;
+
+    public TourPlaceQueryService(
+            TourPlaceRepository tourPlaceRepository,
+            FestivalRepository festivalRepository,
+            FestivalImageRepository festivalImageRepository
+    ) {
+        this.tourPlaceRepository = tourPlaceRepository;
+        this.festivalRepository = festivalRepository;
+        this.festivalImageRepository = festivalImageRepository;
+    }
+
+    @Transactional(readOnly = true)
+    public TourPlaceListResponse getVisiblePlaces(int page, int size, String contentTypeId) {
+        PageRequest pageRequest = PageRequest.of(
+                page,
+                size,
+                Sort.by(Sort.Order.asc("title"), Sort.Order.asc("id"))
+        );
+        Page<TourPlace> placePage = tourPlaceRepository.findVisiblePlaces(
+                TourPlaceStatus.ACTIVE,
+                contentTypeId,
+                pageRequest
+        );
+
+        List<TourPlaceListItemResponse> items = placePage.getContent().stream()
+                .map(this::toListItemResponse)
+                .toList();
+        return new TourPlaceListResponse(
+                items,
+                placePage.getNumber(),
+                placePage.getSize(),
+                placePage.getTotalElements(),
+                placePage.getTotalPages(),
+                placePage.hasNext()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public TourPlaceDetailResponse getTourPlaceDetail(Long id) {
+        TourPlace place = tourPlaceRepository.findById(id)
+                .filter(found -> found.getStatus() != TourPlaceStatus.HIDDEN)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "관광지를 찾을 수 없습니다."));
+
+        return new TourPlaceDetailResponse(
+                place.getId(),
+                place.getContentId(),
+                place.getContentTypeId(),
+                place.getTitle(),
+                place.getAddress(),
+                place.getTel(),
+                place.getMapX(),
+                place.getMapY(),
+                place.getStatus(),
+                place.getImageUrl()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<NearbyFestivalResponse> getNearbyFestivals(Long tourPlaceId, int radiusMeters, int limit) {
+        TourPlace place = tourPlaceRepository.findById(tourPlaceId)
+                .filter(found -> found.getStatus() != TourPlaceStatus.HIDDEN)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "관광지를 찾을 수 없습니다."));
+        if (place.getMapX() == null || place.getMapY() == null) {
+            return List.of();
+        }
+
+        LocalDate today = LocalDate.now(SeoulDateTime.ZONE_ID);
+        List<Festival> candidates = festivalRepository.findAllVisibleWithCoordinates(
+                FestivalStatus.ACTIVE,
+                today
+        );
+        List<Long> festivalIds = candidates.stream().map(Festival::getId).toList();
+        var thumbnailsByFestivalId = festivalImageRepository.findAllByFestivalIdIn(festivalIds).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        FestivalImage::getFestivalId,
+                        FestivalImage::getThumbnailUrl,
+                        (first, second) -> first
+                ));
+
+        return candidates.stream()
+                .map(festival -> toNearbyResponse(place, festival, thumbnailsByFestivalId.get(festival.getId())))
+                .filter(response -> response.distanceMeters() <= radiusMeters)
+                .sorted(Comparator.comparingLong(NearbyFestivalResponse::distanceMeters))
+                .limit(limit)
+                .toList();
+    }
+
+    private NearbyFestivalResponse toNearbyResponse(TourPlace place, Festival festival, String thumbnailUrl) {
+        long distanceMeters = GeoDistanceCalculator.metersBetween(
+                place.getMapY(),
+                place.getMapX(),
+                festival.getMapY(),
+                festival.getMapX()
+        );
+        return new NearbyFestivalResponse(
+                festival.getId(),
+                festival.getTitle(),
+                festival.getAddress(),
+                festival.getEventStartDate(),
+                festival.getEventEndDate(),
+                festival.getStatus(),
+                thumbnailUrl,
+                distanceMeters
+        );
+    }
+
+    private TourPlaceListItemResponse toListItemResponse(TourPlace place) {
+        return new TourPlaceListItemResponse(
+                place.getId(),
+                place.getContentId(),
+                place.getContentTypeId(),
+                place.getTitle(),
+                place.getAddress(),
+                place.getStatus(),
+                place.getImageUrl()
+        );
+    }
+}

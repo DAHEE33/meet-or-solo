@@ -13,13 +13,16 @@ export type TravelStyle = '느긋하게' | '액티브' | '맛집탐방' | '사�
 export interface TourSpot {
   id: number;
   name: string;
-  category: SpotCategory;
+  /** 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 mock 전용으로 optional */
+  category?: SpotCategory;
   address: string;
-  distanceKm: number;
-  rating: number;
-  reviewCount: number;
+  /** GPS 체크인 기능 도입 전까지는 실 API에서 제공하지 않는 optional 값 */
+  distanceKm?: number;
+  /** 리뷰 도메인 구현 전까지는 실 API에서 제공하지 않는 optional 값 */
+  rating?: number;
+  reviewCount?: number;
   imageUrl: string | null; // null이면 플레이스홀더 렌더링
-  tags: string[];
+  tags?: string[];
   description?: string;
 }
 
@@ -100,18 +103,23 @@ export interface FestivalNearbyPlace {
 export interface Festival {
   id: number;
   name: string;
-  category: FestivalCategory;
+  /** 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 mock 전용으로 optional */
+  category?: FestivalCategory;
   status: FestivalStatus;
   /** status가 'upcoming'일 때 노출되는 D-day 뱃지 문구 (예: 'D-3') */
   ddayLabel: string;
   periodShort: string; // 예: '7.24 – 7.28'
   periodFull: string; // 예: '2026.07.24 – 2026.07.28'
-  place: string;
-  region: string;
-  distanceKm: number;
+  /** mock 전용 장소명. 실 API는 address만 제공하므로 optional */
+  place?: string;
+  /** mock 전용 지역명. 실 API는 regionCode만 제공하므로 optional */
+  region?: string;
+  /** GPS 체크인 기능 도입 전까지는 실 API에서 제공하지 않는 optional 값 */
+  distanceKm?: number;
   expectedAttendees?: number;
-  matchingCount: number;
-  matchSupported: boolean;
+  /** 매칭 도메인 구현 전까지는 실 API에서 제공하지 않는 optional 값 */
+  matchingCount?: number;
+  matchSupported?: boolean;
   intro: string;
   address: string;
   imageCount: number;
