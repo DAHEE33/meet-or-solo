@@ -14,7 +14,15 @@ export default function UpcomingFestivalCard({ festival }: UpcomingFestivalCardP
       className="flex w-[150px] shrink-0 flex-col overflow-hidden rounded-2xl bg-white shadow-[0_1px_8px_rgba(34,48,62,0.05)] active:scale-[0.99] transition-transform"
     >
       <div className="relative">
-        <ImagePlaceholder label="축제 사진" className="h-24 w-full" />
+        {festival.thumbnailUrl ? (
+          <img
+            src={festival.thumbnailUrl}
+            alt={`${festival.name} 사진`}
+            className="h-24 w-full object-cover"
+          />
+        ) : (
+          <ImagePlaceholder label="축제 사진" className="h-24 w-full" />
+        )}
         <span className="absolute left-2 top-2 rounded-md bg-ink px-1.5 py-0.5 text-[11px] font-bold text-white tabular-nums">
           {festival.ddayLabel}
         </span>

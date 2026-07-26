@@ -166,6 +166,7 @@ export default function TourSpotDetailPage() {
                   to={`/spots/${other.id}`}
                   name={other.name}
                   meta={other.address || '관광지'}
+                  imageUrl={other.imageUrl}
                 />
               ))}
             </div>

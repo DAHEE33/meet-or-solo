@@ -20,7 +20,15 @@ export default function FestivalNearbyPlaceItem({
       to={`/spots/${spot.id}`}
       className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)] active:scale-[0.99] transition-transform"
     >
-      <ImagePlaceholder label="사진" className="h-16 w-16 shrink-0 rounded-xl" />
+      {spot.imageUrl ? (
+        <img
+          src={spot.imageUrl}
+          alt={`${spot.name} 사진`}
+          className="h-16 w-16 shrink-0 rounded-xl object-cover"
+        />
+      ) : (
+        <ImagePlaceholder label="사진" className="h-16 w-16 shrink-0 rounded-xl" />
+      )}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[15px] font-semibold text-ink">{spot.name}</span>
         {spot.category && <span className="text-xs text-ink/50">{spot.category}</span>}

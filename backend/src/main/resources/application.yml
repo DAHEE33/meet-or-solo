@@ -47,6 +47,8 @@ app:
       retry-max-attempts: ${FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS:3}
       retry-initial-delay: ${FESTIVAL_SYNC_RETRY_INITIAL_DELAY:1s}
       retry-max-delay: ${FESTIVAL_SYNC_RETRY_MAX_DELAY:10s}
+    detail-info:
+      cache-ttl: ${FESTIVAL_DETAIL_INFO_CACHE_TTL:1h}
   tour-place:
     sync:
       initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}

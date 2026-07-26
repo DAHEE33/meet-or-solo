@@ -122,7 +122,7 @@ export interface Festival {
   matchSupported?: boolean;
   intro: string;
   address: string;
-  imageCount: number;
+  thumbnailUrl: string | null; // null이면 플레이스홀더 렌더링
   infoItems: InfoRow[];
   programs: FestivalProgram[];
   nearbyPlaces: FestivalNearbyPlace[];

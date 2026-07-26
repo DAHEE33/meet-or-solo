@@ -14,7 +14,15 @@ export default function FestivalHeroCard({ festival }: FestivalHeroCardProps) {
       to={`/festivals/${festival.id}`}
       className="block overflow-hidden rounded-3xl bg-white shadow-[0_2px_16px_rgba(34,48,62,0.08)] active:scale-[0.99] transition-transform"
     >
-      <ImagePlaceholder label={`${festival.name} 대표 사진`} className="h-44 w-full" />
+      {festival.thumbnailUrl ? (
+        <img
+          src={festival.thumbnailUrl}
+          alt={`${festival.name} 대표 사진`}
+          className="h-44 w-full object-cover"
+        />
+      ) : (
+        <ImagePlaceholder label={`${festival.name} 대표 사진`} className="h-44 w-full" />
+      )}
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-coral/10 px-2.5 py-0.5 text-xs font-semibold text-coral">

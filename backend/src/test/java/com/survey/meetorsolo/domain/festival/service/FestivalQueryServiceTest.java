@@ -7,7 +7,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
@@ -47,6 +49,18 @@ class FestivalQueryServiceTest {
     @Mock
     private TourPlaceRepository tourPlaceRepository;
 
+    @Mock
+    private FestivalDetailInfoService festivalDetailInfoService;
+
+    private FestivalQueryService service() {
+        return new FestivalQueryService(
+                festivalRepository,
+                festivalImageRepository,
+                tourPlaceRepository,
+                festivalDetailInfoService
+        );
+    }
+
     @Test
     void ACTIVE이면서_종료되지_않은_축제를_대표_이미지와_페이지_정보로_조회한다() {
         Festival festival = Festival.create(syncData(), LocalDate.of(2026, 7, 18));
@@ -65,13 +79,7 @@ class FestivalQueryServiceTest {
         )).thenReturn(new PageImpl<>(List.of(festival), pageRequest, 21));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(10L)))
                 .thenReturn(List.of(image));
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
-        );
-
-        var result = service.getActiveFestivals(0, 20, null);
+        var result = service().getActiveFestivals(0, 20, null);
 
         assertThat(result.items())
                 .singleElement()
@@ -105,11 +113,7 @@ class FestivalQueryServiceTest {
                 eq(""),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
-        );
+        FestivalQueryService service = service();
 
         service.getActiveFestivals(0, 20, "  축제  ");
         service.getActiveFestivals(0, 20, "   ");
@@ -130,31 +134,27 @@ class FestivalQueryServiceTest {
         when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(10L)))
                 .thenReturn(List.of(image));
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
+        when(festivalDetailInfoService.getDetailInfo("100", "15")).thenReturn(
+                new FestivalDetailInfo("소개글", List.of(new FestivalInfoItem("주최", "테스트시")), List.of())
         );
 
-        FestivalDetailResponse result = service.getFestivalDetail(10L);
+        FestivalDetailResponse result = service().getFestivalDetail(10L);
 
         assertThat(result.id()).isEqualTo(10L);
         assertThat(result.title()).isEqualTo("테스트 축제");
         assertThat(result.status()).isEqualTo(FestivalStatus.ACTIVE);
         assertThat(result.originImageUrl()).isEqualTo("https://example.com/origin.jpg");
         assertThat(result.thumbnailUrl()).isEqualTo("https://example.com/thumbnail.jpg");
+        assertThat(result.intro()).isEqualTo("소개글");
+        assertThat(result.infoItems()).containsExactly(new FestivalInfoItem("주최", "테스트시"));
+        assertThat(result.programs()).isEmpty();
     }
 
     @Test
     void 존재하지_않는_축제_id를_조회하면_NOT_FOUND_예외를_던진다() {
         when(festivalRepository.findById(99L)).thenReturn(Optional.empty());
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
-        );
 
-        assertThatThrownBy(() -> service.getFestivalDetail(99L))
+        assertThatThrownBy(() -> service().getFestivalDetail(99L))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception ->
                         assertThat(((BusinessException) exception).getErrorCode())
@@ -167,13 +167,8 @@ class FestivalQueryServiceTest {
         ReflectionTestUtils.setField(festival, "id", 11L);
         ReflectionTestUtils.setField(festival, "status", FestivalStatus.HIDDEN);
         when(festivalRepository.findById(11L)).thenReturn(Optional.of(festival));
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
-        );
 
-        assertThatThrownBy(() -> service.getFestivalDetail(11L))
+        assertThatThrownBy(() -> service().getFestivalDetail(11L))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception ->
                         assertThat(((BusinessException) exception).getErrorCode())
@@ -199,13 +194,8 @@ class FestivalQueryServiceTest {
         ReflectionTestUtils.setField(far, "id", 2L);
         when(tourPlaceRepository.findAllVisibleWithCoordinates(TourPlaceStatus.ACTIVE))
                 .thenReturn(List.of(far, near));
-        FestivalQueryService service = new FestivalQueryService(
-                festivalRepository,
-                festivalImageRepository,
-                tourPlaceRepository
-        );
 
-        var result = service.getNearbyTourPlaces(10L, 5000, 10);
+        var result = service().getNearbyTourPlaces(10L, 5000, 10);
 
         assertThat(result)
                 .extracting("title")

@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.festival.service;
 
+import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
@@ -33,15 +34,18 @@ public class FestivalQueryService {
     private final FestivalRepository festivalRepository;
     private final FestivalImageRepository festivalImageRepository;
     private final TourPlaceRepository tourPlaceRepository;
+    private final FestivalDetailInfoService festivalDetailInfoService;
 
     public FestivalQueryService(
             FestivalRepository festivalRepository,
             FestivalImageRepository festivalImageRepository,
-            TourPlaceRepository tourPlaceRepository
+            TourPlaceRepository tourPlaceRepository,
+            FestivalDetailInfoService festivalDetailInfoService
     ) {
         this.festivalRepository = festivalRepository;
         this.festivalImageRepository = festivalImageRepository;
         this.tourPlaceRepository = tourPlaceRepository;
+        this.festivalDetailInfoService = festivalDetailInfoService;
     }
 
     @Transactional(readOnly = true)
@@ -78,7 +82,11 @@ public class FestivalQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * TourAPI 온디맨드 호출(intro/infoItems/programs)이 끼어 있어 의도적으로 트랜잭션을 걸지
+     * 않는다 — DB 조회는 각 repository 메서드가 자체 트랜잭션으로 처리하고, 외부 API 호출 중에는
+     * DB 커넥션을 점유하지 않는다.
+     */
     public FestivalDetailResponse getFestivalDetail(Long id) {
         Festival festival = festivalRepository.findById(id)
                 .filter(found -> found.getStatus() != FestivalStatus.HIDDEN)
@@ -88,6 +96,11 @@ public class FestivalQueryService {
                 .stream()
                 .findFirst()
                 .orElse(null);
+
+        FestivalDetailInfo detailInfo = festivalDetailInfoService.getDetailInfo(
+                festival.getContentId(),
+                festival.getContentTypeId()
+        );
 
         return new FestivalDetailResponse(
                 festival.getId(),
@@ -102,7 +115,10 @@ public class FestivalQueryService {
                 festival.getMapX(),
                 festival.getMapY(),
                 image == null ? null : image.getOriginImageUrl(),
-                image == null ? null : image.getThumbnailUrl()
+                image == null ? null : image.getThumbnailUrl(),
+                detailInfo.intro(),
+                detailInfo.infoItems(),
+                detailInfo.programs()
         );
     }
 

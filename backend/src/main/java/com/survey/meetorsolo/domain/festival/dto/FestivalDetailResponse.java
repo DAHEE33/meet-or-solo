@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.festival.dto;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 public record FestivalDetailResponse(
         Long id,
@@ -17,6 +18,9 @@ public record FestivalDetailResponse(
         BigDecimal mapX,
         BigDecimal mapY,
         String originImageUrl,
-        String thumbnailUrl
+        String thumbnailUrl,
+        String intro,
+        List<FestivalInfoItem> infoItems,
+        List<FestivalProgramItem> programs
 ) {
 }

@@ -1,6 +1,10 @@
 package com.survey.meetorsolo.external.tourapi.client;
 
 import com.survey.meetorsolo.external.tourapi.config.TourApiProperties;
+import com.survey.meetorsolo.external.tourapi.dto.DetailCommonItem;
+import com.survey.meetorsolo.external.tourapi.dto.DetailInfoItem;
+import com.survey.meetorsolo.external.tourapi.dto.DetailIntroFestivalItem;
+import com.survey.meetorsolo.external.tourapi.dto.FestivalDetailApiRequest;
 import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalItem;
 import com.survey.meetorsolo.external.tourapi.dto.SearchFestivalRequest;
 import com.survey.meetorsolo.external.tourapi.dto.SearchTourPlaceItem;
@@ -15,6 +19,8 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -34,6 +40,9 @@ public class KoreaTourApiRestClient implements TourApiClient {
     private static final Logger log = LoggerFactory.getLogger(KoreaTourApiRestClient.class);
     private static final String SEARCH_FESTIVAL_OPERATION = "searchFestival2";
     private static final String AREA_BASED_LIST_OPERATION = "areaBasedList2";
+    private static final String DETAIL_COMMON_OPERATION = "detailCommon2";
+    private static final String DETAIL_INTRO_OPERATION = "detailIntro2";
+    private static final String DETAIL_INFO_OPERATION = "detailInfo2";
     private static final DateTimeFormatter API_DATE_FORMAT = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Pattern PERCENT_ENCODED = Pattern.compile("%[0-9A-Fa-f]{2}");
 
@@ -172,6 +181,98 @@ public class KoreaTourApiRestClient implements TourApiClient {
         }
     }
 
+    @Override
+    public Optional<DetailCommonItem> fetchDetailCommon(FestivalDetailApiRequest request) {
+        TourApiPage<DetailCommonItem> page = executeDetailRequest(
+                DETAIL_COMMON_OPERATION,
+                buildDetailCommonUri(request),
+                detailRequestKey(request),
+                DetailCommonItem.class
+        );
+        return page.items().stream().findFirst();
+    }
+
+    @Override
+    public Optional<DetailIntroFestivalItem> fetchDetailIntroFestival(FestivalDetailApiRequest request) {
+        TourApiPage<DetailIntroFestivalItem> page = executeDetailRequest(
+                DETAIL_INTRO_OPERATION,
+                buildDetailIntroUri(request),
+                detailRequestKey(request),
+                DetailIntroFestivalItem.class
+        );
+        return page.items().stream().findFirst();
+    }
+
+    @Override
+    public List<DetailInfoItem> fetchDetailInfo(FestivalDetailApiRequest request) {
+        TourApiPage<DetailInfoItem> page = executeDetailRequest(
+                DETAIL_INFO_OPERATION,
+                buildDetailInfoUri(request),
+                detailRequestKey(request),
+                DetailInfoItem.class
+        );
+        return page.items();
+    }
+
+    private <T> TourApiPage<T> executeDetailRequest(
+            String operationName,
+            URI uri,
+            String requestKey,
+            Class<T> itemType
+    ) {
+        OffsetDateTime calledAt = SeoulDateTime.now();
+        long startedAt = System.nanoTime();
+        String responseBody;
+
+        try {
+            responseBody = restClient.get()
+                    .uri(uri)
+                    .accept(MediaType.APPLICATION_JSON, MediaType.APPLICATION_XML, MediaType.TEXT_XML)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException exception) {
+            int status = exception.getStatusCode().value();
+            TourApiErrorType errorType = status == 429
+                    ? TourApiErrorType.RATE_LIMIT
+                    : TourApiErrorType.HTTP;
+            log.warn("Tour API request failed. operation={}, status={}", operationName, status);
+            TourApiClientException clientException = TourApiClientException.forHttpError(
+                    errorType,
+                    status,
+                    exception
+            );
+            safeRecordFailure(operationName, requestKey, status, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
+        } catch (RestClientException exception) {
+            log.warn("Tour API request failed. operation={}, cause={}",
+                    operationName, exception.getClass().getSimpleName());
+            TourApiClientException clientException = new TourApiClientException(
+                    TourApiErrorType.NETWORK,
+                    exception
+            );
+            safeRecordFailure(operationName, requestKey, null, elapsedMs(startedAt), clientException, calledAt);
+            throw clientException;
+        }
+
+        try {
+            TourApiPage<T> page = responseParser.parsePage(responseBody, itemType);
+            int elapsedMs = elapsedMs(startedAt);
+            safeRecordSuccess(operationName, requestKey, elapsedMs, page.items().size(), calledAt);
+            log.debug("Tour API request succeeded. operation={}, pageNo={}, itemCount={}, elapsedMs={}",
+                    operationName, page.pageNo(), page.items().size(), elapsedMs);
+            return page;
+        } catch (TourApiClientException exception) {
+            log.warn("Tour API response failed. operation={}, type={}, remoteCode={}",
+                    operationName, exception.getErrorType(), exception.getRemoteCode());
+            safeRecordFailure(operationName, requestKey, 200, elapsedMs(startedAt), exception, calledAt);
+            throw exception;
+        }
+    }
+
+    private String detailRequestKey(FestivalDetailApiRequest request) {
+        return "contentId=" + request.contentId() + ";contentTypeId=" + request.contentTypeId();
+    }
+
     private String searchFestivalRequestKey(SearchFestivalRequest request) {
         return "start=" + request.eventStartDate()
                 + ";end=" + request.eventEndDate()
@@ -288,6 +389,70 @@ public class KoreaTourApiRestClient implements TourApiClient {
         addText(builder, "lDongSignguCd", request.sigunguCode());
 
         return builder.build(true).toUri();
+    }
+
+    private URI buildDetailCommonUri(FestivalDetailApiRequest request) {
+        String baseUrl = required(properties.baseUrl(), "TOUR_API_BASE_URL");
+        String serviceKey = encodedServiceKey(properties.serviceKey());
+        String mobileOs = required(properties.mobileOs(), "TOUR_API_MOBILE_OS");
+        String mobileApp = required(properties.mobileApp(), "TOUR_API_MOBILE_APP");
+
+        return UriComponentsBuilder.fromUriString(baseUrl)
+                .pathSegment(DETAIL_COMMON_OPERATION)
+                .queryParam("serviceKey", serviceKey)
+                .queryParam("numOfRows", 1)
+                .queryParam("pageNo", 1)
+                .queryParam("MobileOS", mobileOs)
+                .queryParam("MobileApp", mobileApp)
+                .queryParam("_type", "json")
+                .queryParam("contentId", request.contentId())
+                .queryParam("contentTypeId", request.contentTypeId())
+                .queryParam("defaultYN", "Y")
+                .queryParam("firstImageYN", "N")
+                .queryParam("areacodeYN", "N")
+                .queryParam("catcodeYN", "N")
+                .queryParam("addrinfoYN", "N")
+                .queryParam("mapinfoYN", "N")
+                .queryParam("overviewYN", "Y")
+                .build(true).toUri();
+    }
+
+    private URI buildDetailIntroUri(FestivalDetailApiRequest request) {
+        String baseUrl = required(properties.baseUrl(), "TOUR_API_BASE_URL");
+        String serviceKey = encodedServiceKey(properties.serviceKey());
+        String mobileOs = required(properties.mobileOs(), "TOUR_API_MOBILE_OS");
+        String mobileApp = required(properties.mobileApp(), "TOUR_API_MOBILE_APP");
+
+        return UriComponentsBuilder.fromUriString(baseUrl)
+                .pathSegment(DETAIL_INTRO_OPERATION)
+                .queryParam("serviceKey", serviceKey)
+                .queryParam("numOfRows", 1)
+                .queryParam("pageNo", 1)
+                .queryParam("MobileOS", mobileOs)
+                .queryParam("MobileApp", mobileApp)
+                .queryParam("_type", "json")
+                .queryParam("contentId", request.contentId())
+                .queryParam("contentTypeId", request.contentTypeId())
+                .build(true).toUri();
+    }
+
+    private URI buildDetailInfoUri(FestivalDetailApiRequest request) {
+        String baseUrl = required(properties.baseUrl(), "TOUR_API_BASE_URL");
+        String serviceKey = encodedServiceKey(properties.serviceKey());
+        String mobileOs = required(properties.mobileOs(), "TOUR_API_MOBILE_OS");
+        String mobileApp = required(properties.mobileApp(), "TOUR_API_MOBILE_APP");
+
+        return UriComponentsBuilder.fromUriString(baseUrl)
+                .pathSegment(DETAIL_INFO_OPERATION)
+                .queryParam("serviceKey", serviceKey)
+                .queryParam("numOfRows", 100)
+                .queryParam("pageNo", 1)
+                .queryParam("MobileOS", mobileOs)
+                .queryParam("MobileApp", mobileApp)
+                .queryParam("_type", "json")
+                .queryParam("contentId", request.contentId())
+                .queryParam("contentTypeId", request.contentTypeId())
+                .build(true).toUri();
     }
 
     private String encodedServiceKey(String value) {

@@ -135,6 +135,52 @@ export default function FestivalDetailPage() {
           <span className="text-sm font-medium text-ink/55">매칭 기능은 준비 중이에요</span>
         </div>
 
+        {/* 소개 — 관광공사 detailCommon2 온디맨드 조회, 실패/미제공 시 섹션 자체를 숨긴다 */}
+        {festival.intro && (
+          <section className="flex flex-col gap-2.5">
+            <h3 className="text-[17px] font-bold text-ink">소개</h3>
+            <p className="whitespace-pre-line text-[14px] leading-relaxed text-ink/75">{festival.intro}</p>
+          </section>
+        )}
+
+        {/* 이용정보 — 관광공사 detailIntro2 온디맨드 조회 */}
+        {festival.infoItems.length > 0 && (
+          <section className="flex flex-col gap-2.5">
+            <h3 className="text-[17px] font-bold text-ink">이용정보</h3>
+            <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+              {festival.infoItems.map((item) => (
+                <div key={item.label} className="flex items-start justify-between gap-3 text-[13px]">
+                  <span className="shrink-0 text-ink/50">{item.label}</span>
+                  <span className="text-right text-ink/80">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 프로그램 — 관광공사 detailInfo2 온디맨드 조회 */}
+        {festival.programs.length > 0 && (
+          <section className="flex flex-col gap-2.5">
+            <h3 className="text-[17px] font-bold text-ink">프로그램</h3>
+            <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+              {festival.programs.map((program, index) => (
+                <div
+                  key={`${program.name}-${index}`}
+                  className="flex flex-col gap-0.5 border-b border-line pb-3 last:border-none last:pb-0"
+                >
+                  <span className="text-sm font-semibold text-ink">{program.name}</span>
+                  {program.time && (
+                    <span className="text-xs text-ink/50 tabular-nums">{program.time}</span>
+                  )}
+                  {program.description && (
+                    <span className="text-[13px] text-ink/65">{program.description}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* 오시는 길 */}
         {festival.address && (
           <section className="flex flex-col gap-2.5">

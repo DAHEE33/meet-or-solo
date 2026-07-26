@@ -154,6 +154,113 @@ class KoreaTourApiRestClientTest {
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void detailCommon2_소개글을_단일_객체_응답에서_조회한다() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KoreaTourApiRestClient client = client(builder.build(), "test-key");
+        server.expect(requestTo(org.hamcrest.Matchers.containsString("detailCommon2")))
+                .andRespond(withSuccess("""
+                        {
+                          "response": {
+                            "header": {"resultCode": "0000", "resultMsg": "OK"},
+                            "body": {
+                              "items": {
+                                "item": {
+                                  "contentid": "3310483",
+                                  "contenttypeid": "15",
+                                  "title": "테스트 축제",
+                                  "overview": "축제 소개글입니다."
+                                }
+                              },
+                              "numOfRows": 1,
+                              "pageNo": 1,
+                              "totalCount": 1
+                            }
+                          }
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        var result = client.fetchDetailCommon(
+                new com.survey.meetorsolo.external.tourapi.dto.FestivalDetailApiRequest("3310483", "15")
+        );
+
+        assertThat(result).isPresent();
+        assertThat(result.get().overview()).isEqualTo("축제 소개글입니다.");
+        server.verify();
+    }
+
+    @Test
+    void detailIntro2_이용정보_필드를_조회한다() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KoreaTourApiRestClient client = client(builder.build(), "test-key");
+        server.expect(requestTo(org.hamcrest.Matchers.containsString("detailIntro2")))
+                .andRespond(withSuccess("""
+                        {
+                          "response": {
+                            "header": {"resultCode": "0000", "resultMsg": "OK"},
+                            "body": {
+                              "items": {
+                                "item": {
+                                  "contentid": "3310483",
+                                  "sponsor1": "테스트시청",
+                                  "sponsor1tel": "033-000-0000"
+                                }
+                              },
+                              "numOfRows": 1,
+                              "pageNo": 1,
+                              "totalCount": 1
+                            }
+                          }
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        var result = client.fetchDetailIntroFestival(
+                new com.survey.meetorsolo.external.tourapi.dto.FestivalDetailApiRequest("3310483", "15")
+        );
+
+        assertThat(result).isPresent();
+        assertThat(result.get().sponsor1()).isEqualTo("테스트시청");
+        assertThat(result.get().sponsor1Tel()).isEqualTo("033-000-0000");
+        server.verify();
+    }
+
+    @Test
+    void detailInfo2_프로그램_반복_항목을_조회한다() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KoreaTourApiRestClient client = client(builder.build(), "test-key");
+        server.expect(requestTo(org.hamcrest.Matchers.containsString("detailInfo2")))
+                .andRespond(withSuccess("""
+                        {
+                          "response": {
+                            "header": {"resultCode": "0000", "resultMsg": "OK"},
+                            "body": {
+                              "items": {
+                                "item": [
+                                  {"contentid": "3310483", "serialnum": "1", "infoname": "개막식", "infotext": "개막 공연"},
+                                  {"contentid": "3310483", "serialnum": "2", "infoname": "폐막식", "infotext": "폐막 공연"}
+                                ]
+                              },
+                              "numOfRows": 100,
+                              "pageNo": 1,
+                              "totalCount": 2
+                            }
+                          }
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        var result = client.fetchDetailInfo(
+                new com.survey.meetorsolo.external.tourapi.dto.FestivalDetailApiRequest("3310483", "15")
+        );
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).infoName()).isEqualTo("개막식");
+        assertThat(result.get(1).infoName()).isEqualTo("폐막식");
+        server.verify();
+    }
+
     private KoreaTourApiRestClient client(RestClient restClient, String serviceKey) {
         TourApiProperties properties = new TourApiProperties(
                 "https://apis.data.go.kr/B551011/KorService2",

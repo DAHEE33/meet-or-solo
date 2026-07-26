@@ -5,6 +5,17 @@ import { apiClient } from './apiClient';
 
 export type FestivalSyncStatus = 'ACTIVE' | 'INACTIVE' | 'ENDED' | 'HIDDEN';
 
+export type FestivalInfoItem = {
+  label: string;
+  value: string;
+};
+
+export type FestivalProgramItem = {
+  name: string;
+  description: string;
+  time: string;
+};
+
 export type FestivalDetail = {
   id: number;
   contentId: string;
@@ -19,6 +30,12 @@ export type FestivalDetail = {
   mapY: number | null;
   originImageUrl: string | null;
   thumbnailUrl: string | null;
+  /** 관광공사 detailCommon2를 온디맨드로 호출한 소개글. 실패 시 빈 문자열. */
+  intro: string;
+  /** 관광공사 detailIntro2 기반 이용정보. 실패 시 빈 배열. */
+  infoItems: FestivalInfoItem[];
+  /** 관광공사 detailInfo2 기반 프로그램/세부 일정. 실패 시 빈 배열. */
+  programs: FestivalProgramItem[];
 };
 
 export type FestivalListItem = {

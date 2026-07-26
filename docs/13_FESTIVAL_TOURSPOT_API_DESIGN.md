@@ -24,14 +24,14 @@
 | 3. `tour_places` 도메인 신설 | ✅ 완료 | `domain/tourplace` 패키지, sync scheduler 포함 |
 | 4. 축제 ↔ 관광지 근접 관계 API + Explore(관광지)/`TourSpotDetailPage` 실연동 | ✅ 완료 | haversine 기반 |
 | 5. 목록 필터 확장(`keyword`를 backend 쿼리 파라미터로) | ✅ 완료(`keyword`만) | `category`(contentTypeId)는 이미 구현돼 있었음. `region`/`sort`는 여전히 미구현 (7장 참고) |
+| 6. 축제 소개글/이용정보/프로그램(`intro`/`infoItems`/`programs`) | ✅ 완료(온디맨드) | `detailCommon2`/`detailIntro2`/`detailInfo2`, 인메모리 TTL 캐시 (3.6 참고) |
 
 ## 3. Backend 구현 내용
 
 ### 3.1 축제 상세 API
 
 - `GET /api/festivals/{id}` (`FestivalController.getFestival`) 추가.
-- 응답은 `FestivalDetailResponse`(id, contentId, title, address, regionCode, sigunguCode, eventStartDate, eventEndDate, status, mapX, mapY, originImageUrl, thumbnailUrl) — `festivals` 테이블에 있는 필드만 사용합니다.
-- `intro`/`programs`/`infoItems`처럼 TourAPI `detailCommon2`/`detailIntro2` 호출이 필요한 필드는 여전히 범위 밖입니다 (7장 참고).
+- 응답은 `FestivalDetailResponse`(id, contentId, title, address, regionCode, sigunguCode, eventStartDate, eventEndDate, status, mapX, mapY, originImageUrl, thumbnailUrl, intro, infoItems, programs) — 앞부분은 `festivals` 테이블 필드, 뒤 3개(`intro`/`infoItems`/`programs`)는 TourAPI를 온디맨드로 호출해 채웁니다 (3.6 참고).
 
 ### 3.2 화면 표시용 status/ddayLabel은 프론트에서 계산
 
@@ -70,13 +70,25 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 - `ExploreListPage`는 여전히 `page=0&size=100`으로 가져오지만(페이지네이션 UI 자체가 없어 이번 범위 밖), `keyword`(300ms 디바운스)와 관광지 `contentTypeId` 카테고리를 서버 쿼리 파라미터로 보내고 클라이언트 필터링은 제거했습니다.
 - UI에 보이는 "지역/일정/정렬"(축제), "현재 위치/거리/정렬"(관광지) 칩은 여전히 동작하지 않는 표시용 라벨입니다. 실제 지역 선택 UI와 정렬 기준이 정해지면 backend 파라미터를 추가로 도입해야 합니다.
 
+### 3.6 축제 소개글/이용정보/프로그램 — 온디맨드 조회
+
+`festivals` 테이블에는 목록 조회용(`searchFestival2`) 데이터만 있어서, 소개글(`intro`)·이용정보(`infoItems`)·프로그램(`programs`)은 별도 TourAPI 오퍼레이션 3개를 **DB 동기화 없이, 축제 상세 조회 시점에 라이브로 호출**해 채웁니다.
+
+- `TourApiClient`에 `fetchDetailCommon`(소개글, `detailCommon2`), `fetchDetailIntroFestival`(이용정보 원본 필드, `detailIntro2`, `contentTypeId=15` 전용 필드셋), `fetchDetailInfo`(프로그램/세부 일정 반복 항목, `detailInfo2`) 3개 메서드를 추가했습니다(`KoreaTourApiRestClient`). 기존 `searchFestival2`/`areaBasedList2`와 같은 응답 파서(`TourApiResponseParser`)를 그대로 재사용합니다 — `items.item`이 배열이든 단일 객체든 이미 처리하도록 돼 있었습니다.
+- `FestivalDetailInfoService`(신규)가 `FestivalQueryService.getFestivalDetail()`에서 호출되어 위 3개를 합쳐 `intro`/`infoItems`(주최·이용시간·예매처 등 라벨-값 목록)/`programs`(프로그램명·설명)를 만듭니다.
+- **부분 실패 허용**: 소개글/이용정보/프로그램 3개는 서로 독립적으로 try-catch됩니다. 하나가 실패해도 나머지는 정상 노출되고, 실패한 부분만 빈 값으로 내려갑니다.
+- **인메모리 TTL 캐시**(`app.festival.detail-info.cache-ttl`, 기본 1시간): 축제 상세 페이지를 열 때마다 매번 3번씩 TourAPI를 호출하면 일일 호출 한도를 트래픽에 따라 예측 불가능하게 소진할 수 있어(배치 동기화와 달리 요청 기반 부하), `contentId` 기준 `ConcurrentHashMap` 캐시로 반복 조회를 흡수합니다. Redis는 MVP 단계라 도입하지 않았습니다. 전부 실패해 빈 결과가 나온 경우는 캐싱하지 않아 다음 요청에서 재시도합니다.
+- `getFestivalDetail()`에는 의도적으로 `@Transactional`을 걸지 않았습니다 — 외부 API 호출(수백 ms~초 단위) 중에 DB 커넥션을 점유하지 않기 위해서입니다. DB 조회(`findById`, `findAllByFestivalIdIn`)는 Spring Data 리포지토리가 각각 자체 트랜잭션으로 처리합니다.
+- 관광공사 API가 소개글 등에 섞어 보내는 `<br>` 태그/HTML 엔티티는 `global/text/TextSanitizer`로 정리해 평문으로 내려줍니다.
+- Frontend: `FestivalDetail` 타입에 `intro`/`infoItems`/`programs` 추가, `FestivalDetailPage`에 "소개"/"이용정보"/"프로그램" 섹션을 신설했습니다(데이터가 없으면 섹션 자체를 숨김).
+
 ## 4. 화면별 연동 현황
 
 | 화면 | 연동 API | 상태 |
 | --- | --- | --- |
 | `HomePage` | `GET /api/festivals`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동 |
 | `ExploreListPage` | `GET /api/festivals?keyword=`, `GET /api/spots?contentTypeId=&keyword=` | ✅ mock 제거, 실 API 연동, `keyword`/`category` 서버 필터 적용 / ❌ `region`/`sort`는 미구현 |
-| `FestivalDetailPage` | `GET /api/festivals/{id}`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동 |
+| `FestivalDetailPage` | `GET /api/festivals/{id}`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동, 소개/이용정보/프로그램 섹션 신설 |
 | `TourSpotDetailPage` | `GET /api/spots/{id}`, `GET /api/spots/{id}/nearby-festivals`, `GET /api/spots` | ✅ mock 제거, 실 API 연동 |
 
 `data/mock/festivals.ts`, `data/mock/spotDetails.ts`는 삭제되었습니다. `data/mock/tourSpots.ts`는 일부 잔존 참조가 있어 완전히 제거되지 않았습니다.
@@ -91,16 +103,19 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 
 ## 6. 테스트 커버리지
 
-- `FestivalControllerTest`, `FestivalQueryServiceTest` — 상세/근접 API 케이스, `keyword` 파라미터 전달/정규화(trim, 공백뿐이면 빈 문자열) 케이스 추가.
+- `FestivalControllerTest`, `FestivalQueryServiceTest` — 상세/근접 API 케이스, `keyword` 파라미터 전달/정규화(trim, 공백뿐이면 빈 문자열) 케이스, `intro`/`infoItems`/`programs` 응답 반영 케이스 추가.
 - `TourPlaceControllerTest`, `TourPlaceQueryServiceTest`, `TourPlaceSyncMapperTest`, `TourPlaceSyncServiceTest`, `TourPlaceSyncWriterTest`, `TourPlaceSyncSchedulerTest` — 관광지 도메인 전체(조회, 동기화 매핑/쓰기/재시도, 스케줄러) 신규 작성 + `keyword`/`contentTypeId` 정규화 케이스 추가.
 - `FestivalSyncWriterIntegrationTest` — 실제 PostgreSQL로 `findVisibleFestivals` 조회 검증(3.5절의 null 바인딩 이슈를 이 테스트에서 발견).
+- `KoreaTourApiRestClientTest` — `detailCommon2`/`detailIntro2`/`detailInfo2` 응답 파싱 케이스 추가(단일 객체·배열 `item` 노드 모두 커버).
+- `FestivalDetailInfoServiceTest`(신규) — 3개 API 응답 합성, TTL 캐시 히트/만료, contentId별 캐시 분리, 부분 실패 시 나머지 유지, 전부 실패 시 캐싱하지 않음을 검증.
 - `GeoDistanceCalculator`에 대한 별도 단위 테스트는 확인되지 않았습니다 — 필요 시 후속 작업으로 추가 검토합니다.
 
 ## 7. 미해결 이슈
 
 - `distanceKm`(사용자 GPS 기준 거리)은 아직 GPS 체크인/위치 권한 로직이 없어 노출하지 않습니다. 현재 근접 API는 축제/관광지 좌표 간 거리(`distanceMeters`)만 제공합니다.
 - `matchingCount`, `matchSupported`는 매칭 도메인 구현 이후에 채워질 값입니다.
-- 축제 소개글(`intro`), 이용 정보(`infoItems`), 프로그램(`programs`)은 `detailCommon2`/`detailIntro2` 등 추가 TourAPI 호출이 필요하며, 여전히 범위 밖입니다.
+- `detailIntro2`/`detailInfo2`의 정확한 응답 필드명은 관광공사 공식 문서 기준으로 작성했지만, 실제 강원도 축제 데이터로 라이브 호출해 검증하지는 못했습니다(테스트 키 쿼터를 아껴야 해서). 배포 후 실제 응답으로 필드 매핑(특히 `infoItems`의 라벨 구성)을 한 번 점검해야 합니다.
+- 축제 상세 조회는 요청마다 최대 3번의 TourAPI 호출이 발생합니다(캐시 미스 시). 배치 동기화와 달리 트래픽에 비례하는 부하라서, 캐시 TTL(기본 1시간)이 실제 트래픽 대비 적절한지 배포 후 `tour_api_call_log`로 점검이 필요합니다.
 - 목록 필터 중 `region`(지역 선택)/`sort`(정렬 기준)는 여전히 미구현입니다. `ExploreListPage`의 "지역/일정/정렬" 등 필터 칩은 현재 UI에만 존재하고 동작하지 않는 표시용 라벨이며, 실제 지역 선택 UI·정렬 기준이 정해지기 전까지는 backend 파라미터를 추가하지 않기로 했습니다(`keyword`는 3.5절대로 구현 완료).
 - `data/mock/tourSpots.ts`는 완전히 제거되지 않고 일부 남아 있습니다. 정리 필요 여부 확인이 필요합니다.
 - ~~관광지 동기화가 관광공사 테스트 API 키(일일 1,000회 한도)를 축제 동기화와 공유하고 있어 한도 초과 가능성~~ — 실제 호출량 확인 결과 한도에 여유가 있음을 확인했습니다(배치 커밋 안전장치는 3.3절 참고).

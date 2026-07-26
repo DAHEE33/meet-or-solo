@@ -23,7 +23,15 @@ export default function FestivalListItem({ festival, distanceLabel }: FestivalLi
       to={`/festivals/${festival.id}`}
       className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)] active:scale-[0.99] transition-transform"
     >
-      <ImagePlaceholder label="사진" className="h-[72px] w-[72px] shrink-0 rounded-xl" />
+      {festival.thumbnailUrl ? (
+        <img
+          src={festival.thumbnailUrl}
+          alt={`${festival.name} 사진`}
+          className="h-[72px] w-[72px] shrink-0 rounded-xl object-cover"
+        />
+      ) : (
+        <ImagePlaceholder label="사진" className="h-[72px] w-[72px] shrink-0 rounded-xl" />
+      )}
       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
         <span
           className={`w-fit rounded-md px-[7px] py-0.5 text-[11px] font-bold tabular-nums ${getFestivalStatusSoftClass(festival.status)}`}

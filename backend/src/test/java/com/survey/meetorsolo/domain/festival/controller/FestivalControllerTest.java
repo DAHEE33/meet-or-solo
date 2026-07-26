@@ -7,8 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalProgramItem;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
 import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
@@ -109,7 +111,10 @@ class FestivalControllerTest {
                 null,
                 null,
                 "https://example.com/origin.jpg",
-                "https://example.com/thumbnail.jpg"
+                "https://example.com/thumbnail.jpg",
+                "축제 소개글입니다.",
+                List.of(new FestivalInfoItem("주최", "테스트시청")),
+                List.of(new FestivalProgramItem("개막식", "개막 공연", ""))
         );
         when(festivalQueryService.getFestivalDetail(1L)).thenReturn(detail);
 
@@ -117,7 +122,10 @@ class FestivalControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.title").value("테스트 축제"))
-                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.intro").value("축제 소개글입니다."))
+                .andExpect(jsonPath("$.data.infoItems[0].label").value("주최"))
+                .andExpect(jsonPath("$.data.programs[0].name").value("개막식"));
         verify(festivalQueryService).getFestivalDetail(1L);
     }
 
