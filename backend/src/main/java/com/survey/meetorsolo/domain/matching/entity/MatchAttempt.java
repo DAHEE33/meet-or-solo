@@ -18,6 +18,7 @@ public class MatchAttempt {
     public static final String STATUS_CONFIRMED = "CONFIRMED";
     public static final String STATUS_FAILED = "FAILED";
     public static final String CREATED_BY_SCHEDULER = "SCHEDULER";
+    public static final String CREATED_BY_POOL_ENTRY = "POOL_ENTRY";
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -37,12 +38,26 @@ public class MatchAttempt {
 
     public static MatchAttempt initial(long festivalId, int groupSize, BigDecimal score,
                                        OffsetDateTime now, OffsetDateTime expiresAt) {
+        return initial(festivalId, groupSize, score, now, expiresAt, CREATED_BY_SCHEDULER);
+    }
+
+    public static MatchAttempt initial(
+            long festivalId,
+            int groupSize,
+            BigDecimal score,
+            OffsetDateTime now,
+            OffsetDateTime expiresAt,
+            String createdBy
+    ) {
+        if (!CREATED_BY_SCHEDULER.equals(createdBy) && !CREATED_BY_POOL_ENTRY.equals(createdBy)) {
+            throw new IllegalArgumentException("지원하지 않는 attempt 생성 주체입니다.");
+        }
         MatchAttempt attempt = new MatchAttempt();
         attempt.festivalId = festivalId;
         attempt.targetGroupSize = groupSize;
         attempt.status = STATUS_WAITING_RESPONSES;
         attempt.score = score;
-        attempt.createdBy = CREATED_BY_SCHEDULER;
+        attempt.createdBy = createdBy;
         attempt.startedAt = now;
         attempt.expiresAt = expiresAt;
         attempt.createdAt = now;
@@ -54,6 +69,7 @@ public class MatchAttempt {
     public Long getFestivalId() { return festivalId; }
     public Integer getTargetGroupSize() { return targetGroupSize; }
     public String getStatus() { return status; }
+    public String getCreatedBy() { return createdBy; }
     public OffsetDateTime getExpiresAt() { return expiresAt; }
     public void enterInsufficientMembers(OffsetDateTime now, OffsetDateTime nextExpiresAt) {
         requireStatus(STATUS_WAITING_RESPONSES);

@@ -48,6 +48,17 @@ public class MatchProposalCreationService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public MatchProposalCreationResult createInitial(MatchGroupCombination group, String lockToken,
                                                       OffsetDateTime now, Duration proposalTimeout) {
+        return createInitial(group, lockToken, now, proposalTimeout, MatchAttempt.CREATED_BY_SCHEDULER);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public MatchProposalCreationResult createInitial(
+            MatchGroupCombination group,
+            String lockToken,
+            OffsetDateTime now,
+            Duration proposalTimeout,
+            String createdBy
+    ) {
         Objects.requireNonNull(group, "group은 필수입니다.");
         Objects.requireNonNull(now, "now는 필수입니다.");
         if (lockToken == null || lockToken.isBlank()) throw new IllegalArgumentException("lockToken은 필수입니다.");
@@ -62,7 +73,13 @@ public class MatchProposalCreationService {
 
         OffsetDateTime expiresAt = now.plus(proposalTimeout);
         MatchAttempt attempt = attemptRepository.saveAndFlush(MatchAttempt.initial(
-                candidates.get(0).festivalId(), candidates.size(), group.score(), now, expiresAt));
+                candidates.get(0).festivalId(),
+                candidates.size(),
+                group.score(),
+                now,
+                expiresAt,
+                createdBy
+        ));
         for (MatchingCandidate candidate : candidates) {
             BigDecimal memberScore = memberScore(candidate, candidates);
             memberRepository.save(MatchAttemptMember.proposed(

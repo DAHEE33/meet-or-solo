@@ -38,7 +38,7 @@
 
 한 문장으로 요약하면, 현재 backend는 유효한 대기 후보를 PostgreSQL에서 중복 없이 선점하고, 정형 여행 스타일로 2~4인 그룹을 조합한 뒤 최초 attempt와 proposal을 원자적으로 생성할 수 있습니다.
 
-현재 작업 트리에는 최초 proposal 수락·거절·timeout, attempt 집계와 최종 group 확정뿐 아니라 인원 미달 round 2 재확인과 최소 인원 group 확정 운영 코드 및 테스트도 포함되어 있습니다.
+현재 작업 트리에는 matching 최소 REST API, 최초 proposal 수락·거절·timeout, 인원 미달 round 2와 최종 group 확정뿐 아니라 pool 신청 commit 이후 즉시 실행되는 application-level `POOL_ENTRY` trigger 운영 코드와 테스트도 포함되어 있습니다.
 
 ### 구현 완료
 
@@ -63,27 +63,28 @@
 - round 1 전체 terminal 이후 3명/4명 목표의 2명 이상 수락자에 대한 인원 미달 조건 판정
 - 같은 attempt의 round 2 proposal 생성과 `START_WITH_CURRENT_MEMBERS`/`CANCEL_CURRENT_MEMBERS`/`TIMEOUT` 처리
 - round 2 전원 진행 동의 시 실제 인원 group 확정과 취소·timeout 시 귀책/비귀책 pool 분리
+- matching pool 신청과 현재 pool/proposal/restriction 조회 REST API
+- pool 신청 transaction commit 이후 동기 application event 기반 즉시 matching orchestration
+- requester pool 중심 동일 축제 claim과 trigger attempt `created_by=POOL_ENTRY`
 
 ### 일부 구현 또는 기반만 존재
 
 | 기능 | 현재 수준 |
 | --- | --- |
-| 매칭 신청 | requester 후보 조회·claim service는 있으나 신청 API와 pool 생성 service는 없음 |
+| 매칭 신청 | REST API, 신청 검증, pool 저장과 AFTER_COMMIT trigger 구현 |
 | attempt lifecycle | `WAITING_RESPONSES -> INSUFFICIENT_MEMBERS -> FAILED/CONFIRMED`와 기존 전원 수락 확정 구현 |
 | proposal lifecycle | `INITIAL_MATCH` round 1과 `INSUFFICIENT_MEMBERS_CONFIRMATION` round 2의 응답·timeout 구현 |
 | cooldown | active cooldown 제외 조회와 귀책 응답 기반 생성 구현 |
 | penalty | timeout·round 2 취소 점수와 append-only event 구현 |
 | embedding | V11 schema만 존재. matching score에는 사용하지 않음 |
-| response/group | 최초·인원 미달 응답 저장과 목표/최소 인원 group 확정 구현. REST API는 없음 |
+| response/group | 최초·인원 미달 응답 저장, 목표/최소 인원 group 확정과 proposal action REST API 구현 |
 
 ### 미구현 또는 후속 계획
 
-- matching REST API와 매칭 신청 API
-- application-level `POOL_ENTRY` 실행 경로
 - frontend, WebSocket STOMP, Redis
 - embedding 또는 외부 API scoring
 
-현재 화면에서 동작을 확인할 수 없는 이유는 REST API와 frontend 연결이 없고 Scheduler도 기본적으로 비활성화되어 있기 때문입니다. 현재 완성도는 화면 기능이 아니라 backend engine과 DB transaction 수준입니다.
+현재 화면에서 동작을 확인할 수 없는 이유는 frontend 연결이 없기 때문입니다. backend는 pool 신청 시 `POOL_ENTRY` trigger로 즉시 탐색하며 Scheduler는 fallback과 시간 기반 정리를 담당합니다.
 
 ## 3. 전체 처리 흐름
 
@@ -606,9 +607,9 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 | 인원 미달 재확인 | round 1 전체 terminal 집계, round 2 응답·timeout과 최소 인원 확정 구현 |
 | `allowMinimumTwo` 적용 | 최초 조합에는 미사용하고 인원 미달 round 2 진입 조건에 적용 |
 | 최종 group/member 생성 | 목표 인원 전원 수락과 최소 인원 전원 진행 경로 구현 |
-| matching REST API | 미구현 |
-| 매칭 신청 API | 미구현 |
-| `POOL_ENTRY` 실행 | 후속 계획 |
+| matching REST API | 신청·조회·proposal action·restriction 최소 API 구현 |
+| 매칭 신청 API | 유효 체크인과 신청 제한 검증, AFTER_COMMIT trigger 구현 |
+| `POOL_ENTRY` 실행 | application event 기반 동기 AFTER_COMMIT 즉시 orchestration 구현 |
 | frontend | 미구현 |
 | WebSocket STOMP | 설계 방향만 존재 |
 | Redis | MVP 제외 |
@@ -621,9 +622,8 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 
 1. 개인 `.env`와 local PostgreSQL 인증값을 맞춘 뒤 root `contextLoads()`를 포함한 전체 회귀 테스트 완료
 2. matching 신청·proposal REST API
-3. application-level `POOL_ENTRY` 실행 경로
-4. frontend proposal UI와 인원 미달 modal
-5. WebSocket STOMP 상태 동기화
+3. frontend proposal UI와 인원 미달 modal
+4. WebSocket STOMP 상태 동기화
 
 현재 브랜치에서 먼저 할 일은 다음과 같습니다.
 
@@ -641,7 +641,7 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 
 penalty/cooldown은 중요한 backend 정책이지만 화면 연결의 기술적 선행 조건은 아닙니다. 다만 현재 WBS 순서를 유지하려면 세부 정책을 먼저 확정한 뒤 REST API 작업으로 넘어갑니다.
 
-`POOL_ENTRY`는 다음 application 흐름으로만 검토합니다.
+`POOL_ENTRY`는 다음 application 흐름으로 구현했습니다.
 
 ```text
 pool 생성 transaction commit
@@ -651,7 +651,7 @@ pool 생성 transaction commit
 → Scheduler fallback
 ```
 
-현재 구현 완료가 아니며 PostgreSQL DB trigger로 구현하지 않습니다. `match_attempts.created_by`의 `POOL_ENTRY` 값은 이 후속 경로를 위한 schema 계약입니다.
+PostgreSQL DB trigger는 사용하지 않습니다. `match_attempts.created_by`는 trigger 경로에서 `POOL_ENTRY`, 기존 fallback Scheduler 경로에서 `SCHEDULER`를 저장합니다.
 
 ## 21. 기술 블로그 소재
 
@@ -1454,8 +1454,190 @@ rmdir "$COOKIE_DIR"
 
 - frontend matching 화면이 없어 JSON으로만 확인합니다.
 - WebSocket이 없어 proposal과 상태 변경을 polling해야 합니다.
-- Scheduler는 기본 `false`이며 수동 검증 시 명시적으로 활성화해야 합니다.
+- Scheduler는 기본 `false`이지만 pool 신청의 신규 matching 탐색은 AFTER_COMMIT trigger로 즉시 실행됩니다. Scheduler fallback과 시간 기반 처리를 검증하려면 명시적으로 활성화해야 합니다.
 - check-in REST API가 없어 수동 검증용 `festival_checkins`는 SQL로 준비합니다.
-- `POOL_ENTRY` 즉시 orchestration이 없어 신청 후 Scheduler tick을 기다립니다.
 - Swagger/OpenAPI는 이번 범위에 없습니다.
 - 자유 채팅은 구현하지 않았습니다.
+
+## 26. Pool 신청 AFTER_COMMIT 매칭 실행 trigger
+
+### 26.1 구현 배경과 변경 전 구조
+
+기존 `MatchingScheduler`는 기본 5초 fixed delay로 `MatchingOrchestrationService.runTick()`을 호출했습니다. 이 한 경로가 만료 `WAITING` 정리, stale `LOCKED` 복구, 전체 batch claim, 신규 매칭 탐색, proposal 생성과 미사용 lock release를 수행했습니다. 따라서 `POST /api/matching/pools`가 `WAITING` pool을 commit해도 신규 탐색은 다음 Scheduler tick까지 기다렸고 Scheduler가 비활성화된 환경에서는 시작되지 않았습니다.
+
+기존 문서에는 다음 application 흐름이 후속 계약으로 기록되어 있었습니다.
+
+```text
+pool 생성 transaction commit
+→ application event
+→ 즉시 matching orchestration 시도
+→ 실패 시 WAITING 유지
+→ Scheduler fallback
+```
+
+이번 구현은 이 계약을 Spring application event로 연결했습니다. DB Trigger, queue table, 외부 메시지 브로커, Redis, Kafka와 `@Async` executor는 사용하지 않았습니다.
+
+### 26.2 최종 event 구조와 처리 흐름
+
+```text
+MatchingController.enterPool
+→ MatchPoolEntryService.enter
+→ 회원 row lock과 기존 신청 조건 검증
+→ matching repository의 유효 checkinId 조회
+→ WAITING pool saveAndFlush
+→ MatchingPoolEnteredEvent(poolId, memberId, festivalId) publish
+→ 신청 transaction commit
+→ MatchingPoolEnteredEventHandler AFTER_COMMIT
+→ PoolEntryMatchingOrchestrationService.run
+→ requester 중심 동일 festival claim
+→ WAITING → LOCKED
+→ 기존 MatchingBatchReader / MatchGroupComposer
+→ requester 포함 group 선택
+→ 기존 MatchProposalCreationService REQUIRES_NEW
+→ attempt/member/proposal 생성
+→ LOCKED → PROPOSED
+→ 미사용 token lock release
+```
+
+event는 `MatchPoolEntryService`가 저장된 pool의 실제 ID를 얻은 뒤 publish합니다. handler는 다음과 같이 동기 commit listener로 등록했습니다.
+
+```java
+@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+```
+
+원본 transaction이 rollback되면 handler는 실행되지 않습니다. 별도 thread와 in-memory queue 유실 문제를 만들지 않고 기존 단계별 transaction 경계를 그대로 사용하기 위해 동기 listener를 선택했습니다. handler는 orchestration 예외를 내부에서 catch하고 `poolId`, `memberId`, `festivalId`를 구조화된 로그 인자로 기록합니다. 따라서 pool 신청 commit 이후 trigger가 실패해도 이미 성공한 신청 응답을 실패로 되돌리지 않습니다.
+
+### 26.3 requester pool 중심 claim
+
+`PoolEntryMatchPoolClaimService`와 `MatchPoolRepository.findPoolEntryClaimablePoolsForUpdate`를 trigger 전용 경로로 추가했습니다. 기존 `SchedulerMatchPoolClaimService`와 전역 batch query는 변경하지 않았습니다.
+
+trigger claim 조건은 다음과 같습니다.
+
+- event의 `poolId`, `memberId`, `festivalId`가 requester row와 모두 일치
+- requester가 `WAITING`이고 검색 시간이 남아 있음
+- requester와 같은 festival, 같은 `preferred_group_size`
+- 후보도 `WAITING`이고 검색 시간이 남아 있음
+- pool과 check-in의 회원·축제 일치
+- check-in `ACTIVE`, 미만료
+- active cooldown 제외
+- requester와 후보 사이 양방향 block 제외
+- requester를 정렬 최우선으로 두고 기존 `entered_at`, `pool_id` 순서 유지
+- `FOR UPDATE OF pool SKIP LOCKED`
+
+조회 결과에 requester pool이 없으면 아무 row도 `LOCKED`로 전환하지 않습니다. requester가 포함된 경우에만 같은 lock token과 `lockedAt`으로 claim합니다. batch 조합 결과에서도 requester pool을 포함한 group 하나만 proposal 생성 대상으로 선택합니다. 후보 부족 시 생성 없이 finally release가 실행되어 검색 시간이 유효한 pool은 `WAITING`으로 돌아갑니다.
+
+### 26.4 trigger와 Scheduler 책임 분리
+
+| 실행 경로 | 책임 | attempt `created_by` |
+| --- | --- | --- |
+| pool-entry trigger | 신규 신청 직후 requester 중심 같은 축제 즉시 탐색 | `POOL_ENTRY` |
+| `MatchingScheduler` | 누락·실패 후 남은 `WAITING` fallback, 전체 batch matching, `WAITING` 만료, stale `LOCKED` 복구, 미사용 lock release | `SCHEDULER` |
+| `MatchProposalTimeoutScheduler` | proposal과 attempt timeout 처리 | 해당 없음 |
+
+기존 5초 실행 주기와 Scheduler 활성화 설정은 변경하지 않았습니다. `MatchAttempt.initial(...)`은 기존 overload에서 계속 `SCHEDULER`를 기본값으로 사용하고, trigger용 proposal 생성 overload만 `POOL_ENTRY`를 명시합니다. V3 constraint가 두 값을 이미 허용하므로 migration은 추가하지 않았습니다.
+
+### 26.5 동시성과 중복 실행 방지
+
+- 동일 회원의 빠른 중복 신청은 회원 row `FOR UPDATE`와 active pool partial unique index로 방어합니다.
+- 동일 event 재전달은 requester의 `WAITING` 조건으로 방어합니다. 최초 실행이 `LOCKED` 또는 `PROPOSED`로 전환하면 다음 실행은 claim하지 못합니다.
+- 두 pool-entry trigger 또는 trigger와 Scheduler가 동시에 실행되면 `FOR UPDATE SKIP LOCKED`가 이미 선점된 pool을 건너뜁니다.
+- proposal 생성 전 기존 코드가 pool ID 오름차순으로 다시 잠그고 `LOCKED`, `lockToken`, 만료, check-in, cooldown, 모든 pair block을 재검증합니다.
+- proposal 생성은 기존 그룹별 `REQUIRES_NEW` transaction을 유지합니다. 일부 insert 또는 pool flush가 실패하면 attempt/member/proposal/pool 전이가 함께 rollback됩니다.
+- orchestration의 finally release는 같은 token으로 남은 `LOCKED`만 `WAITING` 또는 `EXPIRED`로 전환합니다.
+- process 중단으로 release하지 못한 `LOCKED`는 기존 Scheduler stale cleanup이 복구합니다.
+
+event ID나 별도 deduplication table은 추가하지 않았으며 PostgreSQL row lock, pool 상태와 token을 이용한 기존 상태 기반 멱등성을 유지합니다.
+
+### 26.6 체크인 기능과의 경계
+
+체크인 기능은 다른 담당 범위입니다. 이번 작업은 `domain/checkin/**`, 체크인 Controller/Service/Entity/Repository, `festival_checkins` migration, GPS 정책과 체크인 API 계약을 수정하지 않았습니다.
+
+신청 단계는 기존 `MatchPoolRepository.findValidCheckinId(memberId, festivalId, now)`를 사용합니다. trigger claim과 proposal 생성 직전 검증도 기존 `festival_checkins` SQL 조건을 유지합니다. 자동 테스트는 실제 PostgreSQL의 `festival_checkins` fixture를 사용해 유효·비활성 check-in을 검증했습니다.
+
+### 26.7 변경 파일
+
+신규 운영 파일:
+
+- `domain/matching/event/MatchingPoolEnteredEvent.java`
+- `domain/matching/event/MatchingPoolEnteredEventHandler.java`
+- `domain/matching/service/PoolEntryMatchPoolClaimService.java`
+- `domain/matching/service/PoolEntryMatchingOrchestrationService.java`
+
+수정 운영 파일:
+
+- `MatchPoolEntryService.java`: pool 저장 후 event publish
+- `MatchPoolRepository.java`: trigger 전용 requester 중심 claim query
+- `MatchAttempt.java`: `POOL_ENTRY` 생성 주체 지원
+- `MatchProposalCreationService.java`: 생성 주체를 명시하는 overload
+
+신규 테스트 파일:
+
+- `MatchingPoolEnteredEventHandlerTest.java`
+- `MatchingPoolEnteredEventIntegrationTest.java`
+- `PoolEntryMatchingOrchestrationServiceTest.java`
+- `PoolEntryMatchingOrchestrationServiceIntegrationTest.java`
+
+### 26.8 실제 테스트 명령과 결과
+
+신규 focused 테스트:
+
+```bash
+cd backend
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat test \
+  --tests "com.survey.meetorsolo.domain.matching.event.*" \
+  --tests "com.survey.meetorsolo.domain.matching.service.PoolEntryMatchingOrchestrationServiceTest" \
+  --tests "com.survey.meetorsolo.domain.matching.service.PoolEntryMatchingOrchestrationServiceIntegrationTest" \
+  --rerun-tasks
+```
+
+- 최종 15건 통과
+- `BUILD SUCCESSFUL` 25초
+- commit 전 handler 미실행, commit 이후 event payload 전달, rollback 시 미실행 검증
+- listener 실패 후 commit된 `WAITING` pool 유지 검증
+- requester 포함, 같은 축제 제한, 후보 부족, `POOL_ENTRY`, 중복 event 검증
+- 두 trigger 동시 실행과 trigger/Scheduler 동시 실행의 attempt 단일 생성 검증
+- 비활성 check-in 제외와 proposal 생성 DB 실패 rollback/release 검증
+- Scheduler attempt `created_by=SCHEDULER` 회귀 검증
+
+matching 전체:
+
+```bash
+cd backend
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat test \
+  --tests "com.survey.meetorsolo.domain.matching.*" \
+  --rerun-tasks
+```
+
+- 최종 코드 기준 179건 통과
+- `BUILD SUCCESSFUL` 1분 20초
+
+backend 전체:
+
+```bash
+cd backend
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat test --rerun-tasks
+```
+
+- 최초 실행은 local PostgreSQL `localhost:5432` 부재로 기존 `MeetOrSoloApplicationTests.contextLoads()` 1건 실패, 나머지 215건 통과
+- 고유 이름의 임시 `pgvector/pgvector:pg16` local PostgreSQL을 실행한 뒤 재실행
+- 최종 코드 기준 218건 통과
+- `BUILD SUCCESSFUL` 1분 49초
+- 임시 컨테이너는 검증 후 중지했고 `--rm` 설정으로 제거
+
+backend build:
+
+```bash
+cd backend
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat build
+```
+
+- 최종 재실행 `BUILD SUCCESSFUL` 9초
+- `bootJar`, `jar`, `assemble`, `check`, `build` 완료
+
+### 26.9 남은 제한사항
+
+- frontend matching 화면과 WebSocket 상태 동기화는 아직 없습니다.
+- 체크인 API는 다른 담당 범위이며 수동 검증에서는 기존 `festival_checkins` fixture가 필요합니다.
+- application event는 process 내부 신호이므로 commit 직후 process가 종료되는 극단적인 경우 event 자체를 영속 재처리하지 못합니다. 남은 `WAITING` pool은 기존 Scheduler fallback이 보정합니다.
+- Scheduler가 기본 비활성인 환경에서 commit 직후 process 장애까지 발생하면 자동 fallback도 실행되지 않습니다. 운영 환경에서는 시간 기반 timeout·복구를 위해 Scheduler 활성화가 필요합니다.
+- block/cooldown 최종 검증 직후 다른 transaction이 안전 상태를 변경하는 기존 race 한계는 이번 범위에서 바꾸지 않았습니다.
