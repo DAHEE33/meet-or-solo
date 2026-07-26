@@ -49,6 +49,9 @@ app:
       retry-max-delay: ${FESTIVAL_SYNC_RETRY_MAX_DELAY:10s}
     detail-info:
       cache-ttl: ${FESTIVAL_DETAIL_INFO_CACHE_TTL:1h}
+    checkin:
+      valid-duration: ${FESTIVAL_CHECKIN_VALID_DURATION:6h}
+      accuracy-threshold-meters: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:100}
   tour-place:
     sync:
       initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}

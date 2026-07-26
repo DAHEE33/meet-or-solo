@@ -1,5 +1,19 @@
 # 진행 상태 기록
 
+## [10-A] GPS 체크인 API
+
+상태: 코드·테스트 작성 완료, 실제 dev 재배포 확인 제외
+
+- `GET /api/festivals/{id}/checkin` 대신 `POST /api/festivals/{id}/checkin` 추가 — 브라우저 Geolocation 좌표를 받아 서버가 축제 좌표와의 거리를 계산하고, 반경(`festivals.checkin_radius_meters`) 이내일 때만 `festival_checkins`에 저장한다.
+- 원본 위경도는 요청 처리 중에만 쓰고 DB/응답 어디에도 남기지 않는다. 저장되는 값은 계산된 `distanceMeters`뿐이다.
+- 위치 정확도(`accuracyMeters`)가 임계값(`app.festival.checkin.accuracy-threshold-meters`, 기본 100m)을 넘으면 거절한다.
+- 체크인 유효 기간은 `app.festival.checkin.valid-duration`(기본 6h)로 설정 가능.
+- 한 회원이 동시에 여러 곳에 있을 수 없다는 전제로, 새로 체크인하면 같은 회원의 기존 `ACTIVE` 체크인(다른 축제 포함)은 전부 `CANCELLED` 처리한다. 같은 축제로 재체크인해도 동일하게 취소 후 새로 생성된다.
+- 실제 PostgreSQL로 검증하는 과정에서, 기존 ACTIVE 체크인을 취소(UPDATE)하고 같은 트랜잭션에서 새 체크인을 INSERT할 때 Hibernate의 기본 flush 순서(INSERT 우선) 때문에 `uq_festival_checkins_member_festival_active` 부분 unique index를 위반하는 버그를 발견해, 취소 후 명시적으로 `flush()`하도록 수정했다.
+- 매칭 풀(`match_pools`) 정리는 이번 범위에 포함하지 않았다 — `domain/matching` 엔진 코드가 아직 없어서, 체크인 취소 시 매칭 풀도 함께 취소하는 로직은 매칭 엔진 구현 시점으로 미뤘다(코드에 TODO로 남겨둠).
+- Frontend: `FestivalDetailPage`에 "체크인하기" 버튼 추가. 버튼 클릭 시에만 위치를 1회 읽고(백그라운드 추적 없음), 성공/실패(권한 거부/시간 초과/범위 초과 등) 상태를 화면에 표시한다.
+- dev 서버가 아직 HTTPS를 지원하지 않아, `localhost`가 아닌 dev 서버 도메인에서는 브라우저가 Geolocation 권한 요청 자체를 차단할 수 있다. 로컬 개발(`localhost:5173`)에서는 문제없이 동작한다.
+
 ## [10-A] 축제·탐색 화면 디자인 handoff 프론트엔드 구현 (mock 기반)
 
 상태: 코드 작성 및 frontend build 완료, 실제 backend 축제 API 연동 제외

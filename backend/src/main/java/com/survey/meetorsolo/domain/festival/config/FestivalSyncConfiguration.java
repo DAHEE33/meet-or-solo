@@ -6,6 +6,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration
 @EnableScheduling
-@EnableConfigurationProperties({FestivalSyncProperties.class, FestivalDetailInfoProperties.class})
+@EnableConfigurationProperties({
+        FestivalSyncProperties.class,
+        FestivalDetailInfoProperties.class,
+        FestivalCheckinProperties.class
+})
 public class FestivalSyncConfiguration {
 }

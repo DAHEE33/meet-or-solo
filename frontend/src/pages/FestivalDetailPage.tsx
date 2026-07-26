@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Calendar, MapPin, Share2, Navigation, HeartHandshake, ChevronRight } from 'lucide-react';
+import { Calendar, MapPin, Share2, Navigation, ChevronRight } from 'lucide-react';
 import { festivalsApi, type FestivalDetail } from '../api/festivals';
+import { checkinApi, type CheckInResponse } from '../api/checkin';
 import {
   resolveDisplayStatus,
   resolveDdayLabel,
@@ -10,6 +11,8 @@ import {
   getFestivalStatusSolidClass,
   getFestivalStatusSoftClass,
 } from '../utils/festival';
+import { formatDistanceLabel } from '../utils/tourSpot';
+import { getCurrentPosition } from '../utils/geolocation';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
@@ -20,6 +23,9 @@ export default function FestivalDetailPage() {
   const [festival, setFestival] = useState<FestivalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [checkinResult, setCheckinResult] = useState<CheckInResponse | null>(null);
+  const [checkinLoading, setCheckinLoading] = useState(false);
+  const [checkinError, setCheckinError] = useState<string | null>(null);
 
   useEffect(() => {
     const id = Number(festivalId);
@@ -70,6 +76,25 @@ export default function FestivalDetailPage() {
   const displayStatus = resolveDisplayStatus(festival);
   const statusView = { status: displayStatus, ddayLabel: resolveDdayLabel(festival) };
   const periodFull = formatFestivalPeriod(festival);
+
+  async function handleCheckIn() {
+    setCheckinLoading(true);
+    setCheckinError(null);
+    try {
+      const position = await getCurrentPosition();
+      const result = await checkinApi.checkIn(
+        festival!.id,
+        position.latitude,
+        position.longitude,
+        position.accuracyMeters,
+      );
+      setCheckinResult(result);
+    } catch (error) {
+      setCheckinError(error instanceof Error ? error.message : '체크인에 실패했어요.');
+    } finally {
+      setCheckinLoading(false);
+    }
+  }
 
   return (
     <MobileLayout showTabBar={false}>
@@ -127,12 +152,34 @@ export default function FestivalDetailPage() {
           </div>
         </section>
 
-        {/* 매칭 안내 — 매칭 기능 구현 전까지는 상태만 안내한다 */}
-        <div className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sand text-ink/40">
-            <HeartHandshake size={20} />
-          </span>
-          <span className="text-sm font-medium text-ink/55">매칭 기능은 준비 중이에요</span>
+        {/* GPS 체크인 — 매칭은 아직 준비 중이지만, 체크인 자체는 반경 확인을 위해 먼저 구현했다 */}
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sand text-ink/40">
+              <MapPin size={20} />
+            </span>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-semibold text-ink">
+                {checkinResult ? '체크인 완료' : '이 축제에 체크인하기'}
+              </span>
+              <span className="text-[13px] text-ink/55">
+                {checkinResult
+                  ? `현재 위치에서 ${formatDistanceLabel(checkinResult.distanceMeters)} 떨어진 곳에서 체크인했어요. 매칭 기능은 아직 준비 중이에요.`
+                  : '축제 반경 안에 있으면 체크인할 수 있어요. 매칭 기능은 아직 준비 중이에요.'}
+              </span>
+            </div>
+          </div>
+          {checkinError && <p className="text-[13px] text-coral">{checkinError}</p>}
+          {!checkinResult && (
+            <button
+              type="button"
+              onClick={handleCheckIn}
+              disabled={checkinLoading}
+              className="w-full rounded-xl bg-ink py-2.5 text-[14px] font-bold text-white disabled:opacity-50"
+            >
+              {checkinLoading ? '위치 확인 중...' : '체크인하기'}
+            </button>
+          )}
         </div>
 
         {/* 소개 — 관광공사 detailCommon2 온디맨드 조회, 실패/미제공 시 섹션 자체를 숨긴다 */}
