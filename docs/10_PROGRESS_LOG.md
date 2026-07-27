@@ -1,5 +1,29 @@
 # 진행 상태 기록
 
+## [10-매칭 10차] 확정 group 조회와 frontend 결과 계약
+
+상태: REST API, PostgreSQL 동시성 통합 테스트, matching/backend 전체 회귀 및 build 완료
+
+- `GET /api/matching/groups/me/current`를 추가해 `access_token` HttpOnly cookie의 로그인 회원이 현재 참여 중인 확정 group을 조회하도록 구현
+- 요청 path, query, body에서 `memberId`와 `groupId`를 받지 않고 인증 회원 기준으로만 조회
+- 현재 group이 없으면 기존 `ApiResponse` 조회 계약대로 `200 OK`, `data:null` 반환
+- active group은 group `CONFIRMED`/`IN_PROGRESS`와 group member `JOINED`/`ARRIVAL_TIME_SELECTED`/`ARRIVED`의 교집합으로 판정
+- `COMPLETED`/`CANCELLED` group과 `CANCELLED`/`NO_SHOW`/`LEFT` 참여자는 current 결과에서 제외
+- 다중 active group, 저장된 `confirmed_member_count`와 실제 active 참여자 수 불일치, 조회 회원 누락을 `MATCHING_CONFLICT` 데이터 정합성 오류로 처리
+- `MatchGroupQueryService`를 기존 pool/proposal/restriction 조회 service와 분리
+- `MatchGroupRepository`가 회원 참여 기준 active group을 조회하고, `MatchGroupMemberRepository`가 회원 공개 정보를 한 번에 join 조회해 N+1 방지
+- 참여자는 `match_group_members.id ASC`로 결정적 정렬하며 본인을 포함
+- 응답 공개 범위는 `memberId`, `nickname`, `profileImageUrl`로 제한하고 이메일, OAuth 식별자, 전화번호, 성별, 연령대, 여행 스타일, 자기소개, 위치, penalty/cooldown은 제외
+- `confirmedMemberCount`는 실제 조회된 `members.size()`를 반환하며 저장값과 다르면 응답하지 않음
+- 신규 Flyway migration, frontend, 체크인, trigger/Scheduler, proposal 응답 transaction, penalty/cooldown 코드는 수정하지 않음
+- Controller/service focused 단위 테스트 16건 `BUILD SUCCESSFUL` 17초
+- REST API와 proposal 응답 PostgreSQL focused 통합 테스트 49건 `BUILD SUCCESSFUL` 51초
+- PostgreSQL 통합 테스트에서 목표 인원 확정, round 2 최소 인원 확정, 두 참여자의 동일 group/member 조회, 비참여자 `data:null`, 종료 group 제외, 중복 응답 단일 group, 마지막 동시 수락, ACCEPT/timeout race의 확정 결과만 노출을 검증
+- matching 전체 회귀 190건 `BUILD SUCCESSFUL` 1분 33초
+- backend 전체 최초 실행은 개인 `.env`의 dev SSH tunnel `127.0.0.1:15432` 부재로 기존 `contextLoads()` 1건만 실패하고 나머지 228건 통과
+- 격리된 일회성 `pgvector/pgvector:pg16` PostgreSQL을 사용한 최종 backend 전체 229건 `BUILD SUCCESSFUL` 2분 8초
+- backend `build` 최종 `BUILD SUCCESSFUL` 9초
+
 ## [10-매칭 9차] pool 신청 AFTER_COMMIT 매칭 실행 trigger
 
 상태: application event 운영 코드와 PostgreSQL Testcontainers 통합·backend 전체 회귀 및 build 완료

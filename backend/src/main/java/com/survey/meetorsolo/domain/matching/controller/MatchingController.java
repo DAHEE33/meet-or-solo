@@ -4,10 +4,12 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.matching.dto.ActiveMatchProposalResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchingRestrictionResponse;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
+import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -33,17 +35,20 @@ public class MatchingController {
     private final JwtProvider jwtProvider;
     private final MatchPoolEntryService poolEntries;
     private final MatchingQueryService queries;
+    private final MatchGroupQueryService groupQueries;
     private final MatchProposalActionService proposalActions;
 
     public MatchingController(
             JwtProvider jwtProvider,
             MatchPoolEntryService poolEntries,
             MatchingQueryService queries,
+            MatchGroupQueryService groupQueries,
             MatchProposalActionService proposalActions
     ) {
         this.jwtProvider = jwtProvider;
         this.poolEntries = poolEntries;
         this.queries = queries;
+        this.groupQueries = groupQueries;
         this.proposalActions = proposalActions;
     }
 
@@ -68,6 +73,13 @@ public class MatchingController {
             @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
     ) {
         return ApiResponse.success(queries.activeProposal(memberId(accessToken)));
+    }
+
+    @GetMapping("/groups/me/current")
+    public ApiResponse<MatchGroupResponse> currentGroup(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        return ApiResponse.success(groupQueries.currentGroup(memberId(accessToken)));
     }
 
     @PostMapping("/proposals/{proposalId}/responses")

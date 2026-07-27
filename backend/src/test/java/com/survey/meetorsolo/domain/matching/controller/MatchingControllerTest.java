@@ -10,6 +10,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupMemberResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
@@ -42,6 +45,9 @@ class MatchingControllerTest {
 
     @MockitoBean
     private MatchingQueryService queries;
+
+    @MockitoBean
+    private MatchGroupQueryService groupQueries;
 
     @MockitoBean
     private MatchProposalActionService proposalActions;
@@ -114,6 +120,63 @@ class MatchingControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void 확정_group_조회는_인증_쿠키가_없으면_401을_반환한다() throws Exception {
+        mockMvc.perform(get("/api/matching/groups/me/current"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void 현재_group이_없으면_200과_null_data를_반환한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+        when(groupQueries.currentGroup(20L)).thenReturn(null);
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void access_token의_회원_ID로_현재_group과_참여자를_조회한다() throws Exception {
+        OffsetDateTime confirmedAt = OffsetDateTime.parse("2026-07-27T12:30:00+09:00");
+        MatchGroupResponse response = new MatchGroupResponse(
+                10L,
+                1L,
+                "CONFIRMED",
+                2,
+                confirmedAt,
+                List.of(
+                        new MatchGroupMemberResponse(1L, "member-a", null),
+                        new MatchGroupMemberResponse(2L, "member-b", "https://example.com/b.png")
+                )
+        );
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
+        when(groupQueries.currentGroup(1L)).thenReturn(response);
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.groupId").value(10))
+                .andExpect(jsonPath("$.data.festivalId").value(1))
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.data.confirmedMemberCount").value(2))
+                .andExpect(jsonPath("$.data.confirmedAt").value("2026-07-27T12:30:00+09:00"))
+                .andExpect(jsonPath("$.data.members[0].memberId").value(1))
+                .andExpect(jsonPath("$.data.members[0].nickname").value("member-a"))
+                .andExpect(jsonPath("$.data.members[0].profileImageUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.members[1].memberId").value(2))
+                .andExpect(jsonPath("$.data.members[1].nickname").value("member-b"))
+                .andExpect(jsonPath("$.data.members[1].profileImageUrl")
+                        .value("https://example.com/b.png"));
+
+        verify(groupQueries).currentGroup(1L);
     }
 
     @Test
