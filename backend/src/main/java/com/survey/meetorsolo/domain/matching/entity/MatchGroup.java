@@ -20,4 +20,8 @@ public class MatchGroup {
         group.createdAt=now; group.updatedAt=now; return group;
     }
     public Long getId() { return id; }
+    public Long getFestivalId() { return festivalId; }
+    public String getStatus() { return status; }
+    public Integer getConfirmedMemberCount() { return confirmedMemberCount; }
+    public OffsetDateTime getConfirmedAt() { return confirmedAt; }
 }

@@ -11,7 +11,7 @@
 - Spring transaction과 PostgreSQL row lock을 처음 접하는 참여자
 - 구현 경험을 기술 블로그로 정리하려는 참여자
 
-현재 구현 기준은 `feature/wbs-10-matching-insufficient-members` 작업 트리이며, `c039ad9`에서 분기한 뒤 추가한 인원 미달 round 2 운영 코드와 테스트를 포함합니다.
+현재 구현 기준은 `feature/wbs-10-matching-group-query-api` 작업 트리이며, 기준 HEAD는 `7e2730f02fd77a2dd3fa2519f53aa112f73b8e15`입니다. 이 HEAD 이후 working tree의 확정 group 조회 운영 코드와 테스트까지 포함해 설명합니다.
 
 관련 문서의 역할은 다음과 같이 구분합니다.
 
@@ -64,6 +64,7 @@
 - 같은 attempt의 round 2 proposal 생성과 `START_WITH_CURRENT_MEMBERS`/`CANCEL_CURRENT_MEMBERS`/`TIMEOUT` 처리
 - round 2 전원 진행 동의 시 실제 인원 group 확정과 취소·timeout 시 귀책/비귀책 pool 분리
 - matching pool 신청과 현재 pool/proposal/restriction 조회 REST API
+- 현재 확정 group과 참여자 공개 정보 조회 REST API
 - pool 신청 transaction commit 이후 동기 application event 기반 즉시 matching orchestration
 - requester pool 중심 동일 축제 claim과 trigger attempt `created_by=POOL_ENTRY`
 
@@ -77,7 +78,7 @@
 | cooldown | active cooldown 제외 조회와 귀책 응답 기반 생성 구현 |
 | penalty | timeout·round 2 취소 점수와 append-only event 구현 |
 | embedding | V11 schema만 존재. matching score에는 사용하지 않음 |
-| response/group | 최초·인원 미달 응답 저장, 목표/최소 인원 group 확정과 proposal action REST API 구현 |
+| response/group | 최초·인원 미달 응답 저장, 목표/최소 인원 group 확정, proposal action과 current group REST API 구현 |
 
 ### 미구현 또는 후속 계획
 
@@ -160,6 +161,7 @@ flowchart TD
 | [MatchProposalRepository](../backend/src/main/java/com/survey/meetorsolo/domain/matching/repository/MatchProposalRepository.java) | proposal 저장 |
 | [MatchResponseRepository](../backend/src/main/java/com/survey/meetorsolo/domain/matching/repository/MatchResponseRepository.java) | proposal/member별 단일 응답 조회·저장 |
 | [MatchGroupRepository](../backend/src/main/java/com/survey/meetorsolo/domain/matching/repository/MatchGroupRepository.java) | attempt별 최종 group 저장 |
+| [MatchGroupMemberRepository](../backend/src/main/java/com/survey/meetorsolo/domain/matching/repository/MatchGroupMemberRepository.java) | active 참여자 존재 확인과 공개 프로필 일괄 조회 |
 
 ## 5. MatchPool 상태 전이
 
@@ -521,7 +523,7 @@ rollback 테스트는 정상 입력만으로 발생하기 어려운 “중간 in
 
 ### 보장하지 않는 것
 
-- 아직 작성되지 않은 matching REST API와 frontend 동작
+- 아직 작성되지 않은 frontend matching 화면 동작
 - 운영 부하에서의 처리량과 지연 시간
 - 프로세스·네트워크 장애의 모든 조합
 - ambiguous commit 후 기존 attempt 탐색
@@ -530,10 +532,9 @@ rollback 테스트는 정상 입력만으로 발생하기 어려운 “중간 in
 
 ## 17. 현재 화면에서 테스트할 수 없는 이유
 
-현재 matching engine은 controller가 없는 내부 backend 기능입니다.
+현재 matching engine은 REST API로 호출할 수 있지만 frontend matching 화면이 아직 연결되지 않았습니다.
 
-- 매칭 신청 REST API 없음
-- proposal 조회·응답 API 없음
+- 매칭 신청, proposal 조회·응답, current group 조회 REST API 구현
 - frontend 연결 없음
 - WebSocket 상태 동기화 없음
 - Scheduler 기본 `enabled=false`
@@ -562,7 +563,7 @@ frontend 버튼
 → frontend modal/page 갱신
 ```
 
-REST API가 없으면 frontend가 현재 service를 호출할 방법이 없고, frontend가 없으면 사용자가 proposal과 인원 미달 재확인을 화면에서 볼 수 없습니다. WebSocket은 최초 화면 테스트의 필수 조건은 아니며 REST polling 또는 응답 결과만으로 먼저 연결한 뒤 상태 동기화 단계에서 추가할 수 있습니다.
+frontend가 아직 연결되지 않아 사용자가 proposal과 인원 미달 재확인을 화면에서 볼 수 없습니다. WebSocket은 최초 화면 테스트의 필수 조건이 아니며 REST polling과 `MATCHED` 이후 current group 조회로 먼저 연결한 뒤 상태 동기화 단계에서 추가할 수 있습니다.
 
 ## 18. 현재 보장 범위와 한계
 
@@ -600,7 +601,7 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 
 | 기능 | 현재 상태 |
 | --- | --- |
-| proposal 수락·거절 | service 구현, REST API 미구현 |
+| proposal 수락·거절 | service와 REST API 구현 |
 | proposal timeout 상태 처리 | 최초·인원 미달 service와 Scheduler 구현 및 PostgreSQL targeted 검증 완료 |
 | `match_responses` 생성 | 최초 proposal round 1과 인원 미달 round 2 구현 |
 | penalty/cooldown 생성 | proposal 기반 멱등성과 응답 transaction 원자 처리 구현 |
@@ -608,6 +609,7 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 | `allowMinimumTwo` 적용 | 최초 조합에는 미사용하고 인원 미달 round 2 진입 조건에 적용 |
 | 최종 group/member 생성 | 목표 인원 전원 수락과 최소 인원 전원 진행 경로 구현 |
 | matching REST API | 신청·조회·proposal action·restriction 최소 API 구현 |
+| current group REST API | 인증 회원의 `CONFIRMED`/`IN_PROGRESS` group과 참여자 공개 필드 조회 구현 |
 | 매칭 신청 API | 유효 체크인과 신청 제한 검증, AFTER_COMMIT trigger 구현 |
 | `POOL_ENTRY` 실행 | application event 기반 동기 AFTER_COMMIT 즉시 orchestration 구현 |
 | frontend | 미구현 |
@@ -621,9 +623,8 @@ block/cooldown race를 해결하려면 isolation level, advisory lock, 회원 �
 권장 후속 순서는 다음과 같습니다.
 
 1. 개인 `.env`와 local PostgreSQL 인증값을 맞춘 뒤 root `contextLoads()`를 포함한 전체 회귀 테스트 완료
-2. matching 신청·proposal REST API
-3. frontend proposal UI와 인원 미달 modal
-4. WebSocket STOMP 상태 동기화
+2. frontend proposal UI, 인원 미달 modal과 `MATCHED` 이후 current group 조회 연결
+3. WebSocket STOMP 상태 동기화
 
 현재 브랜치에서 먼저 할 일은 다음과 같습니다.
 
@@ -725,6 +726,7 @@ Postman/curl에서 현재 matching engine을 직접 호출할 수 있도록 다�
 | `GET` | `/api/matching/proposals/me/active` | 아직 만료되지 않은 본인의 최신 `SENT` proposal 조회 |
 | `POST` | `/api/matching/proposals/{proposalId}/responses` | 최초 또는 인원 미달 proposal 응답 |
 | `GET` | `/api/matching/me/restrictions` | 현재 cooldown과 누적 penalty score 조회 |
+| `GET` | `/api/matching/groups/me/current` | 본인의 현재 확정 group과 참여자 목록 조회 |
 
 Swagger/OpenAPI, frontend, WebSocket은 이 단계에 추가하지 않았습니다. proposal 생성 알림도 아직 없으므로 client는 active proposal API를 polling해야 합니다.
 
@@ -1641,3 +1643,187 @@ PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat build
 - application event는 process 내부 신호이므로 commit 직후 process가 종료되는 극단적인 경우 event 자체를 영속 재처리하지 못합니다. 남은 `WAITING` pool은 기존 Scheduler fallback이 보정합니다.
 - Scheduler가 기본 비활성인 환경에서 commit 직후 process 장애까지 발생하면 자동 fallback도 실행되지 않습니다. 운영 환경에서는 시간 기반 timeout·복구를 위해 Scheduler 활성화가 필요합니다.
 - block/cooldown 최종 검증 직후 다른 transaction이 안전 상태를 변경하는 기존 race 한계는 이번 범위에서 바꾸지 않았습니다.
+
+## 27. 확정 group 조회와 frontend 최종 결과 계약
+
+### 27.1 책임 분리
+
+| 구성 요소 | 책임 |
+| --- | --- |
+| `MatchingController` | `access_token` cookie에서 인증 회원 ID 식별, query service 호출, `ApiResponse` 반환 |
+| `MatchGroupQueryService` | active group 단일성, 참여자 수와 본인 포함 여부 검증, response DTO 구성 |
+| `MatchGroupRepository` | `match_group_members.member_id`를 기준으로 active group 조회 |
+| `MatchGroupMemberRepository` | 같은 group의 active 참여자와 `members` 공개 필드를 한 번의 join query로 조회 |
+| `MatchGroupResponse` | group 결과 계약 |
+| `MatchGroupMemberResponse` | 참여자 최소 공개 계약 |
+
+기존 `MatchingQueryService`는 pool, proposal, restriction 조회를 담당합니다. 최종 group과 참여자 aggregate 조회는 별도 `MatchGroupQueryService`로 분리해 기존 책임을 넓히지 않았습니다. Entity는 Controller 응답으로 직접 반환하지 않습니다.
+
+### 27.2 `MATCHED` 이후 조회 흐름
+
+```text
+proposal action 응답의 attemptStatus == CONFIRMED
+또는 pool status == MATCHED
+→ frontend가 GET /api/matching/groups/me/current 호출
+→ access_token에서 memberId 식별
+→ 회원이 참여한 CONFIRMED/IN_PROGRESS group 조회
+→ group 참여자와 공개 프로필을 일괄 조회
+→ 최종 group DTO 수신
+→ MatchingResultPage 또는 후속 MatchRoomPage 상태 구성
+```
+
+proposal 응답에 `groupId`를 추가하지 않습니다. frontend는 `MATCHED` 또는 `CONFIRMED` 상태를 확인한 뒤 독립적인 current group API를 기준 계약으로 사용합니다.
+
+### 27.3 HTTP 계약
+
+```http
+GET /api/matching/groups/me/current
+Cookie: access_token=<ACCESS_TOKEN>
+```
+
+`memberId`나 `groupId`를 path, query parameter, request body로 받지 않습니다. 다른 회원이나 임의 group을 직접 지정하는 조회 API도 제공하지 않습니다.
+
+성공 응답 예:
+
+```json
+{
+  "success": true,
+  "data": {
+    "groupId": 10,
+    "festivalId": 1,
+    "status": "CONFIRMED",
+    "confirmedMemberCount": 2,
+    "confirmedAt": "2026-07-27T12:30:00+09:00",
+    "members": [
+      {
+        "memberId": 1,
+        "nickname": "member-a",
+        "profileImageUrl": null
+      },
+      {
+        "memberId": 2,
+        "nickname": "member-b",
+        "profileImageUrl": "https://example.com/member-b.png"
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+현재 group이 없으면 이력 부재를 오류로 보지 않고 다음처럼 반환합니다.
+
+```json
+{"success":true,"data":null,"error":null}
+```
+
+HTTP status는 `200 OK`입니다. 인증 cookie가 없거나 유효하지 않으면 기존 정책대로 `401 UNAUTHORIZED`입니다.
+
+### 27.4 active group과 참여자 판정
+
+group 상태:
+
+```text
+CONFIRMED
+IN_PROGRESS
+```
+
+group member 상태:
+
+```text
+JOINED
+ARRIVAL_TIME_SELECTED
+ARRIVED
+```
+
+`COMPLETED`, `CANCELLED` group과 `CANCELLED`, `NO_SHOW`, `LEFT` member 이력은 current 결과에서 제외합니다. 현재 schema의 `uq_match_group_members_member_active` partial unique index가 한 회원의 active group member 중복을 차단합니다. Service도 조회 결과가 두 건 이상이면 조용히 하나를 선택하지 않고 `409 MATCHING_CONFLICT`로 처리합니다.
+
+참여자는 `match_group_members.id ASC`로 정렬합니다. 이 순서는 입력이나 JPA collection 순서와 무관하게 결정적입니다. `confirmedMemberCount`는 실제 응답 `members.size()`로 구성하되, DB의 `match_groups.confirmed_member_count`와 다르거나 로그인 회원이 목록에 없으면 데이터 정합성 오류로 응답을 중단합니다.
+
+### 27.5 참여자 공개 범위
+
+공개 필드는 다음 세 가지뿐입니다.
+
+- `memberId`
+- `nickname`
+- `profileImageUrl`
+
+`profileImageUrl`은 `members.profile_image_url` 값이 없거나 blank이면 `null`입니다. private Object Storage의 `profile_image_object_key`는 이번 API에서 노출하지 않으며, 다른 참여자의 private object를 중계하는 별도 권한 API도 이번 범위에 추가하지 않았습니다.
+
+이메일, OAuth 식별자, 전화번호, 성별, 연령대, 여행 스타일, 자기소개, 체크인 위치, GPS, penalty, cooldown은 반환하지 않습니다.
+
+### 27.6 조회 성능과 정합성
+
+active group 조회 1회와 참여자/profile join 조회 1회를 사용합니다. 참여자별 `Member` lazy loading을 반복하지 않아 N+1 query가 발생하지 않습니다.
+
+이번 조회는 기존 `match_groups.attempt_id` unique constraint와 group member unique/partial unique index를 그대로 사용합니다. 신규 migration은 추가하지 않았습니다.
+
+### 27.7 테스트와 build 결과
+
+실행 환경은 Windows Java 17, Docker Desktop, `pgvector/pgvector:pg16` Testcontainers입니다.
+
+focused 단위/Controller:
+
+```bash
+gradlew.bat test \
+  --tests com.survey.meetorsolo.domain.matching.controller.MatchingControllerTest \
+  --tests com.survey.meetorsolo.domain.matching.service.MatchGroupQueryServiceTest
+```
+
+- 16건 통과, `BUILD SUCCESSFUL` 17초
+
+PostgreSQL focused:
+
+```bash
+gradlew.bat test \
+  --tests com.survey.meetorsolo.domain.matching.controller.MatchingRestApiIntegrationTest \
+  --tests com.survey.meetorsolo.domain.matching.service.MatchProposalResponseServiceIntegrationTest \
+  --rerun-tasks
+```
+
+- 49건 통과, `BUILD SUCCESSFUL` 51초
+- 목표 인원 확정과 round 2 최소 인원 확정 후 참여자별 동일 group 조회
+- 동일 members 목록, 결정적 정렬, profile null/URL 매핑
+- 비참여자와 `COMPLETED`/`CANCELLED` group의 `data:null`
+- 중복 proposal 응답 후 단일 group과 `attempt_id` unique 결과
+- 마지막 두 회원 동시 수락 후 동일 group
+- ACCEPT/timeout race에서 최종 `CONFIRMED`인 경우에만 group 노출
+
+matching 전체:
+
+```bash
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> gradlew.bat test \
+  --tests "com.survey.meetorsolo.domain.matching.*" \
+  --rerun-tasks
+```
+
+- 190건 통과, `BUILD SUCCESSFUL` 1분 33초
+
+backend 전체:
+
+```bash
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> gradlew.bat test --rerun-tasks
+```
+
+- 개인 `.env`의 dev SSH tunnel이 없는 첫 실행은 기존 `contextLoads()` 1건만 실패하고 나머지 228건 통과
+- 격리된 일회성 PostgreSQL을 사용한 최종 실행 229건 통과
+- 최종 `BUILD SUCCESSFUL` 2분 8초
+
+backend build:
+
+```bash
+PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> gradlew.bat build
+```
+
+- `bootJar`, `jar`, `assemble`, `check`, `build` 완료
+- `BUILD SUCCESSFUL` 9초
+
+### 27.8 제외 범위와 남은 제한사항
+
+- `domain/checkin/**`, `festival_checkins` schema와 GPS 정책은 수정하지 않음
+- pool-entry trigger, `MatchingPoolEnteredEvent`, handler와 orchestration은 수정하지 않음
+- `MatchingScheduler`, `MatchProposalTimeoutScheduler`와 기존 동시성/timeout 책임은 수정하지 않음
+- proposal response 상태 전이 transaction, penalty/cooldown 정책은 수정하지 않음
+- frontend 코드는 수정하지 않음
+- meeting point, 도착 상태 변경 API와 WebSocket STOMP는 구현하지 않음
+- 다른 참여자의 private Object Storage 업로드 이미지를 제공하는 권한 기반 image endpoint는 후속 범위

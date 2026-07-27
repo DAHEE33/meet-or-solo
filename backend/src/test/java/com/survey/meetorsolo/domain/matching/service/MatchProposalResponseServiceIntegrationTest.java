@@ -34,6 +34,7 @@ class MatchProposalResponseServiceIntegrationTest {
     @Container @ServiceConnection static final PostgreSQLContainer<?> POSTGRES=new PostgreSQLContainer<>(
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
     @Autowired MatchProposalCreationService creation; @Autowired MatchProposalResponseService service;
+    @Autowired MatchGroupQueryService groupQueries;
     @Autowired JdbcTemplate jdbc;
 
     @Test void 유효한_SENT_proposal을_수락하고_일부_수락이면_대기한다() {
@@ -239,6 +240,9 @@ class MatchProposalResponseServiceIntegrationTest {
         runConcurrent(()->service.respond(proposal(attempt,9110002,2),9110002,"START_WITH_CURRENT_MEMBERS",RESPONSE_AT.plusSeconds(2)),
                 ()->service.respond(proposal(attempt,9110006,2),9110006,"START_WITH_CURRENT_MEMBERS",RESPONSE_AT.plusSeconds(2)));
         assertThat(attemptStatus(attempt)).isEqualTo("CONFIRMED"); assertThat(count("match_groups","attempt_id",attempt)).isOne();
+        assertThat(groupQueries.currentGroup(9110002).groupId())
+                .isEqualTo(groupQueries.currentGroup(9110006).groupId());
+        assertThat(groupQueries.currentGroup(9110002).confirmedMemberCount()).isEqualTo(2);
     }
 
     @Test void round2_진행동의와_취소_race는_실패_하나로_종료한다() throws Exception {
@@ -303,6 +307,9 @@ class MatchProposalResponseServiceIntegrationTest {
         runConcurrent(()->service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT),
                 ()->service.respond(proposal(attempt,9110010),9110010,"ACCEPTED",RESPONSE_AT));
         assertThat(count("match_groups","attempt_id",attempt)).isOne(); assertThat(attemptStatus(attempt)).isEqualTo("CONFIRMED");
+        assertThat(groupQueries.currentGroup(9110002).groupId())
+                .isEqualTo(groupQueries.currentGroup(9110006).groupId())
+                .isEqualTo(groupQueries.currentGroup(9110010).groupId());
     }
 
     @Test void ACCEPTED와_TIMEOUT_race는_하나의_terminal결과만_남긴다() throws Exception {
@@ -311,6 +318,17 @@ class MatchProposalResponseServiceIntegrationTest {
                 ()->service.timeoutAttempt(attempt,NOW.plusSeconds(30)));
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
         assertThat(attemptStatus(attempt)).isIn("WAITING_RESPONSES","FAILED");
+        if ("WAITING_RESPONSES".equals(attemptStatus(attempt))) {
+            service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",NOW.plusSeconds(29));
+        }
+        if ("CONFIRMED".equals(attemptStatus(attempt))) {
+            assertThat(groupQueries.currentGroup(9110002).groupId())
+                    .isEqualTo(groupQueries.currentGroup(9110006).groupId());
+        } else {
+            assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
+            assertThat(groupQueries.currentGroup(9110002)).isNull();
+            assertThat(groupQueries.currentGroup(9110006)).isNull();
+        }
     }
 
     @Test void 같은_proposal의_ACCEPTED와_REJECTED_race는_응답_한건만_남긴다() throws Exception {

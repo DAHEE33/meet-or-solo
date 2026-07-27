@@ -131,6 +131,83 @@ class MatchingRestApiIntegrationTest {
                         .content("{\"action\":\"CANCEL_CURRENT_MEMBERS\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("MATCHING_CONFLICT"));
+
+        Long groupId = jdbc.queryForObject(
+                "SELECT id FROM match_groups WHERE attempt_id = 9130001",
+                Long.class
+        );
+        for (long memberId : new long[]{9_110_001L, 9_110_002L}) {
+            mockMvc.perform(get("/api/matching/groups/me/current")
+                            .cookie(cookie(memberId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.groupId").value(groupId))
+                    .andExpect(jsonPath("$.data.confirmedMemberCount").value(2))
+                    .andExpect(jsonPath("$.data.members.length()").value(2))
+                    .andExpect(jsonPath("$.data.members[0].memberId").value(9_110_001))
+                    .andExpect(jsonPath("$.data.members[1].memberId").value(9_110_002));
+        }
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_006L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void CONFIRMED_group은_참여자에게만_동일한_최종_계약으로_노출된다() throws Exception {
+        jdbc.update("""
+                UPDATE members
+                SET profile_image_url = CASE
+                    WHEN id = 9110001 THEN NULL
+                    ELSE 'https://example.com/member-2.png'
+                END
+                WHERE id IN (9110001, 9110002)
+                """);
+        insertGroup("CONFIRMED");
+
+        for (long memberId : new long[]{9_110_001L, 9_110_002L}) {
+            mockMvc.perform(get("/api/matching/groups/me/current")
+                            .cookie(cookie(memberId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data.groupId").value(9_170_001))
+                    .andExpect(jsonPath("$.data.festivalId").value(9_100_001))
+                    .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                    .andExpect(jsonPath("$.data.confirmedMemberCount").value(2))
+                    .andExpect(jsonPath("$.data.confirmedAt")
+                            .value("2026-07-17T15:00:10+09:00"))
+                    .andExpect(jsonPath("$.data.members[0].memberId").value(9_110_001))
+                    .andExpect(jsonPath("$.data.members[0].nickname")
+                            .value("fixture9110001"))
+                    .andExpect(jsonPath("$.data.members[0].profileImageUrl").doesNotExist())
+                    .andExpect(jsonPath("$.data.members[1].memberId").value(9_110_002))
+                    .andExpect(jsonPath("$.data.members[1].profileImageUrl")
+                            .value("https://example.com/member-2.png"));
+        }
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_006L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void COMPLETED_group은_current_API에서_제외한다() throws Exception {
+        insertGroup("COMPLETED");
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void CANCELLED_group은_current_API에서_제외한다() throws Exception {
+        insertGroup("CANCELLED");
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test
@@ -148,6 +225,22 @@ class MatchingRestApiIntegrationTest {
                 "access_token",
                 jwtProvider.createAccessToken(memberId, "ACTIVE")
         );
+    }
+
+    private void insertGroup(String status) {
+        jdbc.update("""
+                INSERT INTO match_groups(
+                    id, attempt_id, festival_id, status, confirmed_member_count,
+                    confirmed_at, created_at, updated_at
+                ) VALUES (9170001, 9130001, 9100001, ?, 2, ?, ?, ?)
+                """, status, NOW.plusSeconds(10), NOW.plusSeconds(10), NOW.plusSeconds(10));
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    id, group_id, member_id, status, created_at, updated_at
+                ) VALUES
+                    (9180002, 9170001, 9110002, 'JOINED', ?, ?),
+                    (9180001, 9170001, 9110001, 'JOINED', ?, ?)
+                """, NOW, NOW, NOW, NOW);
     }
 
     @TestConfiguration
