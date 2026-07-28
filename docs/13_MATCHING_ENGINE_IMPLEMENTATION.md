@@ -398,11 +398,12 @@ TOCTOU는 “검사한 시점(time of check)”과 “사용한 시점(time of u
 | 단계 | 경계 | 이 경계를 사용한 이유 |
 | --- | --- | --- |
 | cleanup | 짧은 `@Transactional` | 조건부 bulk update 원자성 |
-| claim | 짧은 `@Transactional` | row lock을 오래 유지하지 않고 LOCKED 상태만 기록 |
-| batch read | read-only | style/block N+1 방지 batch 조회 |
+| pool-entry claim | 짧은 `REQUIRES_NEW` | AFTER_COMMIT 문맥과 분리하고 LOCKED/token을 proposal 생성 전에 commit |
+| Scheduler claim | 짧은 `@Transactional` | row lock을 오래 유지하지 않고 LOCKED 상태만 기록 |
+| batch read | read-only `REQUIRES_NEW` | commit된 token 후보를 새 persistence context에서 batch 조회 |
 | scoring/grouping | transaction 없음 | CPU 계산 중 DB row lock을 유지하지 않음 |
 | create | 그룹별 `REQUIRES_NEW` | 그룹 단위 원자성과 실패 격리 |
-| release | `@Transactional` | 같은 token의 남은 LOCKED 일괄 반환 |
+| release | `REQUIRES_NEW` | 같은 token의 남은 LOCKED를 호출 transaction과 무관하게 일괄 반환 |
 
 `REQUIRES_NEW`는 호출한 쪽에 transaction이 있더라도 새 transaction을 시작합니다. `MatchProposalCreationService`가 orchestration과 별도 Spring bean이므로 Spring proxy를 통해 이 설정이 적용됩니다. 한 그룹의 insert가 실패해도 해당 그룹만 rollback되고 다른 그룹 생성은 계속됩니다.
 
@@ -424,16 +425,16 @@ sequenceDiagram
     O->>C: cleanup(now, staleBefore)
     C->>DB: short transaction
     O->>Q: claim(now, batchSize, token)
-    Q->>DB: FOR UPDATE SKIP LOCKED / commit
+    Q->>DB: FOR UPDATE SKIP LOCKED / 독립 commit
     O->>R: read(token)
-    R->>DB: batch read
+    R->>DB: REQUIRES_NEW read-only batch read
     O->>G: score and compose
     loop each group
         O->>P: createInitial(group, token, now)
         P->>DB: REQUIRES_NEW / final lock and insert
     end
     O->>L: finally release(token, now)
-    L->>DB: short transaction
+    L->>DB: REQUIRES_NEW / short transaction
 ```
 
 ## 15. 실패 및 복구
@@ -1509,6 +1510,18 @@ event는 `MatchPoolEntryService`가 저장된 pool의 실제 ID를 얻은 뒤 pu
 
 원본 transaction이 rollback되면 handler는 실행되지 않습니다. 별도 thread와 in-memory queue 유실 문제를 만들지 않고 기존 단계별 transaction 경계를 그대로 사용하기 위해 동기 listener를 선택했습니다. handler는 orchestration 예외를 내부에서 catch하고 `poolId`, `memberId`, `festivalId`를 구조화된 로그 인자로 기록합니다. 따라서 pool 신청 commit 이후 trigger가 실패해도 이미 성공한 신청 응답을 실패로 되돌리지 않습니다.
 
+`AFTER_COMMIT`은 원본 commit 완료를 뜻하지만 transaction synchronization 정리까지 끝났다는 뜻은 아닙니다. 이 시점에는 원본 EntityManager/JDBC resource가 현재 thread에 남아 있을 수 있으므로 후속 service의 기본 `REQUIRED`만으로는 실제 새 transaction을 보장할 수 없습니다. 따라서 pool-entry claim, token batch read, proposal 생성, 미사용 lock release는 각각 별도 Spring bean의 `REQUIRES_NEW` 경계로 실행합니다.
+
+```text
+pool 생성 transaction commit
+→ claim REQUIRES_NEW: WAITING → LOCKED/token commit
+→ batch read REQUIRES_NEW(readOnly): commit된 token 후보 조회
+→ proposal create REQUIRES_NEW: attempt/member/proposal + PROPOSED commit
+→ release REQUIRES_NEW: 남은 LOCKED를 WAITING/EXPIRED로 commit
+```
+
+orchestration 전체에는 transaction을 적용하지 않습니다. 그래야 claim의 logical lock이 proposal 생성 transaction에서 보이고, scoring/grouping 중 row lock이나 DB connection을 장시간 점유하지 않으며, proposal 실패 후 release도 독립적으로 복구할 수 있습니다.
+
 ### 26.3 requester pool 중심 claim
 
 `PoolEntryMatchPoolClaimService`와 `MatchPoolRepository.findPoolEntryClaimablePoolsForUpdate`를 trigger 전용 경로로 추가했습니다. 기존 `SchedulerMatchPoolClaimService`와 전역 batch query는 변경하지 않았습니다.
@@ -1643,6 +1656,32 @@ PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> ./gradlew.bat build
 - application event는 process 내부 신호이므로 commit 직후 process가 종료되는 극단적인 경우 event 자체를 영속 재처리하지 못합니다. 남은 `WAITING` pool은 기존 Scheduler fallback이 보정합니다.
 - Scheduler가 기본 비활성인 환경에서 commit 직후 process 장애까지 발생하면 자동 fallback도 실행되지 않습니다. 운영 환경에서는 시간 기반 timeout·복구를 위해 Scheduler 활성화가 필요합니다.
 - block/cooldown 최종 검증 직후 다른 transaction이 안전 상태를 변경하는 기존 race 한계는 이번 범위에서 바꾸지 않았습니다.
+
+### 26.10 AFTER_COMMIT transaction 버그 수정 검증
+
+기존 구현은 proposal 생성만 `REQUIRES_NEW`였고 pool-entry claim, batch read, release는 기본 `REQUIRED`였습니다. 실제 dev 로그에서 release modifying query의 JPA flush가 `TransactionRequiredException: no transaction is in progress`로 실패했고, claim도 proposal 생성 전에 별도 commit되지 않아 두 pool이 `WAITING`에 머물며 attempt/proposal이 생성되지 않았습니다.
+
+수정 후 다음 자동 검증은 실제 dev DB가 아니라 모두 `pgvector/pgvector:pg16` PostgreSQL Testcontainers에서 실행했습니다.
+
+- focused event/orchestration/release 20건: failures 0, errors 0, `BUILD SUCCESSFUL` 59초
+- matching 전체 192건: failures 0, errors 0, `BUILD SUCCESSFUL` 1분 47초
+- backend 전체 231건: failures 0, errors 0, `BUILD SUCCESSFUL` 1분 56초
+- backend build: `BUILD SUCCESSFUL` 4초
+
+실제 `MatchPoolEntryService.enter()`를 외부 `TransactionTemplate`에서 호출해 commit한 통합 테스트는 첫 회원 신청 후 `WAITING`, attempt/proposal 0건, lock 정보 없음과 두 번째 회원 신청 commit 직후 양쪽 `PROPOSED`, `POOL_ENTRY` attempt 1건, 회원별 proposal 1건을 검증합니다. 별도 transaction 검증은 claim의 `LOCKED/lockToken`과 release 결과가 외부 transaction rollback과 무관하게 commit되는지 확인합니다.
+
+기존 proposal insert 실패 test trigger 검증은 attempt/member/proposal/pool 전이의 부분 저장이 없고 동일 token의 pool이 `WAITING`으로 release되며 stale lock이 남지 않는 것을 유지합니다. 두 pool-entry trigger 동시 실행과 trigger/Scheduler 동시 실행에서도 attempt/member/proposal 단일 생성을 유지합니다.
+
+dev DB 수동 재검증은 회원 `2`, `27`과 축제 `144`를 사용했습니다. 두 회원 모두 유효한 `ACTIVE` 체크인과 희망 인원 2명 조건이었고, 서로 다른 일반/시크릿 브라우저에서 확인했습니다.
+
+- 첫 회원 신청 후 `WAITING`
+- 두 번째 회원 신청 후 양쪽 proposal
+- 양쪽 수락 후 동일한 2인 `MATCHED` 화면
+- 참여자 `테스트`, `dev카테` 표시
+- 확정 화면 캡처 확인
+- `TransactionRequiredException` 재발 없음
+
+이 문제는 WebSocket 전달이나 frontend polling 문제가 아니라 Spring `AFTER_COMMIT` 이후 backend DB transaction 경계 문제입니다.
 
 ## 27. 확정 group 조회와 frontend 최종 결과 계약
 

@@ -15,6 +15,7 @@ import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -26,7 +27,7 @@ public class MatchingBatchReader {
                                JdbcTemplate jdbcTemplate) {
         this.poolRepository = poolRepository; this.styleRepository = styleRepository; this.jdbcTemplate = jdbcTemplate;
     }
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
     public MatchingBatch read(String lockToken) {
         List<MatchPool> pools = poolRepository.findAllByLockTokenOrderByEnteredAtAscIdAsc(lockToken);
         List<Long> memberIds = pools.stream().map(MatchPool::getMemberId).toList();
