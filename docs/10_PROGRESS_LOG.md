@@ -882,3 +882,25 @@ dev 서버 기준:
 - `V1__init.sql`은 불필요하게 수정하지 않는다.
 - 실제 비밀번호, API Key, Secret, 서버 IP, 도메인은 하드코딩하지 않는다.
 - 사용자가 문서만 요청했다면 backend, frontend, DB migration, nginx, docker-compose, GitHub Actions, test 파일을 수정하지 않는다.
+
+### [10-매칭 11차] frontend matching REST 연동과 서버 상태 복원
+
+상태: 코드 작성 및 frontend focused 검증 완료, 기존 nickname 회귀 테스트 실패 확인
+
+- 사용자가 수정한 `MatchingConditionPage`의 모바일 레이아웃과 상태별 카드 디자인을 유지하고 demo 상태 전환을 제거
+- pool 신청/current pool, active proposal 조회·응답, restriction, current group REST API를 `matchingApi`로 연결
+- current pool, active proposal, current group의 `200 OK`, `data:null`을 정상 조회 결과로 처리
+- `ApiClientError`에 HTTP status와 backend `error.code`, `message`, `fields`를 보존하고 기존 `credentials: 'include'`, 401 redirect를 유지
+- current group, active proposal, pool, cooldown 순서로 새로고침 후 화면 상태를 복원
+- round 1은 `ACCEPT`/`REJECT`, round 2는 `ACCEPT`/`CANCEL_CURRENT_MEMBERS`만 전송
+- active 상태 2초, cooldown 5초 polling과 오류 backoff, visibility 중단/복귀 즉시 조회, 중복 조회 방지, abort cleanup 적용
+- `festivalId`는 `location.state.festivalId`, 개발 환경의 `VITE_DEV_FESTIVAL_ID` 순서로만 결정하며 값이 없으면 신청 비활성화
+- `/matching/results` 링크와 임시 매칭 기록 숫자를 제거하고 `/matching`, `준비 중`으로 변경
+- `matchSession.ts`, demo 상태 chip/timer, candidate/matchRate mock type 제거
+- 신규 의존성 및 `package-lock.json` semantic 변경 없음
+- `npx tsc --noEmit` 성공
+- 이번 작업 focused test 25건 성공
+- 전체 `npm test`는 37건 중 36건 성공, 기존 `src/utils/nickname.test.ts`의 길이 fixture 1건 실패
+- Windows 의존성 환경의 `npm run build` 성공, 1,616 modules transformed
+- WSL 명령은 기존 `node_modules`에 `@rollup/rollup-linux-x64-gnu`가 없어 Vitest/Vite 시작 전에 실패
+- backend, check-in, meeting point, WebSocket 코드는 수정하지 않음

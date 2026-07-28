@@ -11,7 +11,7 @@
 - Spring transaction과 PostgreSQL row lock을 처음 접하는 참여자
 - 구현 경험을 기술 블로그로 정리하려는 참여자
 
-현재 구현 기준은 `feature/wbs-10-matching-group-query-api` 작업 트리이며, 기준 HEAD는 `7e2730f02fd77a2dd3fa2519f53aa112f73b8e15`입니다. 이 HEAD 이후 working tree의 확정 group 조회 운영 코드와 테스트까지 포함해 설명합니다.
+현재 구현 기준은 `feature/wbs-10-matching-frontend-integration` 작업 트리이며, 기준 HEAD는 `fb50c98d62c92ea51073ad195faec3ef33a9b238`입니다. 이 HEAD 이후 working tree의 확정 group 조회 frontend REST 연동 코드와 테스트까지 포함해 설명합니다.
 
 관련 문서의 역할은 다음과 같이 구분합니다.
 
@@ -1827,3 +1827,88 @@ PROFILE_ENCRYPTION_KEY=<TEST_BASE64_KEY> gradlew.bat build
 - frontend 코드는 수정하지 않음
 - meeting point, 도착 상태 변경 API와 WebSocket STOMP는 구현하지 않음
 - 다른 참여자의 private Object Storage 업로드 이미지를 제공하는 권한 기반 image endpoint는 후속 범위
+
+## 28. frontend matching REST 연동
+
+### 28.1 API와 nullable 응답 계약
+
+`frontend/src/api/matching.ts`는 다음 API를 한 곳에서 호출합니다.
+
+- `POST /api/matching/pools`
+- `GET /api/matching/pools/me/current`
+- `GET /api/matching/proposals/me/active`
+- `POST /api/matching/proposals/{proposalId}/responses`
+- `GET /api/matching/me/restrictions`
+- `GET /api/matching/groups/me/current`
+
+current pool, active proposal, current group의 `200 OK`, `data:null`은 오류가 아니라 현재 데이터가 없는 정상 결과입니다. 공통 client의 기존 non-null 호출 계약은 유지하고, 조회 API만 `apiClientNullable`을 사용합니다. 모든 요청은 `credentials: 'include'`를 유지하며, `ApiClientError`는 HTTP status와 backend `error.code`, `message`, `fields`를 보존합니다. `401` login redirect도 기존 정책을 유지합니다.
+
+proposal action은 `ACCEPT`, `REJECT`, `CANCEL_CURRENT_MEMBERS` 세 값만 선언합니다. round 2의 “현재 인원으로 시작”은 `ACCEPT`, 취소는 `CANCEL_CURRENT_MEMBERS`를 전송합니다.
+
+### 28.2 새로고침 상태 복원 규칙
+
+단일 `/matching` route는 네 조회 결과로 화면 상태를 파생합니다.
+
+1. current group이 있으면 `MATCHED`
+2. active proposal이 있으면 `INITIAL_MATCH`와 `INSUFFICIENT_MEMBERS_CONFIRMATION`을 round 1/2 화면으로 구분
+3. current pool이 `WAITING` 또는 `LOCKED`이면 같은 탐색 화면 상태
+4. pool이 `PROPOSED` 또는 `MATCHED`지만 proposal/group이 아직 없으면 `RESPONSE_PENDING`
+5. pool이 `CANCELLED` 또는 `EXPIRED`이면 terminal 화면
+6. active 상태가 없고 restriction의 cooldown이 active이면 `COOLDOWN`
+7. 모두 없으면 `IDLE`
+
+이 규칙은 client timer로 서버 상태를 확정하지 않습니다. `useCountdown`은 서버의 `searchExpiresAt`, proposal `expiresAt`, cooldown `expiresAt` 표시만 담당하며 0이 되면 서버를 즉시 다시 조회합니다. `MATCHED` 화면은 current group의 `confirmedMemberCount`, `confirmedAt`, `members`를 사용하고 참여자에서는 `memberId`, `nickname`, `profileImageUrl`만 소비합니다.
+
+### 28.3 polling과 화면 보존
+
+`WAITING`, `LOCKED`, proposal, `RESPONSE_PENDING`은 2초, active cooldown은 5초 간격으로 polling합니다. 연속 network 오류는 2초부터 최대 30초까지 backoff하며 `ErrorCard`를 표시합니다. 동일 조회는 하나의 in-flight Promise로 합치고, mutation 중복 제출을 막습니다.
+
+document가 hidden이면 polling timer를 해제합니다. visible 복귀 시 즉시 조회하며, unmount 시 query/mutation `AbortController`와 timer/listener를 정리합니다. `MATCHED`, cooldown 없는 `CANCELLED`/`EXPIRED`, `IDLE`은 polling하지 않습니다.
+
+기존 `IdleForm`, `SearchingCard`, `ProposalCard`, `ResponsePendingCard`, `ConfirmedCard`, `CancelledCard`, `ErrorCard`와 coral/teal/ink/sand 색상, radius, shadow, 타이포그래피, 모바일 max-width 레이아웃은 유지했습니다. demo chip, client 상태 생성 timer, mock participant/session은 제거했습니다.
+
+### 28.4 festival/check-in 경계
+
+매칭 신청의 `festivalId`는 다음 순서로만 결정합니다.
+
+1. `location.state.festivalId`
+2. 개발 build에서만 `VITE_DEV_FESTIVAL_ID`
+3. 둘 다 없으면 신청 버튼 비활성화와 체크인 필요 안내
+
+운영 코드에 `festivalId=1`을 두지 않았습니다. 실제 festival 상세/체크인 화면이 `location.state`를 전달하는 연결과 check-in API는 후속 담당 범위입니다. 이번 작업에서 backend, `domain/checkin/**`, meeting point, WebSocket STOMP는 수정하거나 구현하지 않았습니다.
+
+### 28.5 frontend 검증 결과
+
+```bash
+npx tsc --noEmit
+```
+
+- 성공
+
+```bash
+npx vitest run \
+  src/api/apiClient.test.ts \
+  src/api/matching.test.ts \
+  src/hooks/useMatchingSession.test.ts \
+  src/pages/MatchingConditionPage.test.ts
+```
+
+- 4 files, 25 tests 통과
+- nullable 조회, error 보존, cookie/401/AbortError, proposal action, 상태 우선순위, polling 간격/backoff, festivalId 결정 검증
+
+```bash
+npm test
+```
+
+- 전체 37건 중 36건 통과
+- 기존 `src/utils/nickname.test.ts`의 “열두글자를넘는닉네임” fixture가 실제로 10자여서 길이 오류를 기대한 1건 실패
+- 이번 matching integration 테스트 25건은 모두 통과
+
+```bash
+npm run build
+```
+
+- Windows 설치 의존성 환경에서 성공, 1,616 modules transformed
+- WSL에서는 기존 `node_modules`에 Linux Rollup optional binary가 없어 Vitest/Vite 시작 전에 실패하며 소스 또는 TypeScript 오류는 아님
+
+신규 package 의존성이나 `package-lock.json` semantic 변경은 없습니다.
