@@ -1,72 +1,435 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import type { TravelStyle } from '../types';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
+import type { CurrentMatchGroup } from '../api/matching';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
-import Chip from '../components/common/Chip';
+import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
 
-const TRAVEL_STYLES: TravelStyle[] = ['느긋하게', '액티브', '맛집탐방', '사진위주', '문화답사'];
-const THEMES = ['한옥', '야시장', '사진', '카페', '역사', '야경', '시장', '산책'];
-const TIMES = ['지금 바로', '1시간 이내', '오늘 오후', '오늘 저녁'];
+function useCountdown(deadlineIso?: string | null) {
+  const [remaining, setRemaining] = useState(0);
+  useEffect(() => {
+    if (!deadlineIso) {
+      setRemaining(0);
+      return;
+    }
+    const tick = () => setRemaining(Math.max(0, Math.round((new Date(deadlineIso).getTime() - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [deadlineIso]);
+  return remaining;
+}
+
+const fmt = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function resolveFestivalId(
+  locationState: unknown,
+  isDevelopment = import.meta.env.DEV,
+  developmentFestivalId = import.meta.env.VITE_DEV_FESTIVAL_ID,
+): number | null {
+  if (locationState && typeof locationState === 'object' && 'festivalId' in locationState) {
+    const fromLocation = positiveInteger(locationState.festivalId);
+    if (fromLocation !== null) return fromLocation;
+  }
+  return isDevelopment ? positiveInteger(developmentFestivalId) : null;
+}
 
 export default function MatchingConditionPage() {
+  const location = useLocation();
   const navigate = useNavigate();
-  const [styles, setStyles] = useState<TravelStyle[]>(['느긋하게']);
-  const [themes, setThemes] = useState<string[]>(['한옥']);
-  const [time, setTime] = useState<string>('지금 바로');
+  const festivalId = resolveFestivalId(location.state);
+  const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
+  const [allowMinimum, setAllowMinimum] = useState(false);
+  const { state, isSubmitting, refresh, enterPool, respond } = useMatchingSession();
 
-  const toggle = <T,>(list: T[], v: T): T[] =>
-    list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+  const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
+  const proposalDeadline =
+    state.status === 'INITIAL_PROPOSAL' || state.status === 'INSUFFICIENT_MEMBERS_PROPOSAL'
+      ? state.proposal?.expiresAt
+      : undefined;
+  const cooldownDeadline = state.restriction?.cooldown.active ? state.restriction.cooldown.expiresAt : undefined;
+  const searchRemaining = useCountdown(searchDeadline);
+  const responseRemaining = useCountdown(proposalDeadline);
+  const cooldownRemaining = useCountdown(cooldownDeadline);
+
+  useEffect(() => {
+    const deadlineExpired =
+      (searchDeadline && searchRemaining === 0) ||
+      (proposalDeadline && responseRemaining === 0) ||
+      (cooldownDeadline && cooldownRemaining === 0);
+    if (deadlineExpired) void refresh();
+  }, [
+    cooldownDeadline,
+    cooldownRemaining,
+    proposalDeadline,
+    refresh,
+    responseRemaining,
+    searchDeadline,
+    searchRemaining,
+  ]);
+
+  const hasFestival = festivalId !== null;
+  const canApply = hasFestival && !isSubmitting;
+  const onStart = () => {
+    if (festivalId !== null) void enterPool(festivalId, groupSize, allowMinimum);
+  };
 
   return (
     <MobileLayout>
-      <PageHeader title="매칭 조건 설정" noBack />
-      <main className="flex flex-col gap-7 px-5 pb-10 pt-2">
-        <section className="flex flex-col gap-3">
-          <h2 className="text-[17px] font-bold text-ink">여행 스타일</h2>
-          <div className="flex flex-wrap gap-2">
-            {TRAVEL_STYLES.map((s) => (
-              <Chip
-                key={s}
-                label={s}
-                selected={styles.includes(s)}
-                onClick={() => setStyles((prev) => toggle(prev, s))}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <h2 className="text-[17px] font-bold text-ink">관심 테마</h2>
-          <div className="flex flex-wrap gap-2">
-            {THEMES.map((t) => (
-              <Chip
-                key={t}
-                label={t}
-                selected={themes.includes(t)}
-                onClick={() => setThemes((prev) => toggle(prev, t))}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <h2 className="text-[17px] font-bold text-ink">만남 시간</h2>
-          <div className="flex flex-wrap gap-2">
-            {TIMES.map((t) => (
-              <Chip key={t} label={t} selected={time === t} onClick={() => setTime(t)} />
-            ))}
-          </div>
-        </section>
-
-        <PrimaryButton
-          disabled={styles.length === 0}
-          onClick={() => navigate('/matching/results')}
-        >
-          이 조건으로 매칭 시작
-        </PrimaryButton>
+      <PageHeader title="자동 매칭" noBack />
+      <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
+        <MatchBody
+          status={state.status}
+          group={state.group}
+          groupSize={state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize}
+          allowMinimum={allowMinimum}
+          hasFestival={hasFestival}
+          canApply={canApply}
+          isSubmitting={isSubmitting}
+          searchRemaining={searchRemaining}
+          responseRemaining={responseRemaining}
+          cooldownRemaining={cooldownRemaining}
+          setGroupSize={setGroupSize}
+          setAllowMinimum={setAllowMinimum}
+          onStart={onStart}
+          onAccept={() => void respond('ACCEPT')}
+          onDecline={() => void respond('REJECT')}
+          onStartWithCurrent={() => void respond('ACCEPT')}
+          onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
+          onRetry={() => void refresh()}
+          onGoCheckIn={() => navigate('/check-in')}
+        />
       </main>
     </MobileLayout>
+  );
+}
+
+interface MatchBodyProps {
+  status: MatchingUiStatus;
+  group: CurrentMatchGroup | null;
+  groupSize: number;
+  allowMinimum: boolean;
+  hasFestival: boolean;
+  canApply: boolean;
+  isSubmitting: boolean;
+  searchRemaining: number;
+  responseRemaining: number;
+  cooldownRemaining: number;
+  setGroupSize: (size: 2 | 3 | 4) => void;
+  setAllowMinimum: (allow: boolean) => void;
+  onStart: () => void;
+  onAccept: () => void;
+  onDecline: () => void;
+  onStartWithCurrent: () => void;
+  onCancelProposal: () => void;
+  onRetry: () => void;
+  onGoCheckIn: () => void;
+}
+
+function MatchBody(props: MatchBodyProps) {
+  const { status } = props;
+  if (status === 'IDLE') {
+    return (
+      <IdleForm
+        groupSize={props.groupSize}
+        allowMinimum={props.allowMinimum}
+        hasFestival={props.hasFestival}
+        canApply={props.canApply}
+        setGroupSize={props.setGroupSize}
+        setAllowMinimum={props.setAllowMinimum}
+        onStart={props.onStart}
+        onGoCheckIn={props.onGoCheckIn}
+      />
+    );
+  }
+  if (status === 'WAITING' || status === 'LOCKED') {
+    return <SearchingCard locked={status === 'LOCKED'} remaining={props.searchRemaining} groupSize={props.groupSize} />;
+  }
+  if (status === 'INITIAL_PROPOSAL' || status === 'INSUFFICIENT_MEMBERS_PROPOSAL') {
+    const partial = status === 'INSUFFICIENT_MEMBERS_PROPOSAL';
+    return (
+      <ProposalCard
+        partial={partial}
+        groupSize={props.groupSize}
+        remaining={props.responseRemaining}
+        disabled={props.isSubmitting}
+        onAccept={partial ? props.onStartWithCurrent : props.onAccept}
+        onCancel={partial ? props.onCancelProposal : props.onDecline}
+      />
+    );
+  }
+  if (status === 'RESPONSE_PENDING') return <ResponsePendingCard />;
+  if (status === 'MATCHED' && props.group) return <ConfirmedCard group={props.group} />;
+  if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COOLDOWN') {
+    const reason =
+      status === 'COOLDOWN'
+        ? '잠시 후 다시 매칭을 신청할 수 있어요'
+        : status === 'EXPIRED'
+          ? '응답 시간이 만료됐어요'
+          : '매칭이 취소됐어요';
+    return <CancelledCard reason={reason} cooldownRemaining={props.cooldownRemaining} onRetry={props.onRetry} />;
+  }
+  if (status === 'ERROR') return <ErrorCard onRetry={props.onRetry} />;
+  return null;
+}
+
+// ── 1. 신청 전 ─────────────────────────────────────────
+function IdleForm({
+  groupSize,
+  allowMinimum,
+  hasFestival,
+  canApply,
+  setGroupSize,
+  setAllowMinimum,
+  onStart,
+  onGoCheckIn,
+}: {
+  groupSize: number;
+  allowMinimum: boolean;
+  hasFestival: boolean;
+  canApply: boolean;
+  setGroupSize: (size: 2 | 3 | 4) => void;
+  setAllowMinimum: (allow: boolean) => void;
+  onStart: () => void;
+  onGoCheckIn: () => void;
+}) {
+  return (
+    <>
+      {!hasFestival && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <p className="text-[13px] leading-relaxed text-ink/65">
+            매칭은 현재 축제/행사 현장에서만 가능해요. 먼저 체크인을 해주세요.
+          </p>
+          <button
+            type="button"
+            onClick={onGoCheckIn}
+            className="shrink-0 rounded-xl bg-ink px-3 py-2 text-[13px] font-semibold text-white"
+          >
+            체크인하기
+          </button>
+        </div>
+      )}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[17px] font-bold text-ink">희망 인원</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {([2, 3, 4] as const).map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => setGroupSize(size)}
+              className={`rounded-2xl border-2 py-3 text-[15px] font-bold transition-colors ${
+                groupSize === size ? 'border-coral bg-coral/10 text-coral' : 'border-line bg-white text-ink/60'
+              }`}
+            >
+              {size}명
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[14px] font-semibold text-ink">2명만 모여도 진행</span>
+          <span className="text-[12px] text-ink/50">목표 인원이 다 안 모여도 매칭을 시작해요</span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={allowMinimum}
+          onClick={() => setAllowMinimum(!allowMinimum)}
+          className={`h-7 w-12 shrink-0 rounded-full transition-colors ${allowMinimum ? 'bg-coral' : 'bg-line'}`}
+        >
+          <span
+            className={`block h-5 w-5 translate-y-1 rounded-full bg-white transition-transform ${
+              allowMinimum ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </section>
+      <PrimaryButton disabled={!canApply} onClick={onStart}>
+        자동 매칭 신청
+      </PrimaryButton>
+    </>
+  );
+}
+
+// ── 2·3. WAITING / LOCKED ─────────────────────────────
+function SearchingCard({ locked, remaining, groupSize }: { locked: boolean; remaining: number; groupSize: number }) {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className={`flex h-16 w-16 items-center justify-center rounded-full ${locked ? 'bg-ink/10' : 'bg-coral/10'}`}>
+        <Loader2 size={28} className={`animate-spin ${locked ? 'text-ink/50' : 'text-coral'}`} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">
+          {locked ? '함께할 분을 확정하고 있어요' : '주변 여행자를 찾고 있어요'}
+        </h2>
+        <p className="text-[13px] text-ink/55">
+          {locked ? '거의 다 됐어요, 잠시만 기다려주세요' : `목표 인원 ${groupSize}명 기준으로 탐색 중`}
+        </p>
+      </div>
+      {!locked && (
+        <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/60 tabular-nums">
+          남은 탐색 시간 {fmt(remaining)}
+        </span>
+      )}
+    </section>
+  );
+}
+
+// ── 4·5. 매칭 제안 (정원 / 미달) ───────────────────────
+function ProposalCard({
+  partial,
+  groupSize,
+  remaining,
+  disabled,
+  onAccept,
+  onCancel,
+}: {
+  partial: boolean;
+  groupSize: number;
+  remaining: number;
+  disabled: boolean;
+  onAccept: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex items-center gap-2">
+        <Users size={18} className="text-coral" />
+        <h2 className="text-[17px] font-bold text-ink">
+          {partial ? '인원이 조금 부족해요' : '매칭 상대를 찾았어요'}
+        </h2>
+      </div>
+      <p className="text-[13px] leading-relaxed text-ink/65">
+        {partial
+          ? '최소 인원 이상이 모였어요. 현재 인원으로 시작할까요?'
+          : `목표 인원 ${groupSize}명이 모였어요. 함께 떠나볼까요?`}
+      </p>
+      <div className="flex items-center justify-between rounded-xl bg-sand px-3 py-2">
+        <span className="text-[12px] text-ink/50">응답 제한시간</span>
+        <span className="text-[13px] font-bold text-ink tabular-nums">{fmt(remaining)}</span>
+      </div>
+      <div className="flex gap-2.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onCancel}
+          className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55 active:bg-sand disabled:opacity-50"
+        >
+          취소
+        </button>
+        <PrimaryButton className="flex-1" disabled={disabled} onClick={onAccept}>
+          {partial ? '현재 인원으로 시작' : '수락'}
+        </PrimaryButton>
+      </div>
+    </section>
+  );
+}
+
+// ── 6. 응답 대기 ───────────────────────────────────────
+function ResponsePendingCard() {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal/10">
+        <CheckCircle2 size={28} className="text-teal" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">내 응답을 보냈어요</h2>
+        <p className="text-[13px] text-ink/55">다른 참여자의 응답을 기다리고 있어요. 곧 확정돼요.</p>
+      </div>
+      <Loader2 size={20} className="animate-spin text-ink/30" />
+    </section>
+  );
+}
+
+// ── 7. 매칭 확정 ───────────────────────────────────────
+function ConfirmedCard({ group }: { group: CurrentMatchGroup }) {
+  const time = group.confirmedAt
+    ? new Date(group.confirmedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+    : '';
+  return (
+    <section className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 size={20} className="text-teal" />
+        <h2 className="text-[17px] font-bold text-ink">매칭이 확정됐어요</h2>
+      </div>
+      <p className="text-[13px] text-ink/55">
+        {group.confirmedMemberCount}명 확정 · {time}
+      </p>
+      <div className="flex flex-col gap-2.5">
+        {group.members.map((member) => (
+          <div key={member.memberId} className="flex items-center gap-3 rounded-2xl bg-sand p-3">
+            {member.profileImageUrl ? (
+              <img
+                src={member.profileImageUrl}
+                alt=""
+                className="h-11 w-11 rounded-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-coral/15 text-[14px] font-bold text-coral">
+                {member.nickname.slice(0, 1)}
+              </div>
+            )}
+            <span className="text-[14px] font-semibold text-ink">{member.nickname}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ── 8. CANCELLED / EXPIRED / cooldown ─────────────────
+function CancelledCard({
+  reason,
+  cooldownRemaining,
+  onRetry,
+}: {
+  reason: string;
+  cooldownRemaining: number;
+  onRetry: () => void;
+}) {
+  const inCooldown = cooldownRemaining > 0;
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ink/10">
+        <XCircle size={28} className="text-ink/45" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">매칭이 종료됐어요</h2>
+        <p className="text-[13px] text-ink/55">{reason}</p>
+      </div>
+      {inCooldown && (
+        <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/50 tabular-nums">
+          {fmt(cooldownRemaining)} 후 재신청 가능
+        </span>
+      )}
+      <PrimaryButton disabled={inCooldown} onClick={onRetry} className="mt-1">
+        다시 신청하기
+      </PrimaryButton>
+    </section>
+  );
+}
+
+// ── 9. 네트워크 오류 ───────────────────────────────────
+function ErrorCard({ onRetry }: { onRetry: () => void }) {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-coral/10">
+        <RefreshCw size={28} className="text-coral" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">연결이 잠시 끊겼어요</h2>
+        <p className="text-[13px] text-ink/55">진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.</p>
+      </div>
+      <PrimaryButton onClick={onRetry}>다시 시도</PrimaryButton>
+    </section>
   );
 }

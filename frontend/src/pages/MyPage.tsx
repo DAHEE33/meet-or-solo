@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil } from 'lucide-react';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import { checkInRecords } from '../data/mock/checkIns';
-import { matchCandidates } from '../data/mock/matchCandidates';
 import { tourSpots } from '../data/mock/tourSpots';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -87,11 +86,11 @@ export default function MyPage() {
         {/* 기록 요약 */}
         <section className="grid grid-cols-2 gap-3">
           <Link
-            to="/matching/results"
+            to="/matching"
             className="flex flex-col gap-1 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
           >
             <HeartHandshake size={18} className="text-coral" />
-            <span className="text-lg font-bold text-ink tabular-nums">{matchCandidates.length}</span>
+            <span className="text-sm font-semibold text-ink/55">준비 중</span>
             <span className="text-xs text-ink/50">매칭 기록</span>
           </Link>
           <Link
