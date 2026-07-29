@@ -2046,3 +2046,116 @@ active 2초, cooldown 5초 polling과 network backoff를 fallback으로 유지�
 - 이 문제는 완료된 기능이 아니며, 이번 WebSocket STOMP 작업에서는 수정하지 않고 별도 Frontend 후속 작업으로 관리한다.
 - WebSocket STOMP는 자유 채팅이 아닌 매칭 상태 동기화 전용이다.
 - Redis, Flyway, 자유 채팅 관련 변경은 이번 구현 범위에서 제외했다.
+
+## 30. terminal pool 재신청 화면 전환
+
+### 30.1 서버 상태와 로컬 retry form 책임 분리
+
+`GET /api/matching/pools/me/current`는 이력 보존을 위해 본인의 가장 최신 pool을
+반환합니다. 최신 pool이 `CANCELLED` 또는 `EXPIRED`이면 단순 REST refresh만으로는
+신청 전 화면인 `IDLE`이 되지 않습니다.
+
+frontend는 이 terminal 서버 상태를 `IDLE`로 변환하지 않습니다. PostgreSQL과 REST
+응답은 계속 최종 상태이며, 사용자가 `다시 신청하기`를 선택한 경우에만 같은
+terminal pool 위에 일시적인 로컬 retry form 모드를 표시합니다.
+
+```text
+server state: CANCELLED 또는 EXPIRED
++ retrySourcePoolId가 같은 terminal pool ID
+→ 신규 신청 조건 form 표시
+```
+
+이 모드는 browser memory에만 존재합니다. 새로고침이나 새 mount에서는 사라지며,
+기존 REST 복원 우선순위에 따라 최신 terminal 카드 또는 더 우선하는 서버 화면을
+다시 표시합니다.
+
+### 30.2 `retrySourcePoolId` 상태 전환
+
+retry form 진입은 다음 조건을 모두 만족할 때만 허용합니다.
+
+- 현재 UI 상태가 `CANCELLED` 또는 `EXPIRED`
+- current pool이 존재함
+- active cooldown이 아님
+- mutation 제출 중이 아님
+
+진입 시 현재 terminal pool의 ID를 `retrySourcePoolId`로 보관합니다. REST refresh,
+WebSocket 연결·재연결 또는 상태 변경 알림에 따른 refresh가 같은 terminal pool을
+반환하면 retry form을 유지합니다.
+
+다음 상태가 확인되면 retry 모드를 즉시 해제하고 서버 상태를 우선합니다.
+
+- current group 존재로 `MATCHED`
+- active proposal 존재
+- 새 pool의 `WAITING` 또는 `LOCKED`
+- pool `PROPOSED`/`MATCHED`에 따른 `RESPONSE_PENDING`
+- `retrySourcePoolId`와 다른 최신 pool
+- active cooldown
+
+따라서 다른 browser tab 또는 다른 요청이 새 pool을 만든 경우에도 오래된 terminal
+pool의 로컬 form이 최신 서버 상태를 가리지 않습니다. WebSocket payload를 화면
+상태로 직접 적용하지 않고 기존 REST refresh를 사용하는 계약과 polling 주기,
+network backoff fallback은 변경하지 않았습니다.
+
+### 30.3 재신청 조건과 `festivalId`
+
+retry form은 기존 신청 전 form을 재사용해 희망 인원 `2`/`3`/`4`와
+`allowMinimumTwo`를 다시 선택할 수 있게 합니다.
+
+재신청 `festivalId`는 다음 순서로 결정합니다.
+
+1. `location.state.festivalId`
+2. retry 대상 terminal pool의 `festivalId`
+3. 개발 build의 `VITE_DEV_FESTIVAL_ID`
+
+사용자가 `자동 매칭 신청`을 누르면 기존 `POST /api/matching/pools`를 호출합니다.
+성공 응답의 새 pool은 즉시 `WAITING` 또는 `LOCKED`로 반영하고 retry 모드를
+해제한 뒤 REST refresh로 최종 상태를 다시 확인합니다. POST 실패 시에는 terminal
+서버 상태, retry form과 사용자가 선택한 조건을 유지합니다. active cooldown은
+retry form 진입뿐 아니라 POST 제출 경계에서도 다시 차단합니다.
+
+### 30.4 이력 보존과 제외 범위
+
+재신청은 기존 terminal pool을 되살리거나 상태를 덮어쓰지 않고 신규 pool row를
+생성하는 기존 backend 계약을 사용합니다. 따라서 기존 pool, attempt, proposal,
+response와 group 이력은 그대로 보존되고 current pool 조회는 더 큰 ID의 신규
+pool을 반환합니다.
+
+이번 수정에서 다음 항목은 변경하지 않았습니다.
+
+- backend REST API와 matching service
+- PostgreSQL schema와 Flyway migration
+- Redis
+- WebSocket STOMP 인증, destination과 알림 payload
+- polling 주기와 fallback
+- 자유 채팅
+- frontend package 의존성
+
+### 30.5 자동 검증
+
+- frontend focused 5 files, 47 tests 통과
+- frontend 전체 8 files, 59 tests 통과
+- `npx tsc --noEmit` 성공
+- frontend production build 성공, 1,619 modules transformed
+- PWA service worker 생성 성공
+- `CANCELLED`/`EXPIRED` form 전환, 동일 terminal refresh 유지, 다른 pool·proposal·group 우선 검증
+- cooldown 진입·제출 차단, terminal pool `festivalId` 재사용과 옵션 전달 검증
+- POST 성공 후 `WAITING`/`LOCKED` 즉시 반영과 POST 실패 후 form·선택값 보존 검증
+- `MATCHED` 재신청 UI 미표시, 새 mount REST terminal 복원 검증
+- 기존 WebSocket refresh, `401`, network error와 `AbortError` 회귀 검증
+
+### 30.6 두 브라우저 dev 화면 수동 검증
+
+dev DB의 festival `144`, member `2`, `27`과 유효한 `ACTIVE` check-in을 사용했습니다.
+기존 matching 이력은 삭제하지 않고 유지했습니다.
+
+- `CANCELLED` terminal 화면 표시
+- `다시 신청하기` 클릭 후 신청 form 전환
+- 희망 인원과 최소 2명 진행 옵션 변경
+- DevTools fetch 없이 `자동 매칭 신청`으로 신규 pool 생성
+- 신청 직후 `WAITING` 화면 전환
+- 새로고침 후 새 pool 상태 복원
+- 두 브라우저 신청 후 proposal 전환
+- A 수락 후 A는 `RESPONSE_PENDING`, B는 proposal 유지
+- B 수락 후 양쪽 `MATCHED` 전환
+- `MATCHED`에서 재신청 UI 미표시
+- retry form 상태에서 새로고침 시 서버 terminal 카드 복원

@@ -31,6 +31,7 @@ function positiveInteger(value: unknown): number | null {
 
 export function resolveFestivalId(
   locationState: unknown,
+  terminalPoolFestivalId?: number | null,
   isDevelopment = import.meta.env.DEV,
   developmentFestivalId = import.meta.env.VITE_DEV_FESTIVAL_ID,
 ): number | null {
@@ -38,16 +39,45 @@ export function resolveFestivalId(
     const fromLocation = positiveInteger(locationState.festivalId);
     if (fromLocation !== null) return fromLocation;
   }
+  const fromTerminalPool = positiveInteger(terminalPoolFestivalId);
+  if (fromTerminalPool !== null) return fromTerminalPool;
   return isDevelopment ? positiveInteger(developmentFestivalId) : null;
+}
+
+export function submitPoolEntry(
+  enterPool: (
+    festivalId: number,
+    preferredGroupSize: 2 | 3 | 4,
+    allowMinimumTwo: boolean,
+  ) => Promise<boolean>,
+  festivalId: number | null,
+  preferredGroupSize: 2 | 3 | 4,
+  allowMinimumTwo: boolean,
+): Promise<boolean> | null {
+  return festivalId === null
+    ? null
+    : enterPool(festivalId, preferredGroupSize, allowMinimumTwo);
 }
 
 export default function MatchingConditionPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const festivalId = resolveFestivalId(location.state);
   const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
   const [allowMinimum, setAllowMinimum] = useState(false);
-  const { state, isSubmitting, refresh, enterPool, respond } = useMatchingSession();
+  const {
+    state,
+    isSubmitting,
+    isRetryFormOpen,
+    refresh,
+    beginRetry,
+    enterPool,
+    respond,
+  } = useMatchingSession();
+  const terminalPoolFestivalId =
+    isRetryFormOpen && (state.status === 'CANCELLED' || state.status === 'EXPIRED')
+      ? state.pool?.festivalId
+      : null;
+  const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
 
   const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
   const proposalDeadline =
@@ -76,9 +106,10 @@ export default function MatchingConditionPage() {
   ]);
 
   const hasFestival = festivalId !== null;
-  const canApply = hasFestival && !isSubmitting;
+  const cooldownActive = state.restriction?.cooldown.active === true;
+  const canApply = hasFestival && !isSubmitting && !cooldownActive;
   const onStart = () => {
-    if (festivalId !== null) void enterPool(festivalId, groupSize, allowMinimum);
+    void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
   };
 
   return (
@@ -87,8 +118,13 @@ export default function MatchingConditionPage() {
       <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
         <MatchBody
           status={state.status}
+          isRetryFormOpen={isRetryFormOpen}
           group={state.group}
-          groupSize={state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize}
+          groupSize={
+            isRetryFormOpen
+              ? groupSize
+              : state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize
+          }
           allowMinimum={allowMinimum}
           hasFestival={hasFestival}
           canApply={canApply}
@@ -96,6 +132,7 @@ export default function MatchingConditionPage() {
           searchRemaining={searchRemaining}
           responseRemaining={responseRemaining}
           cooldownRemaining={cooldownRemaining}
+          cooldownActive={cooldownActive}
           setGroupSize={setGroupSize}
           setAllowMinimum={setAllowMinimum}
           onStart={onStart}
@@ -103,7 +140,8 @@ export default function MatchingConditionPage() {
           onDecline={() => void respond('REJECT')}
           onStartWithCurrent={() => void respond('ACCEPT')}
           onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
-          onRetry={() => void refresh()}
+          onRetry={beginRetry}
+          onErrorRetry={() => void refresh()}
           onGoCheckIn={() => navigate('/check-in')}
         />
       </main>
@@ -113,6 +151,7 @@ export default function MatchingConditionPage() {
 
 interface MatchBodyProps {
   status: MatchingUiStatus;
+  isRetryFormOpen: boolean;
   group: CurrentMatchGroup | null;
   groupSize: number;
   allowMinimum: boolean;
@@ -122,6 +161,7 @@ interface MatchBodyProps {
   searchRemaining: number;
   responseRemaining: number;
   cooldownRemaining: number;
+  cooldownActive: boolean;
   setGroupSize: (size: 2 | 3 | 4) => void;
   setAllowMinimum: (allow: boolean) => void;
   onStart: () => void;
@@ -130,12 +170,15 @@ interface MatchBodyProps {
   onStartWithCurrent: () => void;
   onCancelProposal: () => void;
   onRetry: () => void;
+  onErrorRetry: () => void;
   onGoCheckIn: () => void;
 }
 
-function MatchBody(props: MatchBodyProps) {
+export function MatchBody(props: MatchBodyProps) {
   const { status } = props;
-  if (status === 'IDLE') {
+  const retryableTerminal =
+    props.isRetryFormOpen && (status === 'CANCELLED' || status === 'EXPIRED');
+  if (status === 'IDLE' || retryableTerminal) {
     return (
       <IdleForm
         groupSize={props.groupSize}
@@ -174,9 +217,16 @@ function MatchBody(props: MatchBodyProps) {
         : status === 'EXPIRED'
           ? '응답 시간이 만료됐어요'
           : '매칭이 취소됐어요';
-    return <CancelledCard reason={reason} cooldownRemaining={props.cooldownRemaining} onRetry={props.onRetry} />;
+    return (
+      <CancelledCard
+        reason={reason}
+        cooldownActive={props.cooldownActive}
+        cooldownRemaining={props.cooldownRemaining}
+        onRetry={props.onRetry}
+      />
+    );
   }
-  if (status === 'ERROR') return <ErrorCard onRetry={props.onRetry} />;
+  if (status === 'ERROR') return <ErrorCard onRetry={props.onErrorRetry} />;
   return null;
 }
 
@@ -389,14 +439,15 @@ function ConfirmedCard({ group }: { group: CurrentMatchGroup }) {
 // ── 8. CANCELLED / EXPIRED / cooldown ─────────────────
 function CancelledCard({
   reason,
+  cooldownActive,
   cooldownRemaining,
   onRetry,
 }: {
   reason: string;
+  cooldownActive: boolean;
   cooldownRemaining: number;
   onRetry: () => void;
 }) {
-  const inCooldown = cooldownRemaining > 0;
   return (
     <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ink/10">
@@ -406,12 +457,12 @@ function CancelledCard({
         <h2 className="text-[17px] font-bold text-ink">매칭이 종료됐어요</h2>
         <p className="text-[13px] text-ink/55">{reason}</p>
       </div>
-      {inCooldown && (
+      {cooldownActive && (
         <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/50 tabular-nums">
           {fmt(cooldownRemaining)} 후 재신청 가능
         </span>
       )}
-      <PrimaryButton disabled={inCooldown} onClick={onRetry} className="mt-1">
+      <PrimaryButton disabled={cooldownActive} onClick={onRetry} className="mt-1">
         다시 신청하기
       </PrimaryButton>
     </section>

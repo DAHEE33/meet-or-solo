@@ -1,18 +1,198 @@
-import { describe, expect, it } from 'vitest';
-import { resolveFestivalId } from './MatchingConditionPage';
+import { isValidElement, type ReactNode } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
+import { MatchBody, resolveFestivalId, submitPoolEntry } from './MatchingConditionPage';
 
 describe('resolveFestivalId', () => {
   it('location state 값을 개발 환경 fallback보다 우선한다', () => {
-    expect(resolveFestivalId({ festivalId: 7 }, true, '9')).toBe(7);
+    expect(resolveFestivalId({ festivalId: 7 }, 8, true, '9')).toBe(7);
   });
 
-  it('개발 환경에서만 VITE_DEV_FESTIVAL_ID를 fallback으로 사용한다', () => {
-    expect(resolveFestivalId(null, true, '9')).toBe(9);
-    expect(resolveFestivalId(null, false, '9')).toBeNull();
+  it('terminal pool festivalId를 개발 환경 fallback보다 우선한다', () => {
+    expect(resolveFestivalId(null, 8, true, '9')).toBe(8);
+  });
+
+  it('location과 terminal pool이 없을 때 개발 환경에서만 VITE_DEV_FESTIVAL_ID를 사용한다', () => {
+    expect(resolveFestivalId(null, null, true, '9')).toBe(9);
+    expect(resolveFestivalId(null, null, false, '9')).toBeNull();
   });
 
   it('유효한 festivalId가 없으면 null을 반환하여 신청을 막는다', () => {
-    expect(resolveFestivalId(undefined, true, '')).toBeNull();
-    expect(resolveFestivalId({ festivalId: 0 }, false, undefined)).toBeNull();
+    expect(resolveFestivalId(undefined, null, true, '')).toBeNull();
+    expect(resolveFestivalId({ festivalId: 0 }, null, false, undefined)).toBeNull();
+  });
+});
+
+const restriction = (active = false): MatchingRestriction => ({
+  penaltyScore: 0,
+  cooldown: {
+    active,
+    reason: active ? 'REJECTED_PROPOSAL' : null,
+    startsAt: active ? '2026-07-27T12:00:00' : null,
+    expiresAt: active ? '2026-07-27T12:05:00' : null,
+    remainingSeconds: active ? 300 : 0,
+  },
+});
+
+const group: CurrentMatchGroup = {
+  groupId: 30,
+  festivalId: 2,
+  status: 'CONFIRMED',
+  confirmedMemberCount: 2,
+  confirmedAt: '2026-07-27T12:00:20',
+  members: [
+    { memberId: 1, nickname: 'member-a', profileImageUrl: null },
+    { memberId: 2, nickname: 'member-b', profileImageUrl: null },
+  ],
+};
+
+function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Parameters<typeof MatchBody>[0] {
+  return {
+    status: 'CANCELLED',
+    isRetryFormOpen: false,
+    group: null,
+    groupSize: 3,
+    allowMinimum: false,
+    hasFestival: true,
+    canApply: true,
+    isSubmitting: false,
+    searchRemaining: 0,
+    responseRemaining: 0,
+    cooldownRemaining: 0,
+    cooldownActive: false,
+    setGroupSize: vi.fn(),
+    setAllowMinimum: vi.fn(),
+    onStart: vi.fn(),
+    onAccept: vi.fn(),
+    onDecline: vi.fn(),
+    onStartWithCurrent: vi.fn(),
+    onCancelProposal: vi.fn(),
+    onRetry: vi.fn(),
+    onErrorRetry: vi.fn(),
+    onGoCheckIn: vi.fn(),
+    ...overrides,
+  };
+}
+
+function renderNode(node: ReactNode): ReactNode {
+  if (Array.isArray(node)) return node.map(renderNode);
+  if (!isValidElement(node)) return node;
+  const element = node;
+  if (typeof element.type === 'function') {
+    const Component = element.type as (props: typeof element.props) => ReactNode;
+    return renderNode(Component(element.props));
+  }
+  return {
+    ...element,
+    props: {
+      ...element.props,
+      children: renderNode(element.props.children),
+    },
+  };
+}
+
+function elements(node: ReactNode): Array<{ type: unknown; props: Record<string, unknown> }> {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!isValidElement(node)) return [];
+  return [node as never, ...elements(node.props.children)];
+}
+
+function text(node: ReactNode): string {
+  if (Array.isArray(node)) return node.map(text).join('');
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (!isValidElement(node)) return '';
+  return text(node.props.children);
+}
+
+describe('terminal retry form', () => {
+  it.each(['CANCELLED', 'EXPIRED'] as const)('%s retry 모드에서 신청 form을 표시한다', (status) => {
+    const tree = renderNode(MatchBody(bodyProps({ status, isRetryFormOpen: true })));
+    expect(text(tree)).toContain('희망 인원');
+    expect(text(tree)).toContain('자동 매칭 신청');
+    expect(text(tree)).not.toContain('매칭이 종료됐어요');
+  });
+
+  it('terminal 카드의 다시 신청하기 클릭 handler를 호출한다', () => {
+    const onRetry = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({ onRetry })));
+    const retryButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
+    );
+    expect(retryButton).toBeDefined();
+    (retryButton?.props.onClick as () => void)();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('옵션 변경과 신청 handler를 선택값 기준으로 호출할 수 있다', () => {
+    const setGroupSize = vi.fn();
+    const setAllowMinimum = vi.fn();
+    const onStart = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      isRetryFormOpen: true,
+      groupSize: 3,
+      allowMinimum: false,
+      setGroupSize,
+      setAllowMinimum,
+      onStart,
+    })));
+    const all = elements(tree);
+    (all.find((element) => text(element as never) === '4명')?.props.onClick as () => void)();
+    (all.find((element) => element.props.role === 'switch')?.props.onClick as () => void)();
+    (all.find((element) => text(element as never) === '자동 매칭 신청')?.props.onClick as () => void)();
+    expect(setGroupSize).toHaveBeenCalledWith(4);
+    expect(setAllowMinimum).toHaveBeenCalledWith(true);
+    expect(onStart).toHaveBeenCalledOnce();
+  });
+
+  it('terminal pool festivalId와 변경한 옵션으로 enterPool을 호출한다', async () => {
+    const enterPool = vi.fn().mockResolvedValue(true);
+    const festivalId = resolveFestivalId(null, 8, false, undefined);
+    await submitPoolEntry(enterPool, festivalId, 4, true);
+    expect(enterPool).toHaveBeenCalledWith(8, 4, true);
+  });
+
+  it('festivalId가 없으면 pool 제출을 차단한다', () => {
+    const enterPool = vi.fn();
+    expect(submitPoolEntry(enterPool, null, 3, false)).toBeNull();
+    expect(enterPool).not.toHaveBeenCalled();
+  });
+
+  it('POST 실패 후 retry form의 선택값을 그대로 렌더링한다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'EXPIRED',
+      isRetryFormOpen: true,
+      groupSize: 4,
+      allowMinimum: true,
+    })));
+    const all = elements(tree);
+    const selectedSize = all.find(
+      (element) => element.type === 'button' && text(element as never) === '4명',
+    );
+    const minimumSwitch = all.find((element) => element.props.role === 'switch');
+    expect(selectedSize?.props.className).toContain('border-coral');
+    expect(minimumSwitch?.props['aria-checked']).toBe(true);
+  });
+
+  it('MATCHED에서는 retry form과 재신청 UI를 표시하지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'MATCHED',
+      isRetryFormOpen: true,
+      group,
+    })));
+    expect(text(tree)).toContain('매칭이 확정됐어요');
+    expect(text(tree)).not.toContain('자동 매칭 신청');
+    expect(text(tree)).not.toContain('다시 신청하기');
+  });
+
+  it('cooldown 카드에서는 retry button이 비활성화된다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COOLDOWN',
+      cooldownActive: true,
+      cooldownRemaining: restriction(true).cooldown.remainingSeconds,
+    })));
+    const retryButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
+    );
+    expect(retryButton?.props.disabled).toBe(true);
   });
 });
