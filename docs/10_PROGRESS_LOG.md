@@ -1,5 +1,36 @@
 # 진행 상태 기록
 
+## [10-매칭 13차] WebSocket STOMP 매칭 상태 변경 알림
+
+상태: 전체 자동 회귀 및 두 브라우저 dev 수동 검증 완료
+
+- PostgreSQL 최종 상태와 REST 상태 복원 계약을 유지하고 WebSocket을 즉시 변경 알림으로만 추가
+- `/ws` handshake에서 `access_token` HttpOnly cookie를 검증하고 회원 ID 기반 Principal 설정
+- client 구독을 본인 `/user/queue/matching`으로 제한하고 client STOMP `SEND` 거절
+- proposal 생성, 응답, 인원 미달 round 2, timeout, 실패와 group 확정 변경을 회원별로 알림
+- DB transaction 안에서는 application event만 발행하고 실제 STOMP 전송은 `AFTER_COMMIT`에서 수행
+- payload는 `MATCHING_STATE_CHANGED`, 변경 이유, 발생 시각만 제공하고 frontend는 기존 REST 조회로 복원
+- frontend는 현재 origin `/ws` 연결, 재접속 성공과 알림 수신 시 REST refresh 수행
+- 기존 2초/5초 polling과 오류 backoff를 WebSocket 장애 fallback으로 유지
+- local Vite `/ws -> http://localhost:8080`, `ws: true` proxy 추가
+- dev nginx `/ws` Upgrade proxy 활성화
+- Redis, 외부 broker, SockJS, 자유 채팅, client message endpoint, Flyway migration은 추가하지 않음
+- frontend TypeScript 검사 성공
+- WebSocket 포함 frontend focused 27건 통과
+- Windows Temurin Java 17에서 WebSocket focused backend 6건 통과
+- `pgvector/pgvector:pg16` Testcontainers matching 전체 193건 통과
+- root context test도 `pgvector/pgvector:pg16` Testcontainer로 격리한 backend 전체 237건 통과
+- backend build 성공
+- frontend 전체 39건, TypeScript 검사와 production build 성공
+- 두 브라우저 dev 수동 검증에서 양쪽 `/ws` 연결 및 `/user/queue/matching` 구독 성공
+- 양쪽 pool 진입 후 proposal 화면 전환 성공
+- A 수락 후 A는 `RESPONSE_PENDING`, B는 proposal 유지
+- B 수락 후 양쪽 `MATCHED` 화면 전환 성공 및 동일한 확정 group 확인
+- 새로고침 후 `MATCHED` 상태 복원 성공
+- WebSocket 재연결 후 REST 상태 복원 성공
+- terminal pool 상태에서 `다시 시도`가 신규 신청 화면으로 돌아가지 않는 문제는 완료된 기능이 아니며, 이번 WebSocket STOMP 작업에서 수정하지 않고 별도 Frontend 후속 작업으로 남김
+- WebSocket STOMP는 자유 채팅이 아닌 매칭 상태 동기화 전용이며 Redis, Flyway, 자유 채팅 관련 변경은 이번 구현 범위에서 제외
+
 ## [10-매칭 12차] pool 신청 AFTER_COMMIT 후속 transaction 경계 수정
 
 상태: 운영 코드 수정, PostgreSQL Testcontainers 통합·backend 전체 회귀·build 및 dev DB 수동 재검증 완료

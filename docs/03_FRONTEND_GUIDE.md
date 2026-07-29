@@ -357,6 +357,16 @@ Web Push 예정 용도:
 
 VAPID Key는 하드코딩하지 않습니다.
 
+## 매칭 WebSocket STOMP
+
+- matching 화면은 현재 origin의 `/ws`에 native WebSocket으로 연결합니다.
+- local Vite dev server는 `/ws`를 `http://localhost:8080`으로 `ws: true` proxy합니다.
+- 인증은 브라우저가 WebSocket handshake에 함께 보내는 `access_token` HttpOnly cookie를 사용합니다.
+- `/user/queue/matching`에서 상태 변경 알림을 받으면 기존 matching REST 조회를 다시 실행합니다.
+- 알림 payload를 최종 상태로 사용하지 않으며 PostgreSQL과 REST 응답을 기준으로 화면을 복원합니다.
+- 연결 실패와 재접속 중에는 기존 polling이 fallback으로 계속 동작합니다.
+- 재접속 성공 시 즉시 REST 상태를 다시 조회하고 unmount 시 STOMP 연결을 정리합니다.
+
 ## Kakao Maps
 
 Kakao Maps는 추후 다음 용도로 사용합니다.

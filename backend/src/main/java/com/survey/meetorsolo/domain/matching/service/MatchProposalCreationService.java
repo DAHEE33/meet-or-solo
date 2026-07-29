@@ -4,6 +4,7 @@ import com.survey.meetorsolo.domain.matching.entity.MatchAttempt;
 import com.survey.meetorsolo.domain.matching.entity.MatchAttemptMember;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import com.survey.meetorsolo.domain.matching.entity.MatchProposal;
+import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
 import com.survey.meetorsolo.domain.matching.group.MatchGroupCombination;
 import com.survey.meetorsolo.domain.matching.group.MatchingCandidate;
 import com.survey.meetorsolo.domain.matching.repository.MatchAttemptMemberRepository;
@@ -24,6 +25,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,13 +38,14 @@ public class MatchProposalCreationService {
     private final MatchProposalRepository proposalRepository;
     private final TravelStyleScorer scorer;
     private final JdbcTemplate jdbcTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MatchProposalCreationService(MatchPoolRepository poolRepository, MatchAttemptRepository attemptRepository,
             MatchAttemptMemberRepository memberRepository, MatchProposalRepository proposalRepository,
-            TravelStyleScorer scorer, JdbcTemplate jdbcTemplate) {
+            TravelStyleScorer scorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher) {
         this.poolRepository = poolRepository; this.attemptRepository = attemptRepository;
         this.memberRepository = memberRepository; this.proposalRepository = proposalRepository;
-        this.scorer = scorer; this.jdbcTemplate = jdbcTemplate;
+        this.scorer = scorer; this.jdbcTemplate = jdbcTemplate; this.eventPublisher = eventPublisher;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -90,6 +93,11 @@ public class MatchProposalCreationService {
         memberRepository.flush();
         proposalRepository.flush();
         poolRepository.flush();
+        eventPublisher.publishEvent(new MatchingStateChangedEvent(
+                candidates.stream().map(MatchingCandidate::memberId).toList(),
+                "MATCH_PROPOSED",
+                now
+        ));
         return new MatchProposalCreationResult(attempt.getId(), poolIds);
     }
 

@@ -41,6 +41,11 @@ Nginx
   └─ /ws     -> Spring Boot WebSocket STOMP endpoint
 ```
 
+매칭 화면은 PostgreSQL을 최종 상태 저장소로 사용합니다. REST는 최초 진입,
+새로고침과 WebSocket 재접속 후 상태를 복원하고, WebSocket STOMP는 인증된
+회원에게 상태 변경 사실만 알립니다. 알림 payload 자체로 화면 상태를 확정하지
+않고 수신 직후 REST를 다시 조회합니다.
+
 공개 포트 정책:
 
 - `80`: HTTPS redirect 및 Let's Encrypt challenge 용도

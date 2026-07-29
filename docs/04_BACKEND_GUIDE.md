@@ -297,6 +297,16 @@ WebSocket STOMP는 상태 동기화 전용입니다.
 
 자유 채팅 기능으로 확장하지 않습니다.
 
+현재 matching WebSocket 계약:
+
+- handshake endpoint는 `/ws`입니다.
+- `access_token` HttpOnly cookie를 검증해 회원 ID 기반 `Principal`을 설정합니다.
+- client는 본인의 `/user/queue/matching`만 구독할 수 있습니다.
+- client `SEND` endpoint는 제공하지 않습니다.
+- DB transaction에서는 내부 application event만 발행하고 실제 STOMP 알림은 `AFTER_COMMIT`에 전송합니다.
+- payload는 상태 변경 이유와 발생 시각만 포함하며, client는 수신 후 REST로 최종 상태를 복원합니다.
+- 단일 instance의 Spring simple broker를 사용하며 Redis나 외부 message broker를 추가하지 않습니다.
+
 Scheduler 예정 작업:
 
 - 매칭 탐색 시간 만료

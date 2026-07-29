@@ -132,6 +132,7 @@
 - `MatchRoomPage` 시스템 이벤트 타임라인 표시
 - API error/loading 상태 표시
 - WebSocket 이벤트 수신 시 화면 상태 변경은 mock 기반으로 검증
+- WebSocket 연결 성공·재접속 시 REST 상태 복원과 polling fallback 유지 검증
 
 프론트엔드 테스트는 사용자에게 보이는 상태 전환을 검증합니다.
 
@@ -142,6 +143,11 @@
 - 인원 미달 이벤트를 받으면 `InsufficientMembersModal`이 표시된다.
 - `MEMBER_ARRIVED` 이벤트를 mock으로 전달하면 `MatchRoomPage` 타임라인에 도착 이벤트가 표시된다.
 - API error 상태에서는 재시도 또는 안내 UI가 표시된다.
+- 잘못된 WebSocket payload는 무시하고 정상 상태 알림만 REST refresh를 유도한다.
+
+Backend WebSocket 테스트는 handshake cookie 인증, 본인 user destination 구독,
+client `SEND` 거절과 transaction `AFTER_COMMIT` 이후 알림 전달을 우선 검증합니다.
+rollback된 transaction의 알림이 전달되지 않는지도 함께 확인합니다.
 
 ## 6. 기능 테스트 / 시나리오 테스트
 
