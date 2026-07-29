@@ -43,13 +43,13 @@ class MatchPoolReleaseServiceIntegrationTest {
         assertState(9_120_002L, "PROPOSED", "mine");
     }
 
-    @Test void 외부_transaction이_rollback되면_release도_원복된다() {
+    @Test void 외부_transaction이_rollback되어도_release는_독립적으로_commit된다() {
         lock(9_120_002L, "mine");
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             assertThat(service.release("mine", NOW).releasedCount()).isOne();
             status.setRollbackOnly();
         });
-        assertState(9_120_002L, "LOCKED", "mine");
+        assertState(9_120_002L, "WAITING", null);
     }
     private void lock(long id, String token) { jdbc.update("UPDATE match_pools SET status='LOCKED',locked_at=?,lock_token=? WHERE id=?", NOW, token, id); }
     private void assertState(long id, String status, String token) {

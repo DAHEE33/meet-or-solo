@@ -21,6 +21,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -58,7 +60,13 @@ class PoolEntryMatchingOrchestrationServiceIntegrationTest {
     private MatchingOrchestrationService schedulerOrchestration;
 
     @Autowired
+    private PoolEntryMatchPoolClaimService poolEntryClaimService;
+
+    @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void setUp() {
@@ -108,6 +116,31 @@ class PoolEntryMatchingOrchestrationServiceIntegrationTest {
         )).isEqualTo("POOL_ENTRY");
         assertThat(count("match_attempt_members")).isEqualTo(2);
         assertThat(count("match_proposals")).isEqualTo(2);
+    }
+
+    @Test
+    void claim은_외부_transaction_rollback과_무관하게_LOCKED와_token을_commit한다() {
+        String lockToken = "pool-entry-independent-claim";
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            MatchPoolClaimResult result = poolEntryClaimService.claim(
+                    REQUESTER_POOL_ID,
+                    REQUESTER_MEMBER_ID,
+                    FESTIVAL_ID,
+                    NOW,
+                    20,
+                    lockToken
+            );
+            assertThat(result.poolIds()).containsExactly(REQUESTER_POOL_ID, CANDIDATE_POOL_ID);
+            status.setRollbackOnly();
+        });
+
+        assertThat(status(REQUESTER_POOL_ID)).isEqualTo("LOCKED");
+        assertThat(status(CANDIDATE_POOL_ID)).isEqualTo("LOCKED");
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM match_pools WHERE lock_token = ?",
+                Integer.class,
+                lockToken
+        )).isEqualTo(2);
     }
 
     @Test

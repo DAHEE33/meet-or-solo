@@ -1,5 +1,29 @@
 # 진행 상태 기록
 
+## [10-매칭 12차] pool 신청 AFTER_COMMIT 후속 transaction 경계 수정
+
+상태: 운영 코드 수정, PostgreSQL Testcontainers 통합·backend 전체 회귀·build 및 dev DB 수동 재검증 완료
+
+- 실제 원인은 `@TransactionalEventListener(AFTER_COMMIT)` 시점에 원본 transaction이 commit됐어도 transaction resource가 thread에 남아 있을 수 있는데, 후속 claim/read/release가 기본 `REQUIRED`를 사용해 종료된 transaction 문맥에 참여한 점
+- requester claim을 `REQUIRES_NEW`로 변경해 `WAITING -> LOCKED`와 `lockToken`을 proposal 생성 전에 독립 transaction으로 commit
+- token 후보 batch read를 read-only `REQUIRES_NEW`로 분리해 commit된 claim만 새 persistence context에서 조회
+- 기존 proposal 생성의 그룹별 `REQUIRES_NEW`를 유지해 attempt/member/proposal과 `LOCKED -> PROPOSED` 전이의 원자성 보존
+- release를 `REQUIRES_NEW`로 변경해 후보 부족·proposal 실패·미사용 token의 `LOCKED`를 외부 transaction과 무관하게 `WAITING` 또는 `EXPIRED`로 복구
+- orchestration 전체에는 transaction을 추가하지 않아 claim/read/create/release의 짧은 단계별 경계와 Scheduler fallback 구조 유지
+- 실제 `MatchPoolEntryService.enter()` transaction commit을 두 번 거치는 AFTER_COMMIT PostgreSQL Testcontainers 통합 테스트 추가
+- 첫 회원은 `WAITING`·lock 없음·attempt/proposal 0건, 두 번째 회원 commit 직후 두 pool `PROPOSED`, `POOL_ENTRY` attempt 1건, 회원별 proposal 1건 검증
+- claim과 release가 외부 transaction rollback과 무관하게 독립 commit되는 transaction 검증 보강
+- 기존 후보 부족, proposal 생성 실패 rollback/release, 두 trigger 동시 실행, trigger/Scheduler 동시 실행, Scheduler `created_by=SCHEDULER` 회귀 테스트 유지
+- Windows Java 17 + Docker Desktop의 `pgvector/pgvector:pg16` Testcontainers에서 focused 20건 통과, `BUILD SUCCESSFUL` 59초
+- 같은 Testcontainers 환경에서 matching 전체 192건 통과, `BUILD SUCCESSFUL` 1분 47초
+- backend 전체 231건 통과, `BUILD SUCCESSFUL` 1분 56초
+- backend build `BUILD SUCCESSFUL` 4초
+- 자동 테스트는 실제 dev DB를 사용하지 않고 모두 PostgreSQL Testcontainers에서 실행
+- dev DB에서 회원 `2`, `27`, 축제 `144`, 유효한 `ACTIVE` 체크인과 희망 인원 2명 조건으로 일반/시크릿 브라우저를 사용해 수동 재검증 완료
+- 첫 회원 `WAITING`, 두 번째 회원 신청 후 양쪽 proposal, 양쪽 수락 후 동일한 2인 `MATCHED` 화면과 참여자 `테스트`, `dev카테` 표시 확인
+- 확정 화면 캡처를 확인했고 수동 재검증 중 `TransactionRequiredException` 재발 없음
+- 이 수정은 WebSocket 상태 동기화와 무관한 backend transaction 경계 버그 수정
+
 ## [10-매칭 10차] 확정 group 조회와 frontend 결과 계약
 
 상태: REST API, PostgreSQL 동시성 통합 테스트, matching/backend 전체 회귀 및 build 완료
