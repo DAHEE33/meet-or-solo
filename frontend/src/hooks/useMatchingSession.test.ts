@@ -5,7 +5,15 @@ import type {
   MatchPool,
   MatchingRestriction,
 } from '../api/matching';
-import { deriveMatchingState, isAbortError, pollingDelay } from './useMatchingSession';
+import {
+  canBeginRetry,
+  deriveMatchingState,
+  isAbortError,
+  pollingDelay,
+  retrySourceAfterRefresh,
+  stateAfterPoolEntry,
+  stateAfterPoolEntryFailure,
+} from './useMatchingSession';
 
 const restriction = (active = false): MatchingRestriction => ({
   penaltyScore: 0,
@@ -116,5 +124,63 @@ describe('polling policy', () => {
   it('AbortError를 구분한다', () => {
     expect(isAbortError(new DOMException('aborted', 'AbortError'))).toBe(true);
     expect(isAbortError(new Error('network'))).toBe(false);
+  });
+});
+
+describe('retry form reconciliation', () => {
+  it.each(['CANCELLED', 'EXPIRED'] as const)('같은 terminal pool %s에서는 retry form을 유지한다', (status) => {
+    expect(retrySourceAfterRefresh(1, state({ pool: pool(status) }))).toBe(1);
+  });
+
+  it('다른 최신 pool이나 활성 서버 상태가 확인되면 retry form을 해제한다', () => {
+    expect(retrySourceAfterRefresh(99, state({ pool: pool('CANCELLED') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('WAITING') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('LOCKED') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('PROPOSED') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ proposal: proposal('INITIAL_MATCH'), pool: pool('CANCELLED') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ group, pool: pool('CANCELLED') }))).toBeNull();
+  });
+
+  it('cooldown이 활성화되면 같은 terminal pool의 retry form도 해제한다', () => {
+    expect(
+      retrySourceAfterRefresh(1, state({ pool: pool('CANCELLED'), restriction: restriction(true) })),
+    ).toBeNull();
+  });
+
+  it('cooldown과 제출 중에는 retry form 진입을 차단한다', () => {
+    expect(canBeginRetry(state({ pool: pool('CANCELLED') }), false)).toBe(true);
+    expect(canBeginRetry(state({ pool: pool('EXPIRED') }), false)).toBe(true);
+    expect(canBeginRetry(state({ pool: pool('CANCELLED'), restriction: restriction(true) }), false)).toBe(false);
+    expect(canBeginRetry(state({ pool: pool('CANCELLED') }), true)).toBe(false);
+    expect(canBeginRetry(state({ pool: pool('WAITING') }), false)).toBe(false);
+  });
+
+  it.each(['WAITING', 'LOCKED'] as const)('POST 성공 pool %s를 즉시 화면 상태에 반영한다', (status) => {
+    const enteredPool = pool(status);
+    enteredPool.poolId = 2;
+    const nextState = stateAfterPoolEntry(state({ pool: pool('CANCELLED') }), enteredPool);
+    expect(nextState.status).toBe(status);
+    expect(nextState.pool?.poolId).toBe(2);
+    expect(nextState.error).toBeNull();
+  });
+
+  it('retry POST 실패 시 terminal 상태와 pool을 보존한다', () => {
+    const previous = state({ pool: pool('CANCELLED') });
+    const error = new Error('network');
+    const nextState = stateAfterPoolEntryFailure(previous, error, 1);
+    expect(nextState.status).toBe('CANCELLED');
+    expect(nextState.pool?.poolId).toBe(1);
+    expect(nextState.error).toBe(error);
+    expect(retrySourceAfterRefresh(1, nextState)).toBe(1);
+  });
+
+  it('일반 POST 실패는 기존 ERROR 처리로 전환한다', () => {
+    expect(stateAfterPoolEntryFailure(state(), new Error('network'), null).status).toBe('ERROR');
+  });
+
+  it('새 mount의 초기 retry source는 없으므로 terminal 서버 상태만 복원한다', () => {
+    const terminalState = state({ pool: pool('EXPIRED') });
+    expect(terminalState.status).toBe('EXPIRED');
+    expect(retrySourceAfterRefresh(null, terminalState)).toBeNull();
   });
 });

@@ -1,5 +1,33 @@
 # 진행 상태 기록
 
+## [10-매칭 14차] terminal pool 재신청 화면 전환
+
+상태: frontend 구현, 전체 자동 회귀 및 두 브라우저 dev 화면 수동 검증 완료
+
+- backend가 반환한 `CANCELLED`/`EXPIRED` terminal 상태를 `IDLE`로 바꾸지 않고 서버 상태와 로컬 retry form 모드를 분리
+- `retrySourcePoolId`가 현재 최신 terminal pool ID와 같을 때만 일시적인 retry form 유지
+- 같은 terminal pool을 REST로 다시 조회하거나 WebSocket 알림 후 refresh해도 retry form 유지
+- 다른 최신 pool, `WAITING`, `LOCKED`, `RESPONSE_PENDING`, active proposal 또는 current group이 확인되면 retry 모드를 해제하고 서버 상태를 우선
+- active cooldown 중에는 retry form 진입과 pool 제출을 모두 차단
+- 재신청 `festivalId`는 `location.state.festivalId`, retry 대상 terminal pool의 `festivalId`, 개발 환경 `VITE_DEV_FESTIVAL_ID` 순서로 결정
+- 사용자가 희망 인원과 최소 2명 진행 옵션을 다시 선택하고 기존 `POST /api/matching/pools`로 신규 pool을 생성
+- POST 성공 응답의 새 pool을 `WAITING` 또는 `LOCKED`로 즉시 반영하고 retry 모드를 해제
+- POST 실패 시 terminal 서버 상태, retry form과 사용자가 선택한 조건을 유지
+- browser 새로고침과 새 mount에서는 로컬 retry 모드가 사라지고 기존 REST 우선순위로 terminal 또는 최신 서버 상태 복원
+- backend API, DB schema, Flyway, Redis, WebSocket STOMP와 polling fallback 구조 및 package 의존성은 변경하지 않음
+- 기존 pool, attempt, proposal, response, group 이력은 갱신·삭제하지 않고 신규 pool 생성 방식으로 보존
+- frontend focused 5 files, 47 tests 통과
+- frontend 전체 8 files, 59 tests 통과
+- `npx tsc --noEmit` 성공
+- frontend production build 성공, 1,619 modules transformed 및 PWA service worker 생성 완료
+- dev DB의 festival `144`, member `2`, `27`과 유효한 `ACTIVE` check-in을 사용해 두 브라우저 화면 수동 검증 완료
+- `CANCELLED` terminal 화면에서 `다시 신청하기` 클릭 후 신규 신청 form 전환 확인
+- 희망 인원과 최소 2명 진행 옵션 변경 및 DevTools fetch 없이 신규 pool 신청 확인
+- 신청 직후 `WAITING`, 새로고침 후 최신 pool 상태 복원 확인
+- 두 브라우저 신청 후 proposal 전환, A 수락 후 A `RESPONSE_PENDING`·B proposal 유지 확인
+- B 수락 후 양쪽 `MATCHED` 전환 및 `MATCHED`에서 재신청 UI 미표시 확인
+- retry form 상태에서 새로고침 시 서버 terminal 카드로 복원 확인
+
 ## [10-매칭 13차] WebSocket STOMP 매칭 상태 변경 알림
 
 상태: 전체 자동 회귀 및 두 브라우저 dev 수동 검증 완료

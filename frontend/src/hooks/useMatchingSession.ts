@@ -43,6 +43,10 @@ export type MatchingSessionState = {
   error: ApiClientError | Error | null;
 };
 
+export type RetryFormState = {
+  sourcePoolId: number | null;
+};
+
 const INITIAL_STATE: MatchingSessionState = {
   status: 'IDLE',
   pool: null,
@@ -50,6 +54,10 @@ const INITIAL_STATE: MatchingSessionState = {
   group: null,
   restriction: null,
   error: null,
+};
+
+const INITIAL_RETRY_FORM_STATE: RetryFormState = {
+  sourcePoolId: null,
 };
 
 export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSessionState {
@@ -110,8 +118,52 @@ export function pollingDelay(status: MatchingUiStatus, consecutiveErrors: number
   return null;
 }
 
+export function retrySourceAfterRefresh(
+  retrySourcePoolId: number | null,
+  nextState: MatchingSessionState,
+): number | null {
+  if (retrySourcePoolId === null) return null;
+  const sameTerminalPool =
+    (nextState.status === 'CANCELLED' || nextState.status === 'EXPIRED')
+    && nextState.pool?.poolId === retrySourcePoolId;
+  return sameTerminalPool && !nextState.restriction?.cooldown.active ? retrySourcePoolId : null;
+}
+
+export function canBeginRetry(state: MatchingSessionState, isSubmitting: boolean): boolean {
+  const isTerminal = state.status === 'CANCELLED' || state.status === 'EXPIRED';
+  return isTerminal
+    && state.pool !== null
+    && !state.restriction?.cooldown.active
+    && !isSubmitting;
+}
+
+export function stateAfterPoolEntry(
+  previous: MatchingSessionState,
+  pool: MatchPool,
+): MatchingSessionState {
+  return {
+    ...previous,
+    status: pool.status === 'LOCKED' ? 'LOCKED' : 'WAITING',
+    pool,
+    error: null,
+  };
+}
+
+export function stateAfterPoolEntryFailure(
+  previous: MatchingSessionState,
+  error: ApiClientError | Error,
+  retrySourcePoolId: number | null,
+): MatchingSessionState {
+  return {
+    ...previous,
+    status: retrySourcePoolId === null ? 'ERROR' : previous.status,
+    error,
+  };
+}
+
 export function useMatchingSession() {
   const [state, setState] = useState<MatchingSessionState>(INITIAL_STATE);
+  const [retryForm, setRetryForm] = useState<RetryFormState>(INITIAL_RETRY_FORM_STATE);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVisible, setIsVisible] = useState(() => document.visibilityState !== 'hidden');
   const mountedRef = useRef(true);
@@ -119,6 +171,12 @@ export function useMatchingSession() {
   const queryAbortRef = useRef<AbortController | null>(null);
   const mutationAbortRef = useRef<AbortController | null>(null);
   const consecutiveErrorsRef = useRef(0);
+  const retrySourcePoolIdRef = useRef<number | null>(null);
+
+  const updateRetrySourcePoolId = useCallback((sourcePoolId: number | null) => {
+    retrySourcePoolIdRef.current = sourcePoolId;
+    setRetryForm({ sourcePoolId });
+  }, []);
 
   const refresh = useCallback((): Promise<void> => {
     if (inFlightRef.current) return inFlightRef.current;
@@ -134,7 +192,12 @@ export function useMatchingSession() {
       .then(([pool, proposal, group, restriction]) => {
         if (!mountedRef.current || controller.signal.aborted) return;
         consecutiveErrorsRef.current = 0;
-        setState(deriveMatchingState({ pool, proposal, group, restriction }));
+        const nextState = deriveMatchingState({ pool, proposal, group, restriction });
+        const nextRetrySourcePoolId = retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
+        if (nextRetrySourcePoolId !== retrySourcePoolIdRef.current) {
+          updateRetrySourcePoolId(nextRetrySourcePoolId);
+        }
+        setState(nextState);
       })
       .catch((error: unknown) => {
         if (!mountedRef.current || controller.signal.aborted || isAbortError(error)) return;
@@ -151,7 +214,7 @@ export function useMatchingSession() {
       });
     inFlightRef.current = operation;
     return operation;
-  }, []);
+  }, [updateRetrySourcePoolId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -191,13 +254,21 @@ export function useMatchingSession() {
     return () => window.clearTimeout(timer);
   }, [isVisible, refresh, state]);
 
+  const beginRetry = useCallback(() => {
+    if (!canBeginRetry(state, isSubmitting)) return false;
+    const sourcePoolId = state.pool?.poolId;
+    if (sourcePoolId === undefined) return false;
+    updateRetrySourcePoolId(sourcePoolId);
+    return true;
+  }, [isSubmitting, state, updateRetrySourcePoolId]);
+
   const enterPool = useCallback(
     async (
       festivalId: number,
       preferredGroupSize: 2 | 3 | 4,
       allowMinimumTwo: boolean,
     ) => {
-      if (isSubmitting) return;
+      if (isSubmitting || state.restriction?.cooldown.active) return false;
       setIsSubmitting(true);
       const controller = new AbortController();
       mutationAbortRef.current?.abort();
@@ -208,24 +279,26 @@ export function useMatchingSession() {
           controller.signal,
         );
         if (mountedRef.current && !controller.signal.aborted) {
-          setState((previous) => ({
-            ...previous,
-            status: pool.status === 'LOCKED' ? 'LOCKED' : 'WAITING',
-            pool,
-            error: null,
-          }));
+          updateRetrySourcePoolId(null);
+          setState((previous) => stateAfterPoolEntry(previous, pool));
           void refresh();
+          return true;
         }
       } catch (error) {
         if (!isAbortError(error) && mountedRef.current) {
-          setState((previous) => ({ ...previous, status: 'ERROR', error: normalizeError(error) }));
+          setState((previous) => stateAfterPoolEntryFailure(
+            previous,
+            normalizeError(error),
+            retrySourcePoolIdRef.current,
+          ));
         }
       } finally {
         if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
         if (mountedRef.current) setIsSubmitting(false);
       }
+      return false;
     },
-    [isSubmitting, refresh],
+    [isSubmitting, refresh, state.restriction?.cooldown.active, updateRetrySourcePoolId],
   );
 
   const respond = useCallback(
@@ -258,7 +331,16 @@ export function useMatchingSession() {
     [isSubmitting, refresh, state.proposal],
   );
 
-  return { state, isSubmitting, refresh, enterPool, respond };
+  return {
+    state,
+    isSubmitting,
+    isRetryFormOpen: retryForm.sourcePoolId !== null,
+    retrySourcePoolId: retryForm.sourcePoolId,
+    refresh,
+    beginRetry,
+    enterPool,
+    respond,
+  };
 }
 
 export function isAbortError(error: unknown): boolean {
