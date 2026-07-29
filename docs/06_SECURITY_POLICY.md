@@ -176,6 +176,15 @@ CORS는 profile별로 분리합니다.
 
 cookie/header 전략은 인증 구현 단계에서 확정합니다.
 
+## WebSocket 인증과 권한
+
+- `/ws` handshake에서 `access_token` HttpOnly cookie의 서명, token 유형과 만료를 검증합니다.
+- 인증된 회원 ID를 WebSocket `Principal` 이름으로 사용하며 client가 member ID를 전달하지 않습니다.
+- client 구독은 `/user/queue/matching`만 허용하고 임의 회원, attempt, group topic 구독을 허용하지 않습니다.
+- client STOMP `SEND`는 거절하며 자유 채팅 또는 상태 변경 command endpoint를 제공하지 않습니다.
+- local/dev/prod의 handshake origin은 기존 `CORS_ALLOWED_ORIGINS` 경계를 재사용합니다.
+- 알림에는 token, GPS, 이메일, OAuth 식별자와 다른 회원의 개인정보를 포함하지 않습니다.
+
 ## 관리자 보안
 
 관리자 endpoint는 명시적 admin role이 필요합니다.

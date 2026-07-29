@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.matching.service;
 
 import com.survey.meetorsolo.domain.matching.entity.*;
 import com.survey.meetorsolo.domain.matching.config.MatchingSchedulerProperties;
+import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
 import com.survey.meetorsolo.domain.matching.repository.*;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -10,6 +11,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,16 +27,18 @@ public class MatchProposalResponseService {
     private final MatchPenaltyCooldownService penaltyCooldowns;
     private final MatchingPenaltyPolicy penaltyPolicy;
     private final Duration proposalTimeout;
+    private final ApplicationEventPublisher eventPublisher;
 
     public MatchProposalResponseService(MatchAttemptRepository attempts, MatchProposalRepository proposals,
             MatchAttemptMemberRepository members, MatchResponseRepository responses, MatchPoolRepository pools,
             MatchGroupRepository groups, MatchGroupMemberRepository groupMembers,
             MatchPenaltyCooldownService penaltyCooldowns, MatchingPenaltyPolicy penaltyPolicy,
-            MatchingSchedulerProperties properties) {
+            MatchingSchedulerProperties properties, ApplicationEventPublisher eventPublisher) {
         this.attempts=attempts; this.proposals=proposals; this.members=members; this.responses=responses;
         this.pools=pools; this.groups=groups; this.groupMembers=groupMembers;
         this.penaltyCooldowns=penaltyCooldowns; this.penaltyPolicy=penaltyPolicy;
         this.proposalTimeout=properties.proposalTimeout();
+        this.eventPublisher=eventPublisher;
     }
 
     @Transactional
@@ -87,6 +91,13 @@ public class MatchProposalResponseService {
         if (isInitial(proposal)) completeInitialRoundIfReady(attempt, now);
         else completeInsufficientRound(attempt, member, effective, now);
         flushAll();
+        eventPublisher.publishEvent(new MatchingStateChangedEvent(
+                members.findAllByAttemptIdOrderByIdAsc(attempt.getId()).stream()
+                        .map(MatchAttemptMember::getMemberId)
+                        .toList(),
+                notificationReason(attempt, effective),
+                now
+        ));
         return new MatchProposalResponseResult(attempt.getId(), proposalId, effective, attempt.getStatus());
     }
 
@@ -256,6 +267,16 @@ public class MatchProposalResponseService {
     private boolean isActive(MatchAttempt attempt) {
         return MatchAttempt.STATUS_WAITING_RESPONSES.equals(attempt.getStatus())
                 || MatchAttempt.STATUS_INSUFFICIENT_MEMBERS.equals(attempt.getStatus());
+    }
+    private String notificationReason(MatchAttempt attempt, String response) {
+        if (MatchAttempt.STATUS_CONFIRMED.equals(attempt.getStatus())) return "MATCH_CONFIRMED";
+        if (MatchAttempt.STATUS_INSUFFICIENT_MEMBERS.equals(attempt.getStatus())) {
+            return "MATCH_INSUFFICIENT_MEMBERS";
+        }
+        if (MatchProposal.STATUS_TIMEOUT.equals(response)) return "MATCH_TIMEOUT";
+        if (MatchProposal.STATUS_REJECTED.equals(response)
+                || "CANCEL_CURRENT_MEMBERS".equals(response)) return "MATCH_REJECTED";
+        return "MATCH_ACCEPTED";
     }
     private boolean isInitial(MatchProposal proposal) { return MatchProposal.TYPE_INITIAL_MATCH.equals(proposal.getProposalType()); }
     private boolean isInsufficient(MatchProposal proposal) { return MatchProposal.TYPE_INSUFFICIENT_MEMBERS_CONFIRMATION.equals(proposal.getProposalType()); }

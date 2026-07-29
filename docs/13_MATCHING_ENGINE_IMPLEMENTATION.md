@@ -1951,3 +1951,98 @@ npm run build
 - WSL에서는 기존 `node_modules`에 Linux Rollup optional binary가 없어 Vitest/Vite 시작 전에 실패하며 소스 또는 TypeScript 오류는 아님
 
 신규 package 의존성이나 `package-lock.json` semantic 변경은 없습니다.
+
+## 29. WebSocket STOMP 매칭 상태 변경 알림
+
+### 29.1 상태 책임
+
+```text
+PostgreSQL = 최종 상태
+REST = 최초 진입, 새로고침, 재접속 후 상태 복원
+WebSocket = 상태 변경 즉시 알림
+```
+
+STOMP payload는 화면에 적용할 proposal, pool, group 전체 데이터를 포함하지
+않습니다. `MATCHING_STATE_CHANGED`, 변경 이유와 발생 시각만 전달하며 frontend는
+수신 직후 기존 matching REST 조회 네 개를 다시 실행합니다. 이벤트 유실, 중복,
+순서 역전이 있어도 REST 결과가 화면의 최종 상태입니다.
+
+### 29.2 인증과 destination
+
+- handshake endpoint: `/ws`
+- 인증: `access_token` HttpOnly cookie
+- server destination: `convertAndSendToUser(memberId, "/queue/matching", payload)`
+- client subscription: `/user/queue/matching`
+- client STOMP `SEND`: 허용하지 않음
+
+handshake interceptor가 JWT를 검증하고 회원 ID 기반 Principal을 만듭니다. client는
+member ID를 header나 destination에 넣지 않으며 다른 회원의 queue를 지정할 수
+없습니다.
+
+### 29.3 transaction 경계
+
+proposal 생성과 응답 service는 같은 DB transaction 안에서
+`MatchingStateChangedEvent`를 발행합니다. `MatchingStateChangedEventHandler`는
+`AFTER_COMMIT`에서만 실제 STOMP 메시지를 전송합니다. rollback된 DB 상태는
+알림으로 전달되지 않습니다.
+
+알림 reason:
+
+- `MATCH_PROPOSED`
+- `MATCH_ACCEPTED`
+- `MATCH_REJECTED`
+- `MATCH_TIMEOUT`
+- `MATCH_INSUFFICIENT_MEMBERS`
+- `MATCH_CONFIRMED`
+
+같은 attempt의 참여 회원에게 알림을 보내며 각 client는 본인 REST 상태를 다시
+조회합니다. 동일 응답 멱등성 경로는 새 DB 변경이 없으므로 중복 알림을 발행하지
+않습니다.
+
+### 29.4 frontend와 proxy
+
+frontend는 `@stomp/stompjs` native WebSocket client를 사용해 현재 origin의 `/ws`에
+연결합니다. local에서는 `ws://localhost:5173/ws`를 Vite가 backend
+`http://localhost:8080`으로 `ws: true` proxy합니다. dev에서는 nginx가 `/ws`
+Upgrade 요청을 backend로 전달합니다. HTTPS 운영 origin에서는 자동으로 `wss`를
+사용합니다.
+
+연결 성공과 재접속 성공 시 즉시 REST refresh를 수행하고 상태 알림 수신 시에도
+같은 refresh를 호출합니다. 기존 in-flight Promise 병합으로 동시 알림의 중복
+조회를 줄입니다. WebSocket 연결 실패는 화면의 REST 오류로 취급하지 않으며 기존
+active 2초, cooldown 5초 polling과 network backoff를 fallback으로 유지합니다.
+
+### 29.5 제외 범위
+
+- Redis와 외부 message broker
+- SockJS fallback
+- 자유 채팅과 client message endpoint
+- WebSocket payload를 최종 상태로 사용하는 client cache
+- 신규 Flyway migration
+
+### 29.6 검증 결과
+
+- backend WebSocket 인증, 허용 구독, client `SEND` 거절과 회원별 알림 focused 6건 통과
+- `pgvector/pgvector:pg16` Testcontainers matching 전체 193건, failures/errors/skipped 0
+- root context test도 `pgvector/pgvector:pg16` Testcontainer로 격리한 backend 전체 237건, failures/errors/skipped 0
+- backend build 성공
+- frontend TypeScript 검사 성공
+- matching WebSocket을 포함한 frontend 전체 39건 통과
+- frontend production build 성공, 1,619 modules transformed
+
+### 29.7 두 브라우저 dev 수동 검증 결과
+
+- 양쪽 `/ws` 연결 및 `/user/queue/matching` 구독 성공
+- 양쪽 pool 진입 후 proposal 화면 전환 성공
+- A 수락 후 A는 `RESPONSE_PENDING`, B는 proposal 유지
+- B 수락 후 양쪽 `MATCHED` 화면 전환 성공
+- 양쪽에서 동일한 확정 group 확인
+- 새로고침 후 `MATCHED` 상태 복원 성공
+- WebSocket 재연결 후 REST 상태 복원 성공
+
+### 29.8 별도 Frontend 후속 작업
+
+- terminal pool 상태에서 `다시 시도`가 신규 신청 화면으로 돌아가지 않는 문제가 남아 있다.
+- 이 문제는 완료된 기능이 아니며, 이번 WebSocket STOMP 작업에서는 수정하지 않고 별도 Frontend 후속 작업으로 관리한다.
+- WebSocket STOMP는 자유 채팅이 아닌 매칭 상태 동기화 전용이다.
+- Redis, Flyway, 자유 채팅 관련 변경은 이번 구현 범위에서 제외했다.

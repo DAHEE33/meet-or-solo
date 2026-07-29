@@ -393,6 +393,16 @@ member_preference_embeddings
 
 ## WebSocket STOMP 이벤트
 
+현재 matching 화면 구현은 아래 세부 이벤트를 화면 데이터로 직접 적용하지 않고
+`MATCHING_STATE_CHANGED` 알림의 `reason`으로 전달합니다. 전달 경로는 인증된
+회원별 `/user/queue/matching`이며, frontend는 알림을 받으면 current group,
+active proposal, current pool, cooldown REST 상태를 다시 조회합니다.
+
+WebSocket 알림은 유실되거나 중복될 수 있는 보조 신호입니다. PostgreSQL이 최종
+상태이고 기존 polling을 fallback으로 유지합니다. transaction rollback 상태가
+전달되지 않도록 실제 STOMP 전송은 상태 변경 transaction의 `AFTER_COMMIT`에
+수행합니다.
+
 | Event | 발생 시점 | 서버 처리 | Frontend UI | DB 상태 | Topic/Queue 예시 |
 | --- | --- | --- | --- | --- | --- |
 | `MATCH_PROPOSED` | 후보 그룹 생성 | proposal 생성 및 30초 만료 설정 | `MatchProposalModal` | `SENT` | `/queue/users/{userId}/match` |

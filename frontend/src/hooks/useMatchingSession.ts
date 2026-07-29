@@ -8,6 +8,7 @@ import {
   type MatchProposalAction,
   type MatchingRestriction,
 } from '../api/matching';
+import { connectMatchingWebSocket } from '../api/matchingWebSocket';
 
 const ACTIVE_POLL_MS = 2_000;
 const COOLDOWN_POLL_MS = 5_000;
@@ -161,6 +162,15 @@ export function useMatchingSession() {
       mutationAbortRef.current?.abort();
     };
   }, [refresh]);
+
+  useEffect(() => connectMatchingWebSocket({
+    onConnected: () => {
+      if (mountedRef.current) void refresh();
+    },
+    onStateChanged: () => {
+      if (mountedRef.current) void refresh();
+    },
+  }), [refresh]);
 
   useEffect(() => {
     const handleVisibility = () => {

@@ -222,7 +222,8 @@ jdbc:postgresql://postgres:5432/meet_or_solo_dev
 - `frontend/dist`를 `/usr/share/nginx/html`로 mount해 정적 파일을 서빙합니다.
 - SPA routing을 위해 `try_files $uri $uri/ /index.html`을 사용합니다.
 - `/api/` 요청은 `backend:8080`으로 reverse proxy합니다.
-- `/ws/` WebSocket 경로는 아직 실제 구현 전이므로 주석 placeholder로만 남깁니다.
+- `/ws` WebSocket 경로는 `backend:8080`으로 Upgrade proxy합니다.
+- `proxy_http_version 1.1`, `Upgrade`, `Connection` header를 전달합니다.
 - HTTPS, Certbot, 실제 domain 설정은 이번 단계에서 하지 않습니다.
 
 ### dev 서버 환경변수 예시
