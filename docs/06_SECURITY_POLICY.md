@@ -182,6 +182,19 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
 - 인증된 회원 ID를 WebSocket `Principal` 이름으로 사용하며 client가 member ID를 전달하지 않습니다.
 - client 구독은 `/user/queue/matching`만 허용하고 임의 회원, attempt, group topic 구독을 허용하지 않습니다.
 - client STOMP `SEND`는 거절하며 자유 채팅 또는 상태 변경 command endpoint를 제공하지 않습니다.
+
+## MatchRoomPage 조회 인가
+
+- 도착 완료 API도 `memberId`와 `groupId`를 받지 않고 인증 회원 본인만 변경합니다.
+- `MEMBER_ARRIVED` payload에는 위치, token과 개인정보를 저장하지 않습니다.
+
+- `/match-room`은 URL에 `groupId`를 포함하지 않습니다.
+- `GET /api/matching/groups/me/current`는 `access_token` HttpOnly cookie의 회원만 기준으로 조회합니다.
+- 다른 회원 또는 임의 group을 지정하는 path, query, body 계약을 제공하지 않습니다.
+- festival은 제목, 주소, 행사 기간만 공개하고 member는 ID, nickname, 공개 profile image, 참여 상태만 공개합니다.
+- 이메일, OAuth 식별자, GPS, 성별, 연령대, penalty/cooldown과 private object key는 반환하지 않습니다.
+- 도착 예정 시간 request는 `memberId`와 `groupId`를 받지 않고 인증 회원 본인만 변경합니다.
+- `match_events.payload`에는 `arrivalMinutes`만 저장하고 token, GPS, 이메일, OAuth 식별자를 저장하지 않습니다.
 - local/dev/prod의 handshake origin은 기존 `CORS_ALLOWED_ORIGINS` 경계를 재사용합니다.
 - 알림에는 token, GPS, 이메일, OAuth 식별자와 다른 회원의 개인정보를 포함하지 않습니다.
 
@@ -229,3 +242,11 @@ MVP 초기 방향:
 - 조회 API도 인증된 본인의 `profile_image_object_key`만 사용하고 요청에서 임의 object key를 받지 않습니다.
 - 응답은 `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`를 사용합니다.
 - OCI Customer Secret Key와 endpoint의 실제 namespace는 코드, 문서, example 파일에 기록하지 않습니다.
+
+## MatchRoomPage event 공개 경계
+
+- current group events API는 HttpOnly `access_token`의 인증 회원과 current active group으로 인가합니다.
+- 임의 `memberId`, `groupId` 조회 경로를 제공하지 않습니다.
+- raw payload, GPS, 이메일, OAuth 식별자, token, penalty/cooldown과 Secret은 반환하지 않습니다.
+- actor의 ID/nickname은 같은 active group의 active member 관계가 query에서 확인된 경우에만 공개합니다.
+- malformed payload 원문을 응답이나 로그에 기록하지 않고 해당 event만 안전하게 제외합니다.

@@ -175,19 +175,75 @@ class MatchingRestApiIntegrationTest {
                     .andExpect(jsonPath("$.data.confirmedMemberCount").value(2))
                     .andExpect(jsonPath("$.data.confirmedAt")
                             .value("2026-07-17T15:00:10+09:00"))
+                    .andExpect(jsonPath("$.data.arrivalDeadlineAt")
+                            .value("2026-07-17T15:30:10+09:00"))
+                    .andExpect(jsonPath("$.data.festival.festivalId").value(9_100_001))
+                    .andExpect(jsonPath("$.data.festival.title").value("매칭 테스트 강원 축제"))
+                    .andExpect(jsonPath("$.data.festival.address").doesNotExist())
+                    .andExpect(jsonPath("$.data.festival.eventStartDate").value("2026-07-01"))
+                    .andExpect(jsonPath("$.data.festival.eventEndDate").value("2026-07-31"))
                     .andExpect(jsonPath("$.data.members[0].memberId").value(9_110_001))
                     .andExpect(jsonPath("$.data.members[0].nickname")
                             .value("fixture9110001"))
                     .andExpect(jsonPath("$.data.members[0].profileImageUrl").doesNotExist())
+                    .andExpect(jsonPath("$.data.members[0].status").value("JOINED"))
                     .andExpect(jsonPath("$.data.members[1].memberId").value(9_110_002))
                     .andExpect(jsonPath("$.data.members[1].profileImageUrl")
-                            .value("https://example.com/member-2.png"));
+                            .value("https://example.com/member-2.png"))
+                    .andExpect(jsonPath("$.data.members[1].status").value("JOINED"));
         }
 
         mockMvc.perform(get("/api/matching/groups/me/current")
                         .cookie(cookie(9_110_006L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void IN_PROGRESS_group도_current_API에서_반환한다() throws Exception {
+        insertGroup("IN_PROGRESS");
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.data.festival.title").value("매칭 테스트 강원 축제"))
+                .andExpect(jsonPath("$.data.members.length()").value(2));
+    }
+
+    @Test
+    void inactive_member는_제외하고_확정_인원과_불일치하면_충돌로_처리한다() throws Exception {
+        insertGroup("CONFIRMED");
+        jdbc.update("""
+                UPDATE match_group_members
+                SET status = 'LEFT', updated_at = ?
+                WHERE id = 9180002
+                """, NOW.plusSeconds(11));
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("MATCHING_CONFLICT"));
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_002L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void 저장된_확정_인원과_active_member_수가_다르면_충돌로_처리한다() throws Exception {
+        insertGroup("CONFIRMED");
+        jdbc.update("""
+                UPDATE match_groups
+                SET confirmed_member_count = 3, updated_at = ?
+                WHERE id = 9170001
+                """, NOW.plusSeconds(11));
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("MATCHING_CONFLICT"));
     }
 
     @Test

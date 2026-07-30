@@ -143,6 +143,7 @@ export default function MatchingConditionPage() {
           onRetry={beginRetry}
           onErrorRetry={() => void refresh()}
           onGoCheckIn={() => navigate('/check-in')}
+          onEnterRoom={() => navigate('/match-room')}
         />
       </main>
     </MobileLayout>
@@ -172,6 +173,7 @@ interface MatchBodyProps {
   onRetry: () => void;
   onErrorRetry: () => void;
   onGoCheckIn: () => void;
+  onEnterRoom: () => void;
 }
 
 export function MatchBody(props: MatchBodyProps) {
@@ -209,7 +211,9 @@ export function MatchBody(props: MatchBodyProps) {
     );
   }
   if (status === 'RESPONSE_PENDING') return <ResponsePendingCard />;
-  if (status === 'MATCHED' && props.group) return <ConfirmedCard group={props.group} />;
+  if (status === 'MATCHED' && props.group) {
+    return <ConfirmedCard group={props.group} onEnterRoom={props.onEnterRoom} />;
+  }
   if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COOLDOWN') {
     const reason =
       status === 'COOLDOWN'
@@ -400,7 +404,7 @@ function ResponsePendingCard() {
 }
 
 // ── 7. 매칭 확정 ───────────────────────────────────────
-function ConfirmedCard({ group }: { group: CurrentMatchGroup }) {
+function ConfirmedCard({ group, onEnterRoom }: { group: CurrentMatchGroup; onEnterRoom: () => void }) {
   const time = group.confirmedAt
     ? new Date(group.confirmedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
     : '';
@@ -432,6 +436,7 @@ function ConfirmedCard({ group }: { group: CurrentMatchGroup }) {
           </div>
         ))}
       </div>
+      <PrimaryButton onClick={onEnterRoom}>상태방 들어가기</PrimaryButton>
     </section>
   );
 }

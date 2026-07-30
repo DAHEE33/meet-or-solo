@@ -329,6 +329,11 @@ DATA_CORRECTION
 | 개인정보/보안 | 공공데이터 캐시이며 개인정보 없음. 원천 데이터 임의 수정 여부를 구분할 수 있도록 `raw_data`를 둔다. |
 | MVP 필수 | 필수 |
 
+`GET /api/matching/groups/me/current`의 읽기 전용 상태방 summary는 이 테이블의
+`id`, `title`, `address`, `event_start_date`, `event_end_date`만 사용합니다.
+기존 `match_groups.festival_id` FK로 join할 수 있어 MatchRoomPage 작업에서는
+신규 migration을 추가하지 않았습니다.
+
 ### festival_images
 
 | 항목 | 내용 |
@@ -505,11 +510,22 @@ DATA_CORRECTION
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `member_id -> members.id` |
 | 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
-| CHECK | `arrival_minutes IN (0,5,10,20,30)`, `status IN (...)` |
+| CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)` |
 | UNIQUE | `(group_id, member_id)`, active 상태의 `member_id` partial unique index 후보 |
 | INDEX | `idx_match_group_members_member_status`, `idx_match_group_members_group_status` |
 | 개인정보/보안 | 취소 사유는 구조화된 버튼 값만 저장한다. |
 | MVP 필수 | 필수 |
+
+도착 예정 시간 선택은 기존 컬럼만 사용합니다. `JOINED` 또는
+`ARRIVAL_TIME_SELECTED`인 로그인 member row를 잠근 뒤 `status`,
+`arrival_minutes`, `arrival_time_selected_at`, `updated_at`을 갱신합니다.
+같은 값 반복은 row와 event를 갱신하지 않습니다. `V13`은 기존 row/event의
+`0`, `30`을 유지하면서 신규 `25`를 저장할 수 있도록 CHECK만 교체합니다.
+신규 PUT API는 이 DB 호환 집합과 별도로 `5`, `10`, `20`, `25`만 허용합니다.
+
+도착 완료도 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED` event
+type만 사용합니다. 최초 도착에서 group을 IN_PROGRESS로 전환하고 기존 도착
+예정 값은 유지하며 신규 migration은 없습니다.
 
 ### match_events
 
@@ -682,7 +698,7 @@ DATA_CORRECTION
 - `match_proposals.proposal_round > 0`
 - `match_proposals.expires_at > match_proposals.sent_at`
 - `match_groups.confirmed_member_count BETWEEN 2 AND 4`
-- `match_group_members.arrival_minutes IN (0,5,10,20,30)`
+- `match_group_members.arrival_minutes IN (0,5,10,20,25,30)`
 - `reports.reporter_member_id <> reports.reported_member_id`
 - `festival_checkins.distance_meters >= 0`
 
@@ -758,8 +774,12 @@ backend/src/main/resources/db/migration/V9__add_member_profile_image_object_key.
 backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
 backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
 backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
+backend/src/main/resources/db/migration/V13__allow_25_arrival_minutes.sql
 ```
 
-기존 `V1`~`V11`은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반 멱등성은 `V12`에서 추가한다.
+기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반
+멱등성은 `V12`에서 추가했고, `V13`은
+`chk_match_group_members_arrival_minutes`를 안전하게 교체해
+`NULL 또는 0,5,10,20,25,30`을 허용한다. 기존 `0`, `30` row를 변환하지 않는다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.

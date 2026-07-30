@@ -44,4 +44,6 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
     systemProperty("api.version", System.getProperty("api.version", "1.44"))
+    systemProperty("file.encoding", "UTF-8")
+    systemProperty("spring.sql.init.encoding", "UTF-8")
 }

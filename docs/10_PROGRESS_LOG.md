@@ -1,5 +1,166 @@
 # 진행 상태 기록
 
+## [10-매칭 21차] 도착 예정 선택지와 상대 변경 snackbar
+
+상태: 구현 및 비컨테이너 자동 회귀 완료, Testcontainers와 수동 화면 검증은 환경 제약으로 미완료
+
+- 신규 도착 예정 선택값을 `5`, `10`, `20`, `25`분으로 변경하고 `지금 도착(0)`, `30분` 신규 선택 제거
+- 응답/과거 데이터 타입은 `0`, `5`, `10`, `20`, `25`, `30`을 유지해 과거 `0`을 `곧 도착 예정`, `30`도 정상 표시
+- 기존 migration을 수정하지 않고 `V13__allow_25_arrival_minutes.sql` 추가
+- `V13`에서 실제 constraint `chk_match_group_members_arrival_minutes`를 `NULL 또는 0,5,10,20,25,30` CHECK로 교체하며 기존 row를 변환하지 않음
+- Backend request validation/service는 DB 호환 집합과 분리해 신규 `5`, `10`, `20`, `25`만 허용
+- 기존 `arrivalDeadlineAt = confirmedAt + 30분`, `now < deadline`, `now + minutes <= deadline`, 멱등성, transaction, rollback과 AFTER_COMMIT 계약 유지
+- 정상 REST snapshot 전후 상대 회원의 `arrivalMinutes` 또는 `arrivalTimeSelectedAt` 실제 변경만 감지해 nickname 포함 snackbar 표시
+- 최초 snapshot, 본인 mutation, 동일 snapshot/멱등 refresh, 실패한 refresh와 잘못된 WebSocket payload에는 snackbar를 만들지 않음
+- WebSocket은 payload를 직접 적용하지 않는 REST refresh trigger로 유지하고 polling fallback도 같은 snapshot 비교 사용
+- snackbar는 하단 navigation 위 `bottom-24`, `role="status"`, `aria-live="polite"`로 표시하고 3초 뒤 자동 제거하며 연속 변경 시 기존 timer 교체
+- Backend focused 41건 통과
+- PostgreSQL focused 2개 class는 Docker client 탐지 실패로 assertion/migration 실행 전 initialization 실패
+- matching 전체 104건 중 일반 90건 통과, Testcontainers 14개 class initialization 실패
+- backend 전체 148건 중 일반 133건 통과, Testcontainers 15개 class initialization 실패
+- backend `./gradlew build -x test` 성공
+- frontend focused 3 files 52건, 전체 10 files 106건, `npx tsc --noEmit`, production/PWA build 성공
+- repository 전체 `git diff --check`는 작업 시작 전부터 존재한 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했으며, 기존 파일을 일괄 정규화하지 않음
+- 작업 시작 시 이미 수정 상태였던 `V1`~`V12`는 건드리지 않고 신규 `V13`만 추가
+- `NO_SHOW`, Scheduler, 취소·패널티, meeting point, Kakao Maps, `COMPLETED`, 자유 채팅, group topic, client `SEND`, Redis는 추가하지 않음
+
+## [10-매칭 20차] MatchRoomPage 30분 절대 도착 마감
+
+상태: 구현 및 비컨테이너 자동 회귀 완료, Testcontainers와 두 브라우저 수동 검증은 실행 환경 제약으로 미완료
+
+- `arrivalDeadlineAt = confirmedAt + 30분`을 공통 정책 계산으로 정의하고 current group 응답에 추가
+- 기존 `confirmed_at`에서 파생하므로 Flyway migration과 schema 변경 없음
+- 도착 예정 시간 transaction에서 active group, active member와 `JOINED`/`ARRIVAL_TIME_SELECTED` 상태를 잠금 후 재검증
+- 현재 시각은 deadline 이전이어야 하고, 실제 값 변경의 `현재 시각 + arrivalMinutes`는 deadline 이하일 때만 허용
+- `estimatedArrivalAt == arrivalDeadlineAt`은 허용하고 deadline 시각부터는 선택 거절
+- deadline 전 같은 값 반복은 기존 선택 기준 시각, deadline, event와 WebSocket 알림을 변경하지 않는 멱등 계약 유지
+- 다른 값 변경과 동시 요청도 파생 deadline을 연장하거나 다시 시작하지 않음
+- 마감 위반은 내부 group/member 존재 여부를 노출하지 않는 `MATCHING_ARRIVAL_DEADLINE_EXCEEDED` 409 오류로 반환
+- MatchRoomPage에 최종 도착 마감, 전체 남은 시간, 실제 예상 도착 시각과 예상 도착까지 남은 시간 표시
+- 개별 예정 시각이 지났지만 전체 마감 전이면 `예정 시간이 지났어요`를 표시하고 남은 범위에서 재선택 가능
+- 남은 전체 시간보다 긴 선택지는 비활성화하고 전체 마감부터 시간 선택 UI 차단
+- 본인이 `ARRIVED`이면 도착 예정 시간과 도착 완료 action을 모두 숨기고 기존 도착 완료 시각만 표시
+- frontend timer는 표시만 갱신하며 server 상태, `NO_SHOW`와 event를 생성하지 않음
+- WebSocket 알림과 polling은 기존 current group/events REST refresh trigger 구조 유지
+- Backend focused 단위/Controller 36건 통과, backend `build -x test` 성공
+- matching 전체 실행은 102건 중 일반 테스트 88건 통과, Testcontainers 14개 class가 Docker 미탐지로 initialization 실패
+- backend 전체 실행은 146건 중 일반 테스트 131건 통과, Testcontainers 15개 class가 같은 사유로 initialization 실패
+- 신규 `MatchArrivalTimeServiceIntegrationTest` 경계·멱등·rollback·동시성 코드는 컴파일됐지만 현재 WSL에서 Docker Desktop integration이 없어 실행하지 못함
+- frontend focused 45건, 전체 99건, `npx tsc --noEmit`, production/PWA build 성공
+- `git diff --check`는 이번 범위 밖 기존 작업 트리의 CRLF 전체 변경을 trailing whitespace로 판정해 repository 전체 기준 실패
+- `localhost:8080`, `localhost:5173` runtime이 없고 Windows executable interop도 `UtilBindVsockAnyPort` 오류여서 festival `144`, member `2`, `27` 두 브라우저 수동 검증 미실행
+- `NO_SHOW`, Scheduler, 취소·패널티, meeting point, 지도, `COMPLETED`, 자유 채팅, group topic, client `SEND`, Redis는 추가하지 않음
+
+## [10-매칭 19차] MatchRoomPage 시스템 이벤트 타임라인
+
+상태: 구현 및 자동 회귀 완료, 두 브라우저 dev 수동 검증 미실행
+
+- 자유 채팅이 아닌 읽기 전용 상태 기록으로 `MATCH_CONFIRMED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED` 타임라인 추가
+- `GET /api/matching/groups/me/current/events` 추가: 식별자 입력 없이 인증 회원의 current active group만 조회하며 active group 부재는 `200 data:null`
+- 기존 확정 transaction에 actor 없는 `MATCH_CONFIRMED` audit event 저장을 추가하고 event insert 실패 시 확정 전체 rollback 회귀 검증
+- raw JSON payload를 반환하지 않고 event ID/type/KST 시각, 같은 active group actor의 ID/nickname, 검증된 `arrivalMinutes`만 DTO로 공개
+- 최신 50건을 `created_at DESC, id DESC`로 선택한 뒤 응답은 시간/ID 오름차순으로 반환
+- 허용하지 않은 도착 분 또는 malformed `ARRIVAL_TIME_SELECTED` payload는 해당 event만 제외하고 전체 API는 성공
+- 다른 group 또는 inactive/unrelated member의 nickname은 공개하지 않고 actor를 `null`로 반환
+- 최초 진입·새로고침·WebSocket 연결/재연결·상태 알림·polling에서 current group과 events REST를 함께 refresh
+- 동일 in-flight refresh 병합, WebSocket 중복 trigger 후속 refresh, mutation generation으로 늦은 이전 응답의 최신 snapshot 덮어쓰기 방지
+- mutation 성공 시 optimistic event를 추가하지 않고 DB commit 후 events REST 결과로 timeline을 교체
+- focused backend 84건, matching 전체 234건, backend 전체 278건, backend build 성공
+- frontend focused 39건, 전체 94건, `npx tsc --noEmit`, production/PWA build 성공
+- Windows 8080/5173 dev runtime과 식별 가능한 두 로그인 session이 없어 두 브라우저 수동 검증은 미실행
+- 자유 text input, 전송 버튼, client SEND, group topic, Redis, meeting point, COMPLETED 전환은 제외
+- 기존 Flyway migration과 schema는 변경하지 않았으며 기존 `idx_match_events_group_created_at`을 사용
+
+## [10-매칭 18차] 도착 완료 동시성·rollback 검증 보강
+
+상태: PostgreSQL 동시성·rollback·AFTER_COMMIT 자동 검증 완료, 두 브라우저 dev 수동 검증 미실행
+
+- 신규 사용자 기능과 운영 API/schema 변경 없이 기존 `MatchArrivalTimeServiceIntegrationTest` 보강
+- `pgvector/pgvector:pg16` Testcontainers와 실제 별도 thread/transaction으로 같은 group의 서로 다른 두 회원 동시 도착 검증
+- 두 요청 10초 timeout 내 정상 완료, 양쪽 ARRIVED, 회원별 `MEMBER_ARRIVED` 1건, group IN_PROGRESS와 startedAt/confirmedAt 불변 계약 검증
+- 양쪽 current group snapshot 일치, active member count와 confirmedMemberCount 일치, COMPLETED 미전환 검증
+- 동일 회원 동시 도착 두 요청 성공, arrivedAt/startedAt 불변, event 1건과 active 회원별 알림 1회 검증
+- member update, group update, MEMBER_ARRIVED insert 실패를 PostgreSQL test trigger로 각각 강제하고 member/group/event/current snapshot 전체 rollback 검증
+- rollback과 멱등 요청의 AFTER_COMMIT STOMP 알림 부재 검증
+- 이미 IN_PROGRESS인 group에 group update 실패 trigger를 설치해도 member 도착이 성공하여 불필요한 group update가 없음을 검증
+- 실제 변경마다 active member 전원 `MEMBER_ARRIVED` 알림, 다른 group 회원 제외, 기존 ARRIVAL_TIME_SELECTED 알림 회귀 검증
+- arrival PostgreSQL integration 13건, matching 전체 212건, backend 전체 266건, backend build 성공
+- frontend 운영 코드/테스트 수정 없이 전체 83건, `npx tsc --noEmit`, production build 성공
+- 테스트 matcher 타입 추론 compile 오류만 수정했으며 운영 코드 결함은 발견되지 않음
+- Windows 8080/5173 dev runtime과 식별 가능한 두 로그인 session이 없어 두 브라우저 수동 검증은 미실행
+- 기존 dev 이력의 festival `144`, member `2`, `27`을 확인했으나 현재 DB를 추정하거나 변경하지 않음
+- meeting point, COMPLETED, 취소·신고·평가, 채팅, group topic, client SEND, Redis는 제외
+
+## [10-매칭 17차] MatchRoomPage 도착 완료
+
+상태: Windows backend gate 해소, 도착 완료 구현 및 자동 회귀 완료, 두 브라우저 dev 수동 검증 미실행
+
+- Windows PowerShell, Azul Java 17.0.15, Docker Desktop과 `pgvector/pgvector:pg16` Testcontainers로 직전 backend 미검증 해소
+- native timestamp projection, 미정의 route 500 처리, Mockito fixture와 Windows SQL fixture encoding 결함 수정
+- body와 식별자 없는 `PUT /api/matching/groups/me/current/arrival` 추가
+- `group row -> group member row` 잠금 후 `JOINED`/`ARRIVAL_TIME_SELECTED -> ARRIVED` 처리
+- 최초 도착에서 `CONFIRMED -> IN_PROGRESS`, `started_at`을 최초 한 번만 설정
+- 기존 도착 예정 값은 유지하고 동일 ARRIVED 반복의 시각/event/WebSocket 알림 중복 방지
+- 실제 변경 commit 후 `MEMBER_ARRIVED`를 기존 `/user/queue/matching`으로 active member 전원 알림
+- current group에 `startedAt`, `currentMemberId`, member `arrivedAt` 추가
+- 확인 panel 기반 `도착했어요` 동선, 실패 snapshot 보존, 도착 시각 KST 표시 추가
+- 선행 focused, PostgreSQL integration, WebSocket focused와 backend build 성공
+- 신규 focused/PostgreSQL 회귀, frontend focused 42건·전체 83건, TypeScript와 production build 성공
+- 신규 변경 포함 matching 전체 206건, backend 전체 260건과 최종 build 성공
+- 두 브라우저 dev 수동 검증은 준비된 두 로그인 session이 없어 미실행
+- 채팅, group topic, client SEND, Redis, meeting point, 지도, COMPLETED, 취소·신고·평가는 제외
+
+## [10-매칭 16차] MatchRoomPage 도착 예정 시간 선택
+
+상태: 구현 및 frontend 전체 자동 검증 완료, backend 자동 검증과 두 브라우저 dev 수동 검증은 실행 환경 제약으로 미실행
+
+- 기존 V3 schema의 `arrival_minutes`, `arrival_time_selected_at`, 허용값 CHECK와 `ARRIVAL_TIME_SELECTED` event type을 사용해 신규 migration 없이 구현
+- `PUT /api/matching/groups/me/current/arrival-time` 추가, `access_token` HttpOnly cookie 회원 기준으로만 처리
+- request는 `arrivalMinutes`만 받으며 `0`, `5`, `10`, `20`, `30`만 validation 통과
+- active group을 잠근 뒤 로그인 회원의 group member를 잠그는 `group row -> group member row` 순서 적용
+- 잠금 후 group/member 상태를 재검증하고 `JOINED -> ARRIVAL_TIME_SELECTED`, 기존 선택값 변경 지원
+- `ARRIVED`, inactive member, `COMPLETED`/`CANCELLED` group 변경 거절
+- 같은 값 반복 요청은 snapshot을 반환하되 member update, `match_events`, WebSocket 알림을 만들지 않는 멱등 처리
+- 실제 변경은 member 상태·분·선택 시각과 최소 JSON payload의 `match_events` 저장을 같은 transaction에서 처리
+- 실제 commit 후 active group member 전원에게 기존 `/user/queue/matching`으로 `ARRIVAL_TIME_SELECTED` refresh 알림 fan-out
+- current group member 응답에 `arrivalMinutes`, `arrivalTimeSelectedAt` 추가, 기존 2-query/N+1 방지와 결정적 정렬 유지
+- MatchRoomPage에 접근 가능한 도착 예정 시간 선택 panel과 0/5/10/20/30분 선택지 추가
+- mutation 중 중복 제출 방지, 성공 snapshot 즉시 반영, 실패 시 기존 snapshot 유지와 오류 안내 제공
+- member 행에 `도착 시간 미정`, `곧 도착 예정`, `N분 후 도착 예정`, `도착 완료` 표시
+- frontend focused 5 files 43건 통과
+- frontend 전체 10 files 81건 통과
+- `npx tsc --noEmit` 성공
+- frontend production build 성공, 1,621 modules transformed 및 PWA service worker 생성 완료
+- backend focused/unit, PostgreSQL integration, WebSocket, matching 전체, backend 전체와 build는 현재 WSL에 Java와 Docker가 없어 실행하지 못함
+- 직전 15차 MatchRoomPage backend 자동 검증도 같은 이유로 여전히 미검증
+- 두 브라우저 dev 수동 검증은 dev runtime과 로그인 session이 없어 미실행
+- 자유 채팅, 도착 완료, group topic, client STOMP `SEND`, Redis, meeting point, 지도, 취소·신고 기능은 추가하지 않음
+
+## [10-매칭 15차] 읽기 전용 MatchRoomPage와 current group festival 계약
+
+상태: 구현 및 frontend 전체 자동 검증 완료, backend 자동 검증과 dev 수동 검증은 실행 환경 제약으로 미실행
+
+- 기존 `GET /api/matching/groups/me/current`와 `access_token` HttpOnly cookie 인증 경계를 유지
+- 기존 group 응답 필드를 유지하고 `festival`의 `festivalId`, `title`, `address`, `eventStartDate`, `eventEndDate` summary 추가
+- active member 공개 응답에 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED` 상태 추가
+- active group과 festival을 한 projection query로, active member와 공개 profile을 한 projection query로 조회해 참여자 수와 무관한 2개 query 구조 유지
+- `confirmed_member_count` 불일치, 로그인 회원 누락, 다중 active group은 기존 `MATCHING_CONFLICT` 계약 유지
+- `/match-room` route와 current group 전용 `useMatchRoom` 상태 복원 hook 추가
+- 최초 mount, WebSocket 연결·재연결 성공, `/user/queue/matching` 정상 알림 수신 시 current group REST refresh
+- WebSocket 미연결·장애 구간에는 5초 polling fallback을 사용하고 연결 성공 시 fallback timer 해제
+- current group이 없으면 `/matching`으로 replace 이동하고 loading, API 오류 안내, 수동 재시도 UI 제공
+- 확정 시각·인원·group 상태, 축제명·주소·기간, 확정 멤버 nickname·공개 profile image·참여 상태 표시
+- 기존 `/matching`의 `MATCHED` 카드에 `상태방 들어가기` 버튼을 추가하고 확정 직후 자동 이동은 추가하지 않음
+- URL에 `groupId`를 포함하지 않고 다른 group 직접 조회 route/API를 추가하지 않음
+- 신규 group topic, client STOMP `SEND`, Redis, 외부 broker, SockJS, 자유 채팅, meeting point, 도착 기능, 신규 Flyway migration 없음
+- frontend focused 5 files 31건 통과
+- frontend 전체 10 files 70건 통과
+- `npx tsc --noEmit` 성공
+- frontend production build 성공, 1,621 modules transformed 및 PWA service worker 생성 완료
+- backend focused/PostgreSQL/matching 전체/backend 전체/build는 현재 WSL에 Linux Java가 없고 Windows Java interop도 `UtilBindVsockAnyPort` 오류로 실행하지 못함
+- 두 브라우저 dev 수동 검증은 이 작업 환경에서 로그인 세션과 dev runtime을 준비하지 않아 미실행
+- 수동 검증 대상은 양쪽 동일 group·festival·member 확인, 새로고침·직접 URL·WebSocket 재연결 복원, active group 없는 회원의 `/matching` 복귀, 임의 group route·채팅 UI·group topic 부재 확인
+
 ## [10-매칭 14차] terminal pool 재신청 화면 전환
 
 상태: frontend 구현, 전체 자동 회귀 및 두 브라우저 dev 화면 수동 검증 완료

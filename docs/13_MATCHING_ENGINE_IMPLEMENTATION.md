@@ -2159,3 +2159,1135 @@ dev DB의 festival `144`, member `2`, `27`과 유효한 `ACTIVE` check-in을 사
 - B 수락 후 양쪽 `MATCHED` 전환
 - `MATCHED`에서 재신청 UI 미표시
 - retry form 상태에서 새로고침 시 서버 terminal 카드 복원
+
+## 31. 읽기 전용 MatchRoomPage
+
+### 31.1 current group 응답 확장 계약
+
+기존 endpoint와 인증 방식은 변경하지 않습니다.
+
+```text
+GET /api/matching/groups/me/current
+Cookie: access_token=<HttpOnly JWT>
+```
+
+`memberId`, `groupId`를 path, query, body로 받지 않으며 로그인 회원이 참여한
+current group만 조회합니다. current group이 없으면 `200 OK`,
+`{"success":true,"data":null,"error":null}`을 반환합니다.
+
+응답 예:
+
+```json
+{
+  "success": true,
+  "data": {
+    "groupId": 10,
+    "festivalId": 1,
+    "status": "CONFIRMED",
+    "confirmedMemberCount": 2,
+    "confirmedAt": "2026-07-27T12:30:00+09:00",
+    "festival": {
+      "festivalId": 1,
+      "title": "강원 여름 축제",
+      "address": "강원특별자치도",
+      "eventStartDate": "2026-07-27",
+      "eventEndDate": "2026-07-29"
+    },
+    "members": [
+      {
+        "memberId": 1,
+        "nickname": "member-a",
+        "profileImageUrl": null,
+        "status": "JOINED"
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+기존 `groupId`, `festivalId`, `status`, `confirmedMemberCount`, `confirmedAt`,
+`members`는 유지했습니다. `festival` summary와 member `status`만
+추가했습니다. 날짜가 없는 축제는 `eventStartDate`, `eventEndDate`가
+`null`일 수 있고 주소도 nullable입니다.
+
+### 31.2 active 범위와 공개 정보
+
+active group:
+
+```text
+CONFIRMED
+IN_PROGRESS
+```
+
+active member:
+
+```text
+JOINED
+ARRIVAL_TIME_SELECTED
+ARRIVED
+```
+
+종료 group과 inactive member는 제외합니다. active group이 여러 건이거나 저장된
+`confirmed_member_count`와 응답 참여자 수가 다르거나 로그인 회원이 참여자에
+없으면 `409 MATCHING_CONFLICT`입니다. 참여자는
+`match_group_members.id ASC`로 결정적 정렬합니다.
+
+공개 범위:
+
+- festival: ID, 제목, 주소, 행사 시작일, 행사 종료일
+- member: ID, nickname, 공개 profile image URL, 참여 상태
+
+이메일, OAuth 식별자, GPS, 성별, 연령대, 여행 스타일, 자기소개,
+penalty/cooldown, private Object Storage key와 도착 기능의 세부 시각은
+반환하지 않습니다.
+
+active group과 festival은 하나의 native projection query로 조회하고, active
+member와 공개 profile은 하나의 projection query로 조회합니다. 참여자 수와
+관계없이 총 2개 query 구조이며 member entity lazy loading을 사용하지 않습니다.
+기존 `festivals`와 matching schema만 사용했고 신규 Flyway migration은 없습니다.
+
+### 31.3 route와 사용자 동선
+
+frontend route는 `/match-room`이며 URL에 `groupId`가 없습니다.
+
+```text
+/matching MATCHED 카드
+  -> 사용자가 "상태방 들어가기" 클릭
+  -> /match-room
+  -> current group REST 복원
+```
+
+`MATCH_CONFIRMED` 직후 자동 이동하지 않습니다. 사용자가 확정 결과를 확인한 뒤
+버튼으로 이동합니다. `/match-room` 새로고침과 직접 URL 접근도 같은 REST
+복원 경로를 사용합니다. current group이 `null`이면 `/matching`으로 replace
+이동합니다.
+
+읽기 전용 화면은 확정 안내, 확정 시각·인원, group 상태 문구, 축제 summary와
+멤버 공개 정보만 표시합니다. `CONFIRMED`는 `만남 준비 중`,
+`IN_PROGRESS`는 `미팅 진행 중`으로 표시합니다. loading과 API 오류를 별도로
+표시하고 오류에는 `다시 시도` 버튼을 제공합니다.
+
+### 31.4 WebSocket REST refresh와 polling
+
+MatchRoomPage는 pool/proposal/restriction까지 조회하는 `useMatchingSession`을
+재사용하지 않고 current group 전용 `useMatchRoom`을 사용합니다.
+
+```text
+PostgreSQL = 최종 상태
+current group REST = 화면 복원
+/user/queue/matching = refresh trigger
+5초 polling = WebSocket 미연결·장애 fallback
+```
+
+최초 mount, `/ws` 연결 성공, 재연결 성공과 정상 상태 변경 알림 수신 시 current
+group REST를 다시 조회합니다. STOMP payload는 최종 화면 데이터로 사용하지
+않습니다. 연결 성공 시 fallback timer를 해제하고 연결 종료·오류 시 polling을
+재개합니다. unmount에서는 timer, STOMP subscription/client와 진행 중
+`AbortController`를 정리합니다.
+
+신규 `/topic/match-groups/{groupId}` 구독, client `SEND`, Redis, 외부 broker,
+SockJS와 자유 채팅은 추가하지 않았습니다.
+
+### 31.5 인증·인가 경계
+
+- REST와 WebSocket 모두 기존 `access_token` HttpOnly cookie를 사용합니다.
+- client가 회원 ID 또는 group ID를 지정하지 않습니다.
+- 다른 group 직접 조회 endpoint와 frontend route를 제공하지 않습니다.
+- 공개 summary 밖의 개인정보와 위치정보를 응답하지 않습니다.
+- 잘못된 WebSocket payload는 기존 parser에서 무시하며 REST refresh를 유도하지 않습니다.
+
+### 31.6 자동 검증
+
+frontend focused:
+
+```bash
+npx tsc --noEmit
+npx vitest run \
+  src/api/matching.test.ts \
+  src/api/matchingWebSocket.test.ts \
+  src/hooks/useMatchRoom.test.ts \
+  src/pages/MatchRoomPage.test.ts \
+  src/pages/MatchingConditionPage.test.ts
+```
+
+- 5 files, 31 tests 통과
+- loading, group/festival/member 렌더링과 두 group 상태 문구 검증
+- null redirect 판정, API 오류와 재시도 검증
+- 최초 REST 복원, 연결·재연결, 정상 알림 refresh 검증
+- 잘못된 payload 무시 회귀, 장애 polling과 stop cleanup 검증
+- 상태방 버튼 이동 handler와 자동 이동 부재 검증
+- 자유 text input/textarea 부재 검증
+
+frontend 전체:
+
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+```
+
+- 전체 10 files, 70 tests 통과
+- TypeScript 검사 성공
+- production build 성공, 1,621 modules transformed
+- PWA service worker 생성 성공
+
+backend에는 Controller/service/PostgreSQL 통합 테스트의 응답 기대값과 정합성
+검증을 보강했습니다. 다만 현재 WSL에는 Linux Java가 없고 Windows Java 실행도
+WSL interop의 `UtilBindVsockAnyPort` 오류로 실패해 아래 명령은 실행하지
+못했습니다.
+
+```text
+focused unit/controller tests: 미실행
+focused PostgreSQL integration tests: 미실행
+matching 전체 tests: 미실행
+backend 전체 tests: 미실행
+backend build: 미실행
+```
+
+PostgreSQL 통합 테스트 구성은 기존 `pgvector/pgvector:pg16` Testcontainers를
+그대로 사용하며 H2로 대체하지 않았습니다.
+
+### 31.7 두 브라우저 수동 검증 절차
+
+이 작업 환경에서는 dev runtime과 두 로그인 session을 준비하지 않아 수동
+검증을 실행하지 않았습니다. 다음 순서로 확인합니다.
+
+1. 서로 다른 두 회원을 같은 축제·같은 조건으로 신청해 동일 group을 확정한다.
+2. 양쪽 `/matching`에서 `MATCHED` 카드가 유지되고 자동 이동하지 않는지 확인한다.
+3. 양쪽에서 `상태방 들어가기`를 눌러 `/match-room`으로 이동한다.
+4. 양쪽의 group ID, 축제 summary, 확정 인원과 정렬된 멤버가 같은지 확인한다.
+5. 한쪽을 새로고침해 current group REST로 같은 화면이 복원되는지 확인한다.
+6. 다른 쪽에서 `/match-room`을 직접 입력해 같은 화면이 복원되는지 확인한다.
+7. DevTools Network offline/online 또는 WebSocket 연결 종료 후 재연결하여 REST가 다시 조회되는지 확인한다.
+8. active group이 없는 회원으로 `/match-room`에 접근해 `/matching`으로 replace 이동하는지 확인한다.
+9. `/match-room/{groupId}`와 `/api/matching/groups/{groupId}` 같은 임의 조회 경로가 없는지 확인한다.
+10. text input, 메시지 목록, client STOMP `SEND`, group topic 구독이 없는지 확인한다.
+
+### 31.8 제외 범위와 남은 제한사항
+
+- 자유 채팅, 자유 text input과 메시지 목록
+- meeting point와 지도
+- 도착 시간 선택, 도착 완료와 도착 상세 시각
+- 취소, 신고, 긴급 도움, 안전 리마인드, 평가와 사진 공유
+- group topic과 client STOMP `SEND`
+- Redis, 외부 message broker와 SockJS
+- matching engine 상태 전이와 terminal retry 계약 변경
+- Flyway migration 추가 또는 기존 migration 수정
+- backend 자동 검증과 두 브라우저 dev 수동 검증은 Java/runtime 가능한 환경에서 후속 실행 필요
+
+## 32. MatchRoomPage 도착 예정 시간 선택
+
+### 32.1 REST 계약
+
+```text
+PUT /api/matching/groups/me/current/arrival-time
+Cookie: access_token=<HttpOnly JWT>
+Content-Type: application/json
+```
+
+request:
+
+```json
+{
+  "arrivalMinutes": 10
+}
+```
+
+허용값은 기존 DB CHECK와 같은 `0`, `5`, `10`, `20`, `30`입니다.
+`arrivalMinutes` 누락과 그 밖의 값은 validation 오류입니다. request path,
+query, body에 `memberId`, `groupId`를 받지 않고 로그인 회원의 current active
+group과 group member를 서버에서 찾습니다.
+
+성공 응답은 갱신된 `MatchGroupResponse` 전체 snapshot입니다. member 공개
+필드에는 다음 두 항목이 추가됩니다.
+
+- `arrivalMinutes`: 선택 전에는 `null`, 선택 후 `0|5|10|20|30`
+- `arrivalTimeSelectedAt`: 선택 전에는 `null`, 선택·변경 commit 시각
+
+같은 active group 참여자에게만 기존 current group 조회를 통해 공개하며 GPS,
+원본 위치, 이메일, OAuth 식별자와 Secret은 포함하지 않습니다.
+
+### 32.2 상태 전이와 오류 경계
+
+```text
+JOINED
+  -> ARRIVAL_TIME_SELECTED
+
+ARRIVAL_TIME_SELECTED
+  -> ARRIVAL_TIME_SELECTED (다른 허용값으로 변경)
+```
+
+아래 상태에서는 변경을 거절하고 내부 group/member 존재 여부를 구분해
+노출하지 않는 `MATCHING_CONFLICT`를 사용합니다.
+
+- member `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT`
+- group `COMPLETED`, `CANCELLED`
+- active group 부재 또는 다중 active group
+- 로그인 회원의 group member 부재
+
+`ARRIVED`의 도착 완료 상태는 읽기 전용 표시만 하며 이번 API가 `arrived_at`을
+변경하지 않습니다.
+
+### 32.3 transaction과 lock 순서
+
+도착 예정 시간 변경은 하나의 Spring transaction입니다.
+
+```text
+1. 로그인 회원 기준 active match_groups row 조회 및 FOR UPDATE
+2. group_id + 로그인 member_id 기준 match_group_members row FOR UPDATE
+3. 잠금 획득 후 group/member 상태 재검증
+4. 멱등 여부 판정
+5. member 상태, arrival_minutes, arrival_time_selected_at 갱신 및 flush
+6. match_events 저장 및 flush
+7. active group member ID 조회
+8. MatchingStateChangedEvent publish
+9. current group snapshot 조회
+10. transaction commit
+11. AFTER_COMMIT STOMP fan-out
+```
+
+잠금 순서는 `group row -> group member row`입니다. 향후 도착 완료 기능도 같은
+순서를 사용해야 arrival 선택과 도착 완료 경쟁에서 교착 가능성을 줄이고,
+member 상태를 잠금 후 다시 검증할 수 있습니다. matching engine의 attempt,
+proposal, pool transaction과 terminal retry transaction은 변경하지 않았습니다.
+
+### 32.4 멱등성과 동시성
+
+member가 이미 `ARRIVAL_TIME_SELECTED`이고 저장된 `arrival_minutes`가 request와
+같으면 갱신된 current group snapshot을 반환하되 다음 작업은 수행하지 않습니다.
+
+- member update와 선택 시각 갱신
+- `match_events` insert
+- `MatchingStateChangedEvent` publish
+- WebSocket 알림
+
+다른 값은 member row lock 아래에서 한 번 변경하고 event 한 건을 추가합니다.
+동일 회원의 동시 요청은 같은 group/member row lock으로 직렬화되며 commit 순서의
+최종 `arrival_minutes`와 event ID 순서의 마지막 payload가 일치합니다.
+
+member update 또는 `match_events` insert가 실패하면 transaction 전체가
+rollback됩니다. `@TransactionalEventListener(AFTER_COMMIT)` handler는 commit된
+transaction에만 반응하므로 rollback 시 STOMP 알림도 없습니다.
+
+### 32.5 match_events
+
+기존 허용 event type을 사용합니다.
+
+```text
+event_type = ARRIVAL_TIME_SELECTED
+group_id = current group ID
+attempt_id = current group attempt ID
+member_id = 로그인 회원 ID
+```
+
+payload:
+
+```json
+{
+  "arrivalMinutes": 10
+}
+```
+
+payload에는 token, GPS, 원본 위치, 이메일, OAuth 식별자와 Secret을 저장하지
+않습니다. 기존 V3 schema의 JSONB와 event type CHECK를 그대로 사용하며 Flyway
+migration을 추가하거나 수정하지 않았습니다.
+
+### 32.6 AFTER_COMMIT WebSocket fan-out
+
+실제 값이 변경된 transaction만 active group 참여 회원 ID 목록으로
+`MatchingStateChangedEvent`를 발행합니다.
+
+```text
+reason = ARRIVAL_TIME_SELECTED
+destination = /user/queue/matching
+```
+
+기존 `MatchingStateChangedEventHandler`가 commit 후 회원별
+`/queue/matching`으로 알립니다. 다른 group 회원은 ID 목록에 포함하지 않습니다.
+동일 값 멱등 요청과 rollback transaction에는 application event를 발행하지
+않거나 AFTER_COMMIT 단계가 없으므로 추가 알림이 없습니다.
+
+신규 group topic, client STOMP `SEND`, Redis, 외부 broker와 SockJS는 없습니다.
+알림 payload는 최종 화면 데이터가 아니라 current group REST refresh
+trigger입니다.
+
+### 32.7 frontend 복원과 사용자 동선
+
+MatchRoomPage의 `몇 분 후 도착하나요?` 제한형 panel에서 다음 선택지를
+제공합니다.
+
+- `지금 도착` → `0`
+- `5분` → `5`
+- `10분` → `10`
+- `20분` → `20`
+- `30분` → `30`
+
+mutation 중에는 추가 선택을 막고 동일 in-flight Promise를 재사용합니다. 성공
+응답 snapshot을 즉시 현재 화면에 반영하고, 실패하면 기존 group snapshot을
+유지한 채 오류 안내를 표시해 재선택할 수 있게 합니다.
+
+member 행 표시:
+
+```text
+JOINED                         -> 도착 시간 미정
+ARRIVAL_TIME_SELECTED + 0      -> 곧 도착 예정
+ARRIVAL_TIME_SELECTED + N      -> N분 후 도착 예정
+ARRIVED                        -> 도착 완료
+```
+
+다른 browser의 변경은 기존 `/user/queue/matching` 알림 수신 후 current group
+REST refresh로 반영합니다. WebSocket 장애 중에는 기존 5초 polling fallback을
+유지합니다. 최초 mount, 직접 URL, 새로고침과 재연결 복원 계약도 변경하지
+않았습니다.
+
+자유 text input, 메시지 목록, 채팅 형태 UX와 `도착했어요` 버튼은 없습니다.
+
+### 32.8 자동 테스트
+
+frontend focused:
+
+```bash
+npx tsc --noEmit
+npx vitest run \
+  src/api/matching.test.ts \
+  src/api/matchingWebSocket.test.ts \
+  src/hooks/useMatchRoom.test.ts \
+  src/pages/MatchRoomPage.test.ts \
+  src/pages/MatchingConditionPage.test.ts
+```
+
+- 5 files, 43 tests 통과
+- 0/5/10/20/30 API contract와 선택 panel 검증
+- mutation 중복 제출 병합, 성공 snapshot 반영, 실패 snapshot 보존과 재시도 검증
+- member 도착 상태 문구, WebSocket refresh, polling fallback과 cleanup 회귀
+- 직접 URL/null redirect 판정, `/matching` MATCHED와 terminal retry 회귀
+- 자유 text input과 도착 완료 버튼 부재 검증
+
+frontend 전체:
+
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+```
+
+- 전체 10 files, 81 tests 통과
+- TypeScript 검사 성공
+- production build 성공, 1,621 modules transformed
+- PWA service worker 생성 성공
+
+backend에는 다음 테스트를 작성했습니다.
+
+- Controller 인증, 누락/허용 외 validation, 모든 허용값과 snapshot contract
+- service lock 순서, 멱등, ARRIVED와 리소스 은닉
+- `pgvector/pgvector:pg16` Testcontainers의 상태 전이, 변경, 멱등 event,
+  concurrent serialization, member/event failure rollback
+- 실제 commit 후 active member fan-out, 멱등/rollback 알림 부재
+- 기존 WebSocket handler의 `ARRIVAL_TIME_SELECTED` reason
+
+하지만 현재 WSL에는 Linux Java와 Docker가 없어서 backend focused,
+PostgreSQL integration, WebSocket focused, matching 전체, backend 전체와
+build를 실행하지 못했습니다. 직전 31절의 MatchRoomPage backend 테스트도 같은
+환경 제약으로 여전히 미검증입니다. H2로 대체하지 않았습니다.
+
+### 32.9 두 브라우저 수동 검증
+
+현재 작업 환경에는 dev runtime과 두 로그인 session이 없어 실행하지
+못했습니다. 다음 절차를 후속 실행합니다.
+
+1. A/B 두 회원을 같은 group으로 확정하고 양쪽 MatchRoomPage에 진입한다.
+2. A가 10분을 선택하고 A 화면에 즉시 `10분 후 도착 예정`이 표시되는지 확인한다.
+3. B가 `/user/queue/matching` 알림 후 REST refresh로 A의 10분을 표시하는지 확인한다.
+4. A가 5분으로 변경하고 양쪽에서 최신 5분을 표시하는지 확인한다.
+5. A가 같은 5분을 반복 선택한 뒤 `match_events`와 알림이 증가하지 않는지 확인한다.
+6. B가 `지금 도착`을 선택하고 양쪽에 `곧 도착 예정`이 표시되는지 확인한다.
+7. 양쪽 새로고침과 `/match-room` 직접 접근 후 상태가 복원되는지 확인한다.
+8. WebSocket 연결을 끊고 한쪽 값을 변경해 5초 polling fallback으로 복원되는지 확인한다.
+9. request와 URL에 임의 `memberId`, `groupId` 조작 경로가 없는지 확인한다.
+10. 채팅, group topic, client `SEND`, 도착 완료 기능이 없는지 확인한다.
+
+### 32.10 제외 범위와 제한사항
+
+- 도착 완료와 `arrived_at` 변경
+- 자유 채팅, 자유 text input과 메시지 목록
+- meeting point, 지도와 Kakao Maps
+- 취소, 신고, 긴급 도움, 평가, 사진 공유와 no-show penalty
+- group topic, client STOMP `SEND`
+- Redis, 외부 broker와 SockJS
+- matching engine와 terminal retry transaction 변경
+- Flyway migration 추가 또는 기존 migration 수정
+- backend 자동 검증과 두 브라우저 dev 수동 검증은 Java/Docker/dev runtime 가능한 환경에서 후속 실행 필요
+
+## 33. MatchRoomPage 도착 완료
+
+### 33.1 Windows 선행 검증과 REST 계약
+
+Windows PowerShell, Azul Java 17.0.15, Docker Desktop과 기존
+`pgvector/pgvector:pg16` Testcontainers로 직전 backend 미검증을 해소했습니다.
+timestamp native projection, 미정의 route 500 변환, Mockito fixture와 Windows
+SQL fixture encoding 결함을 수정한 뒤 gate를 통과했습니다.
+
+```text
+PUT /api/matching/groups/me/current/arrival
+Cookie: access_token=<HttpOnly JWT>
+body 없음
+```
+
+회원/group 식별자를 입력받지 않고 인증 회원의 current active group member만
+변경합니다. 응답에는 `startedAt`, `currentMemberId`, member `arrivedAt`을
+추가한 전체 snapshot을 반환합니다.
+
+### 33.2 상태 전이, transaction과 lock
+
+`JOINED`와 `ARRIVAL_TIME_SELECTED`는 `ARRIVED`로 전환하며 기존 도착 예정 분과
+선택 시각은 유지합니다. 첫 도착이면 같은 transaction에서
+`CONFIRMED -> IN_PROGRESS`와 `started_at`을 한 번만 처리합니다.
+
+```text
+group row FOR UPDATE
+-> 로그인 회원 group member row FOR UPDATE
+-> 잠금 후 상태 재검증
+-> member/group 변경
+-> MEMBER_ARRIVED 저장과 application event 발행
+-> commit
+-> AFTER_COMMIT STOMP fan-out
+```
+
+`ARRIVED -> ARRIVED` 반복은 기존 snapshot을 반환하고 `arrivedAt`, `startedAt`,
+event와 알림을 변경하지 않습니다. inactive member와 종료 group은 거절하며
+모든 회원 도착을 COMPLETED로 연결하지 않습니다.
+
+### 33.3 WebSocket, frontend와 검증
+
+실제 변경 commit 뒤 active member 전원의 기존 `/user/queue/matching`에
+`MEMBER_ARRIVED` reason을 전송합니다. Frontend는 payload를 직접 적용하지 않고
+current group REST로 복원하며 WebSocket 장애 시 기존 polling을 유지합니다.
+
+MatchRoomPage는 본인이 JOINED 또는 ARRIVAL_TIME_SELECTED일 때 확인 panel을
+표시합니다. 성공 snapshot 전에는 optimistic하게 ARRIVED로 표시하지 않고,
+실패하면 기존 snapshot을 보존합니다. `arrivedAt`은 기존 KST formatter를
+사용합니다.
+
+자동 검증은 focused, PostgreSQL arrival/arrival-time, WebSocket, matching 전체
+206건, backend build, frontend focused 42건·전체 83건, TypeScript와 production
+build가 통과했고 backend 전체 260건과 최종 build도 성공했습니다. 두 브라우저 dev 검증은 준비된 로그인 session이 없어
+미실행이며 후속으로 예정 시간 전파, 첫 도착 IN_PROGRESS/startedAt, 반복 event
+불변, 두 번째 도착 후 COMPLETED 미전환과 polling 복원을 확인해야 합니다.
+
+### 33.4 제외 범위
+
+- 자유 채팅, meeting point와 지도
+- COMPLETED 전환
+- 취소, 신고, 긴급 도움, 평가, 사진 공유와 no-show penalty
+- group topic, client STOMP SEND, Redis와 외부 broker
+
+## 34. 도착 완료 동시성·rollback 검증
+
+### 34.1 실제 PostgreSQL 동시 도착
+
+Windows PowerShell, Azul Java 17.0.15, Docker Desktop과 기존
+`pgvector/pgvector:pg16` Testcontainers를 사용했습니다. sleep 대신
+`CountDownLatch`로 두 thread를 동시에 시작하고 각 `Future`를 10초 timeout으로
+회수하여 deadlock과 lock timeout도 테스트 실패로 처리했습니다. 각 service
+호출은 Spring proxy를 통해 별도 transaction으로 실행됩니다.
+
+서로 다른 A/B가 동시에 도착해도 두 요청이 완료되고 최종 snapshot에서 양쪽이
+ARRIVED입니다. 회원별 `MEMBER_ARRIVED`는 정확히 1건이고 group은 IN_PROGRESS,
+startedAt은 최초 값으로 유지되며 confirmedAt과 confirmedMemberCount는 바뀌지
+않습니다. A/B가 다시 조회한 current group의 status, startedAt, confirmedAt과
+정렬된 member snapshot은 동일합니다. active member count는 확정 인원과 같고
+group은 COMPLETED로 전환되지 않습니다.
+
+이는 운영 repository의 고정 lock 순서를 실제 DB에서 검증합니다.
+
+```text
+group row FOR UPDATE
+-> 로그인 회원 group member row FOR UPDATE
+```
+
+### 34.2 동일 회원 동시 멱등 요청
+
+같은 회원의 두 동시 요청도 모두 성공합니다. 첫 transaction만 ARRIVED,
+arrivedAt, IN_PROGRESS, startedAt과 event를 만들고 두 번째 transaction은
+group/member lock 뒤 ARRIVED를 확인해 snapshot만 반환합니다. 두 응답과 최종
+snapshot의 arrivedAt/startedAt이 같고 `MEMBER_ARRIVED`와 active 회원별 fan-out은
+각각 한 번뿐임을 검증했습니다.
+
+### 34.3 failure rollback
+
+운영 migration을 수정하지 않고 테스트 안에서 다음 PostgreSQL trigger를
+생성하고 `@AfterEach`에서 trigger/function을 제거합니다.
+
+- `match_group_members BEFORE UPDATE`: member 상태와 arrivedAt, group 상태와 startedAt, event 전체 rollback
+- `match_groups BEFORE UPDATE`: 먼저 flush된 member 변경까지 rollback, group CONFIRMED/startedAt null 유지
+- `match_events BEFORE INSERT`: member/group 변경 rollback, event 없음
+
+각 실패 뒤 current group REST용 query snapshot도 변경 전 CONFIRMED/JOINED로
+복원되며 `SimpMessagingTemplate` 호출이 없음을 확인했습니다. application
+event와 실제 STOMP 사이의 `AFTER_COMMIT` 경계 때문에 rollback 상태는 전송되지
+않습니다. 이미 IN_PROGRESS인 group은 group update 실패 trigger가 있어도
+member 도착이 성공하므로 startedAt을 다시 쓰는 불필요한 update가 없음을
+검증했습니다.
+
+### 34.4 WebSocket fan-out
+
+실제 MEMBER_ARRIVED commit마다 active group 두 회원 모두에게
+`/queue/matching`, reason `MEMBER_ARRIVED`가 전달되고 fixture의 다른 회원에게는
+전달되지 않습니다. 서로 다른 두 회원의 실제 변경은 수신자별 2회, 동일 회원
+동시 멱등 요청은 수신자별 1회입니다. rollback은 0회이며 기존
+ARRIVAL_TIME_SELECTED fan-out도 focused 회귀에 포함했습니다.
+
+신규 group topic, client SEND, Redis, 외부 broker와 SockJS는 없습니다.
+
+### 34.5 실행 명령과 결과
+
+```powershell
+.\gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeServiceIntegrationTest" --rerun-tasks
+.\gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.*" --rerun-tasks
+.\gradlew.bat test --rerun-tasks
+.\gradlew.bat build
+
+npm test -- --run
+npx tsc --noEmit
+npm run build
+```
+
+- arrival PostgreSQL integration: 13건 성공
+- matching 전체: 212건 성공
+- backend 전체: 266건 성공
+- backend build 성공
+- frontend 전체: 10 files, 83건 성공
+- TypeScript와 production build 성공
+
+### 34.6 두 브라우저 검증과 남은 범위
+
+기존 수동 검증 이력의 festival `144`, member `2`, `27`은 확인했지만 현재
+Windows에서 8080/5173 dev runtime이 실행 중이지 않고 준비된 두 로그인 session을
+식별·제어할 수 없어 수동 검증은 실행하지 않았습니다. 기존 DB를 삭제하거나
+보정하지 않았습니다.
+
+후속 수동 검증은 동일 group/축제/member 확인, A 예정 시간의 B 전파, A 도착의
+양쪽 ARRIVED·IN_PROGRESS·startedAt 복원, A 반복 요청 event/알림 불변, B 도착
+후에도 COMPLETED 미전환, 새로고침, WebSocket 차단 polling, 재연결 REST 복원,
+임의 ID route와 채팅/group topic/client SEND 부재를 확인합니다.
+
+운영 코드 결함은 발견되지 않았습니다. meeting point, COMPLETED, 취소·신고·평가,
+채팅과 외부 broker는 계속 제외합니다.
+
+## 35. MatchRoomPage 시스템 이벤트 타임라인
+
+### 35.1 실제 event 생성 조사와 REST 계약
+
+조사 전 운영 코드는 `ARRIVAL_TIME_SELECTED`를 `{"arrivalMinutes": N}`,
+`MEMBER_ARRIVED`를 빈 object payload로 저장했습니다. `MATCH_CONFIRMED`는 DB CHECK와
+WebSocket reason에만 존재하고 audit row를 저장하지 않아, group/member 확정과
+같은 transaction에서 actor 없는 빈 object event를 저장하도록 보강했습니다.
+`MATCH_CANCELLED`, `MEMBER_CANCELLED`, `SAFETY_REMINDER`는 생성 기능이 없어 이번
+응답과 화면에서 제외합니다.
+
+```text
+GET /api/matching/groups/me/current/events
+Cookie: access_token=<HttpOnly JWT>
+path/query/body 식별자 없음
+```
+
+current active group이 없으면 `200 data:null`, 있으면 다음 안전한 DTO를
+반환합니다.
+
+```json
+{
+  "events": [
+    {
+      "eventId": 101,
+      "type": "ARRIVAL_TIME_SELECTED",
+      "occurredAt": "2026-07-30T09:01:00+09:00",
+      "actor": {"memberId": 1, "nickname": "민수"},
+      "arrivalMinutes": 10
+    }
+  ]
+}
+```
+
+raw payload, GPS, 이메일, OAuth 식별자, token, penalty/cooldown과 Secret은
+포함하지 않습니다.
+
+### 35.2 인가, actor와 N+1 경계
+
+기존 `MatchGroupQueryService.currentGroup(memberId)` 계약으로 active group 부재,
+다중 active group, 확정 인원 불일치와 로그인 member 누락을 동일하게 검증한 뒤
+확정된 group ID로 event를 조회합니다. event query는
+`match_group_members`와 `members`를 한 번에 left join합니다.
+
+event `member_id`가 같은 group의 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`
+member일 때만 ID/nickname을 공개합니다. system event와 unrelated/inactive
+member는 actor `null`입니다. event별 member 추가 조회는 없어 N+1이 발생하지
+않습니다.
+
+### 35.3 payload, 정렬과 조회 제한
+
+기존 `idx_match_events_group_created_at(group_id, created_at)`을 사용하며 migration은
+추가하지 않았습니다.
+
+```text
+DB 선택: created_at DESC, id DESC LIMIT 50
+응답 순서: created_at ASC, id ASC
+```
+
+`ARRIVAL_TIME_SELECTED`만 `arrivalMinutes`를 파싱하고 `0`, `5`, `10`, `20`,
+`30`인지 검증합니다. JSON 구조가 잘못됐거나 허용값이 아니면 원문을 노출하거나
+전체 API를 실패시키지 않고 해당 event만 제외합니다. 다른 지원 type은 payload를
+파싱하지 않습니다.
+
+별도 미팅 시작 event가 없으므로 group `startedAt` 또는 첫 `MEMBER_ARRIVED`에서
+“미팅이 시작됐어요” event를 합성하지 않습니다.
+
+### 35.4 frontend REST 복원
+
+최초 mount, 직접 URL, 새로고침, WebSocket 연결·재연결, 정상 상태 알림과 장애
+polling에서 current group과 events REST를 함께 조회합니다. 동일 in-flight
+refresh는 병합하고, 연결/알림 trigger가 진행 중 요청과 겹치면 완료 뒤 한 번 더
+refresh합니다. mutation generation을 사용해 mutation 뒤 늦게 끝난 과거 group
+응답이 최신 snapshot을 덮지 못하게 합니다.
+
+도착 예정/도착 완료 성공 snapshot은 즉시 반영하되 timeline은 optimistic하게
+append하지 않고 commit 후 events REST 결과로 교체합니다. events만 실패하면
+group 화면과 기존 timeline을 유지하고 상태 기록 영역에 별도 오류/재시도를
+표시합니다.
+
+타임라인은 KST 시각, actor nickname 또는 본인의 “내가” 표현과 다음 문구를
+사용합니다.
+
+- `MATCH_CONFIRMED`: 매칭이 확정됐어요.
+- `ARRIVAL_TIME_SELECTED + 0`: 곧 도착할 예정이에요.
+- `ARRIVAL_TIME_SELECTED + N`: N분 후 도착할 예정이에요.
+- `MEMBER_ARRIVED`: 도착했어요.
+
+자유 text input, 전송 버튼, 메시지 작성, group topic과 client SEND는 없습니다.
+
+### 35.5 멱등성, rollback과 자동 검증
+
+동일 arrivalMinutes와 동일 ARRIVED 요청은 기존 transaction 계약대로 새 event를
+만들지 않아 timeline 항목도 증가하지 않습니다. arrival member/group/event
+rollback 뒤 events API에는 변경 event가 노출되지 않습니다.
+`MATCH_CONFIRMED` event insert 실패도 proposal response, attempt, group/member,
+pool 확정 전체를 rollback하도록 PostgreSQL trigger 회귀에 포함했습니다.
+
+Windows PowerShell, Azul Java 17.0.15, Docker Desktop과
+`pgvector/pgvector:pg16`으로 실행했습니다.
+
+```powershell
+.\gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.controller.MatchingControllerTest" --tests "com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryServiceTest" --tests "com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeServiceIntegrationTest" --tests "com.survey.meetorsolo.domain.matching.service.MatchProposalResponseServiceIntegrationTest" --rerun-tasks
+.\gradlew.bat test --tests "com.survey.meetorsolo.domain.matching.*" --rerun-tasks
+.\gradlew.bat test --rerun-tasks
+.\gradlew.bat build
+npx vitest run src/api/matching.test.ts src/hooks/useMatchRoom.test.ts src/pages/MatchRoomPage.test.ts
+npm test -- --run
+npx tsc --noEmit
+npm run build
+```
+
+- backend focused: 84건 성공
+- matching 전체: 234건 성공
+- backend 전체: 278건 성공
+- backend build 성공
+- frontend focused: 3 files, 39건 성공
+- frontend 전체: 10 files, 94건 성공
+- TypeScript, production build와 PWA service worker 생성 성공
+
+### 35.6 수동 검증과 제한사항
+
+Windows의 8080/5173 dev runtime이 실행 중이지 않았고 기존 Chrome process에서
+안전하게 식별 가능한 두 로그인 session을 확인·제어할 수 없어 두 브라우저
+검증은 실행하지 않았습니다. DB를 삭제하거나 fixture를 보정하지 않았습니다.
+
+후속 수동 검증은 A/B 동일 group의 MATCH_CONFIRMED, A 예정 시간 변경과 멱등,
+A/B 도착 event, 양쪽 순서 일치, 새로고침, WebSocket 차단 polling과 재연결 REST
+복원, 다른 group event 접근 차단 및 자유 입력/전송 UI 부재를 확인합니다.
+cursor pagination, 취소·안전 event, meeting point, COMPLETED와 자유 채팅은
+계속 후속 범위입니다.
+
+## 36. 요구사항 원문 재확인과 30분 도착 마감 후속 설계
+
+### 36.1 요구사항 분석서에서 재확인한 거리·시간 정책
+
+2026-07-30 수동 화면 검증 중 도착 예정 시간을 반복 변경할 수 있는 현재 UX를
+검토했고, 프로젝트 외부 기획 문서인 `관광데이터_기획_요구사항분석서_v1.docx.pdf`
+의 서비스 플로우와 기능 요구사항을 다시 확인했습니다.
+
+거리 기준은 용도별로 다음과 같이 구분합니다.
+
+| 기준 | 거리 | 용도 |
+| --- | ---: | --- |
+| 축제 탐색 | 반경 2km | 현재 위치 주변의 진행 중 강원 축제 탐색 |
+| GPS 체크인 | 반경 500m | 선택한 축제 현장 체크인 검증 |
+| 만남 포인트 | 2km 이내 | 축제 공식 좌표 기반 고정 만남 포인트 안내 |
+| 주변 자원·후속 추천 | 반경 3km | 음식점·카페·관광지 밀도와 상황형 동선 추천 |
+
+따라서 `3km`는 만남 포인트 허용 범위가 아니라 관광 자원과 후속 추천 조회
+범위입니다. 매칭 확정 그룹의 만남 포인트는 축제 공식 좌표를 기준으로 1개를
+자동 안내하고, 사용자는 즉시·5분·10분·20분·30분의 구조화된 버튼만 사용합니다.
+
+요구사항의 “2km 이내, 30분 내외 도착”과 `INTER-03`의 도착 인증·노쇼 자동
+감지·취소 시점별 패널티를 함께 해석하면, 30분은 매 선택마다 새로 시작하는
+상대 시간이 아니라 그룹에 고정되는 전체 도착 마감입니다.
+
+### 36.2 현재 구현과 확인된 정책 차이
+
+현재 구현은 다음 값을 저장합니다.
+
+```text
+arrival_minutes
+arrival_time_selected_at
+```
+
+같은 `arrivalMinutes` 반복 요청은 멱등 처리하여 선택 시각, event와 WebSocket
+알림을 갱신하지 않습니다. 그러나 다른 값을 선택하면
+`arrival_time_selected_at`이 새로 설정됩니다. 별도의 절대 마감 검증이 없으므로
+아래와 같은 연장이 가능합니다.
+
+```text
+14:00 30분 선택
+14:20 10분 또는 30분으로 변경
+→ 그룹 확정 후 30분을 넘긴 예정 시각 생성 가능
+```
+
+이는 재확인한 요구사항과 맞지 않습니다. 화면에서도 본인이 `ARRIVED`가 된 뒤
+`도착했어요` 버튼은 사라지지만 “몇 분 후 도착하나요?” 영역은 상태와 무관하게
+남아 있습니다. backend는 `ARRIVED` 회원의 변경을 거절하더라도 frontend에서
+실행 불가능한 action을 계속 노출하는 UX 결함입니다.
+
+현재 구현과 자동 테스트가 보장하는 arrival-time 멱등성·transaction 원자성은
+유효하지만, “그룹 전체 30분 절대 마감”까지 구현·검증한 것으로 보지 않습니다.
+이 항목을 보완하기 전에는 두 브라우저 화면 검증과 현재 MatchRoom 브랜치의
+최종 마감이 남아 있는 상태로 기록합니다.
+
+### 36.3 확정할 30분 절대 마감 계약
+
+meeting point 기능이 아직 없는 현재 단계에서는 다음 값을 파생 기준으로
+사용합니다.
+
+```text
+arrival_deadline_at = match_groups.confirmed_at + 30 minutes
+```
+
+후속 meeting point 정책에서 만남 포인트 안내 시점이 그룹 확정과 분리되면,
+마감 기준을 `meeting_point_confirmed_at + 30 minutes`로 변경할지 별도 검토합니다.
+그 전까지 선택 변경으로 `arrival_deadline_at`을 갱신하거나 연장하지 않습니다.
+
+허용 예정 시각은 다음 조건을 만족해야 합니다.
+
+```text
+estimated_arrival_at
+  = arrival_time_selected_at + arrival_minutes
+
+estimated_arrival_at <= arrival_deadline_at
+```
+
+예를 들어 14:00에 확정된 그룹은 14:30이 최종 마감입니다.
+
+| 현재 시각 | 남은 전체 시간 | 허용 가능한 선택 |
+| --- | ---: | --- |
+| 14:00 | 30분 | 즉시, 5분, 10분, 20분, 30분 |
+| 14:10 | 20분 | 즉시, 5분, 10분, 20분 |
+| 14:25 | 5분 | 즉시, 5분 |
+| 14:30 이후 | 0분 | 선택 불가 |
+
+도착 완료 전에는 남은 전체 시간 안에서 다른 값으로 변경할 수 있습니다. 같은
+값의 반복 선택은 기존 멱등 계약을 유지하며 선택 기준 시각과 마감을 갱신하지
+않습니다. 다른 값으로 변경하더라도 새 예정 시각이 고정 마감을 넘을 수 없습니다.
+
+선택한 개별 예정 시각이 지났다고 즉시 `NO_SHOW`로 전환하지 않습니다. 전체
+30분 마감 전에는 “예정 시간이 지났어요”를 표시하고 남은 범위 안에서 다시
+알릴 수 있습니다. 전체 마감 이후에만 시간 선택을 차단하고 노쇼 판정 대상으로
+넘깁니다.
+
+`ARRIVED` 회원은 도착 예정 시간과 도착 완료 action을 더 이상 실행할 수 없습니다.
+frontend는 두 action을 모두 숨기고 도착 완료 시각만 표시합니다.
+
+### 36.4 현재 브랜치 마감 범위
+
+현재 `feature/wbs-10-b-match-room-state`에서는 노쇼와 패널티 전체를 함께
+구현하지 않고 아래 경계까지만 보완합니다.
+
+- `arrivalDeadlineAt`을 current group 응답에 제공
+- `confirmedAt + 30분`의 절대 마감 계산
+- backend에서 남은 시간보다 긴 도착 예정 선택 거절
+- 마감 이후 도착 예정 선택 거절
+- 같은 값 반복 요청의 기존 멱등성과 마감 불변 유지
+- frontend에서 남은 전체 시간과 실제 예상 도착 시각 표시
+- 남은 시간보다 긴 선택지 비활성화 또는 미표시
+- 개별 예정 시각 경과 안내
+- 마감 이후 선택 UI 차단
+- 본인 `ARRIVED` 이후 도착 예정 및 도착 완료 action 제거
+- 경계 시각, 동시 요청, REST 복원과 WebSocket refresh 회귀 테스트
+- 회원 `2`, `27`을 사용하는 두 브라우저 수동 검증
+
+기존 `confirmed_at`으로 파생할 수 있으므로 이 범위에서는 신규 migration을
+추가하지 않습니다. 기존 Flyway migration도 수정하지 않습니다.
+
+### 36.5 후속 브랜치 분리
+
+현재 브랜치를 위 마감 범위와 수동 검증까지 완료한 뒤 PR로 종료하고, 이후 작업은
+다음처럼 분리합니다.
+
+```text
+feature/wbs-10-b-match-room-state
+  현재 MatchRoom 상태방 + 30분 절대 마감 보완 + 수동 검증
+
+feature/wbs-10-b-match-room-no-show
+  마감 Scheduler + NO_SHOW + 못 갈 것 같아요 + 취소/노쇼 패널티
+
+feature/wbs-10-b-meeting-point
+  축제 공식 좌표 기반 만남 포인트 API + Kakao Maps 핀
+
+feature/wbs-10-b-match-room-completion
+  그룹 완료 조건과 COMPLETED 전환
+```
+
+`match-room-no-show`에서는 최소한 다음 정책을 구현 전에 확정합니다.
+
+- 30분 마감 Scheduler의 조회·잠금·batch·재실행 멱등성
+- 미도착 active member의 `NO_SHOW` 전환
+- 노쇼 매너온도 `-5`와 cooldown/penalty event 연결
+- 마감 전 “못 갈 것 같아요”의 구조화된 취소 사유
+- 취소 시점별 패널티
+- 비귀책 회원과 group 유지·취소 기준
+- `MEMBER_CANCELLED`, `MATCH_CANCELLED` 및 노쇼 알림 reason
+- match event 타임라인 공개 문구
+- transaction rollback과 AFTER_COMMIT WebSocket
+
+자유 채팅, 자유 text input, group topic, client SEND, Redis와 외부 broker는 이
+후속 작업에도 포함하지 않습니다.
+
+### 36.6 실제 구현 결과
+
+현재 브랜치에서 30분 절대 마감을 다음 공통 계산으로 구현했습니다.
+
+```text
+arrivalDeadlineAt = confirmedAt + 30 minutes
+```
+
+`MatchArrivalDeadlinePolicy`가 계산을 한 곳에서 제공하고 current group DTO와
+도착 예정 시간 service가 같은 계산을 사용합니다. DB에는 deadline 컬럼을
+추가하지 않고 기존 `match_groups.confirmed_at`에서 매번 파생하므로 선택 변경,
+재시도와 동시 요청으로 마감이 연장되지 않습니다. 기존 Flyway migration과
+schema는 변경하지 않았습니다.
+
+`MatchArrivalTimeService`의 transaction 검증 순서는 다음과 같습니다.
+
+```text
+1. 인증 회원의 current active group row 잠금
+2. 같은 group의 active member row 잠금
+3. group CONFIRMED/IN_PROGRESS와 member JOINED/ARRIVAL_TIME_SELECTED 재검증
+4. now < arrivalDeadlineAt 검증
+5. 같은 arrivalMinutes이면 기존 snapshot 멱등 반환
+6. 실제 값 변경이면 now + arrivalMinutes <= arrivalDeadlineAt 검증
+7. member update, match event insert와 AFTER_COMMIT 알림 event 발행
+```
+
+같은 값 반복은 기존 `arrival_time_selected_at`을 기준으로 한 예정 시각을
+유지해야 하므로 5단계에서 새 예정 시각을 다시 계산하지 않습니다. 다만 전체
+deadline 시각부터는 같은 값 요청도 거절합니다. 실제 값 변경은 예상 도착
+시각이 deadline과 같을 때까지 허용하고 이를 넘으면
+`MATCHING_ARRIVAL_DEADLINE_EXCEEDED` 409로 거절합니다. 오류 응답은 내부
+group/member 존재 여부를 구분해 노출하지 않습니다.
+
+current group 응답은 다음 시간 계약을 함께 제공합니다.
+
+```text
+confirmedAt
+arrivalDeadlineAt
+startedAt
+members[].arrivalTimeSelectedAt
+members[].arrivedAt
+```
+
+Frontend는 `arrivalDeadlineAt`과 REST snapshot만 기준으로 최종 마감 시각,
+전체 남은 시간, 본인의 실제 예상 도착 시각과 예상 도착까지 남은 시간을
+표시합니다. 1초 timer는 표시만 갱신하며 server 상태, `NO_SHOW`, event를
+확정하거나 생성하지 않습니다.
+
+- 남은 시간보다 긴 `0/5/10/20/30` 선택지는 비활성화합니다.
+- 개별 예정 시각이 지났지만 전체 deadline 전이면 `예정 시간이 지났어요`를
+  표시하고 남은 범위에서 다시 선택할 수 있습니다.
+- 전체 deadline부터 시간 선택 UI를 차단합니다.
+- `JOINED`, `ARRIVAL_TIME_SELECTED`는 기존 도착 완료 action을 유지합니다.
+- `ARRIVED`는 시간 선택과 도착 완료 action을 모두 숨기고 도착 완료 시각만
+  표시합니다.
+- WebSocket 연결·재연결·알림과 polling은 기존처럼 current group/events REST
+  refresh trigger로만 사용합니다.
+
+### 36.7 자동 검증 결과
+
+현재 실행 환경에는 Linux Java가 없어 임시 Linux Java 17을 `/tmp`에 준비해
+Gradle compile과 비컨테이너 테스트를 실행했습니다. 운영 코드와 전체 테스트
+소스 compile은 성공했습니다.
+
+Backend 결과:
+
+```text
+focused 단위/Controller
+- MatchArrivalTimeServiceTest
+- MatchGroupQueryServiceTest
+- MatchingControllerTest
+결과: 36건 통과
+
+matching 전체
+결과: 102건 실행, 일반 테스트 88건 통과
+제약: Testcontainers 14개 class Docker initialization 실패
+
+backend 전체
+결과: 146건 실행, 일반 테스트 131건 통과
+제약: Testcontainers 15개 class Docker initialization 실패
+
+backend build
+./gradlew build -x test
+결과: BUILD SUCCESSFUL
+```
+
+추가한 Backend 테스트 소스는 다음 계약을 포함합니다.
+
+- `confirmedAt + 30분` 계산과 current group `arrivalDeadlineAt`
+- 확정 직후 `0/5/10/20/30`, 30분 선택의 예상 시각과 deadline 동일 경계
+- 남은 시간보다 긴 값 거절
+- deadline 직전 즉시 선택과 deadline 시각부터 거절
+- deadline 전 같은 값 멱등 요청의 기존 선택 시각 유지
+- 같은 값과 다른 값 변경의 deadline 불변
+- 기존 PostgreSQL 동시 요청, rollback, event와 AFTER_COMMIT 알림 회귀
+
+`pgvector/pgvector:pg16` Testcontainers 통합 테스트는 compile됐지만 현재
+WSL에 `docker` command와 Docker Desktop WSL integration이 없어 container
+탐지 단계에서 중단됐습니다. 이는 assertion 실패가 아니며, Docker가 연결된
+Windows PowerShell 또는 WSL 환경에서 재실행해야 최종 통과로 기록할 수 있습니다.
+
+Frontend 결과:
+
+```text
+focused: 3 files, 45건 통과
+전체: 10 files, 99건 통과
+npx tsc --noEmit: 성공
+npm run build: 성공
+Vite: 1,621 modules transformed
+PWA generateSW: 6 entries precache, sw.js/workbox 생성
+```
+
+Frontend 테스트는 남은 시간별 선택지 활성·비활성, deadline과 두 countdown,
+예상 도착 시각, 개별 예정 시각 경과, 전체 마감 차단, `ARRIVED` action 제거와
+도착 완료 시각, 기존 WebSocket/polling/새로고침/timeline 복원을 검증합니다.
+
+repository 전체 `git diff --check`는 이번 작업 전부터 작업 트리의 광범위한
+CRLF 변경을 각 줄의 trailing whitespace로 판정해 실패했습니다. 이번 범위 밖
+기존 변경을 일괄 변환하거나 덮어쓰지 않았습니다.
+
+### 36.8 수동 검증 상태와 남은 gate
+
+현재 세션에서는 `http://localhost:8080`, `http://localhost:5173`이 모두
+실행 중이지 않았습니다. `powershell.exe`와 Windows Java executable 호출도
+WSL `UtilBindVsockAnyPort` 오류로 시작되지 않아 dev DB의 festival `144`,
+member `2`, `27`을 사용하는 일반/시크릿 브라우저 검증은 실행하지 못했습니다.
+
+현재 브랜치를 완전히 마감하려면 Docker Desktop과 두 로그인 session을 사용할 수
+있는 Windows PowerShell에서 다음 gate를 다시 통과해야 합니다.
+
+1. 신규 `MatchArrivalTimeServiceIntegrationTest`
+2. matching 전체
+3. backend 전체
+4. 양쪽 동일 group과 deadline 확인
+5. 남은 시간보다 긴 선택 차단과 선택 변경 deadline 불변
+6. 같은 값 반복 timeline 불변
+7. A 도착 후 A의 두 action 제거와 B 화면 반영
+8. 새로고침, WebSocket 재연결과 polling fallback
+
+이 구현에는 `NO_SHOW`, Scheduler, 취소·패널티, meeting point와 지도,
+`COMPLETED`, 자유 채팅, group topic, client `SEND`, Redis를 포함하지 않았습니다.
+
+## 37. 도착 예정 선택지와 상대 변경 snackbar
+
+### 37.1 신규 요청과 기존 데이터 호환
+
+신규 PUT 요청과 화면 선택값은 `5`, `10`, `20`, `25`로 제한했습니다.
+실제 도착은 별도 `도착했어요` action만 사용하므로 `0`, 전체 마감 안에서
+사실상 선택하기 어려운 `30`은 신규 UI와 API에서 거절합니다.
+
+기존 row/event 호환을 위해 조회 타입과 event parser는
+`0`, `5`, `10`, `20`, `25`, `30`을 지원합니다. 과거 `0`은
+`곧 도착 예정`, 과거 `30`과 신규 `25`는 기존 N분 문구로 표시합니다.
+
+기존 migration은 수정하지 않고 다음 migration을 추가했습니다.
+
+```text
+V13__allow_25_arrival_minutes.sql
+```
+
+`V13`은 실제 기존 이름인 `chk_match_group_members_arrival_minutes`를 제거한 뒤
+`NULL 또는 0,5,10,20,25,30` 정의로 다시 생성합니다. 기존 데이터를 UPDATE하거나
+일괄 변환하지 않습니다.
+
+### 37.2 절대 마감과 transaction 회귀
+
+기존 계약은 그대로 유지합니다.
+
+```text
+arrivalDeadlineAt = confirmedAt + 30분
+now < arrivalDeadlineAt
+now + arrivalMinutes <= arrivalDeadlineAt
+```
+
+`25분`도 예상 도착 시각이 deadline과 같으면 허용하고 1ns라도 넘으면
+`MATCHING_ARRIVAL_DEADLINE_EXCEEDED`로 거절합니다. 선택 변경은 deadline을
+갱신하지 않습니다. 같은 신규 허용값 반복의 멱등 성공, group/member lock,
+member/event 단일 transaction, rollback과 AFTER_COMMIT fan-out도 변경하지
+않았습니다. `ARRIVED` 이후 두 action 제거 계약도 유지합니다.
+
+### 37.3 상대 변경 snackbar 판정
+
+WebSocket payload는 계속 REST refresh trigger로만 사용합니다. 정상 current
+group REST refresh 전후 snapshot에서 current member가 아닌 회원의
+`arrivalMinutes` 또는 `arrivalTimeSelectedAt`이 실제 달라졌을 때만 다음 문구를
+표시합니다.
+
+```text
+{nickname}님이 도착 시간을 변경하였어요.
+```
+
+최초 snapshot은 비교 기준만 만들고 알림을 생성하지 않습니다. 본인 mutation
+성공 snapshot은 먼저 현재 상태에 반영하므로 후속 refresh에서 본인 snackbar로
+오인하지 않습니다. 동일 snapshot, 같은 값 멱등 요청, rollback/실패 refresh와
+잘못된 WebSocket payload에도 표시하지 않습니다. WebSocket 장애 polling도 같은
+비교 함수를 사용합니다.
+
+snackbar는 모바일 하단 navigation을 가리지 않는 `bottom-24`에 두고
+`role="status"`, `aria-live="polite"`를 사용합니다. 3초 뒤 자동 제거하며
+연속 변경은 이전 timer를 취소하고 최신 문구와 timer로 교체합니다. unmount에서
+polling, snackbar timer, WebSocket과 AbortController를 함께 정리합니다.
+
+### 37.4 자동 검증 결과와 제한
+
+```text
+Backend focused: 41건 통과
+PostgreSQL focused: 2개 class Docker 탐지 단계 initialization 실패
+matching 전체: 104건 중 일반 90건 통과, Testcontainers 14개 class 실패
+backend 전체: 148건 중 일반 133건 통과, Testcontainers 15개 class 실패
+backend build -x test: 성공
+
+Frontend focused: 3 files, 52건 통과
+Frontend 전체: 10 files, 106건 통과
+npx tsc --noEmit: 성공
+production/PWA build: 성공, 1,621 modules와 precache 6 entries
+```
+
+Backend Testcontainers는 기존 `pgvector/pgvector:pg16` 구성을 유지했고 H2로
+대체하지 않았습니다. 현재 WSL에서 Docker client를 탐지하지 못해 V13 적용,
+PostgreSQL 동시성·rollback·AFTER_COMMIT 회귀는 assertion에 진입하지 못했습니다.
+Docker Desktop integration이 가능한 환경에서 focused, matching 전체와 backend
+전체를 다시 실행해야 합니다.
+
+repository 전체 `git diff --check`는 작업 시작 전부터 존재한 광범위한 CRLF
+working tree 변경을 trailing whitespace로 판정해 실패했습니다. 기존 변경을
+정규화하거나 되돌리지 않았습니다. 시작 시 이미 수정 상태였던 `V1`~`V12`
+migration은 건드리지 않고 신규 `V13`만 추가했습니다.
+
+`NO_SHOW`, 마감 Scheduler, 취소·패널티, meeting point, Kakao Maps,
+`COMPLETED`, 자유 채팅, group topic, client STOMP `SEND`, Redis와 외부 broker는
+구현하지 않았습니다.

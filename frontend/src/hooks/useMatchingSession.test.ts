@@ -54,9 +54,17 @@ const group: CurrentMatchGroup = {
   status: 'CONFIRMED',
   confirmedMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20',
+  arrivalDeadlineAt: '2026-07-27T12:30:20',
+  festival: {
+    festivalId: 2,
+    title: '테스트 축제',
+    address: '강원특별자치도 춘천시',
+    eventStartDate: '2026-07-27',
+    eventEndDate: '2026-07-29',
+  },
   members: [
-    { memberId: 1, nickname: 'member-a', profileImageUrl: null },
-    { memberId: 2, nickname: 'member-b', profileImageUrl: null },
+    { memberId: 1, nickname: 'member-a', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
+    { memberId: 2, nickname: 'member-b', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
   ],
 };
 

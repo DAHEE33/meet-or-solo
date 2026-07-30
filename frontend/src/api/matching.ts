@@ -60,10 +60,25 @@ export type MatchingRestriction = {
   };
 };
 
+export type ArrivalMinutesSnapshot = 0 | 5 | 10 | 20 | 25 | 30;
+export type ArrivalMinutesSelection = 5 | 10 | 20 | 25;
+
 export type MatchGroupMember = {
   memberId: number;
   nickname: string;
   profileImageUrl: string | null;
+  status: 'JOINED' | 'ARRIVAL_TIME_SELECTED' | 'ARRIVED';
+  arrivalMinutes: ArrivalMinutesSnapshot | null;
+  arrivalTimeSelectedAt: string | null;
+  arrivedAt?: string | null;
+};
+
+export type MatchGroupFestival = {
+  festivalId: number;
+  title: string;
+  address: string | null;
+  eventStartDate: string | null;
+  eventEndDate: string | null;
 };
 
 export type CurrentMatchGroup = {
@@ -72,7 +87,31 @@ export type CurrentMatchGroup = {
   status: 'CONFIRMED' | 'IN_PROGRESS';
   confirmedMemberCount: number;
   confirmedAt: string;
+  arrivalDeadlineAt: string;
+  startedAt?: string | null;
+  currentMemberId?: number;
+  festival: MatchGroupFestival;
   members: MatchGroupMember[];
+};
+
+export type MatchGroupEventType =
+  | 'MATCH_CONFIRMED'
+  | 'ARRIVAL_TIME_SELECTED'
+  | 'MEMBER_ARRIVED';
+
+export type MatchGroupEvent = {
+  eventId: number;
+  type: MatchGroupEventType;
+  occurredAt: string;
+  actor: {
+    memberId: number;
+    nickname: string;
+  } | null;
+  arrivalMinutes: ArrivalMinutesSnapshot | null;
+};
+
+export type CurrentMatchGroupEvents = {
+  events: MatchGroupEvent[];
 };
 
 export const matchingApi = {
@@ -101,4 +140,21 @@ export const matchingApi = {
     apiClient<MatchingRestriction>('/api/matching/me/restrictions', { signal }),
   getCurrentGroup: (signal?: AbortSignal) =>
     apiClientNullable<CurrentMatchGroup>('/api/matching/groups/me/current', { signal }),
+  getCurrentGroupEvents: (signal?: AbortSignal) =>
+    apiClientNullable<CurrentMatchGroupEvents>(
+      '/api/matching/groups/me/current/events',
+      { signal },
+    ),
+  selectArrivalTime: (arrivalMinutes: ArrivalMinutesSelection, signal?: AbortSignal) =>
+    apiClient<CurrentMatchGroup>('/api/matching/groups/me/current/arrival-time', {
+      method: 'PUT',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ arrivalMinutes }),
+    }),
+  arrive: (signal?: AbortSignal) =>
+    apiClient<CurrentMatchGroup>('/api/matching/groups/me/current/arrival', {
+      method: 'PUT',
+      signal,
+    }),
 };

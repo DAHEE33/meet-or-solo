@@ -90,6 +90,34 @@ REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
 
 현재 공통 구조는 MVP 수준으로 유지합니다. trace id, error detail, debug field 같은 운영 확장 필드는 필요해질 때 별도 승인 후 추가합니다.
 
+## current match group 조회
+
+`PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고 인증
+회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
+도착이면 group을 IN_PROGRESS로 전환하고 갱신된 전체 snapshot을 반환합니다.
+
+`GET /api/matching/groups/me/current`는 path, query, body의 회원/group 식별자를
+받지 않고 `access_token` HttpOnly cookie의 로그인 회원만 기준으로 조회합니다.
+응답은 기존 group 필드와 함께 `festivals`의 최소 summary 및 active member의
+공개 상태를 제공합니다.
+
+- group: `groupId`, `festivalId`, `status`, `confirmedMemberCount`, `confirmedAt`
+- festival: `festivalId`, `title`, `address`, `eventStartDate`, `eventEndDate`
+- member: `memberId`, `nickname`, `profileImageUrl`, `status`
+
+group/festival projection 1회와 member/profile projection 1회로 조회해 N+1을
+방지합니다. current group이 없으면 `200 OK`, `data:null`이고 정합성 충돌은
+`MATCHING_CONFLICT`입니다.
+
+도착 예정 시간은
+`PUT /api/matching/groups/me/current/arrival-time`에서 변경합니다. request에는
+`arrivalMinutes`만 포함하며 신규 요청은 `5`, `10`, `20`, `25`만 허용합니다.
+DB CHECK와 조회 DTO/parser는 기존 row/event 호환을 위해 `0`, `30`도 계속
+허용하지만 신규 PUT API에서는 거절합니다. 서버는
+인증 회원의 active group과 member를 직접 찾고 group row, group member row
+순서로 잠급니다. 실제 변경은 member update와 `match_events` insert를 같은
+transaction에서 처리하고 알림은 `AFTER_COMMIT`에만 전송합니다.
+
 ## 공통 예외 처리
 
 공통 예외 구조:
@@ -355,3 +383,12 @@ Redis는 MVP 1단계에 추가하지 않습니다.
 - 매칭 대기열 최적화
 
 Redis를 명시적으로 도입하기 전까지 backend는 Redis 전용 동작에 의존하지 않습니다.
+
+## Current group events 조회
+
+- `GET /api/matching/groups/me/current/events`는 HttpOnly `access_token`의 회원을 기준으로 current active group event만 조회합니다.
+- path/query/body에서 `memberId`, `groupId`를 받지 않으며 active group 부재는 `200 data:null`입니다.
+- 최신 50건을 선택해 `created_at ASC, id ASC` 순서로 반환하고 raw JSON payload는 DTO에 포함하지 않습니다.
+- actor는 event member가 같은 active group의 active member일 때만 `memberId`, `nickname`을 공개합니다.
+- `ARRIVAL_TIME_SELECTED`는 허용된 `arrivalMinutes`만 파싱하며 malformed event는 해당 항목만 제외합니다.
+- `MATCH_CONFIRMED` 저장은 group/member 확정과 같은 transaction이며 event insert 실패 시 확정도 rollback됩니다.

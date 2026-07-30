@@ -140,6 +140,10 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_group_members gm JOIN match_groups g ON g.id=gm.group_id WHERE g.attempt_id=? AND gm.status='JOINED'",Integer.class,attempt)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006,9120010) AND status='MATCHED'",Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT confirmed_at FROM match_attempts WHERE id=?",OffsetDateTime.class,attempt)).isEqualTo(RESPONSE_AT);
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE attempt_id=? AND event_type='MATCH_CONFIRMED' AND member_id IS NULL
+                """, Integer.class, attempt)).isEqualTo(1);
         assertThat(count("match_cooldowns","member_id",9110002)).isZero();
         assertThat(count("match_penalty_events","member_id",9110002)).isZero();
     }
@@ -196,6 +200,10 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(jdbc.queryForMap("SELECT status,confirmed_member_count FROM match_groups WHERE attempt_id=?",attempt))
                 .containsEntry("status","CONFIRMED").containsEntry("confirmed_member_count",2);
         assertThat(count("match_groups","attempt_id",attempt)).isOne();
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE attempt_id=? AND event_type='MATCH_CONFIRMED' AND member_id IS NULL
+                """, Integer.class, attempt)).isEqualTo(1);
         assertPool(9120002,"MATCHED",NOW.plusMinutes(1)); assertPool(9120006,"MATCHED",NOW.plusMinutes(1));
         assertResponse(first,attempt,9110002,"START_WITH_CURRENT_MEMBERS",RESPONSE_AT.plusSeconds(2));
     }
@@ -385,7 +393,7 @@ class MatchProposalResponseServiceIntegrationTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    @ParameterizedTest @ValueSource(strings={"match_responses","match_proposals","match_attempt_members","match_groups","match_group_members","match_pools","match_attempts"})
+    @ParameterizedTest @ValueSource(strings={"match_responses","match_proposals","match_attempt_members","match_groups","match_group_members","match_events","match_pools","match_attempts"})
     void 확정_중간_DB실패는_마지막_응답과_전체_확정을_rollback한다(String table) {
         long attempt=prepare(2,NOW.plusMinutes(1)); long first=proposal(attempt,9110002), last=proposal(attempt,9110006);
         service.respond(first,9110002,"ACCEPTED",RESPONSE_AT);
@@ -446,7 +454,8 @@ class MatchProposalResponseServiceIntegrationTest {
     private int roundTwoCount(long attempt) { return jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_round=2",Integer.class,attempt); }
     private void resetFoundation() {
         jdbc.update("DELETE FROM match_penalty_events"); jdbc.update("DELETE FROM match_cooldowns");
-        jdbc.update("DELETE FROM match_responses"); jdbc.update("DELETE FROM match_group_members"); jdbc.update("DELETE FROM match_groups");
+        jdbc.update("DELETE FROM match_responses"); jdbc.update("DELETE FROM match_events");
+        jdbc.update("DELETE FROM match_group_members"); jdbc.update("DELETE FROM match_groups");
         jdbc.update("DELETE FROM match_proposals"); jdbc.update("DELETE FROM match_attempt_members"); jdbc.update("DELETE FROM match_attempts");
         jdbc.update("UPDATE members SET penalty_score=0");
         jdbc.update("UPDATE match_pools SET preferred_group_size=3,allow_minimum_two=false,status='WAITING',locked_at=NULL,lock_token=NULL,search_expires_at=?",NOW.plusMinutes(1));

@@ -40,9 +40,17 @@ const group: CurrentMatchGroup = {
   status: 'CONFIRMED',
   confirmedMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20',
+  arrivalDeadlineAt: '2026-07-27T12:30:20',
+  festival: {
+    festivalId: 2,
+    title: '테스트 축제',
+    address: '강원특별자치도 춘천시',
+    eventStartDate: '2026-07-27',
+    eventEndDate: '2026-07-29',
+  },
   members: [
-    { memberId: 1, nickname: 'member-a', profileImageUrl: null },
-    { memberId: 2, nickname: 'member-b', profileImageUrl: null },
+    { memberId: 1, nickname: 'member-a', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
+    { memberId: 2, nickname: 'member-b', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
   ],
 };
 
@@ -70,6 +78,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     onRetry: vi.fn(),
     onErrorRetry: vi.fn(),
     onGoCheckIn: vi.fn(),
+    onEnterRoom: vi.fn(),
     ...overrides,
   };
 }
@@ -182,6 +191,22 @@ describe('terminal retry form', () => {
     expect(text(tree)).toContain('매칭이 확정됐어요');
     expect(text(tree)).not.toContain('자동 매칭 신청');
     expect(text(tree)).not.toContain('다시 신청하기');
+  });
+
+  it('MATCHED는 자동 이동하지 않고 상태방 버튼 클릭으로만 이동 handler를 호출한다', () => {
+    const onEnterRoom = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'MATCHED',
+      group,
+      onEnterRoom,
+    })));
+    expect(onEnterRoom).not.toHaveBeenCalled();
+    const enterButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '상태방 들어가기',
+    );
+    expect(enterButton).toBeDefined();
+    (enterButton?.props.onClick as () => void)();
+    expect(onEnterRoom).toHaveBeenCalledOnce();
   });
 
   it('cooldown 카드에서는 retry button이 비활성화된다', () => {
