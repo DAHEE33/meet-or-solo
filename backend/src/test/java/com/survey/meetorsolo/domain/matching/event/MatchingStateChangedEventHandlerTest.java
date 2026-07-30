@@ -30,4 +30,32 @@ class MatchingStateChangedEventHandlerTest {
         verify(messagingTemplate, times(1))
                 .convertAndSendToUser("2", "/queue/matching", notification);
     }
+
+    @Test
+    void 도착시간변경은기존회원Queue에refresh알림만전송한다() {
+        SimpMessagingTemplate messagingTemplate =
+                org.mockito.Mockito.mock(SimpMessagingTemplate.class);
+        MatchingStateChangedEventHandler handler =
+                new MatchingStateChangedEventHandler(messagingTemplate);
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-07-29T12:05:00+09:00");
+
+        handler.handle(new MatchingStateChangedEvent(
+                List.of(1L, 2L),
+                "ARRIVAL_TIME_SELECTED",
+                occurredAt
+        ));
+
+        MatchingStateChangedNotification notification =
+                MatchingStateChangedNotification.of("ARRIVAL_TIME_SELECTED", occurredAt);
+        verify(messagingTemplate).convertAndSendToUser(
+                "1",
+                "/queue/matching",
+                notification
+        );
+        verify(messagingTemplate).convertAndSendToUser(
+                "2",
+                "/queue/matching",
+                notification
+        );
+    }
 }

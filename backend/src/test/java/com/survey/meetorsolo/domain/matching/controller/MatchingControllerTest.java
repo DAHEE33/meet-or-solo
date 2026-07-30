@@ -4,6 +4,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -11,8 +12,15 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupMemberResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupFestivalResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchEventActorResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
+import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
+import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
@@ -48,6 +56,15 @@ class MatchingControllerTest {
 
     @MockitoBean
     private MatchGroupQueryService groupQueries;
+
+    @MockitoBean
+    private MatchGroupEventQueryService groupEventQueries;
+
+    @MockitoBean
+    private MatchArrivalTimeService arrivalTimes;
+
+    @MockitoBean
+    private MatchArrivalService arrivals;
 
     @MockitoBean
     private MatchProposalActionService proposalActions;
@@ -143,6 +160,151 @@ class MatchingControllerTest {
     }
 
     @Test
+    void current_group_event_조회는_인증_쿠키가_없으면_401을_반환한다() throws Exception {
+        mockMvc.perform(get("/api/matching/groups/me/current/events"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void access_token_회원의_current_group_event를_안전한_DTO로_반환한다() throws Exception {
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-07-30T09:01:00+09:00");
+        MatchGroupEventsResponse response = new MatchGroupEventsResponse(List.of(
+                new MatchGroupEventResponse(
+                        102L,
+                        "ARRIVAL_TIME_SELECTED",
+                        occurredAt,
+                        new MatchEventActorResponse(20L, "민수"),
+                        10
+                )
+        ));
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+        when(groupEventQueries.currentGroupEvents(20L)).thenReturn(response);
+
+        mockMvc.perform(get("/api/matching/groups/me/current/events")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.events[0].eventId").value(102))
+                .andExpect(jsonPath("$.data.events[0].type").value("ARRIVAL_TIME_SELECTED"))
+                .andExpect(jsonPath("$.data.events[0].actor.memberId").value(20))
+                .andExpect(jsonPath("$.data.events[0].actor.nickname").value("민수"))
+                .andExpect(jsonPath("$.data.events[0].arrivalMinutes").value(10))
+                .andExpect(jsonPath("$.data.events[0].payload").doesNotExist());
+
+        verify(groupEventQueries).currentGroupEvents(20L);
+    }
+
+    @Test
+    void current_group이_없으면_event_조회도_200과_null_data를_반환한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+        when(groupEventQueries.currentGroupEvents(20L)).thenReturn(null);
+
+        mockMvc.perform(get("/api/matching/groups/me/current/events")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void group_ID를_직접_지정하는_조회_경로는_제공하지_않는다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+
+        mockMvc.perform(get("/api/matching/groups/10")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 도착_예정_시간_선택은_인증_쿠키가_없으면_401을_반환한다() throws Exception {
+        mockMvc.perform(put("/api/matching/groups/me/current/arrival-time")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"arrivalMinutes\":10}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void 도착_예정_시간_누락과_허용되지_않은_값은_validation_오류다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
+
+        for (String body : List.of(
+                "{}",
+                "{\"arrivalMinutes\":0}",
+                "{\"arrivalMinutes\":-1}",
+                "{\"arrivalMinutes\":1}",
+                "{\"arrivalMinutes\":15}",
+                "{\"arrivalMinutes\":30}",
+                "{\"arrivalMinutes\":60}"
+        )) {
+            mockMvc.perform(put("/api/matching/groups/me/current/arrival-time")
+                            .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+    }
+
+    @Test
+    void 허용된_도착_예정_시간은_로그인_회원_기준으로_갱신된_snapshot을_반환한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
+        MatchGroupResponse response = arrivalGroupResponse();
+        for (int minutes : List.of(5, 10, 20, 25)) {
+            when(arrivalTimes.select(1L, minutes)).thenReturn(response);
+
+            mockMvc.perform(put("/api/matching/groups/me/current/arrival-time")
+                            .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"arrivalMinutes\":" + minutes + "}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.groupId").value(10))
+                    .andExpect(jsonPath("$.data.members[0].status")
+                            .value("ARRIVAL_TIME_SELECTED"))
+                    .andExpect(jsonPath("$.data.members[0].arrivalMinutes").value(10))
+                    .andExpect(jsonPath("$.data.members[0].arrivalTimeSelectedAt")
+                            .value("2026-07-27T12:35:00+09:00"));
+        }
+    }
+
+    @Test
+    void 도착_마감_오류는_내부_리소스_정보없이_409로_반환한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
+        when(arrivalTimes.select(1L, 25))
+                .thenThrow(new BusinessException(ErrorCode.MATCHING_ARRIVAL_DEADLINE_EXCEEDED));
+
+        mockMvc.perform(put("/api/matching/groups/me/current/arrival-time")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"arrivalMinutes\":25}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code")
+                        .value("MATCHING_ARRIVAL_DEADLINE_EXCEEDED"))
+                .andExpect(jsonPath("$.error.message")
+                        .value("도착 예정 시간을 최종 마감 안으로 선택해주세요."));
+    }
+
+    @Test
+    void 도착_완료는_body_없이_로그인_회원_기준_snapshot을_반환한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
+        MatchGroupResponse response = arrivalGroupResponse();
+        when(arrivals.arrive(1L)).thenReturn(response);
+
+        mockMvc.perform(put("/api/matching/groups/me/current/arrival")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groupId").value(10));
+
+        verify(arrivals).arrive(1L);
+    }
+
+    @Test
+    void 도착_완료는_인증_쿠키가_없으면_401을_반환한다() throws Exception {
+        mockMvc.perform(put("/api/matching/groups/me/current/arrival"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
     void access_token의_회원_ID로_현재_group과_참여자를_조회한다() throws Exception {
         OffsetDateTime confirmedAt = OffsetDateTime.parse("2026-07-27T12:30:00+09:00");
         MatchGroupResponse response = new MatchGroupResponse(
@@ -151,9 +313,23 @@ class MatchingControllerTest {
                 "CONFIRMED",
                 2,
                 confirmedAt,
+                new MatchGroupFestivalResponse(
+                        1L,
+                        "테스트 축제",
+                        "강원특별자치도 춘천시",
+                        java.time.LocalDate.parse("2026-07-27"),
+                        java.time.LocalDate.parse("2026-07-29")
+                ),
                 List.of(
-                        new MatchGroupMemberResponse(1L, "member-a", null),
-                        new MatchGroupMemberResponse(2L, "member-b", "https://example.com/b.png")
+                        new MatchGroupMemberResponse(1L, "member-a", null, "JOINED", null, null),
+                        new MatchGroupMemberResponse(
+                                2L,
+                                "member-b",
+                                "https://example.com/b.png",
+                                "ARRIVED",
+                                10,
+                                confirmedAt
+                        )
                 )
         );
         when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
@@ -168,15 +344,60 @@ class MatchingControllerTest {
                 .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
                 .andExpect(jsonPath("$.data.confirmedMemberCount").value(2))
                 .andExpect(jsonPath("$.data.confirmedAt").value("2026-07-27T12:30:00+09:00"))
+                .andExpect(jsonPath("$.data.arrivalDeadlineAt")
+                        .value("2026-07-27T13:00:00+09:00"))
+                .andExpect(jsonPath("$.data.festival.festivalId").value(1))
+                .andExpect(jsonPath("$.data.festival.title").value("테스트 축제"))
+                .andExpect(jsonPath("$.data.festival.address").value("강원특별자치도 춘천시"))
+                .andExpect(jsonPath("$.data.festival.eventStartDate").value("2026-07-27"))
+                .andExpect(jsonPath("$.data.festival.eventEndDate").value("2026-07-29"))
                 .andExpect(jsonPath("$.data.members[0].memberId").value(1))
                 .andExpect(jsonPath("$.data.members[0].nickname").value("member-a"))
                 .andExpect(jsonPath("$.data.members[0].profileImageUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.members[0].status").value("JOINED"))
                 .andExpect(jsonPath("$.data.members[1].memberId").value(2))
                 .andExpect(jsonPath("$.data.members[1].nickname").value("member-b"))
                 .andExpect(jsonPath("$.data.members[1].profileImageUrl")
-                        .value("https://example.com/b.png"));
+                        .value("https://example.com/b.png"))
+                .andExpect(jsonPath("$.data.members[1].status").value("ARRIVED"));
 
         verify(groupQueries).currentGroup(1L);
+    }
+
+    private MatchGroupResponse arrivalGroupResponse() {
+        OffsetDateTime confirmedAt = OffsetDateTime.parse("2026-07-27T12:30:00+09:00");
+        return new MatchGroupResponse(
+                10L,
+                1L,
+                "CONFIRMED",
+                2,
+                confirmedAt,
+                new MatchGroupFestivalResponse(
+                        1L,
+                        "테스트 축제",
+                        "강원특별자치도 춘천시",
+                        java.time.LocalDate.parse("2026-07-27"),
+                        java.time.LocalDate.parse("2026-07-29")
+                ),
+                List.of(
+                        new MatchGroupMemberResponse(
+                                1L,
+                                "member-a",
+                                null,
+                                "ARRIVAL_TIME_SELECTED",
+                                10,
+                                OffsetDateTime.parse("2026-07-27T12:35:00+09:00")
+                        ),
+                        new MatchGroupMemberResponse(
+                                2L,
+                                "member-b",
+                                null,
+                                "JOINED",
+                                null,
+                                null
+                        )
+                )
+        );
     }
 
     @Test

@@ -10,6 +10,7 @@ import SoloCoursePage from './pages/SoloCoursePage';
 import CheckInPage from './pages/CheckInPage';
 import MyPage from './pages/MyPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import MatchRoomPage from './pages/MatchRoomPage';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/spots" element={<TourSpotListPage />} />
         <Route path="/spots/:spotId" element={<TourSpotDetailPage />} />
         <Route path="/matching" element={<MatchingConditionPage />} />
+        <Route path="/match-room" element={<MatchRoomPage />} />
         <Route path="/meeting-point" element={<MeetingPointPage />} />
         <Route path="/solo-course" element={<SoloCoursePage />} />
         <Route path="/check-in" element={<CheckInPage />} />

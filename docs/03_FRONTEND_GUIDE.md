@@ -310,9 +310,47 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 
 ## MatchRoomPage
 
+도착 완료는 본인이 `JOINED` 또는 `ARRIVAL_TIME_SELECTED`일 때 확인 panel을
+거쳐 실행합니다. 성공 snapshot 전에는 ARRIVED로 표시하지 않고 실패 시 기존
+snapshot을 유지하며, `arrivedAt`은 KST formatter로 표시합니다.
+
 `MatchRoomPage`는 자유 채팅방이 아닙니다.
 
 시스템 이벤트 타임라인과 제한형 버튼 인터랙션을 제공하는 상태 동기화 화면입니다.
+
+현재 구현된 첫 단계는 `/match-room`의 읽기 전용 상태방입니다. URL에 `groupId`를
+포함하지 않고 `GET /api/matching/groups/me/current`로 로그인 회원의 active
+group을 복원합니다. 최초 mount, `/ws` 연결·재연결과 `/user/queue/matching`
+알림 수신 시 REST를 다시 조회하며, WebSocket 장애 중에는 5초 polling을
+fallback으로 사용합니다. current group이 없으면 `/matching`으로 replace
+이동합니다.
+
+현재 읽기 전용 표시 범위:
+
+- 확정 시각, 확정 인원과 `CONFIRMED`/`IN_PROGRESS` 안내
+- 축제명, 주소와 행사 기간
+- 멤버 nickname, 공개 가능한 profile image와 참여 상태
+- loading, API 오류 안내와 재시도
+
+도착 예정 시간 선택 단계에서는 기존 상태방에 다음 제한형 인터랙션만
+추가합니다.
+
+- 신규 선택 요청은 `5분`, `10분`, `20분`, `25분` panel만 제공
+- 과거 응답 `0`은 `곧 도착 예정`, 과거 `30`과 신규 `25`는 `N분 후 도착 예정`으로 표시
+- 상대 회원의 도착 분 또는 선택 시각이 정상 REST refresh 전후 실제 변경되면
+  하단 navigation 위에 3초 동안 nickname 포함 snackbar 표시
+- 최초 snapshot, 본인 변경, 동일 snapshot, 실패한 refresh와 잘못된 WebSocket
+  payload에는 상대 변경 snackbar를 표시하지 않음
+- 제출 중 중복 선택 방지
+- 성공 응답의 current group snapshot 즉시 반영
+- 실패 시 기존 snapshot 유지와 재선택 안내
+- 멤버별 `도착 시간 미정`, `곧 도착 예정`, `N분 후 도착 예정`, `도착 완료` 표시
+
+`도착 완료`는 기존 서버 데이터의 읽기 전용 표시이며 `도착했어요` 버튼은 아직
+구현하지 않습니다.
+
+아래의 지도, 도착, 취소, 신고, 안전 기능과 시스템 이벤트 타임라인은 후속
+범위이며 현재 화면에는 구현하지 않았습니다.
 
 필수 요소:
 
@@ -377,3 +415,12 @@ Kakao Maps는 추후 다음 용도로 사용합니다.
 - 솔로 코스 맥락 제공
 
 Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하지 않습니다.
+
+## MatchRoomPage 시스템 이벤트 타임라인
+
+- `/match-room` 최초 진입과 새로고침에서 current group과 current group events REST를 함께 조회합니다.
+- `/user/queue/matching` 연결·재연결·상태 알림과 WebSocket 장애 polling은 두 REST를 다시 조회하는 trigger입니다.
+- event WebSocket payload를 직접 append하거나 optimistic event를 만들지 않고 PostgreSQL commit 뒤 REST 결과를 사용합니다.
+- current group 조회가 성공하고 events만 실패하면 기존 group 화면을 유지하고 상태 기록 영역에 별도 재시도를 제공합니다.
+- 타임라인은 `MATCH_CONFIRMED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`만 표시하며 KST formatter를 사용합니다.
+- 자유 text input, 메시지 작성, 전송 버튼과 client STOMP `SEND`는 제공하지 않습니다.

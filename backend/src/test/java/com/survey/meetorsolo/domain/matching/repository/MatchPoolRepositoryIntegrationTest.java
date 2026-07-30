@@ -49,7 +49,7 @@ class MatchPoolRepositoryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void V1부터_V11과_pgvector_extension이_적용된다() {
+    void V1부터_V13과_pgvector_extension_및_도착시간_CHECK가_적용된다() {
         List<String> successfulVersions = jdbcTemplate.queryForList(
                 """
                 SELECT version
@@ -65,8 +65,17 @@ class MatchPoolRepositoryIntegrationTest {
         );
 
         assertThat(successfulVersions).contains(
-                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+                "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
         assertThat(vectorExtensionCount).isEqualTo(1);
+        String checkDefinition = jdbcTemplate.queryForObject(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conname = 'chk_match_group_members_arrival_minutes'
+                """,
+                String.class
+        );
+        assertThat(checkDefinition).contains("0", "5", "10", "20", "25", "30");
     }
 
     @Test

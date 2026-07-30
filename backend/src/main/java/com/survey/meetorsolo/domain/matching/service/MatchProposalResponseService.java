@@ -24,6 +24,7 @@ public class MatchProposalResponseService {
     private final MatchPoolRepository pools;
     private final MatchGroupRepository groups;
     private final MatchGroupMemberRepository groupMembers;
+    private final MatchEventRepository events;
     private final MatchPenaltyCooldownService penaltyCooldowns;
     private final MatchingPenaltyPolicy penaltyPolicy;
     private final Duration proposalTimeout;
@@ -32,10 +33,12 @@ public class MatchProposalResponseService {
     public MatchProposalResponseService(MatchAttemptRepository attempts, MatchProposalRepository proposals,
             MatchAttemptMemberRepository members, MatchResponseRepository responses, MatchPoolRepository pools,
             MatchGroupRepository groups, MatchGroupMemberRepository groupMembers,
+            MatchEventRepository events,
             MatchPenaltyCooldownService penaltyCooldowns, MatchingPenaltyPolicy penaltyPolicy,
             MatchingSchedulerProperties properties, ApplicationEventPublisher eventPublisher) {
         this.attempts=attempts; this.proposals=proposals; this.members=members; this.responses=responses;
         this.pools=pools; this.groups=groups; this.groupMembers=groupMembers;
+        this.events=events;
         this.penaltyCooldowns=penaltyCooldowns; this.penaltyPolicy=penaltyPolicy;
         this.proposalTimeout=properties.proposalTimeout();
         this.eventPublisher=eventPublisher;
@@ -239,6 +242,7 @@ public class MatchProposalResponseService {
         MatchGroup group = groups.saveAndFlush(MatchGroup.confirmed(
                 attempt.getId(), attempt.getFestivalId(), accepted.size(), now));
         for (MatchAttemptMember value : accepted) groupMembers.save(MatchGroupMember.joined(group.getId(), value.getMemberId(), now));
+        events.save(MatchEvent.matchConfirmed(group.getId(), attempt.getId(), now));
         lockedPools.forEach(pool -> pool.match(now));
         attempt.confirm(now);
     }

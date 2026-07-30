@@ -4,12 +4,17 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.matching.dto.ActiveMatchProposalResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchArrivalTimeRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchingRestrictionResponse;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
+import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
+import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
+import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -22,6 +27,7 @@ import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +42,9 @@ public class MatchingController {
     private final MatchPoolEntryService poolEntries;
     private final MatchingQueryService queries;
     private final MatchGroupQueryService groupQueries;
+    private final MatchGroupEventQueryService groupEventQueries;
+    private final MatchArrivalTimeService arrivalTimes;
+    private final MatchArrivalService arrivals;
     private final MatchProposalActionService proposalActions;
 
     public MatchingController(
@@ -43,12 +52,18 @@ public class MatchingController {
             MatchPoolEntryService poolEntries,
             MatchingQueryService queries,
             MatchGroupQueryService groupQueries,
+            MatchGroupEventQueryService groupEventQueries,
+            MatchArrivalTimeService arrivalTimes,
+            MatchArrivalService arrivals,
             MatchProposalActionService proposalActions
     ) {
         this.jwtProvider = jwtProvider;
         this.poolEntries = poolEntries;
         this.queries = queries;
         this.groupQueries = groupQueries;
+        this.groupEventQueries = groupEventQueries;
+        this.arrivalTimes = arrivalTimes;
+        this.arrivals = arrivals;
         this.proposalActions = proposalActions;
     }
 
@@ -80,6 +95,30 @@ public class MatchingController {
             @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
     ) {
         return ApiResponse.success(groupQueries.currentGroup(memberId(accessToken)));
+    }
+
+    @GetMapping("/groups/me/current/events")
+    public ApiResponse<MatchGroupEventsResponse> currentGroupEvents(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        return ApiResponse.success(groupEventQueries.currentGroupEvents(memberId(accessToken)));
+    }
+
+    @PutMapping("/groups/me/current/arrival")
+    public ApiResponse<MatchGroupResponse> arrive(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        return ApiResponse.success(arrivals.arrive(memberId(accessToken)));
+    }
+
+    @PutMapping("/groups/me/current/arrival-time")
+    public ApiResponse<MatchGroupResponse> selectArrivalTime(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken,
+            @Valid @RequestBody MatchArrivalTimeRequest request
+    ) {
+        return ApiResponse.success(
+                arrivalTimes.select(memberId(accessToken), request.arrivalMinutes())
+        );
     }
 
     @PostMapping("/proposals/{proposalId}/responses")

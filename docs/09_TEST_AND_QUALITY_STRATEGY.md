@@ -133,6 +133,19 @@
 - API error/loading 상태 표시
 - WebSocket 이벤트 수신 시 화면 상태 변경은 mock 기반으로 검증
 - WebSocket 연결 성공·재접속 시 REST 상태 복원과 polling fallback 유지 검증
+- 읽기 전용 `MatchRoomPage`의 최초 mount current group 복원, null redirect, festival/member 표시 검증
+- 상태방 WebSocket 알림 payload를 화면 상태로 사용하지 않고 REST refresh만 유도하는지 검증
+- 상태방 unmount 시 timer, WebSocket과 `AbortController` 정리 검증
+- 도착 예정 시간 허용값 validation, 상태 전이, 같은 값 멱등성과 다른 값 변경 event 검증
+- group row → group member row 잠금 순서와 동일 회원 동시 요청 직렬화 검증
+- member update/event insert 실패 rollback과 rollback 알림 부재 검증
+- frontend 선택 panel, 중복 제출 방지, 성공 snapshot 반영과 실패 snapshot 보존 검증
+- 신규 선택값 `5/10/20/25`, 과거 응답 `0/30`, 25분 절대 마감 경계를 검증
+- 정상 REST snapshot 전후 비교로만 상대 도착 시간 snackbar가 생성되고 최초
+  snapshot, 본인 변경, 동일값, 실패 refresh에는 생성되지 않는지 검증
+- WebSocket refresh와 polling fallback의 상대 변경 감지, 자동 제거와 timer
+  cleanup을 fake timer 또는 제어 가능한 scheduler로 검증
+- 도착 완료의 row lock, ARRIVED 멱등성, 최초 IN_PROGRESS 전환과 AFTER_COMMIT 알림 검증
 
 프론트엔드 테스트는 사용자에게 보이는 상태 전환을 검증합니다.
 
@@ -250,3 +263,11 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - GitHub Actions 테스트 workflow 실제 작성
 
 위 항목은 개발환경 세팅 또는 비즈니스 기능 구현 단계에서 별도 승인 후 진행합니다.
+
+## 시스템 이벤트 타임라인 검증 기준
+
+- Controller/service에서 인증, current group 인가, DTO 변환과 raw payload 비노출을 검증합니다.
+- `pgvector/pgvector:pg16` Testcontainers에서 다른 group 비노출, actor 공개 경계, 시간/ID 정렬, 최신 50건과 malformed payload 제외를 검증합니다.
+- group 확정 transaction의 `MATCH_CONFIRMED` 저장과 event insert 실패 전체 rollback을 회귀 검증합니다.
+- arrival-time/arrival 멱등 및 rollback 뒤 event 조회 결과가 증가하지 않는지 검증합니다.
+- Frontend는 group/events 부분 실패, WebSocket 연결·재연결·알림, polling, 늦은 응답 차단과 자유 입력/전송 UI 부재를 검증합니다.

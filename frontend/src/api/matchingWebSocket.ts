@@ -8,13 +8,15 @@ export type MatchingStateChangedNotification = {
   occurredAt: string;
 };
 
-type MatchingWebSocketCallbacks = {
+export type MatchingWebSocketCallbacks = {
   onConnected: () => void;
+  onDisconnected?: () => void;
   onStateChanged: (notification: MatchingStateChangedNotification) => void;
 };
 
 export function connectMatchingWebSocket({
   onConnected,
+  onDisconnected,
   onStateChanged,
 }: MatchingWebSocketCallbacks): () => void {
   let subscription: StompSubscription | null = null;
@@ -31,7 +33,11 @@ export function connectMatchingWebSocket({
       onConnected();
     },
     onWebSocketError: () => {
+      onDisconnected?.();
       // REST polling이 연결 실패와 재접속 구간의 fallback을 담당한다.
+    },
+    onWebSocketClose: () => {
+      onDisconnected?.();
     },
     onStompError: () => {
       // broker 오류를 화면 상태로 사용하지 않고 reconnect와 REST 복원에 맡긴다.

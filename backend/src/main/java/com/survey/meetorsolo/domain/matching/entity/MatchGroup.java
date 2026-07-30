@@ -11,6 +11,7 @@ public class MatchGroup {
     @Column(nullable=false, length=30) private String status;
     @Column(name="confirmed_member_count", nullable=false) private Integer confirmedMemberCount;
     @Column(name="confirmed_at", nullable=false) private OffsetDateTime confirmedAt;
+    @Column(name="started_at") private OffsetDateTime startedAt;
     @Column(name="created_at", nullable=false) private OffsetDateTime createdAt;
     @Column(name="updated_at", nullable=false) private OffsetDateTime updatedAt;
     protected MatchGroup() { }
@@ -20,8 +21,17 @@ public class MatchGroup {
         group.createdAt=now; group.updatedAt=now; return group;
     }
     public Long getId() { return id; }
+    public Long getAttemptId() { return attemptId; }
     public Long getFestivalId() { return festivalId; }
     public String getStatus() { return status; }
     public Integer getConfirmedMemberCount() { return confirmedMemberCount; }
     public OffsetDateTime getConfirmedAt() { return confirmedAt; }
+    public OffsetDateTime getStartedAt() { return startedAt; }
+    public void start(OffsetDateTime now) {
+        if ("CONFIRMED".equals(status)) {
+            status = "IN_PROGRESS";
+            startedAt = now;
+            updatedAt = now;
+        }
+    }
 }

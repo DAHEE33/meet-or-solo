@@ -372,7 +372,28 @@ member_preference_embeddings
 
 ## MatchRoomPage 상태방 구조
 
+첫 active member 도착에서 `CONFIRMED -> IN_PROGRESS`로 전환하고
+`started_at`을 한 번만 설정합니다. ARRIVED 반복은 멱등이며 모든 회원 도착을
+COMPLETED로 연결하는 정책은 후속 범위입니다.
+
 매칭 확정 후 사용자는 `MatchRoomPage`로 이동합니다.
+
+현재 첫 구현은 확정 group의 읽기 전용 상태 표시만 제공합니다. active group은
+`CONFIRMED`, `IN_PROGRESS`, active 참여자는 `JOINED`,
+`ARRIVAL_TIME_SELECTED`, `ARRIVED`로 제한합니다. 종료 group과 inactive
+참여자는 current group 응답에서 제외하고, 확정 인원 불일치나 로그인 참여자
+누락은 정합성 충돌로 처리합니다.
+
+도착 예정 시간 정책:
+
+- 신규 선택 허용값은 `5`, `10`, `20`, `25`분입니다.
+- `0`, `30`은 기존 row/event 조회 호환용으로만 유지하며 신규 요청에서는 거절합니다.
+- `JOINED`에서 선택하면 `ARRIVAL_TIME_SELECTED`로 전환합니다.
+- `ARRIVAL_TIME_SELECTED`는 다른 허용값으로 변경할 수 있습니다.
+- 같은 값을 다시 선택하면 event와 알림을 추가하지 않는 멱등 성공입니다.
+- `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` member는 변경할 수 없습니다.
+- `COMPLETED`, `CANCELLED` group에서는 변경할 수 없습니다.
+- 도착 완료와 `arrived_at` 변경은 후속 범위입니다.
 
 포함 요소:
 
@@ -416,3 +437,11 @@ WebSocket 알림은 유실되거나 중복될 수 있는 보조 신호입니다.
 | `MEMBER_CANCELLED` | 사용자가 취소 | cancellation 저장 및 정책 적용 | `MemberCancelledModal` | `MEMBER_CANCELLED` | `/topic/match-groups/{groupId}` |
 | `MATCH_CANCELLED` | 그룹 유지 불가 | group 취소 | `MatchingFailedPage` | `CANCELLED` | `/topic/match-groups/{groupId}` |
 | `SAFETY_REMINDER` | 안전 안내 시점 | reminder event 저장 | `SafetyReminderModal` | `SAFETY_REMINDER_SENT` | `/queue/users/{userId}/safety` |
+
+## 시스템 이벤트 타임라인 정책
+
+- 현재 운영 생성 코드가 있는 `MATCH_CONFIRMED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`만 표시합니다.
+- `MATCH_CANCELLED`, `MEMBER_CANCELLED`, `SAFETY_REMINDER`는 실제 생성 기능이 구현되기 전 mock event로 표시하지 않습니다.
+- 별도 미팅 시작 event가 없으므로 `startedAt`이나 첫 `MEMBER_ARRIVED`에서 “미팅이 시작됐어요” 항목을 중복 합성하지 않습니다.
+- 같은 도착 예정 값과 동일 ARRIVED 멱등 요청은 새 `match_events`를 만들지 않으므로 타임라인도 증가하지 않습니다.
+- 최근 50건만 제공하며 cursor pagination은 후속 범위입니다.
