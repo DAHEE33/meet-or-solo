@@ -47,6 +47,39 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
             """, nativeQuery = true)
     List<MatchGroup> findActiveByMemberIdForUpdate(@Param("memberId") long memberId);
 
+    @Query(value = """
+            SELECT * FROM match_groups
+            WHERE id = :groupId
+            FOR UPDATE
+            """, nativeQuery = true)
+    java.util.Optional<MatchGroup> findByIdForUpdate(@Param("groupId") long groupId);
+
+    @Query(value = """
+            SELECT * FROM match_groups
+            WHERE id = :groupId
+              AND status IN ('CONFIRMED', 'IN_PROGRESS')
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    java.util.Optional<MatchGroup> tryLockActiveById(@Param("groupId") long groupId);
+
+    @Query(value = """
+            SELECT matching_group.id
+            FROM match_groups matching_group
+            WHERE matching_group.status IN ('CONFIRMED', 'IN_PROGRESS')
+              AND matching_group.confirmed_at + INTERVAL '30 minutes' <= :now
+              AND EXISTS (
+                  SELECT 1 FROM match_group_members group_member
+                  WHERE group_member.group_id = matching_group.id
+                    AND group_member.status IN ('JOINED', 'ARRIVAL_TIME_SELECTED')
+              )
+            ORDER BY matching_group.confirmed_at, matching_group.id
+            LIMIT :batchSize
+            """, nativeQuery = true)
+    List<Long> findNoShowCandidateIds(
+            @Param("now") java.time.OffsetDateTime now,
+            @Param("batchSize") int batchSize
+    );
+
     interface ActiveGroupWithFestivalProjection {
         Long getGroupId();
         Long getFestivalId();

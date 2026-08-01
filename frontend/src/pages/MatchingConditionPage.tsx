@@ -78,6 +78,12 @@ export default function MatchingConditionPage() {
       ? state.pool?.festivalId
       : null;
   const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
+  const matchRoomNotice = location.state
+    && typeof location.state === 'object'
+    && 'matchRoomNotice' in location.state
+    && typeof location.state.matchRoomNotice === 'string'
+      ? location.state.matchRoomNotice
+      : null;
 
   const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
   const proposalDeadline =
@@ -116,6 +122,11 @@ export default function MatchingConditionPage() {
     <MobileLayout>
       <PageHeader title="자동 매칭" noBack />
       <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
+        {matchRoomNotice && (
+          <p role="status" className="rounded-2xl bg-coral/10 px-4 py-3 text-[14px] font-semibold text-coral">
+            {matchRoomNotice}
+          </p>
+        )}
         <MatchBody
           status={state.status}
           isRetryFormOpen={isRetryFormOpen}

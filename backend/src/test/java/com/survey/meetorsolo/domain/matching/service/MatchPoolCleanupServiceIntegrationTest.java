@@ -21,7 +21,9 @@ import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
-        "spring.jpa.show-sql=false"
+        "spring.jpa.show-sql=false",
+        "app.matching.scheduler.enabled=false",
+        "app.matching.no-show-scheduler.enabled=false"
 })
 @Testcontainers
 @Sql(

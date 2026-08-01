@@ -30,6 +30,8 @@ public class MatchPenaltyEvent {
 
     @Column(name = "related_attempt_id")
     private Long relatedAttemptId;
+    @Column(name = "related_group_id")
+    private Long relatedGroupId;
 
     @Column(name = "related_proposal_id")
     private Long relatedProposalId;
@@ -56,6 +58,19 @@ public class MatchPenaltyEvent {
         event.reason = reason;
         event.relatedAttemptId = relatedAttemptId;
         event.relatedProposalId = relatedProposalId;
+        event.createdAt = now;
+        return event;
+    }
+
+    public static MatchPenaltyEvent forGroup(long memberId, String eventType, int scoreDelta,
+            String reason, long groupId, long attemptId, OffsetDateTime now) {
+        MatchPenaltyEvent event = new MatchPenaltyEvent();
+        event.memberId = memberId;
+        event.eventType = eventType;
+        event.scoreDelta = scoreDelta;
+        event.reason = reason;
+        event.relatedGroupId = groupId;
+        event.relatedAttemptId = attemptId;
         event.createdAt = now;
         return event;
     }

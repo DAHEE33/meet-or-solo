@@ -1,5 +1,49 @@
 # 진행 상태 기록
 
+## [10-매칭 22차] 확정 후 자발적 취소와 30분 마감 NO_SHOW
+
+상태: 구현 및 비컨테이너 focused 자동 검증 완료, PostgreSQL Testcontainers와 두 브라우저 수동 검증은 환경 제약으로 미완료
+
+### Windows Testcontainers 1차 실패 분석과 테스트 격리 보완
+
+- Windows에서 관련 통합 테스트 36건 중 3건 실패 확인
+- `confirmedMemberCount=3`, active member 2명을 충돌로 보던 기존 REST assertion을 현재 정책에 맞게 정상 응답으로 변경
+- 실제 비정상 데이터는 active member가 2명 미만이거나 최초 확정 인원보다 많은 경우로 분리해 충돌 검증
+- arrival 통합 테스트의 고정 Clock은 `NOW + 10초`였지만 경계 fixture가 `NOW`를 기준으로 계산해 10초 오차가 발생한 원인 수정
+- DB 입력 시각과 fixed Clock을 `TEST_NOW`, `ChronoUnit.MICROS` 기준으로 통일
+- PostgreSQL이 안정적으로 표현하지 못하는 `minusNanos(1)`을 제거하고 deadline 초과는 1초 차이로 검증
+- 운영 코드의 `estimatedArrivalAt <= deadline`, `now < deadline` 비교는 변경하지 않음
+- 모든 matching `@SpringBootTest` 통합 테스트에 `app.matching.scheduler.enabled=false`, `app.matching.no-show-scheduler.enabled=false`를 명시
+- 사용자 환경변수와 무관하게 일반 통합 테스트 종료 후 Scheduler가 종료된 Testcontainers DB에 접근하지 않도록 격리
+- Scheduler 전용 `ApplicationContextRunner` 테스트의 활성화 계약은 변경하지 않음
+- 수정 후 test source compile 성공
+- 비컨테이너 정책 회귀 21건 성공: current group 9건, arrival-time 8건, Scheduler 조건 4건
+- 현재 WSL은 Docker command가 없고 Windows executable interop도 `UtilBindVsockAnyPort`로 실패해 요청한 Windows Testcontainers 3단계 재실행은 미완료
+
+- 기존 V1~V13을 수정하지 않고 `V14__add_match_room_cancellation_no_show.sql` 추가
+- group 확정 시 pool의 `allow_minimum_two`를 `match_group_members`에 snapshot 저장
+- 기존 row는 `match_groups.attempt_id -> match_attempt_members -> match_pools` 관계로 backfill하며 매핑 실패 row가 있으면 migration 실패
+- 구조화된 세 취소 사유만 받는 `PUT /api/matching/groups/me/current/cancellation` 추가
+- 확정 후 3분 이내 무패널티, 이후 deadline 전 `penalty_score +1` 및 KST 당일 10/30/60분 cooldown 적용
+- deadline부터 `JOINED`, `ARRIVAL_TIME_SELECTED`를 `NO_SHOW`로 처리하는 기본 비활성 Scheduler 추가
+- NO_SHOW는 `penalty_score +3`, KST 당일 30/60분 cooldown이며 `manner_temperature`는 변경하지 않음
+- 잠금 순서는 group row, group member ID 오름차순, cooldown/member 관련 row 순서로 고정
+- group별 `REQUIRES_NEW`, `FOR UPDATE SKIP LOCKED`, 상태 재검증과 group/member/cause unique index로 반복 tick과 다중 실행 멱등성 보강
+- 현재 유효 인원이 3명 이상이거나 2명 모두 최소 인원을 허용하면 group 유지
+- 유지 불가 시 귀책 회원 상태를 유지하고 비귀책 회원을 `LEFT`, group을 `CANCELLED`로 전환
+- `confirmedMemberCount`는 최초 확정 인원으로 유지하고 `currentMemberCount`를 별도 응답
+- `MEMBER_CANCELLED`, `MEMBER_NO_SHOW`, `MATCH_CANCELLED` event와 AFTER_COMMIT 알림 추가
+- MatchRoomPage에 구조화된 취소 dialog, 현재 인원과 신규 timeline 문구, 성공 후 `/matching` 이동 안내 추가
+- Backend focused 47건 성공
+- Frontend focused 3 files, 56건 성공 및 `npx tsc --noEmit` 성공
+- Frontend 전체 10 files, 110건, production/PWA build 성공
+- Backend `build -x test` 성공
+- PostgreSQL focused는 Docker client 탐지 실패로 Flyway와 assertion 실행 전 initialization 실패
+- matching 전체 114건 실행에서 일반 테스트 98건 통과, Testcontainers 14건은 Docker initialization 실패, scheduling 조건 회귀 2건은 원인을 수정한 뒤 focused 재실행 성공
+- V14 취소·NO_SHOW PostgreSQL 통합 테스트 2건을 추가하고 compile 성공했으나 Docker 부재로 assertion 미실행
+- 두 로그인 session과 실행 중인 local runtime이 없어 회원 `2`, `27`, festival `144` 수동 검증 미실행
+- meeting point, Kakao Maps, COMPLETED, 평가/신고, manner temperature, 자유 채팅, Redis와 재매칭은 제외
+
 ## [10-매칭 21차] 도착 예정 선택지와 상대 변경 snackbar
 
 상태: 구현 및 비컨테이너 자동 회귀 완료, Testcontainers와 수동 화면 검증은 환경 제약으로 미완료

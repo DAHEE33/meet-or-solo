@@ -12,6 +12,8 @@ public class MatchGroup {
     @Column(name="confirmed_member_count", nullable=false) private Integer confirmedMemberCount;
     @Column(name="confirmed_at", nullable=false) private OffsetDateTime confirmedAt;
     @Column(name="started_at") private OffsetDateTime startedAt;
+    @Column(name="cancelled_at") private OffsetDateTime cancelledAt;
+    @Column(name="cancel_reason", length=60) private String cancelReason;
     @Column(name="created_at", nullable=false) private OffsetDateTime createdAt;
     @Column(name="updated_at", nullable=false) private OffsetDateTime updatedAt;
     protected MatchGroup() { }
@@ -27,10 +29,19 @@ public class MatchGroup {
     public Integer getConfirmedMemberCount() { return confirmedMemberCount; }
     public OffsetDateTime getConfirmedAt() { return confirmedAt; }
     public OffsetDateTime getStartedAt() { return startedAt; }
+    public OffsetDateTime getCancelledAt() { return cancelledAt; }
     public void start(OffsetDateTime now) {
         if ("CONFIRMED".equals(status)) {
             status = "IN_PROGRESS";
             startedAt = now;
+            updatedAt = now;
+        }
+    }
+    public void cancel(String reason, OffsetDateTime now) {
+        if (!"CANCELLED".equals(status)) {
+            status = "CANCELLED";
+            cancelReason = reason;
+            cancelledAt = now;
             updatedAt = now;
         }
     }

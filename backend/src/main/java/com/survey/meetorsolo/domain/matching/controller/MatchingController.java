@@ -7,6 +7,8 @@ import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchArrivalTimeRequest;
+import com.survey.meetorsolo.domain.matching.dto.MatchCancellationRequest;
+import com.survey.meetorsolo.domain.matching.dto.MatchCancellationResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchProposalActionResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchingRestrictionResponse;
@@ -15,6 +17,7 @@ import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
+import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -46,6 +49,7 @@ public class MatchingController {
     private final MatchArrivalTimeService arrivalTimes;
     private final MatchArrivalService arrivals;
     private final MatchProposalActionService proposalActions;
+    private final MatchCancellationService cancellations;
 
     public MatchingController(
             JwtProvider jwtProvider,
@@ -55,7 +59,8 @@ public class MatchingController {
             MatchGroupEventQueryService groupEventQueries,
             MatchArrivalTimeService arrivalTimes,
             MatchArrivalService arrivals,
-            MatchProposalActionService proposalActions
+            MatchProposalActionService proposalActions,
+            MatchCancellationService cancellations
     ) {
         this.jwtProvider = jwtProvider;
         this.poolEntries = poolEntries;
@@ -65,6 +70,7 @@ public class MatchingController {
         this.arrivalTimes = arrivalTimes;
         this.arrivals = arrivals;
         this.proposalActions = proposalActions;
+        this.cancellations = cancellations;
     }
 
     @PostMapping("/pools")
@@ -119,6 +125,14 @@ public class MatchingController {
         return ApiResponse.success(
                 arrivalTimes.select(memberId(accessToken), request.arrivalMinutes())
         );
+    }
+
+    @PutMapping("/groups/me/current/cancellation")
+    public ApiResponse<MatchCancellationResponse> cancelCurrentParticipation(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken,
+            @Valid @RequestBody MatchCancellationRequest request
+    ) {
+        return ApiResponse.success(cancellations.cancel(memberId(accessToken), request.reason()));
     }
 
     @PostMapping("/proposals/{proposalId}/responses")

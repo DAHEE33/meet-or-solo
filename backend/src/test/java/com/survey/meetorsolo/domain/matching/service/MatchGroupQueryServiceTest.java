@@ -1,5 +1,7 @@
 package com.survey.meetorsolo.domain.matching.service;
 
+import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -176,6 +178,26 @@ class MatchGroupQueryServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getErrorCode().getCode())
                 .isEqualTo("MATCHING_CONFLICT");
+    }
+
+    @Test
+    void 최초_세명에서_현재_두명이면_정상_snapshot과_두_count를_반환한다() {
+        ActiveGroupWithFestivalProjection group = group(
+                10L, 20L, "CONFIRMED", 3,
+                OffsetDateTime.parse("2026-07-27T12:30:00+09:00"));
+        ActiveGroupMemberProjection first =
+                participant(100L, 1L, "member-a", null, "JOINED");
+        ActiveGroupMemberProjection second =
+                participant(101L, 2L, "member-b", null, "ARRIVED");
+        when(groups.findActiveByMemberId(1L)).thenReturn(List.of(group));
+        when(groupMembers.findActiveMembersWithProfileByGroupId(10L))
+                .thenReturn(List.of(first, second));
+
+        MatchGroupResponse response = service.currentGroup(1L);
+
+        assertThat(response.confirmedMemberCount()).isEqualTo(3);
+        assertThat(response.currentMemberCount()).isEqualTo(2);
+        assertThat(response.members()).hasSize(2);
     }
 
     @Test

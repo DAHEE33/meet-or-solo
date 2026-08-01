@@ -95,6 +95,13 @@ REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
 `PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고 인증
 회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
 도착이면 group을 IN_PROGRESS로 전환하고 갱신된 전체 snapshot을 반환합니다.
+도착은 `now < confirmedAt + 30분`에서만 허용하고 deadline 정각부터는
+NO_SHOW Scheduler 판정 대상으로 넘깁니다.
+
+`PUT /api/matching/groups/me/current/cancellation`은 회원/group 식별자를 받지
+않고 `SCHEDULE_CHANGED`, `TRANSPORTATION_ISSUE`, `OTHER` 중 하나만 받습니다.
+취소 상세 사유는 다른 회원에게 공개하지 않으며 성공 응답은 group 유지 여부와
+현재 유효 인원 수를 제공합니다.
 
 `GET /api/matching/groups/me/current`는 path, query, body의 회원/group 식별자를
 받지 않고 `access_token` HttpOnly cookie의 로그인 회원만 기준으로 조회합니다.

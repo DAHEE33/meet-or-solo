@@ -34,7 +34,14 @@
 allow_minimum_two = true | false
 ```
 
-이 값은 인원 미달 흐름에서 사용합니다.
+이 값은 두 단계에서 회원의 최소 2인 진행 의사를 판단하는 데 사용합니다.
+
+- 매칭 확정 전 목표 인원 미달 round 2에서 수락자 2명으로 시작할 수 있는지 판단한다.
+- 매칭 확정 후 취소 또는 `NO_SHOW`로 현재 참여자가 2명만 남았을 때 group을 유지할 수 있는지 판단한다.
+
+group 확정 시 각 회원의 `allow_minimum_two`를 `match_group_members`에 snapshot으로
+보존합니다. 이후 원본 pool이나 attempt 이력이 바뀌어도 확정 당시 동의는
+변하지 않습니다.
 
 ## 시간 정책
 
@@ -207,9 +214,14 @@ penalty 또는 cooldown 적용 대상:
 - No-show
 - 관리자에 의해 유효하다고 판단된 신고
 
-MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로 확장할 수 있습니다.
+MVP는 단순 cooldown window로 시작합니다. `penalty_score`는 단기 재매칭 제한과
+운영 감사에 사용하고, `manner_temperature`는 후기·신고·관리자 정책이 함께
+구현되는 후속 단계에서 연결합니다. 현재 확정 후 취소·노쇼 구현에서는
+`manner_temperature`를 변경하지 않습니다.
 
-최초 구현 정책은 다음과 같이 확정합니다.
+### Proposal 단계 penalty/cooldown
+
+매칭 확정 전 proposal 단계의 기존 정책은 다음과 같습니다.
 
 | 원인 | cooldown 시작 | 기간 | penalty score |
 | --- | --- | ---: | ---: |
@@ -228,6 +240,116 @@ MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로
 - response, cooldown, penalty event, `members.penalty_score`, pool, attempt 변경은 같은 transaction에서 처리한다.
 - 외부 API와 WebSocket 호출은 이 transaction에 포함하지 않는다.
 
+### 매칭 확정 후 자발적 취소
+
+`못 갈 것 같아요`는 자유 입력 없이 다음 구조화된 사유만 사용합니다.
+
+```text
+SCHEDULE_CHANGED
+TRANSPORTATION_ISSUE
+OTHER
+```
+
+Frontend 문구는 각각 `갑자기 일정이 생겼어요`, `이동이 어려워졌어요`,
+`다른 이유가 있어요`를 사용합니다. 사유는 운영 분석과 audit에 사용하며,
+사유별 자동 면제는 두지 않습니다. 상대 회원에게는 상세 사유를 공개하지 않고
+취소 사실만 안내합니다.
+
+자발적 취소의 귀책 기준은 group `confirmed_at`을 기준으로 합니다.
+
+| 취소 시점 | penalty score | 당일 귀책 취소 횟수 | cooldown |
+| --- | ---: | ---: | ---: |
+| 확정 후 3분 이내 | 없음 | 집계 제외 | 없음 |
+| 확정 3분 후부터 `arrival_deadline_at` 전 | `+1` | 1회 | 10분 |
+| 확정 3분 후부터 `arrival_deadline_at` 전 | `+1` | 2회 | 30분 |
+| 확정 3분 후부터 `arrival_deadline_at` 전 | `+1` | 3회 이상 | 60분 |
+
+- `arrival_deadline_at`은 저장값을 새로 만들지 않고 `confirmed_at + 30분`으로 파생한다.
+- deadline 시각부터 자발적 취소 API로 상태를 바꾸지 않고 Scheduler의 `NO_SHOW` 판정 대상으로 넘긴다.
+- 당일 횟수는 `Asia/Seoul` 날짜의 확정 후 `CANCEL` penalty event를 기준으로 계산한다.
+- 같은 group/member의 동일 취소 요청은 member 상태와 DB unique constraint로 멱등 처리한다.
+- 취소 member, penalty event, cooldown, group 유지·취소와 match event는 하나의 transaction에서 처리한다.
+- 실제 WebSocket 전송은 commit 뒤 `AFTER_COMMIT`에만 수행한다.
+
+### NO_SHOW와 반복 제한
+
+`arrival_deadline_at`까지 도착하지 않은 active member는 Scheduler가 `NO_SHOW`로
+전환합니다.
+
+```text
+대상 member 상태:
+JOINED
+ARRIVAL_TIME_SELECTED
+
+제외 member 상태:
+ARRIVED
+CANCELLED
+NO_SHOW
+LEFT
+```
+
+| 원인 | penalty score | 당일 NO_SHOW 횟수 | cooldown |
+| --- | ---: | ---: | ---: |
+| `NO_SHOW` | `+3` | 1회 | 30분 |
+| `NO_SHOW` | `+3` | 2회 이상 | 60분 |
+
+- NO_SHOW의 당일 횟수도 `Asia/Seoul` 날짜의 penalty event를 기준으로 계산한다.
+- `members.penalty_score`는 누적 audit 값으로 유지하고 실제 cooldown 단계는 당일 귀책 event 집계로 결정한다.
+- penalty score decay와 장기 초기화는 운영 데이터 확인 후 후속 정책으로 이월한다.
+- 이번 단계에서는 NO_SHOW로 `manner_temperature`를 차감하지 않는다.
+- Scheduler 재실행과 다중 instance 실행에도 같은 group/member의 `NO_SHOW`,
+  penalty, cooldown과 event가 중복되지 않아야 한다.
+
+### 확정 후 인원 감소와 group 유지
+
+`confirmed_member_count`는 최초 확정 인원으로 유지합니다. 취소·NO_SHOW 이후
+현재 유효 인원은 `current_member_count`로 별도 계산해 응답합니다.
+
+| 현재 유효 인원 | 유지 조건 | 결과 |
+| ---: | --- | --- |
+| 3명 이상 | 추가 조건 없음 | group 유지 |
+| 2명 | 남은 두 회원 모두 `allow_minimum_two = true` | group 유지 |
+| 2명 | 한 명이라도 `allow_minimum_two = false` | group `CANCELLED` |
+| 1명 이하 | 유지 불가 | group `CANCELLED` |
+
+- 현재 유효 인원은 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED` member만 계산한다.
+- group이 유지되면 취소·NO_SHOW member만 current group 공개 대상에서 제외한다.
+- group이 취소되면 귀책 member는 `CANCELLED` 또는 `NO_SHOW`를 유지한다.
+- group 취소로 남은 비귀책 member는 `LEFT`로 전환하며 penalty와 cooldown을 적용하지 않는다.
+- `confirmed_member_count == active member count`를 강제하지 않는다.
+- current group 조회는 `current_member_count`와 실제 공개 member 수의 정합성을 검증한다.
+- 2명 유지 판단에 사용하는 `allow_minimum_two`는 group 확정 당시 snapshot을 기준으로 한다.
+
+### 확정 후 취소·NO_SHOW Scheduler와 잠금
+
+NO_SHOW Scheduler는 기본 비활성화하고 명시적 환경 설정에서만 실행합니다.
+기본 fixed delay는 5초, batch 상한은 20입니다.
+현재 구현의 별도 활성화 환경변수는
+`MATCHING_NO_SHOW_SCHEDULER_ENABLED=true`이며, 기존 matching 탐색 Scheduler의
+활성화 여부만으로 NO_SHOW 처리를 시작하지 않습니다.
+
+```text
+1. deadline이 지난 active group을 제한 batch로 조회
+2. group row 잠금
+3. group member row를 ID 오름차순으로 잠금
+4. group/member 상태와 deadline 재검증
+5. 미도착 member NO_SHOW 전환
+6. penalty/cooldown과 match event 저장
+7. 현재 유효 인원과 allow_minimum_two snapshot으로 group 유지 여부 판단
+8. 필요하면 group CANCELLED와 비귀책 member LEFT 처리
+9. commit
+10. AFTER_COMMIT WebSocket 알림
+```
+
+도착 API도 같은 `group row -> group member row` 잠금 순서를 사용하며
+`now < arrival_deadline_at`일 때만 `ARRIVED`를 허용합니다. deadline 정각부터는
+도착 요청을 거절하고 NO_SHOW Scheduler가 처리합니다.
+
+확정 후 취소·NO_SHOW의 멱등성은 proposal ID가 아니라
+`group_id + member_id + cause`를 원인 key로 사용합니다. PostgreSQL unique
+constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock에 의존하지
+않습니다.
+
 ## 최초 proposal 응답 처리 정책
 
 `INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.
@@ -240,7 +362,7 @@ MVP는 단순 cooldown window로 시작하고, 이후 매너온도 scoring으로
 - 전원이 수락하면 마지막 응답 transaction에서 group, group member, pool `MATCHED`, attempt `CONFIRMED`를 원자적으로 생성·전환한다.
 - timeout Scheduler는 기존 matching Scheduler의 활성화 조건, fixed delay, batch size를 재사용하되 attempt별 독립 transaction으로 처리한다.
 - 거절·timeout cooldown과 penalty는 위 확정 정책과 proposal 기반 멱등성 계약에 따라 생성한다.
-- 인원 미달 round 2와 `allow_minimum_two`는 후속 단계로 분리한다.
+- 인원 미달 round 2는 앞의 확정된 인원 미달 정책에 따라 별도 proposal 회차로 처리한다.
 
 ## PostgreSQL 기반 상태 관리
 
@@ -312,7 +434,9 @@ FOR UPDATE SKIP LOCKED;
 
 - 같은 축제와 같은 `preferred_group_size`를 선택한 후보끼리만 그룹을 구성한다.
 - 그룹의 실제 인원은 후보들이 선택한 `preferred_group_size`와 정확히 같아야 한다.
-- `allow_minimum_two`는 최초 그룹 조합에 사용하지 않고 인원 미달 재확인 단계에서만 사용한다.
+- `allow_minimum_two`는 최초 목표 인원 그룹 조합의 scoring에는 사용하지 않는다.
+  목표 인원 미달 round 2와 확정 후 현재 인원이 2명으로 감소한 group의 유지
+  판단에 사용한다.
 - 그룹 점수는 그룹 내부 모든 2인 pair의 정형 여행 스타일 점수 평균이다.
 - 모든 호환 조합을 계산한 뒤 그룹 점수 내림차순, 오래된 `entered_at`, 작은 `pool_id` 순으로 정렬한다.
 - 정렬된 조합부터 동일 회원과 pool의 중복 배정을 막으며 결정적 greedy 방식으로 선택한다.
@@ -378,11 +502,12 @@ COMPLETED로 연결하는 정책은 후속 범위입니다.
 
 매칭 확정 후 사용자는 `MatchRoomPage`로 이동합니다.
 
-현재 첫 구현은 확정 group의 읽기 전용 상태 표시만 제공합니다. active group은
-`CONFIRMED`, `IN_PROGRESS`, active 참여자는 `JOINED`,
-`ARRIVAL_TIME_SELECTED`, `ARRIVED`로 제한합니다. 종료 group과 inactive
-참여자는 current group 응답에서 제외하고, 확정 인원 불일치나 로그인 참여자
-누락은 정합성 충돌로 처리합니다.
+현재 상태방은 확정 group 조회, 도착 예정 시간, 도착 완료와 시스템 이벤트
+타임라인을 제공합니다. active group은 `CONFIRMED`, `IN_PROGRESS`, current
+참여자는 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`로 제한합니다. 취소,
+`NO_SHOW`, `LEFT` member와 종료 group은 current group 응답에서 제외합니다.
+최초 확정 인원은 `confirmedMemberCount`, 현재 공개 참여자 수는
+`currentMemberCount`로 구분합니다.
 
 도착 예정 시간 정책:
 
@@ -393,7 +518,10 @@ COMPLETED로 연결하는 정책은 후속 범위입니다.
 - 같은 값을 다시 선택하면 event와 알림을 추가하지 않는 멱등 성공입니다.
 - `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` member는 변경할 수 없습니다.
 - `COMPLETED`, `CANCELLED` group에서는 변경할 수 없습니다.
-- 도착 완료와 `arrived_at` 변경은 후속 범위입니다.
+- `도착했어요`는 `JOINED`, `ARRIVAL_TIME_SELECTED`를 `ARRIVED`로 전환하고
+  `arrived_at`을 최초 한 번만 저장합니다.
+- `ARRIVED` 반복 요청은 event와 알림을 추가하지 않는 멱등 성공입니다.
+- deadline 정각부터 도착 완료 요청을 거절하고 Scheduler의 `NO_SHOW` 판정 대상으로 넘깁니다.
 
 포함 요소:
 

@@ -21,11 +21,17 @@ public interface MatchEventRepository extends JpaRepository<MatchEvent, Long> {
             LEFT JOIN match_group_members active_group_member
               ON active_group_member.group_id = event.group_id
              AND active_group_member.member_id = event.member_id
-             AND active_group_member.status IN ('JOINED', 'ARRIVAL_TIME_SELECTED', 'ARRIVED')
             LEFT JOIN members visible_member
               ON visible_member.id = active_group_member.member_id
             WHERE event.group_id = :groupId
-              AND event.event_type IN ('MATCH_CONFIRMED', 'ARRIVAL_TIME_SELECTED', 'MEMBER_ARRIVED')
+              AND event.event_type IN (
+                  'MATCH_CONFIRMED',
+                  'ARRIVAL_TIME_SELECTED',
+                  'MEMBER_ARRIVED',
+                  'MEMBER_CANCELLED',
+                  'MEMBER_NO_SHOW',
+                  'MATCH_CANCELLED'
+              )
             ORDER BY event.created_at DESC, event.id DESC
             LIMIT 50
             """, nativeQuery = true)

@@ -241,7 +241,14 @@ public class MatchProposalResponseService {
         if (lockedPools.size() != accepted.size()) throw failure("attempt pool을 모두 잠글 수 없습니다.");
         MatchGroup group = groups.saveAndFlush(MatchGroup.confirmed(
                 attempt.getId(), attempt.getFestivalId(), accepted.size(), now));
-        for (MatchAttemptMember value : accepted) groupMembers.save(MatchGroupMember.joined(group.getId(), value.getMemberId(), now));
+        for (MatchAttemptMember value : accepted) {
+            MatchPool pool = lockedPools.stream()
+                    .filter(candidate -> candidate.getId().equals(value.getPoolId()))
+                    .findFirst()
+                    .orElseThrow(() -> failure("확정 member의 pool을 찾을 수 없습니다."));
+            groupMembers.save(MatchGroupMember.joined(
+                    group.getId(), value.getMemberId(), pool.getAllowMinimumTwo(), now));
+        }
         events.save(MatchEvent.matchConfirmed(group.getId(), attempt.getId(), now));
         lockedPools.forEach(pool -> pool.match(now));
         attempt.confirm(now);

@@ -506,11 +506,11 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 확정 그룹의 참여자 상태, 도착 예정 시간, 도착 인증 상태를 저장한다. |
-| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `created_at`, `updated_at` |
+| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `allow_minimum_two`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `no_show_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `member_id -> members.id` |
 | 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
-| CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)` |
+| CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)`, `cancel_reason IN ('SCHEDULE_CHANGED','TRANSPORTATION_ISSUE','OTHER')` |
 | UNIQUE | `(group_id, member_id)`, active 상태의 `member_id` partial unique index 후보 |
 | INDEX | `idx_match_group_members_member_status`, `idx_match_group_members_group_status` |
 | 개인정보/보안 | 취소 사유는 구조화된 버튼 값만 저장한다. |
@@ -527,6 +527,12 @@ DATA_CORRECTION
 type만 사용합니다. 최초 도착에서 group을 IN_PROGRESS로 전환하고 기존 도착
 예정 값은 유지하며 신규 migration은 없습니다.
 
+`V14`는 group 확정 당시 pool의 `allow_minimum_two`를 member snapshot으로
+저장합니다. 기존 row는 group attempt, attempt member와 pool 관계로
+결정적으로 backfill하며 매핑할 수 없는 row가 있으면 임의 값으로 채우지 않고
+migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancelled_at`,
+`no_show_at`과 구조화된 상태/event를 사용합니다.
+
 ### match_events
 
 | 항목 | 내용 |
@@ -536,7 +542,7 @@ type만 사용합니다. 최초 도착에서 group을 IN_PROGRESS로 전환하�
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MATCH_CANCELLED','SAFETY_REMINDER')` |
+| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MEMBER_NO_SHOW','MATCH_CANCELLED','SAFETY_REMINDER')` |
 | UNIQUE | 없음 |
 | INDEX | `idx_match_events_group_created_at`, `idx_match_events_attempt_created_at`, `idx_match_events_member_created_at`, `idx_match_events_type_created_at` |
 | 개인정보/보안 | `payload JSONB`에는 token, GPS 원본 좌표, 민감정보를 저장하지 않는다. |
@@ -775,6 +781,7 @@ backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
 backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
 backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
 backend/src/main/resources/db/migration/V13__allow_25_arrival_minutes.sql
+backend/src/main/resources/db/migration/V14__add_match_room_cancellation_no_show.sql
 ```
 
 기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반

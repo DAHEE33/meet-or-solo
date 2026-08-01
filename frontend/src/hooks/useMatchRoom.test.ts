@@ -16,6 +16,7 @@ const group: CurrentMatchGroup = {
   festivalId: 2,
   status: 'CONFIRMED',
   confirmedMemberCount: 2,
+  currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20+09:00',
   arrivalDeadlineAt: '2026-07-27T12:30:20+09:00',
   currentMemberId: 1,

@@ -73,6 +73,19 @@ export type MatchGroupMember = {
   arrivedAt?: string | null;
 };
 
+export type MatchCancellationReason =
+  | 'SCHEDULE_CHANGED'
+  | 'TRANSPORTATION_ISSUE'
+  | 'OTHER';
+
+export type MatchCancellationResult = {
+  groupId: number;
+  memberStatus: 'CANCELLED';
+  groupStatus: 'CONFIRMED' | 'IN_PROGRESS' | 'CANCELLED';
+  groupContinues: boolean;
+  currentMemberCount: number;
+};
+
 export type MatchGroupFestival = {
   festivalId: number;
   title: string;
@@ -86,6 +99,7 @@ export type CurrentMatchGroup = {
   festivalId: number;
   status: 'CONFIRMED' | 'IN_PROGRESS';
   confirmedMemberCount: number;
+  currentMemberCount: number;
   confirmedAt: string;
   arrivalDeadlineAt: string;
   startedAt?: string | null;
@@ -97,7 +111,10 @@ export type CurrentMatchGroup = {
 export type MatchGroupEventType =
   | 'MATCH_CONFIRMED'
   | 'ARRIVAL_TIME_SELECTED'
-  | 'MEMBER_ARRIVED';
+  | 'MEMBER_ARRIVED'
+  | 'MEMBER_CANCELLED'
+  | 'MEMBER_NO_SHOW'
+  | 'MATCH_CANCELLED';
 
 export type MatchGroupEvent = {
   eventId: number;
@@ -157,4 +174,14 @@ export const matchingApi = {
       method: 'PUT',
       signal,
     }),
+  cancelParticipation: (reason: MatchCancellationReason, signal?: AbortSignal) =>
+    apiClient<MatchCancellationResult>(
+      '/api/matching/groups/me/current/cancellation',
+      {
+        method: 'PUT',
+        signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      },
+    ),
 };

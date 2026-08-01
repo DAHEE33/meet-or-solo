@@ -1,7 +1,11 @@
 import { CheckCircle2, Clock3, Loader2, RefreshCw, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ArrivalMinutesSelection, CurrentMatchGroup } from '../api/matching';
+import type {
+  ArrivalMinutesSelection,
+  CurrentMatchGroup,
+  MatchCancellationReason,
+} from '../api/matching';
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -10,13 +14,20 @@ import { formatSeoulDateTime } from '../utils/dateTime';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
-  const { state, refresh, selectArrivalTime, arrive } = useMatchRoom();
+  const { state, refresh, selectArrivalTime, arrive, cancelParticipation } = useMatchRoom();
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
 
   useEffect(() => {
     const redirectPath = matchRoomRedirectPath(state.status);
-    if (redirectPath) navigate(redirectPath, { replace: true });
-  }, [navigate, state.status]);
+    if (redirectPath) {
+      navigate(redirectPath, {
+        replace: true,
+        state: state.terminationNotice
+          ? { matchRoomNotice: state.terminationNotice }
+          : undefined,
+      });
+    }
+  }, [navigate, state.status, state.terminationNotice]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowEpochMs(Date.now()), 1_000);
@@ -32,6 +43,7 @@ export default function MatchRoomPage() {
           onRetry={() => void refresh()}
           onSelectArrivalTime={selectArrivalTime}
           onArrive={arrive}
+          onCancel={cancelParticipation}
           nowEpochMs={nowEpochMs}
         />
       </main>
@@ -49,12 +61,14 @@ export function MatchRoomContent({
   onRetry,
   onSelectArrivalTime,
   onArrive,
+  onCancel,
   nowEpochMs,
 }: {
   state: MatchRoomState;
   onRetry: () => void;
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive?: () => Promise<boolean>;
+  onCancel?: (reason: MatchCancellationReason) => Promise<boolean>;
   nowEpochMs?: number;
 }) {
   if (state.status === 'LOADING' || state.status === 'EMPTY') {
@@ -87,6 +101,7 @@ export function MatchRoomContent({
       onRetry={onRetry}
       onSelectArrivalTime={onSelectArrivalTime}
       onArrive={onArrive ?? (() => Promise.resolve(false))}
+      onCancel={onCancel ?? (() => Promise.resolve(false))}
       nowEpochMs={nowEpochMs}
     />
   );
@@ -116,6 +131,7 @@ export function CurrentGroupRoom({
   onRetry,
   onSelectArrivalTime,
   onArrive,
+  onCancel,
   nowEpochMs,
 }: {
   group: CurrentMatchGroup;
@@ -126,6 +142,7 @@ export function CurrentGroupRoom({
   onRetry: () => void;
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive: () => Promise<boolean>;
+  onCancel: (reason: MatchCancellationReason) => Promise<boolean>;
   nowEpochMs?: number;
 }) {
   const effectiveNowEpochMs = nowEpochMs ?? Date.parse(group.confirmedAt);
@@ -152,6 +169,7 @@ export function CurrentGroupRoom({
           <dt className="text-ink/50">최종 도착 마감</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.arrivalDeadlineAt)}</dd>
           <dt className="text-ink/50">전체 남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.arrivalDeadlineAt, effectiveNowEpochMs)}</dd>
           <dt className="text-ink/50">확정 인원</dt><dd className="text-right font-semibold text-ink">{group.confirmedMemberCount}명</dd>
+          <dt className="text-ink/50">현재 참여 인원</dt><dd className="text-right font-semibold text-ink">{group.currentMemberCount}명</dd>
           <dt className="text-ink/50">현재 상태</dt><dd className="text-right font-semibold text-teal">{statusText}</dd>
         </dl>
       </section>
@@ -186,6 +204,35 @@ export function CurrentGroupRoom({
                 >
                   {isSubmitting ? '처리 중...' : '도착했어요'}
                 </button>
+              </div>
+            </div>
+          </details>
+        </section>
+      )}
+
+      {canSelectArrivalTime && (
+        <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <details>
+            <summary className={`cursor-pointer list-none rounded-2xl border border-coral px-4 py-3 text-center text-[15px] font-bold text-coral ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
+              못 갈 것 같아요
+            </summary>
+            <div role="dialog" aria-modal="true" aria-labelledby="cancellation-title" className="mt-3 rounded-2xl border border-line bg-sand/40 p-4">
+              <h2 id="cancellation-title" className="text-[16px] font-bold text-ink">
+                정말 참여를 취소할까요?
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/55">취소 사유는 다른 멤버에게 공개되지 않아요.</p>
+              <div className="mt-4 grid gap-2">
+                {CANCELLATION_OPTIONS.map((option) => (
+                  <button
+                    key={option.reason}
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => void onCancel(option.reason)}
+                    className="rounded-2xl border border-line bg-white px-3 py-3 text-left text-[14px] font-semibold disabled:opacity-50"
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
           </details>
@@ -318,9 +365,25 @@ export function matchEventText(
     ? (event.actor.memberId === currentMemberId ? '내가' : `${event.actor.nickname}님이`)
     : '참여자가';
   if (event.type === 'MEMBER_ARRIVED') return `${actor} 도착했어요.`;
+  if (event.type === 'MEMBER_CANCELLED') return `${actor} 참여를 취소했어요.`;
+  if (event.type === 'MEMBER_NO_SHOW') {
+    return `${actor} 도착 마감까지 도착하지 않았어요.`;
+  }
+  if (event.type === 'MATCH_CANCELLED') {
+    return '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.';
+  }
   if (event.arrivalMinutes === 0) return `${actor} 곧 도착할 예정이에요.`;
   return `${actor} ${event.arrivalMinutes}분 후 도착할 예정이에요.`;
 }
+
+export const CANCELLATION_OPTIONS: Array<{
+  reason: MatchCancellationReason;
+  label: string;
+}> = [
+  { reason: 'SCHEDULE_CHANGED', label: '갑자기 일정이 생겼어요' },
+  { reason: 'TRANSPORTATION_ISSUE', label: '이동이 어려워졌어요' },
+  { reason: 'OTHER', label: '다른 이유가 있어요' },
+];
 
 export function ArrivalTimePanel({
   deadlineAt,

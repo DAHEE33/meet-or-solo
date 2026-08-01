@@ -11,13 +11,15 @@ import {
   matchRoomRedirectPath,
   matchEventText,
   memberArrivalText,
+  CANCELLATION_OPTIONS,
 } from './MatchRoomPage';
 
 const group = (status: CurrentMatchGroup['status'] = 'CONFIRMED'): CurrentMatchGroup => ({
   groupId: 30,
   festivalId: 2,
   status,
-  confirmedMemberCount: 2,
+    confirmedMemberCount: 2,
+    currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20+09:00',
   arrivalDeadlineAt: '2026-07-27T12:30:20+09:00',
   currentMemberId: 1,
@@ -70,6 +72,24 @@ function text(node: ReactNode): string {
 }
 
 describe('MatchRoomContent', () => {
+  it('deadline 전 active 회원에게 세 구조화 취소 사유만 제공하고 자유 입력은 없다', () => {
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY', group: group(), events: [], error: null, eventsError: null,
+        actionError: null, isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onCancel: vi.fn(),
+      nowEpochMs: Date.parse('2026-07-27T12:10:00+09:00'),
+    }));
+    const content = text(tree);
+    expect(content).toContain('못 갈 것 같아요');
+    CANCELLATION_OPTIONS.forEach((option) => expect(content).toContain(option.label));
+    expect(elements(tree).some((element) =>
+      element.type === 'input' || element.type === 'textarea')).toBe(false);
+  });
+
   it('상대 도착 시간 변경 snackbar를 하단 navigation 위 접근 가능한 status로 표시한다', () => {
     const tree = renderNode(ArrivalChangeSnackbar({
       message: '테스트님이 도착 시간을 변경하였어요.',

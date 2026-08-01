@@ -17,10 +17,13 @@ import com.survey.meetorsolo.domain.matching.dto.MatchEventActorResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchCancellationReason;
+import com.survey.meetorsolo.domain.matching.dto.MatchCancellationResponse;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
+import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
@@ -68,6 +71,9 @@ class MatchingControllerTest {
 
     @MockitoBean
     private MatchProposalActionService proposalActions;
+
+    @MockitoBean
+    private MatchCancellationService cancellations;
 
     @Test
     void 인증_쿠키가_없으면_401을_반환한다() throws Exception {
@@ -125,6 +131,37 @@ class MatchingControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void 본인_current_group과_구조화된_사유로만_취소한다() throws Exception {
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+        when(cancellations.cancel(20L, MatchCancellationReason.TRANSPORTATION_ISSUE))
+                .thenReturn(new MatchCancellationResponse(
+                        30L, "CANCELLED", "CONFIRMED", true, 2));
+
+        mockMvc.perform(put("/api/matching/groups/me/current/cancellation")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reason":"TRANSPORTATION_ISSUE"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groupContinues").value(true))
+                .andExpect(jsonPath("$.data.currentMemberCount").value(2));
+
+        verify(cancellations).cancel(20L, MatchCancellationReason.TRANSPORTATION_ISSUE);
+    }
+
+    @Test
+    void 허용하지_않은_취소_사유는_거절한다() throws Exception {
+        mockMvc.perform(put("/api/matching/groups/me/current/cancellation")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reason":"FREE_TEXT"}
+                                """))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
