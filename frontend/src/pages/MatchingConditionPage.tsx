@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
+import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup } from '../api/matching';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -129,6 +130,7 @@ export default function MatchingConditionPage() {
         )}
         <MatchBody
           status={state.status}
+          error={state.error}
           isRetryFormOpen={isRetryFormOpen}
           group={state.group}
           groupSize={
@@ -163,6 +165,7 @@ export default function MatchingConditionPage() {
 
 interface MatchBodyProps {
   status: MatchingUiStatus;
+  error: ApiClientError | Error | null;
   isRetryFormOpen: boolean;
   group: CurrentMatchGroup | null;
   groupSize: number;
@@ -241,7 +244,15 @@ export function MatchBody(props: MatchBodyProps) {
       />
     );
   }
-  if (status === 'ERROR') return <ErrorCard onRetry={props.onErrorRetry} />;
+  if (status === 'ERROR') {
+    return (
+      <ErrorCard
+        error={props.error}
+        onRetry={props.onErrorRetry}
+        onGoCheckIn={props.onGoCheckIn}
+      />
+    );
+  }
   return null;
 }
 
@@ -486,17 +497,34 @@ function CancelledCard({
 }
 
 // ── 9. 네트워크 오류 ───────────────────────────────────
-function ErrorCard({ onRetry }: { onRetry: () => void }) {
+function ErrorCard({
+  error,
+  onRetry,
+  onGoCheckIn,
+}: {
+  error: ApiClientError | Error | null;
+  onRetry: () => void;
+  onGoCheckIn: () => void;
+}) {
+  const requiresCheckIn = error instanceof ApiClientError
+    && error.code === 'MATCHING_INVALID_REQUEST'
+    && error.message.includes('체크인');
   return (
     <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-coral/10">
         <RefreshCw size={28} className="text-coral" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-[17px] font-bold text-ink">연결이 잠시 끊겼어요</h2>
-        <p className="text-[13px] text-ink/55">진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.</p>
+        <h2 className="text-[17px] font-bold text-ink">
+          {requiresCheckIn ? '축제 체크인이 필요해요' : '요청을 처리하지 못했어요'}
+        </h2>
+        <p className="text-[13px] text-ink/55">
+          {error?.message ?? '진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.'}
+        </p>
       </div>
-      <PrimaryButton onClick={onRetry}>다시 시도</PrimaryButton>
+      <PrimaryButton onClick={requiresCheckIn ? onGoCheckIn : onRetry}>
+        {requiresCheckIn ? '체크인하기' : '다시 시도'}
+      </PrimaryButton>
     </section>
   );
 }

@@ -245,6 +245,8 @@ export function CurrentGroupRoom({
           <p className="text-[13px] text-ink/55">내 예상 도착 시간만 선택하거나 변경할 수 있어요.</p>
           {estimatedArrivalAt && (
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-2xl bg-sand/50 p-3 text-[13px]">
+              <dt className="text-ink/50">선택한 도착 시간</dt>
+              <dd className="text-right font-semibold text-ink">{currentMember?.arrivalMinutes}분</dd>
               <dt className="text-ink/50">예상 도착 시각</dt>
               <dd className="text-right font-semibold text-ink">{formatSeoulDateTime(estimatedArrivalAt)}</dd>
               <dt className="text-ink/50">예상 도착까지</dt>
@@ -254,6 +256,11 @@ export function CurrentGroupRoom({
                   : formatRemainingTime(estimatedArrivalAt, effectiveNowEpochMs)}
               </dd>
             </dl>
+          )}
+          {estimatedArrivalPassed && canSelectArrivalTime && (
+            <p role="status" className="rounded-xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
+              다른 시간을 선택하거나 도착 완료를 눌러주세요. 같은 시간을 다시 선택해도 예정 시각은 연장되지 않아요.
+            </p>
           )}
           {actionError && (
             <p role="alert" className="rounded-xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
@@ -269,6 +276,7 @@ export function CurrentGroupRoom({
                 deadlineAt={group.arrivalDeadlineAt}
                 nowEpochMs={effectiveNowEpochMs}
                 isSubmitting={isSubmitting}
+                selectedMinutes={currentMember?.arrivalMinutes ?? null}
                 onSelect={(minutes) => void onSelectArrivalTime(minutes)}
               />
             </details>
@@ -389,11 +397,13 @@ export function ArrivalTimePanel({
   deadlineAt,
   nowEpochMs,
   isSubmitting,
+  selectedMinutes = null,
   onSelect,
 }: {
   deadlineAt: string;
   nowEpochMs: number;
   isSubmitting: boolean;
+  selectedMinutes?: CurrentMatchGroup['members'][number]['arrivalMinutes'];
   onSelect: (minutes: ArrivalMinutes) => void;
 }) {
   const options: Array<{ minutes: ArrivalMinutes; label: string }> = [
@@ -412,15 +422,19 @@ export function ArrivalTimePanel({
           {options.map((option) => {
             const exceedsDeadline = nowEpochMs >= Date.parse(deadlineAt)
               || nowEpochMs + option.minutes * 60_000 > Date.parse(deadlineAt);
+            const selected = selectedMinutes === option.minutes;
             return (
             <button
               key={option.minutes}
               type="button"
-              disabled={isSubmitting || exceedsDeadline}
+              disabled={isSubmitting || exceedsDeadline || selected}
+              aria-pressed={selected}
               onClick={() => onSelect(option.minutes)}
-              className="rounded-2xl border border-line px-4 py-3 text-left text-[14px] font-semibold text-ink disabled:opacity-50"
+              className={`rounded-2xl border px-4 py-3 text-left text-[14px] font-semibold disabled:opacity-50 ${
+                selected ? 'border-coral bg-coral/10 text-coral' : 'border-line text-ink'
+              }`}
             >
-              {option.label}
+              {option.label}{selected ? ' · 현재 선택' : ''}
             </button>
             );
           })}
@@ -452,8 +466,8 @@ export function memberArrivalText(member: CurrentMatchGroup['members'][number]):
   if (member.status === 'ARRIVED') return '도착 완료';
   if (member.status === 'ARRIVAL_TIME_SELECTED') {
     return member.arrivalMinutes === 0
-      ? '곧 도착 예정'
-      : `${member.arrivalMinutes ?? '-'}분 후 도착 예정`;
+      ? '선택한 도착 시간: 곧 도착'
+      : `선택한 도착 시간: ${member.arrivalMinutes ?? '-'}분`;
   }
   return '도착 시간 미정';
 }

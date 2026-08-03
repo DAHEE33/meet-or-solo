@@ -1,5 +1,6 @@
 import { isValidElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
 import { MatchBody, resolveFestivalId, submitPoolEntry } from './MatchingConditionPage';
 
@@ -58,6 +59,7 @@ const group: CurrentMatchGroup = {
 function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Parameters<typeof MatchBody>[0] {
   return {
     status: 'CANCELLED',
+    error: null,
     isRetryFormOpen: false,
     group: null,
     groupSize: 3,
@@ -220,5 +222,27 @@ describe('terminal retry form', () => {
       (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
     );
     expect(retryButton?.props.disabled).toBe(true);
+  });
+
+  it('유효 체크인 오류는 일반 연결 오류 대신 체크인 안내를 표시한다', () => {
+    const onGoCheckIn = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'ERROR',
+      error: new ApiClientError(
+        '해당 축제의 유효한 체크인이 필요합니다.',
+        400,
+        'MATCHING_INVALID_REQUEST',
+        [],
+      ),
+      onGoCheckIn,
+    })));
+    expect(text(tree)).toContain('축제 체크인이 필요해요');
+    expect(text(tree)).toContain('해당 축제의 유효한 체크인이 필요합니다.');
+    expect(text(tree)).not.toContain('연결이 잠시 끊겼어요');
+    const checkInButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '체크인하기',
+    );
+    (checkInButton?.props.onClick as () => void)();
+    expect(onGoCheckIn).toHaveBeenCalledOnce();
   });
 });
