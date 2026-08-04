@@ -47,7 +47,8 @@ public class MatchGroupQueryService {
                 .map(MatchGroupMemberResponse::from)
                 .toList();
 
-        if (participants.size() != group.getConfirmedMemberCount()
+        if (participants.size() < 2
+                || participants.size() > group.getConfirmedMemberCount()
                 || participants.stream().noneMatch(member -> member.memberId() == memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT);
         }

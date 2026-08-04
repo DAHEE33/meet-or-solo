@@ -11,13 +11,15 @@ import {
   matchRoomRedirectPath,
   matchEventText,
   memberArrivalText,
+  CANCELLATION_OPTIONS,
 } from './MatchRoomPage';
 
 const group = (status: CurrentMatchGroup['status'] = 'CONFIRMED'): CurrentMatchGroup => ({
   groupId: 30,
   festivalId: 2,
   status,
-  confirmedMemberCount: 2,
+    confirmedMemberCount: 2,
+    currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20+09:00',
   arrivalDeadlineAt: '2026-07-27T12:30:20+09:00',
   currentMemberId: 1,
@@ -70,6 +72,24 @@ function text(node: ReactNode): string {
 }
 
 describe('MatchRoomContent', () => {
+  it('deadline 전 active 회원에게 세 구조화 취소 사유만 제공하고 자유 입력은 없다', () => {
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY', group: group(), events: [], error: null, eventsError: null,
+        actionError: null, isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onCancel: vi.fn(),
+      nowEpochMs: Date.parse('2026-07-27T12:10:00+09:00'),
+    }));
+    const content = text(tree);
+    expect(content).toContain('못 갈 것 같아요');
+    CANCELLATION_OPTIONS.forEach((option) => expect(content).toContain(option.label));
+    expect(elements(tree).some((element) =>
+      element.type === 'input' || element.type === 'textarea')).toBe(false);
+  });
+
   it('상대 도착 시간 변경 snackbar를 하단 navigation 위 접근 가능한 status로 표시한다', () => {
     const tree = renderNode(ArrivalChangeSnackbar({
       message: '테스트님이 도착 시간을 변경하였어요.',
@@ -351,6 +371,7 @@ describe('MatchRoomContent', () => {
     expect(text(tree)).toContain('최종 도착 마감');
     expect(text(tree)).toContain('2026-07-27 12:30:20');
     expect(text(tree)).toContain('전체 남은 시간20:00');
+    expect(text(tree)).toContain('선택한 도착 시간10분');
     expect(text(tree)).toContain('예상 도착 시각2026-07-27 12:15:20');
     expect(text(tree)).toContain('예상 도착까지05:00');
   });
@@ -379,10 +400,16 @@ describe('MatchRoomContent', () => {
     }));
 
     expect(text(tree)).toContain('예정 시간이 지났어요');
+    expect(text(tree)).toContain('같은 시간을 다시 선택해도 예정 시각은 연장되지 않아요.');
     expect(text(tree)).toContain('몇 분 후 도착하나요?');
+    const selectedOption = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '5분 · 현재 선택',
+    );
+    expect(selectedOption?.props.disabled).toBe(true);
+    expect(selectedOption?.props['aria-pressed']).toBe(true);
   });
 
-  it('전체 마감부터 시간 선택을 차단하지만 도착 완료 action은 유지한다', () => {
+  it('전체 마감부터 시간 선택과 도착 완료 action을 차단하고 노쇼 처리 대기를 안내한다', () => {
     const tree = renderNode(MatchRoomContent({
       state: {
         status: 'READY',
@@ -401,7 +428,10 @@ describe('MatchRoomContent', () => {
 
     expect(text(tree)).toContain('최종 도착 마감이 지나 예정 시간을 변경할 수 없어요.');
     expect(text(tree)).not.toContain('몇 분 후 도착하나요?');
-    expect(text(tree)).toContain('축제 만남 장소에 도착했나요?');
+    expect(text(tree)).not.toContain('축제 만남 장소에 도착했나요?');
+    expect(text(tree)).not.toContain('도착했어요');
+    expect(text(tree)).toContain('노쇼 처리 결과를 확인하고 있어요.');
+    expect(elements(tree).some((element) => element.props.role === 'status')).toBe(true);
   });
 
   it('제출 중 선택을 막고 실패하면 기존 snapshot과 오류 안내를 유지한다', () => {
@@ -436,11 +466,11 @@ describe('MatchRoomContent', () => {
     expect(memberArrivalText({
       memberId: 1, nickname: 'a', profileImageUrl: null, status: 'ARRIVAL_TIME_SELECTED',
       arrivalMinutes: 0, arrivalTimeSelectedAt: '2026-07-27T12:00:00+09:00',
-    })).toBe('곧 도착 예정');
+    })).toBe('선택한 도착 시간: 곧 도착');
     expect(memberArrivalText({
       memberId: 1, nickname: 'a', profileImageUrl: null, status: 'ARRIVAL_TIME_SELECTED',
       arrivalMinutes: 10, arrivalTimeSelectedAt: '2026-07-27T12:00:00+09:00',
-    })).toBe('10분 후 도착 예정');
+    })).toBe('선택한 도착 시간: 10분');
     expect(memberArrivalText({
       memberId: 1, nickname: 'a', profileImageUrl: null, status: 'ARRIVED',
       arrivalMinutes: 10, arrivalTimeSelectedAt: '2026-07-27T12:00:00+09:00',

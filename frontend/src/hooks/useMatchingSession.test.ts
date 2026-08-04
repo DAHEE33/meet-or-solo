@@ -53,6 +53,7 @@ const group: CurrentMatchGroup = {
   festivalId: 2,
   status: 'CONFIRMED',
   confirmedMemberCount: 2,
+  currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20',
   arrivalDeadlineAt: '2026-07-27T12:30:20',
   festival: {
@@ -102,9 +103,13 @@ describe('deriveMatchingState', () => {
     expect(state({ pool: pool(status) }).status).toBe(status);
   });
 
-  it('PROPOSED 또는 MATCHED pool에서 active proposal/group이 없으면 응답 대기로 본다', () => {
+  it('PROPOSED pool에서 active proposal이 없으면 응답 대기로 본다', () => {
     expect(state({ pool: pool('PROPOSED') }).status).toBe('RESPONSE_PENDING');
-    expect(state({ pool: pool('MATCHED') }).status).toBe('RESPONSE_PENDING');
+  });
+
+  it('MATCHED pool만 남고 active group이 없으면 종료 상태로 복원한다', () => {
+    expect(state({ pool: pool('MATCHED') }).status).toBe('CANCELLED');
+    expect(state({ pool: pool('MATCHED'), restriction: restriction(true) }).status).toBe('CANCELLED');
   });
 
   it('active 서버 상태가 없으면 cooldown, 그마저 없으면 IDLE을 사용한다', () => {

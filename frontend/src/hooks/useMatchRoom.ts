@@ -5,6 +5,8 @@ import {
   type ArrivalMinutesSelection,
   type CurrentMatchGroup,
   type MatchGroupEvent,
+  type MatchCancellationReason,
+  type MatchCancellationResult,
 } from '../api/matching';
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
 
@@ -20,6 +22,8 @@ export type MatchRoomState = {
   actionError: ApiClientError | Error | null;
   arrivalChangeNotice?: string | null;
   isSubmitting: boolean;
+  cancellationResult?: MatchCancellationResult | null;
+  terminationNotice?: string | null;
 };
 
 const INITIAL_STATE: MatchRoomState = {
@@ -31,6 +35,8 @@ const INITIAL_STATE: MatchRoomState = {
   actionError: null,
   arrivalChangeNotice: null,
   isSubmitting: false,
+  cancellationResult: null,
+  terminationNotice: null,
 };
 
 type MatchRoomSessionDependencies = {
@@ -43,6 +49,10 @@ type MatchRoomSessionDependencies = {
     signal: AbortSignal,
   ) => Promise<CurrentMatchGroup>;
   arrive?: (signal: AbortSignal) => Promise<CurrentMatchGroup>;
+  cancelParticipation?: (
+    reason: MatchCancellationReason,
+    signal: AbortSignal,
+  ) => Promise<MatchCancellationResult>;
   connect: typeof connectMatchingWebSocket;
   schedule: (callback: () => void, delay: number) => number;
   cancelSchedule: (timer: number) => void;
@@ -112,6 +122,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
         }
         const group = groupResult.value;
         if (!group) {
+          const hadCurrentGroup = currentState.group !== null;
           publish({
             ...currentState,
             status: 'EMPTY',
@@ -119,6 +130,9 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             events: [],
             error: null,
             eventsError: null,
+            terminationNotice: hadCurrentGroup
+              ? '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.'
+              : currentState.terminationNotice,
             isSubmitting: false,
           });
           return;
@@ -255,6 +269,45 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     return operation;
   };
 
+  const cancelParticipation = (reason: MatchCancellationReason): Promise<boolean> => {
+    if (!dependencies.cancelParticipation || mutationInFlight || stopped
+        || currentState.status !== 'READY') {
+      return mutationInFlight ?? Promise.resolve(false);
+    }
+    const controller = new AbortController();
+    mutationAbortController = controller;
+    publish({ ...currentState, actionError: null, isSubmitting: true });
+    const operation = dependencies.cancelParticipation(reason, controller.signal)
+      .then((result) => {
+        if (stopped || controller.signal.aborted) return false;
+        ++generation;
+        publish({
+          ...currentState,
+          status: 'EMPTY',
+          group: null,
+          events: [],
+          actionError: null,
+          cancellationResult: result,
+          terminationNotice: result.groupContinues
+            ? '참여 취소가 완료됐어요. 남은 멤버는 만남을 계속해요.'
+            : '참여 취소가 완료되어 그룹이 종료됐어요.',
+          isSubmitting: false,
+        });
+        return true;
+      })
+      .catch((error: unknown) => {
+        if (stopped || controller.signal.aborted || isAbortError(error)) return false;
+        publish({ ...currentState, actionError: normalizeError(error), isSubmitting: false });
+        return false;
+      })
+      .finally(() => {
+        if (mutationAbortController === controller) mutationAbortController = null;
+        if (mutationInFlight === operation) mutationInFlight = null;
+      });
+    mutationInFlight = operation;
+    return operation;
+  };
+
   const refreshEventsAfterMutation = async (
     controller: AbortController,
     mutationGeneration: number,
@@ -281,6 +334,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     refresh,
     selectArrivalTime,
     arrive,
+    cancelParticipation,
     stop: () => {
       stopped = true;
       clearTimer();
@@ -303,6 +357,8 @@ export function useMatchRoom() {
       selectArrivalTime: (arrivalMinutes, signal) =>
         matchingApi.selectArrivalTime(arrivalMinutes, signal),
       arrive: (signal) => matchingApi.arrive(signal),
+      cancelParticipation: (reason, signal) =>
+        matchingApi.cancelParticipation(reason, signal),
       connect: connectMatchingWebSocket,
       schedule: (callback, delay) => window.setTimeout(callback, delay),
       cancelSchedule: (timer) => window.clearTimeout(timer),
@@ -331,7 +387,13 @@ export function useMatchRoom() {
     [],
   );
 
-  return { state, refresh, selectArrivalTime, arrive };
+  const cancelParticipation = useCallback(
+    (reason: MatchCancellationReason) =>
+      sessionRef.current?.cancelParticipation(reason) ?? Promise.resolve(false),
+    [],
+  );
+
+  return { state, refresh, selectArrivalTime, arrive, cancelParticipation };
 }
 
 function findChangedOtherMember(

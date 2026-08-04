@@ -35,6 +35,8 @@ public class MatchCooldown {
 
     @Column(name = "related_proposal_id")
     private Long relatedProposalId;
+    @Column(name = "related_group_id")
+    private Long relatedGroupId;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -59,6 +61,21 @@ public class MatchCooldown {
         cooldown.createdAt = startsAt;
         return cooldown;
     }
+
+    public static MatchCooldown activeForGroup(long memberId, String reason, long groupId,
+            OffsetDateTime startsAt, OffsetDateTime expiresAt) {
+        MatchCooldown cooldown = new MatchCooldown();
+        cooldown.memberId = memberId;
+        cooldown.reason = reason;
+        cooldown.status = STATUS_ACTIVE;
+        cooldown.startsAt = startsAt;
+        cooldown.expiresAt = expiresAt;
+        cooldown.relatedGroupId = groupId;
+        cooldown.createdAt = startsAt;
+        return cooldown;
+    }
+
+    public void expire() { status = "EXPIRED"; }
 
     public String getReason() {
         return reason;

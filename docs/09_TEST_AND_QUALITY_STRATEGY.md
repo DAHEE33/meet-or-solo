@@ -146,6 +146,11 @@
 - WebSocket refresh와 polling fallback의 상대 변경 감지, 자동 제거와 timer
   cleanup을 fake timer 또는 제어 가능한 scheduler로 검증
 - 도착 완료의 row lock, ARRIVED 멱등성, 최초 IN_PROGRESS 전환과 AFTER_COMMIT 알림 검증
+- 확정 후 취소의 3분 경계, KST 당일 CANCEL 횟수와 10/30/60분 cooldown 검증
+- 30분 deadline 경계의 NO_SHOW, KST 당일 30/60분 cooldown과 Scheduler 재실행 멱등성 검증
+- `allow_minimum_two` snapshot 기반 3명 이상/동의한 2명 유지와 비귀책 `LEFT` 검증
+- 도착·취소·NO_SHOW 경쟁에서 group row → group member ID 순 잠금과 단일 terminal 상태 검증
+- group/member/event/penalty/cooldown 실패 전체 rollback과 AFTER_COMMIT 이전 알림 부재 검증
 
 프론트엔드 테스트는 사용자에게 보이는 상태 전환을 검증합니다.
 
@@ -271,3 +276,4 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - group 확정 transaction의 `MATCH_CONFIRMED` 저장과 event insert 실패 전체 rollback을 회귀 검증합니다.
 - arrival-time/arrival 멱등 및 rollback 뒤 event 조회 결과가 증가하지 않는지 검증합니다.
 - Frontend는 group/events 부분 실패, WebSocket 연결·재연결·알림, polling, 늦은 응답 차단과 자유 입력/전송 UI 부재를 검증합니다.
+- 취소 화면은 세 구조화 사유만 표시하고 자유 입력 부재, 중복 제출 방지, 성공 전 snapshot 불변과 유지/종료 결과 이동을 검증합니다.

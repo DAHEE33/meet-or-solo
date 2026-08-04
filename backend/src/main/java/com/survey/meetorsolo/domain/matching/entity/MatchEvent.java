@@ -81,4 +81,33 @@ public class MatchEvent {
         event.createdAt = now;
         return event;
     }
+
+    public static MatchEvent memberCancelled(long groupId, long attemptId, long memberId,
+            String reason, OffsetDateTime now) {
+        return groupEvent(groupId, attemptId, memberId, "MEMBER_CANCELLED",
+                Map.of("reason", reason), now);
+    }
+
+    public static MatchEvent memberNoShow(long groupId, long attemptId, long memberId,
+            OffsetDateTime now) {
+        return groupEvent(groupId, attemptId, memberId, "MEMBER_NO_SHOW", Map.of(), now);
+    }
+
+    public static MatchEvent matchCancelled(long groupId, long attemptId, String reason,
+            OffsetDateTime now) {
+        return groupEvent(groupId, attemptId, null, "MATCH_CANCELLED",
+                Map.of("reason", reason), now);
+    }
+
+    private static MatchEvent groupEvent(long groupId, long attemptId, Long memberId,
+            String eventType, Map<String, Object> payload, OffsetDateTime now) {
+        MatchEvent event = new MatchEvent();
+        event.groupId = groupId;
+        event.attemptId = attemptId;
+        event.memberId = memberId;
+        event.eventType = eventType;
+        event.payload = payload;
+        event.createdAt = now;
+        return event;
+    }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
+import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup } from '../api/matching';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -59,11 +60,29 @@ export function submitPoolEntry(
     : enterPool(festivalId, preferredGroupSize, allowMinimumTwo);
 }
 
+export function readMatchRoomNotice(locationState: unknown): string | null {
+  return locationState
+    && typeof locationState === 'object'
+    && 'matchRoomNotice' in locationState
+    && typeof locationState.matchRoomNotice === 'string'
+      ? locationState.matchRoomNotice
+      : null;
+}
+
+export function consumeMatchRoomNotice(locationState: unknown): unknown {
+  if (!locationState || typeof locationState !== 'object' || !('matchRoomNotice' in locationState)) {
+    return locationState;
+  }
+  const { matchRoomNotice: _consumedNotice, ...remainingState } = locationState;
+  return Object.keys(remainingState).length > 0 ? remainingState : null;
+}
+
 export default function MatchingConditionPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
   const [allowMinimum, setAllowMinimum] = useState(false);
+  const [matchRoomNotice, setMatchRoomNotice] = useState(() => readMatchRoomNotice(location.state));
   const {
     state,
     isSubmitting,
@@ -90,6 +109,14 @@ export default function MatchingConditionPage() {
   const cooldownRemaining = useCountdown(cooldownDeadline);
 
   useEffect(() => {
+    if (readMatchRoomNotice(location.state) === null) return;
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: consumeMatchRoomNotice(location.state),
+    });
+  }, [location.hash, location.pathname, location.search, location.state, navigate]);
+
+  useEffect(() => {
     const deadlineExpired =
       (searchDeadline && searchRemaining === 0) ||
       (proposalDeadline && responseRemaining === 0) ||
@@ -109,15 +136,26 @@ export default function MatchingConditionPage() {
   const cooldownActive = state.restriction?.cooldown.active === true;
   const canApply = hasFestival && !isSubmitting && !cooldownActive;
   const onStart = () => {
+    setMatchRoomNotice(null);
     void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
+  };
+  const onRetry = () => {
+    setMatchRoomNotice(null);
+    beginRetry();
   };
 
   return (
     <MobileLayout>
       <PageHeader title="자동 매칭" noBack />
       <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
+        {matchRoomNotice && (
+          <p role="status" className="rounded-2xl bg-coral/10 px-4 py-3 text-[14px] font-semibold text-coral">
+            {matchRoomNotice}
+          </p>
+        )}
         <MatchBody
           status={state.status}
+          error={state.error}
           isRetryFormOpen={isRetryFormOpen}
           group={state.group}
           groupSize={
@@ -140,7 +178,7 @@ export default function MatchingConditionPage() {
           onDecline={() => void respond('REJECT')}
           onStartWithCurrent={() => void respond('ACCEPT')}
           onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
-          onRetry={beginRetry}
+          onRetry={onRetry}
           onErrorRetry={() => void refresh()}
           onGoCheckIn={() => navigate('/check-in')}
           onEnterRoom={() => navigate('/match-room')}
@@ -152,6 +190,7 @@ export default function MatchingConditionPage() {
 
 interface MatchBodyProps {
   status: MatchingUiStatus;
+  error: ApiClientError | Error | null;
   isRetryFormOpen: boolean;
   group: CurrentMatchGroup | null;
   groupSize: number;
@@ -230,7 +269,15 @@ export function MatchBody(props: MatchBodyProps) {
       />
     );
   }
-  if (status === 'ERROR') return <ErrorCard onRetry={props.onErrorRetry} />;
+  if (status === 'ERROR') {
+    return (
+      <ErrorCard
+        error={props.error}
+        onRetry={props.onErrorRetry}
+        onGoCheckIn={props.onGoCheckIn}
+      />
+    );
+  }
   return null;
 }
 
@@ -475,17 +522,34 @@ function CancelledCard({
 }
 
 // ── 9. 네트워크 오류 ───────────────────────────────────
-function ErrorCard({ onRetry }: { onRetry: () => void }) {
+function ErrorCard({
+  error,
+  onRetry,
+  onGoCheckIn,
+}: {
+  error: ApiClientError | Error | null;
+  onRetry: () => void;
+  onGoCheckIn: () => void;
+}) {
+  const requiresCheckIn = error instanceof ApiClientError
+    && error.code === 'MATCHING_INVALID_REQUEST'
+    && error.message.includes('체크인');
   return (
     <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-coral/10">
         <RefreshCw size={28} className="text-coral" />
       </div>
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-[17px] font-bold text-ink">연결이 잠시 끊겼어요</h2>
-        <p className="text-[13px] text-ink/55">진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.</p>
+        <h2 className="text-[17px] font-bold text-ink">
+          {requiresCheckIn ? '축제 체크인이 필요해요' : '요청을 처리하지 못했어요'}
+        </h2>
+        <p className="text-[13px] text-ink/55">
+          {error?.message ?? '진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.'}
+        </p>
       </div>
-      <PrimaryButton onClick={onRetry}>다시 시도</PrimaryButton>
+      <PrimaryButton onClick={requiresCheckIn ? onGoCheckIn : onRetry}>
+        {requiresCheckIn ? '체크인하기' : '다시 시도'}
+      </PrimaryButton>
     </section>
   );
 }

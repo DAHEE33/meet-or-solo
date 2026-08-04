@@ -22,7 +22,9 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.jpa.show-sql=false",
-        "app.profile.encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        "app.profile.encryption-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "app.matching.scheduler.enabled=false",
+        "app.matching.no-show-scheduler.enabled=false"
 })
 @Testcontainers
 class MatchingPoolEnteredAfterCommitTransactionIntegrationTest {

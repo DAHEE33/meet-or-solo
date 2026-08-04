@@ -1,7 +1,32 @@
 import { isValidElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
-import { MatchBody, resolveFestivalId, submitPoolEntry } from './MatchingConditionPage';
+import {
+  consumeMatchRoomNotice,
+  MatchBody,
+  readMatchRoomNotice,
+  resolveFestivalId,
+  submitPoolEntry,
+} from './MatchingConditionPage';
+
+describe('match room 종료 안내 소비', () => {
+  it('종료 안내를 한 번 읽고 festivalId 등 다른 route state는 보존한다', () => {
+    const locationState = {
+      festivalId: 144,
+      matchRoomNotice: '참여 취소가 완료되어 그룹이 종료됐어요.',
+    };
+
+    expect(readMatchRoomNotice(locationState)).toBe('참여 취소가 완료되어 그룹이 종료됐어요.');
+    expect(consumeMatchRoomNotice(locationState)).toEqual({ festivalId: 144 });
+  });
+
+  it('종료 안내만 있으면 history state를 비우고 잘못된 값은 표시하지 않는다', () => {
+    expect(consumeMatchRoomNotice({ matchRoomNotice: '종료 안내' })).toBeNull();
+    expect(readMatchRoomNotice({ matchRoomNotice: 123 })).toBeNull();
+    expect(readMatchRoomNotice(null)).toBeNull();
+  });
+});
 
 describe('resolveFestivalId', () => {
   it('location state 값을 개발 환경 fallback보다 우선한다', () => {
@@ -39,6 +64,7 @@ const group: CurrentMatchGroup = {
   festivalId: 2,
   status: 'CONFIRMED',
   confirmedMemberCount: 2,
+  currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20',
   arrivalDeadlineAt: '2026-07-27T12:30:20',
   festival: {
@@ -57,6 +83,7 @@ const group: CurrentMatchGroup = {
 function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Parameters<typeof MatchBody>[0] {
   return {
     status: 'CANCELLED',
+    error: null,
     isRetryFormOpen: false,
     group: null,
     groupSize: 3,
@@ -219,5 +246,27 @@ describe('terminal retry form', () => {
       (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
     );
     expect(retryButton?.props.disabled).toBe(true);
+  });
+
+  it('유효 체크인 오류는 일반 연결 오류 대신 체크인 안내를 표시한다', () => {
+    const onGoCheckIn = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'ERROR',
+      error: new ApiClientError(
+        '해당 축제의 유효한 체크인이 필요합니다.',
+        400,
+        'MATCHING_INVALID_REQUEST',
+        [],
+      ),
+      onGoCheckIn,
+    })));
+    expect(text(tree)).toContain('축제 체크인이 필요해요');
+    expect(text(tree)).toContain('해당 축제의 유효한 체크인이 필요합니다.');
+    expect(text(tree)).not.toContain('연결이 잠시 끊겼어요');
+    const checkInButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '체크인하기',
+    );
+    (checkInButton?.props.onClick as () => void)();
+    expect(onGoCheckIn).toHaveBeenCalledOnce();
   });
 });

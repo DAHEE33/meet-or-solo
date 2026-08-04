@@ -370,6 +370,12 @@ fallback으로 사용합니다. current group이 없으면 `/matching`으로 rep
 
 자유 텍스트 입력창은 구현하지 않습니다.
 
+확정 후 취소는 deadline 전 `JOINED`, `ARRIVAL_TIME_SELECTED`인 본인에게만
+`못 갈 것 같아요` action을 표시합니다. 사유는 `갑자기 일정이 생겼어요`,
+`이동이 어려워졌어요`, `다른 이유가 있어요` 버튼만 제공하고 자유 입력은
+제공하지 않습니다. 성공 전 optimistic 상태 변경을 하지 않으며 종료 결과는
+안내와 함께 `/matching`으로 이동합니다.
+
 ## PWA 동작
 
 예정 PWA 기능:

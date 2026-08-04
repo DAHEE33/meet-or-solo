@@ -82,7 +82,7 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
   if (pool?.status === 'WAITING' || pool?.status === 'LOCKED') {
     return { status: pool.status, pool, proposal, group, restriction, error: null };
   }
-  if (pool?.status === 'PROPOSED' || pool?.status === 'MATCHED') {
+  if (pool?.status === 'PROPOSED') {
     return {
       status: 'RESPONSE_PENDING',
       pool,
@@ -91,6 +91,9 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
       restriction,
       error: null,
     };
+  }
+  if (pool?.status === 'MATCHED') {
+    return { status: 'CANCELLED', pool, proposal, group, restriction, error: null };
   }
   if (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
     return { status: pool.status, pool, proposal, group, restriction, error: null };

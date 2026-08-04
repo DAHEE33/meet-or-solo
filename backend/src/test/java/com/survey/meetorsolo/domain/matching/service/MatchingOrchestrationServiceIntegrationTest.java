@@ -21,7 +21,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
+@SpringBootTest(properties = {
+        "spring.jpa.hibernate.ddl-auto=validate",
+        "app.matching.scheduler.enabled=false",
+        "app.matching.no-show-scheduler.enabled=false"
+})
 @Testcontainers
 @Import(MatchingOrchestrationServiceIntegrationTest.FixedInputs.class)
 @Sql(scripts = {"/fixtures/matching-engine-cleanup.sql", "/fixtures/matching-engine-foundation.sql"},

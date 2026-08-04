@@ -10,11 +10,13 @@ import static org.mockito.Mockito.verify;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchCancellationReason;
 import com.survey.meetorsolo.domain.matching.dto.MatchingStateChangedNotification;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.time.Clock;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -41,7 +43,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(properties = "spring.jpa.hibernate.ddl-auto=validate")
+@SpringBootTest(properties = {
+        "spring.jpa.hibernate.ddl-auto=validate",
+        "app.matching.scheduler.enabled=false",
+        "app.matching.no-show-scheduler.enabled=false"
+})
 @Testcontainers
 @Import(MatchArrivalTimeServiceIntegrationTest.FixedClockConfiguration.class)
 @Sql(
@@ -49,6 +55,8 @@ import org.testcontainers.utility.DockerImageName;
         config = @SqlConfig(transactionMode = SqlConfig.TransactionMode.ISOLATED)
 )
 class MatchArrivalTimeServiceIntegrationTest {
+    private static final java.time.OffsetDateTime TEST_NOW =
+            NOW.plusSeconds(10).truncatedTo(ChronoUnit.MICROS);
 
     @Container
     @ServiceConnection
@@ -61,6 +69,10 @@ class MatchArrivalTimeServiceIntegrationTest {
     private MatchArrivalTimeService service;
     @Autowired
     private MatchArrivalService arrivals;
+    @Autowired
+    private MatchCancellationService cancellations;
+    @Autowired
+    private MatchNoShowGroupService noShows;
 
     @Autowired
     private MatchGroupQueryService queries;
@@ -74,6 +86,60 @@ class MatchArrivalTimeServiceIntegrationTest {
     @MockitoBean
     private SimpMessagingTemplate messagingTemplate;
 
+    @Test
+    void V14_무패널티_취소는_2인_group을_종료하고_비귀책을_LEFT로_전환한다() {
+        var result = cancellations.cancel(
+                9_110_001L, MatchCancellationReason.TRANSPORTATION_ISSUE);
+
+        assertThat(result.groupContinues()).isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id=9171001", String.class))
+                .isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_group_members WHERE id=9181001", String.class))
+                .isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_group_members WHERE id=9181002", String.class))
+                .isEqualTo("LEFT");
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_penalty_events
+                WHERE related_group_id=9171001
+                """, Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE group_id=9171001
+                  AND event_type IN ('MEMBER_CANCELLED','MATCH_CANCELLED')
+                """, Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void V14_NO_SHOW는_재실행해도_member_event_penalty_cooldown을_중복하지_않는다() {
+        var deadline = NOW.plusSeconds(10).plusMinutes(30);
+
+        assertThat(noShows.process(9_171_001L, deadline)).isTrue();
+        assertThat(noShows.process(9_171_001L, deadline)).isFalse();
+
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_group_members
+                WHERE group_id=9171001 AND status='NO_SHOW'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE group_id=9171001 AND event_type='MEMBER_NO_SHOW'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_penalty_events
+                WHERE related_group_id=9171001 AND event_type='NO_SHOW'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_cooldowns
+                WHERE related_group_id=9171001 AND reason='NO_SHOW'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("""
+                SELECT sum(penalty_score) FROM members WHERE id IN (9110001,9110002)
+                """, Integer.class)).isEqualTo(6);
+    }
+
     @BeforeEach
     void setUp() {
         jdbc.update("""
@@ -84,10 +150,10 @@ class MatchArrivalTimeServiceIntegrationTest {
                 """, NOW.plusSeconds(10), NOW.plusSeconds(10), NOW.plusSeconds(10));
         jdbc.update("""
                 INSERT INTO match_group_members(
-                    id, group_id, member_id, status, created_at, updated_at
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
                 ) VALUES
-                    (9181001, 9171001, 9110001, 'JOINED', ?, ?),
-                    (9181002, 9171001, 9110002, 'JOINED', ?, ?)
+                    (9181001, 9171001, 9110001, 'JOINED', true, ?, ?),
+                    (9181002, 9171001, 9110002, 'JOINED', true, ?, ?)
                 """, NOW, NOW, NOW, NOW);
         clearInvocations(messagingTemplate);
     }
@@ -439,7 +505,7 @@ class MatchArrivalTimeServiceIntegrationTest {
     void 도착_25분_예상_시각이_deadline과_같으면_허용하고_넘으면_거절한다() {
         jdbc.update(
                 "UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
-                NOW.minusMinutes(5)
+                TEST_NOW.minusMinutes(5)
         );
 
         MatchGroupResponse boundary = service.select(9_110_001L, 25);
@@ -456,7 +522,7 @@ class MatchArrivalTimeServiceIntegrationTest {
         jdbc.update("DELETE FROM match_events WHERE group_id = 9171001");
         jdbc.update(
                 "UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
-                NOW.minusMinutes(5).minusNanos(1)
+                TEST_NOW.minusMinutes(5).minusSeconds(1)
         );
         clearInvocations(messagingTemplate);
 
@@ -482,7 +548,7 @@ class MatchArrivalTimeServiceIntegrationTest {
     void 남은_5분_경계에서는_5분을_허용하고_deadline부터는_선택할_수_없다() {
         jdbc.update(
                 "UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
-                NOW.minusMinutes(25)
+                TEST_NOW.minusMinutes(25)
         );
 
         MatchGroupResponse justBefore = service.select(9_110_001L, 5);
@@ -498,7 +564,7 @@ class MatchArrivalTimeServiceIntegrationTest {
         jdbc.update("DELETE FROM match_events WHERE group_id = 9171001");
         jdbc.update(
                 "UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
-                NOW.minusMinutes(30)
+                TEST_NOW.minusMinutes(30)
         );
         clearInvocations(messagingTemplate);
 
@@ -739,7 +805,7 @@ class MatchArrivalTimeServiceIntegrationTest {
         @Bean
         @Primary
         Clock fixedArrivalClock() {
-            return Clock.fixed(NOW.plusSeconds(10).toInstant(), ZoneId.of("Asia/Seoul"));
+            return Clock.fixed(TEST_NOW.toInstant(), ZoneId.of("Asia/Seoul"));
         }
     }
 }

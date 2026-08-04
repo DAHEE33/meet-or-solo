@@ -31,7 +31,9 @@ import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
-        "app.jwt.secret=matching-rest-api-integration-test-secret"
+        "app.jwt.secret=matching-rest-api-integration-test-secret",
+        "app.matching.scheduler.enabled=false",
+        "app.matching.no-show-scheduler.enabled=false"
 })
 @AutoConfigureMockMvc
 @Testcontainers
@@ -232,13 +234,30 @@ class MatchingRestApiIntegrationTest {
     }
 
     @Test
-    void 저장된_확정_인원과_active_member_수가_다르면_충돌로_처리한다() throws Exception {
+    void 최초_확정_3명에서_active_2명이_남으면_두_count를_정상_반환한다() throws Exception {
         insertGroup("CONFIRMED");
         jdbc.update("""
                 UPDATE match_groups
                 SET confirmed_member_count = 3, updated_at = ?
                 WHERE id = 9170001
                 """, NOW.plusSeconds(11));
+
+        mockMvc.perform(get("/api/matching/groups/me/current")
+                        .cookie(cookie(9_110_001L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.confirmedMemberCount").value(3))
+                .andExpect(jsonPath("$.data.currentMemberCount").value(2))
+                .andExpect(jsonPath("$.data.members.length()").value(2));
+    }
+
+    @Test
+    void active_member가_최초_확정_인원보다_많으면_충돌로_처리한다() throws Exception {
+        insertGroup("CONFIRMED");
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES (9180003, 9170001, 9110003, 'JOINED', true, ?, ?)
+                """, NOW, NOW);
 
         mockMvc.perform(get("/api/matching/groups/me/current")
                         .cookie(cookie(9_110_001L)))
@@ -292,10 +311,10 @@ class MatchingRestApiIntegrationTest {
                 """, status, NOW.plusSeconds(10), NOW.plusSeconds(10), NOW.plusSeconds(10));
         jdbc.update("""
                 INSERT INTO match_group_members(
-                    id, group_id, member_id, status, created_at, updated_at
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
                 ) VALUES
-                    (9180002, 9170001, 9110002, 'JOINED', ?, ?),
-                    (9180001, 9170001, 9110001, 'JOINED', ?, ?)
+                    (9180002, 9170001, 9110002, 'JOINED', true, ?, ?),
+                    (9180001, 9170001, 9110001, 'JOINED', true, ?, ?)
                 """, NOW, NOW, NOW, NOW);
     }
 

@@ -34,6 +34,18 @@ public interface MatchCooldownRepository extends JpaRepository<MatchCooldown, Lo
             """, nativeQuery = true)
     Optional<MatchCooldown> findActive(@Param("memberId") long memberId, @Param("now") OffsetDateTime now);
 
+    @Query(value = """
+            SELECT * FROM match_cooldowns
+            WHERE member_id = :memberId
+              AND status = 'ACTIVE'
+            ORDER BY id
+            FOR UPDATE
+            """, nativeQuery = true)
+    Optional<MatchCooldown> findActiveForUpdate(@Param("memberId") long memberId);
+
+    boolean existsByRelatedGroupIdAndMemberIdAndReason(
+            long relatedGroupId, long memberId, String reason);
+
     @Modifying
     @Query(value = """
             UPDATE match_cooldowns

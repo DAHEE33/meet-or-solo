@@ -50,11 +50,14 @@ public class MatchArrivalService {
                 .findByGroupIdAndMemberIdForUpdate(group.getId(), memberId)
                 .orElseThrow(this::conflict);
         validateLockedState(group, member);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        if (!now.isBefore(MatchArrivalDeadlinePolicy.deadlineAt(group.getConfirmedAt()))) {
+            throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_DEADLINE_EXCEEDED);
+        }
         if ("ARRIVED".equals(member.getStatus())) {
             return requireSnapshot(memberId);
         }
 
-        OffsetDateTime now = OffsetDateTime.now(clock);
         member.arrive(now);
         group.start(now);
         groupMembers.flush();

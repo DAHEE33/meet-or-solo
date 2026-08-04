@@ -3291,3 +3291,165 @@ migration은 건드리지 않고 신규 `V13`만 추가했습니다.
 `NO_SHOW`, 마감 Scheduler, 취소·패널티, meeting point, Kakao Maps,
 `COMPLETED`, 자유 채팅, group topic, client STOMP `SEND`, Redis와 외부 broker는
 구현하지 않았습니다.
+
+## 38. 확정 후 자발적 취소와 30분 마감 NO_SHOW
+
+### 38.1 V14와 snapshot
+
+기존 migration은 수정하지 않고
+`V14__add_match_room_cancellation_no_show.sql`을 추가했습니다.
+`match_group_members.allow_minimum_two`는 신규 group 확정 시 pool 값으로
+snapshot하며 기존 row는 group attempt, attempt member와 pool 관계로
+backfill합니다. 매핑하지 못한 row가 하나라도 있으면 migration을 실패시킵니다.
+
+V14는 `no_show_at`, 구조화된 member/group 취소 사유, `MEMBER_NO_SHOW`,
+cooldown의 `related_group_id`와 `(group, member, cause)` unique index를
+추가합니다.
+
+### 38.2 transaction과 상태 전이
+
+취소, 도착과 NO_SHOW는 다음 잠금 순서를 공유합니다.
+
+```text
+match_groups row
+→ match_group_members row ID 오름차순
+→ member/cooldown 관련 row
+```
+
+자발적 취소는 확정 후 3분 이내에는 penalty event와 cooldown을 만들지 않습니다.
+그 이후 deadline 전에는 `CANCEL +1` event를 만들고 KST 당일 횟수에 따라
+10/30/60분 cooldown을 적용합니다. NO_SHOW는 deadline 정각부터 `+3`,
+KST 당일 30/60분 cooldown을 적용합니다. 기존 active cooldown보다 새 만료가
+짧으면 기존 만료를 보존합니다. `manner_temperature`는 변경하지 않습니다.
+
+현재 유효 인원이 3명 이상이거나 정확히 2명이고 두 snapshot이 모두 true이면
+group을 유지합니다. 그 외에는 group을 `CANCELLED`, 남은 비귀책 회원을
+`LEFT`로 전환하며 `MATCH_CANCELLED`를 한 번 저장합니다.
+`confirmedMemberCount`는 최초 확정 인원이고 `currentMemberCount`는 공개 active
+member 수입니다.
+
+### 38.3 Scheduler와 알림
+
+NO_SHOW Scheduler는 `MATCHING_NO_SHOW_SCHEDULER_ENABLED=true`일 때만 실행하며
+기본 fixed delay 5초와 batch 20을 사용합니다. 한 tick에서 `Clock`을 한 번
+읽고 만료 group을 제한 조회한 뒤 group별 `REQUIRES_NEW` transaction과
+`FOR UPDATE SKIP LOCKED`로 실패를 격리합니다.
+
+`MEMBER_CANCELLED`, `MEMBER_NO_SHOW`, `MATCH_CANCELLED`는 DB transaction에서
+event와 application event를 만들고 실제 STOMP 전송은 기존
+`AFTER_COMMIT` listener에서만 수행합니다. Frontend는 WebSocket payload를
+상태로 사용하지 않고 REST refresh trigger로만 사용합니다.
+
+### 38.4 검증 결과와 제한
+
+```text
+Backend focused: 47건 성공
+Frontend focused: 3 files, 56건 성공
+Frontend 전체: 10 files, 110건 성공
+npx tsc --noEmit: 성공
+Backend build -x test와 production/PWA build: 성공
+PostgreSQL focused: Docker client 탐지 실패로 initialization 실패
+matching 전체: 114건 중 일반 98건 통과, Testcontainers 14건 initialization 실패,
+  scheduling 조건 2건은 수정 후 focused 재실행 성공
+```
+
+PostgreSQL 테스트는 Flyway V14와 assertion 실행 전에 중단됐으므로 실제
+migration, 동시성, rollback 통합 검증 성공으로 기록하지 않습니다. 실행 중인
+local backend/frontend와 두 로그인 session도 없어 회원 `2`, `27`, festival
+`144`의 두 브라우저 수동 검증은 실행하지 않았습니다.
+V14 취소와 NO_SHOW 재실행 멱등성 PostgreSQL 통합 테스트 소스는 추가하고
+compile했지만 같은 Docker 제약으로 assertion에는 진입하지 못했습니다.
+
+### 38.5 Windows Testcontainers 경계 실패와 Scheduler 격리 보완
+
+Windows 실행에서 관련 통합 테스트 36건 중 다음 3건이 실패했습니다.
+
+```text
+MatchingRestApiIntegrationTest
+- 저장된 확정 인원과 active member 수 불일치 assertion
+
+MatchArrivalTimeServiceIntegrationTest
+- 25분 예상 도착 == deadline 경계
+- 남은 5분과 deadline 정각 경계
+```
+
+첫 REST 실패는 과거의 `confirmedMemberCount == active member count` 계약이
+남아 있던 테스트 문제였습니다. 현재는 최초 확정 3명에서 active 2명이 남는
+상태를 정상으로 검증하고 `confirmedMemberCount=3`,
+`currentMemberCount=2`, 공개 member 2명을 확인합니다. active member가 2명
+미만이거나 최초 확정 인원보다 많은 경우는 계속 `MATCHING_CONFLICT`입니다.
+
+시간 경계 실패는 테스트 fixed Clock이 `NOW + 10초`인데 DB `confirmed_at`
+fixture는 `NOW`를 기준으로 만들었던 10초 오차가 원인이었습니다.
+`TEST_NOW = (NOW + 10초).truncatedTo(ChronoUnit.MICROS)`로 DB와 Clock 기준을
+통일했습니다. `minusNanos(1)`은 제거하고 deadline 초과는 PostgreSQL에서
+안정적인 1초 차이로 검증합니다. 운영 서비스의 `예상 도착 <= deadline`,
+`now < deadline` 계약은 변경하지 않았습니다.
+
+일반 matching Spring 통합 테스트는 사용자 환경변수와 무관하게 아래 값을
+test property로 고정합니다.
+
+```text
+app.matching.scheduler.enabled=false
+app.matching.no-show-scheduler.enabled=false
+```
+
+따라서 테스트 context와 Testcontainers 종료 뒤 Scheduler가 DB에 재접근하지
+않습니다. Scheduler 자체의 조건을 검증하는 전용 테스트에는 이 설정을
+적용하지 않았습니다.
+
+수정 후 test source compile과 비컨테이너 정책 회귀 21건은 성공했습니다.
+현재 WSL에는 Docker command가 없고 Windows interop은
+`UtilBindVsockAnyPort` 오류로 실행되지 않아 다음 Windows 재검증은 남아
+있습니다.
+
+```text
+1. MatchingRestApiIntegrationTest
+2. MatchArrivalTimeServiceIntegrationTest
+3. matching 전체
+```
+
+### 38.6 dev DB·두 브라우저 수동 검증과 Frontend 보완
+
+2026-08-04에 festival `144`, member `1`, `2`, `27`을 사용해
+`14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`의 취소·NO_SHOW·인원 감소 시나리오를
+dev DB와 일반/시크릿 브라우저에서 검증했습니다.
+
+확인한 결과는 다음과 같습니다.
+
+- deadline 전 상태 유지, deadline 정각부터 도착 API 거절과 Scheduler의
+  `JOINED`/`ARRIVAL_TIME_SELECTED -> NO_SHOW` 전환
+- `no_show_at`, 회원별 `MEMBER_NO_SHOW`, penalty event, cooldown과
+  `related_group_id` 저장
+- NO_SHOW `penalty_score +3`, KST 당일 첫 30분·두 번째 이상 60분 cooldown,
+  `manner_temperature` 불변
+- Scheduler 반복 tick 이후 member event, penalty event와 cooldown 각 1건 유지
+- `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` 재처리 제외와 비귀책 회원 무패널티
+- 2명 group의 귀책 이탈 시 group 종료와 비귀책 회원 `LEFT`
+- 최초 확정 3명에서 잔여 2명의 `allow_minimum_two`가 모두 true이면 group 유지,
+  false가 포함되면 group 종료
+- 한 회원이 `ARRIVED`인 상태에서 상대가 확정 3분 이후 취소하면 취소 회원에게만
+  `CANCEL +1`과 첫 10분 cooldown 적용
+- 동일 취소 요청 재전송과 Scheduler 재실행에도 event, penalty와 cooldown 멱등성 유지
+- 기존 2시간 `REPORT` active cooldown보다 새 NO_SHOW 만료가 짧을 때 기존
+  만료 시각 보존. 기존 row는 `EXPIRED`, 새 `NO_SHOW` row는 `ACTIVE`이며
+  `expires_at`이 동일함
+- 취소·NO_SHOW 종료 snapshot이 양쪽 화면과 새로고침에서 복원됨
+
+수동 검증 중 deadline 이후에도 `도착했어요` action이 남는 문제를 발견해,
+deadline부터 action을 숨기고 Scheduler 처리 대기 안내를 표시하도록
+`MatchRoomPage`를 수정했습니다. 또한 종료 안내가 Router history state에 남아
+새 매칭과 새로고침에도 반복 표시되는 문제를 수정했습니다. 종료 안내는 최초
+`/matching` 진입에서만 local 상태로 표시하고 history state에서 즉시 소비하며,
+재신청과 새 pool 신청에서도 제거합니다.
+
+관련 frontend focused 테스트는 2 files, 43건이 통과했고
+`tsc --noEmit`도 성공했습니다. 두 문제는 브라우저 재검증까지 완료해
+`ISSUE-MR-006`, `ISSUE-MR-007`을 `FIXED`로 판정했습니다. 상세 SQL과 개별
+체크 결과는 `14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`를 기준으로 합니다.
+
+이 범위에서 확정 후 취소·NO_SHOW 기능과 수동 검증은 완료했습니다. 다음 기능
+브랜치는 `feature/wbs-10-b-meeting-point`이며 축제 공식 좌표 기반 만남 포인트,
+2km 정책과 Kakao Maps 핀을 구현합니다. 이후
+`feature/wbs-10-b-match-room-completion`에서 group 완료 조건과
+`IN_PROGRESS -> COMPLETED` 전환을 구현합니다.

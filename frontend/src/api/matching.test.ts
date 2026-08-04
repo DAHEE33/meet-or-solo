@@ -129,4 +129,35 @@ describe('matchingApi', () => {
     );
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('body');
   });
+
+  it.each(['SCHEDULE_CHANGED', 'TRANSPORTATION_ISSUE', 'OTHER'] as const)(
+    '구조화된 취소 사유 %s만 current 회원 endpoint로 전송한다',
+    async (reason) => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({
+          success: true,
+          data: {
+            groupId: 1,
+            memberStatus: 'CANCELLED',
+            groupStatus: 'CANCELLED',
+            groupContinues: false,
+            currentMemberCount: 0,
+          },
+          error: null,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await matchingApi.cancelParticipation(reason);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/matching/groups/me/current/cancellation',
+        expect.objectContaining({
+          credentials: 'include',
+          method: 'PUT',
+          body: JSON.stringify({ reason }),
+        }),
+      );
+    },
+  );
 });

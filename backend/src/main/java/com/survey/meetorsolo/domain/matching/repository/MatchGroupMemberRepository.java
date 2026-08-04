@@ -54,6 +54,29 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
     );
 
     @Query(value = """
+            SELECT * FROM match_group_members
+            WHERE group_id = :groupId
+            ORDER BY id
+            FOR UPDATE
+            """, nativeQuery = true)
+    List<MatchGroupMember> findAllByGroupIdForUpdate(@Param("groupId") long groupId);
+
+    @Query(value = """
+            SELECT group_member.*
+            FROM match_group_members group_member
+            JOIN match_groups matching_group ON matching_group.id = group_member.group_id
+            WHERE group_member.member_id = :memberId
+              AND group_member.status = 'CANCELLED'
+              AND matching_group.confirmed_at + INTERVAL '30 minutes' > :now
+            ORDER BY group_member.cancelled_at DESC, group_member.id DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<MatchGroupMember> findLatestCancelledByMemberId(
+            @Param("memberId") long memberId,
+            @Param("now") java.time.OffsetDateTime now
+    );
+
+    @Query(value = """
             SELECT member_id
             FROM match_group_members
             WHERE group_id = :groupId
