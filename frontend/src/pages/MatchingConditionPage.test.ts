@@ -2,7 +2,31 @@ import { isValidElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
-import { MatchBody, resolveFestivalId, submitPoolEntry } from './MatchingConditionPage';
+import {
+  consumeMatchRoomNotice,
+  MatchBody,
+  readMatchRoomNotice,
+  resolveFestivalId,
+  submitPoolEntry,
+} from './MatchingConditionPage';
+
+describe('match room 종료 안내 소비', () => {
+  it('종료 안내를 한 번 읽고 festivalId 등 다른 route state는 보존한다', () => {
+    const locationState = {
+      festivalId: 144,
+      matchRoomNotice: '참여 취소가 완료되어 그룹이 종료됐어요.',
+    };
+
+    expect(readMatchRoomNotice(locationState)).toBe('참여 취소가 완료되어 그룹이 종료됐어요.');
+    expect(consumeMatchRoomNotice(locationState)).toEqual({ festivalId: 144 });
+  });
+
+  it('종료 안내만 있으면 history state를 비우고 잘못된 값은 표시하지 않는다', () => {
+    expect(consumeMatchRoomNotice({ matchRoomNotice: '종료 안내' })).toBeNull();
+    expect(readMatchRoomNotice({ matchRoomNotice: 123 })).toBeNull();
+    expect(readMatchRoomNotice(null)).toBeNull();
+  });
+});
 
 describe('resolveFestivalId', () => {
   it('location state 값을 개발 환경 fallback보다 우선한다', () => {

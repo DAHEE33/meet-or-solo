@@ -151,8 +151,8 @@ export function CurrentGroupRoom({
   const currentMember = group.members.find((member) => member.memberId === group.currentMemberId);
   const canArrive = currentMember?.status === 'JOINED'
     || currentMember?.status === 'ARRIVAL_TIME_SELECTED';
-  const canSelectArrivalTime = canArrive
-    && effectiveNowEpochMs < Date.parse(group.arrivalDeadlineAt);
+  const arrivalDeadlineReached = effectiveNowEpochMs >= Date.parse(group.arrivalDeadlineAt);
+  const canSelectArrivalTime = canArrive && !arrivalDeadlineReached;
   const estimatedArrivalAt = getEstimatedArrivalAt(currentMember);
   const estimatedArrivalEpochMs = estimatedArrivalAt ? Date.parse(estimatedArrivalAt) : null;
   const estimatedArrivalPassed = estimatedArrivalEpochMs !== null
@@ -174,7 +174,7 @@ export function CurrentGroupRoom({
         </dl>
       </section>
 
-      {canArrive && (
+      {canArrive && !arrivalDeadlineReached && (
         <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <details>
             <summary className={`cursor-pointer list-none rounded-2xl bg-coral px-4 py-3 text-center text-[15px] font-bold text-white ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
@@ -236,6 +236,19 @@ export function CurrentGroupRoom({
               </div>
             </div>
           </details>
+        </section>
+      )}
+
+      {canArrive && arrivalDeadlineReached && (
+        <section
+          role="status"
+          aria-live="polite"
+          className="rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
+        >
+          <p className="text-[15px] font-bold text-ink">최종 도착 마감이 지났어요</p>
+          <p className="mt-1 text-[13px] text-ink/60">
+            노쇼 처리 결과를 확인하고 있어요. 잠시 후 화면이 자동으로 변경됩니다.
+          </p>
         </section>
       )}
 

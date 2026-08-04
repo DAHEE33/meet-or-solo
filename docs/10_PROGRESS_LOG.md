@@ -2,7 +2,7 @@
 
 ## [10-매칭 22차] 확정 후 자발적 취소와 30분 마감 NO_SHOW
 
-상태: 구현 및 비컨테이너 focused 자동 검증 완료, PostgreSQL Testcontainers와 두 브라우저 수동 검증은 환경 제약으로 미완료
+상태: 구현, dev DB·두 브라우저 수동 검증 및 Frontend 보완 완료. Windows PostgreSQL Testcontainers 전체 재실행은 별도 환경 검증으로 유지
 
 ### Windows Testcontainers 1차 실패 분석과 테스트 격리 보완
 
@@ -41,8 +41,20 @@
 - PostgreSQL focused는 Docker client 탐지 실패로 Flyway와 assertion 실행 전 initialization 실패
 - matching 전체 114건 실행에서 일반 테스트 98건 통과, Testcontainers 14건은 Docker initialization 실패, scheduling 조건 회귀 2건은 원인을 수정한 뒤 focused 재실행 성공
 - V14 취소·NO_SHOW PostgreSQL 통합 테스트 2건을 추가하고 compile 성공했으나 Docker 부재로 assertion 미실행
-- 두 로그인 session과 실행 중인 local runtime이 없어 회원 `2`, `27`, festival `144` 수동 검증 미실행
+- 초기 자동 검증 당시에는 로그인 session과 local runtime이 없어 회원 `2`, `27`, festival `144` 수동 검증을 실행하지 못함
 - meeting point, Kakao Maps, COMPLETED, 평가/신고, manner temperature, 자유 채팅, Redis와 재매칭은 제외
+
+### 2026-08-04 dev DB·두 브라우저 최종 수동 검증
+
+- festival `144`, member `1`, `2`, `27`로 확정 후 취소, NO_SHOW Scheduler와 인원 감소 시나리오 검증 완료
+- deadline 이후 도착 거절, `no_show_at`, `MEMBER_NO_SHOW`, penalty `+3`, 첫 30분·당일 반복 60분 cooldown 확인
+- 취소 3분 이후 `CANCEL +1`과 첫 10분 cooldown, 동일 요청 재전송 멱등성 확인
+- Scheduler 반복 tick 이후 member event, penalty event와 cooldown 각 1건 유지 확인
+- 3명 group에서 잔여 2명의 `allow_minimum_two`가 모두 true이면 유지하고 false 포함 시 종료되는 정책 확인
+- 기존 2시간 active cooldown보다 새 NO_SHOW cooldown이 짧을 때 기존 `expires_at` 보존 확인
+- deadline 이후 도착 action 노출과 종료 안내 history state 잔존 Frontend 문제 수정 및 브라우저 재검증 완료
+- Frontend focused 2 files, 43건과 `tsc --noEmit` 성공
+- 상세 실행 결과와 SQL 증거는 `docs/14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`에 기록
 
 ## [10-매칭 21차] 도착 예정 선택지와 상대 변경 snackbar
 

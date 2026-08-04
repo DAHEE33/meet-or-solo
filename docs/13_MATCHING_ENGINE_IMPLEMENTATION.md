@@ -3408,3 +3408,48 @@ app.matching.no-show-scheduler.enabled=false
 2. MatchArrivalTimeServiceIntegrationTest
 3. matching 전체
 ```
+
+### 38.6 dev DB·두 브라우저 수동 검증과 Frontend 보완
+
+2026-08-04에 festival `144`, member `1`, `2`, `27`을 사용해
+`14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`의 취소·NO_SHOW·인원 감소 시나리오를
+dev DB와 일반/시크릿 브라우저에서 검증했습니다.
+
+확인한 결과는 다음과 같습니다.
+
+- deadline 전 상태 유지, deadline 정각부터 도착 API 거절과 Scheduler의
+  `JOINED`/`ARRIVAL_TIME_SELECTED -> NO_SHOW` 전환
+- `no_show_at`, 회원별 `MEMBER_NO_SHOW`, penalty event, cooldown과
+  `related_group_id` 저장
+- NO_SHOW `penalty_score +3`, KST 당일 첫 30분·두 번째 이상 60분 cooldown,
+  `manner_temperature` 불변
+- Scheduler 반복 tick 이후 member event, penalty event와 cooldown 각 1건 유지
+- `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` 재처리 제외와 비귀책 회원 무패널티
+- 2명 group의 귀책 이탈 시 group 종료와 비귀책 회원 `LEFT`
+- 최초 확정 3명에서 잔여 2명의 `allow_minimum_two`가 모두 true이면 group 유지,
+  false가 포함되면 group 종료
+- 한 회원이 `ARRIVED`인 상태에서 상대가 확정 3분 이후 취소하면 취소 회원에게만
+  `CANCEL +1`과 첫 10분 cooldown 적용
+- 동일 취소 요청 재전송과 Scheduler 재실행에도 event, penalty와 cooldown 멱등성 유지
+- 기존 2시간 `REPORT` active cooldown보다 새 NO_SHOW 만료가 짧을 때 기존
+  만료 시각 보존. 기존 row는 `EXPIRED`, 새 `NO_SHOW` row는 `ACTIVE`이며
+  `expires_at`이 동일함
+- 취소·NO_SHOW 종료 snapshot이 양쪽 화면과 새로고침에서 복원됨
+
+수동 검증 중 deadline 이후에도 `도착했어요` action이 남는 문제를 발견해,
+deadline부터 action을 숨기고 Scheduler 처리 대기 안내를 표시하도록
+`MatchRoomPage`를 수정했습니다. 또한 종료 안내가 Router history state에 남아
+새 매칭과 새로고침에도 반복 표시되는 문제를 수정했습니다. 종료 안내는 최초
+`/matching` 진입에서만 local 상태로 표시하고 history state에서 즉시 소비하며,
+재신청과 새 pool 신청에서도 제거합니다.
+
+관련 frontend focused 테스트는 2 files, 43건이 통과했고
+`tsc --noEmit`도 성공했습니다. 두 문제는 브라우저 재검증까지 완료해
+`ISSUE-MR-006`, `ISSUE-MR-007`을 `FIXED`로 판정했습니다. 상세 SQL과 개별
+체크 결과는 `14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`를 기준으로 합니다.
+
+이 범위에서 확정 후 취소·NO_SHOW 기능과 수동 검증은 완료했습니다. 다음 기능
+브랜치는 `feature/wbs-10-b-meeting-point`이며 축제 공식 좌표 기반 만남 포인트,
+2km 정책과 Kakao Maps 핀을 구현합니다. 이후
+`feature/wbs-10-b-match-room-completion`에서 group 완료 조건과
+`IN_PROGRESS -> COMPLETED` 전환을 구현합니다.

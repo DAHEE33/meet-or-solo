@@ -409,7 +409,7 @@ describe('MatchRoomContent', () => {
     expect(selectedOption?.props['aria-pressed']).toBe(true);
   });
 
-  it('전체 마감부터 시간 선택을 차단하지만 도착 완료 action은 유지한다', () => {
+  it('전체 마감부터 시간 선택과 도착 완료 action을 차단하고 노쇼 처리 대기를 안내한다', () => {
     const tree = renderNode(MatchRoomContent({
       state: {
         status: 'READY',
@@ -428,7 +428,10 @@ describe('MatchRoomContent', () => {
 
     expect(text(tree)).toContain('최종 도착 마감이 지나 예정 시간을 변경할 수 없어요.');
     expect(text(tree)).not.toContain('몇 분 후 도착하나요?');
-    expect(text(tree)).toContain('축제 만남 장소에 도착했나요?');
+    expect(text(tree)).not.toContain('축제 만남 장소에 도착했나요?');
+    expect(text(tree)).not.toContain('도착했어요');
+    expect(text(tree)).toContain('노쇼 처리 결과를 확인하고 있어요.');
+    expect(elements(tree).some((element) => element.props.role === 'status')).toBe(true);
   });
 
   it('제출 중 선택을 막고 실패하면 기존 snapshot과 오류 안내를 유지한다', () => {

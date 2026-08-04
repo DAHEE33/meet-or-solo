@@ -60,11 +60,29 @@ export function submitPoolEntry(
     : enterPool(festivalId, preferredGroupSize, allowMinimumTwo);
 }
 
+export function readMatchRoomNotice(locationState: unknown): string | null {
+  return locationState
+    && typeof locationState === 'object'
+    && 'matchRoomNotice' in locationState
+    && typeof locationState.matchRoomNotice === 'string'
+      ? locationState.matchRoomNotice
+      : null;
+}
+
+export function consumeMatchRoomNotice(locationState: unknown): unknown {
+  if (!locationState || typeof locationState !== 'object' || !('matchRoomNotice' in locationState)) {
+    return locationState;
+  }
+  const { matchRoomNotice: _consumedNotice, ...remainingState } = locationState;
+  return Object.keys(remainingState).length > 0 ? remainingState : null;
+}
+
 export default function MatchingConditionPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
   const [allowMinimum, setAllowMinimum] = useState(false);
+  const [matchRoomNotice, setMatchRoomNotice] = useState(() => readMatchRoomNotice(location.state));
   const {
     state,
     isSubmitting,
@@ -79,12 +97,6 @@ export default function MatchingConditionPage() {
       ? state.pool?.festivalId
       : null;
   const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
-  const matchRoomNotice = location.state
-    && typeof location.state === 'object'
-    && 'matchRoomNotice' in location.state
-    && typeof location.state.matchRoomNotice === 'string'
-      ? location.state.matchRoomNotice
-      : null;
 
   const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
   const proposalDeadline =
@@ -95,6 +107,14 @@ export default function MatchingConditionPage() {
   const searchRemaining = useCountdown(searchDeadline);
   const responseRemaining = useCountdown(proposalDeadline);
   const cooldownRemaining = useCountdown(cooldownDeadline);
+
+  useEffect(() => {
+    if (readMatchRoomNotice(location.state) === null) return;
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: consumeMatchRoomNotice(location.state),
+    });
+  }, [location.hash, location.pathname, location.search, location.state, navigate]);
 
   useEffect(() => {
     const deadlineExpired =
@@ -116,7 +136,12 @@ export default function MatchingConditionPage() {
   const cooldownActive = state.restriction?.cooldown.active === true;
   const canApply = hasFestival && !isSubmitting && !cooldownActive;
   const onStart = () => {
+    setMatchRoomNotice(null);
     void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
+  };
+  const onRetry = () => {
+    setMatchRoomNotice(null);
+    beginRetry();
   };
 
   return (
@@ -153,7 +178,7 @@ export default function MatchingConditionPage() {
           onDecline={() => void respond('REJECT')}
           onStartWithCurrent={() => void respond('ACCEPT')}
           onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
-          onRetry={beginRetry}
+          onRetry={onRetry}
           onErrorRetry={() => void refresh()}
           onGoCheckIn={() => navigate('/check-in')}
           onEnterRoom={() => navigate('/match-room')}

@@ -657,31 +657,38 @@ WHERE member_id IN (2, 27)
 
 통과 기준:
 
-- [ ] 남은 전체 시간보다 긴 선택지만 비활성화됩니다.
-- [ ] `now + arrivalMinutes == deadline`은 허용됩니다.
-- [ ] `now >= deadline`이면 모든 시간 선택을 차단합니다.
-- [ ] deadline은 선택 변경으로 연장되지 않습니다.
-- [ ] deadline 이후 도착 API 거절과 NO_SHOW Scheduler 처리를 확인합니다.
+- [X] 남은 전체 시간보다 긴 선택지만 비활성화됩니다.
+- [X] `now + arrivalMinutes == deadline`은 허용됩니다.
+- [X] `now >= deadline`이면 모든 시간 선택을 차단합니다.
+- [X] deadline은 선택 변경으로 연장되지 않습니다.
+- [X] deadline 이후 도착 API 거절과 NO_SHOW Scheduler 처리를 확인합니다.
 
-| 판정 | 실행 시각 | 증거/메모 |
-| --- | --- | --- |
-| `PENDING` | | |
+| 판정     | 실행 시각      | 증거/메모 |
+|--------|------------| --- |
+| `PASS` | 2026-08-04 | deadline 이후 도착 API 거절과 NO_SHOW Scheduler의 양쪽 종료 화면·첫 NO_SHOW 30분 cooldown 확인. DB 검증은 12.4에서 별도 확인 필요. 마감 후 `도착했어요` action이 남는 UX는 ISSUE-MR-006으로 분리 |
+
+추가 확인:
+
+- [X] 12.4 SQL로 두 회원 `NO_SHOW`, group `CANCELLED`, 회원별 penalty `+3`, 30분 cooldown과 event 중복 여부를 확인합니다.
+- [X] ISSUE-MR-006 수정 후 deadline부터 `도착했어요` action이 사라지는지 확인합니다.
+- [X] Scheduler 처리 전 짧은 대기 구간에는 `노쇼 처리 결과를 확인하고 있어요`와 같은 안내가 표시되는지 확인합니다.
+- [X] polling 또는 WebSocket refresh 뒤 양쪽 화면이 종료 snapshot으로 이동하는지 재확인합니다.
 
 ### MT-ARRIVAL-05 도착 완료
 
 통과 기준:
 
-- [ ] 도착 회원 상태가 `ARRIVED`입니다.
-- [ ] 첫 도착이면 group이 `IN_PROGRESS`입니다.
-- [ ] 본인의 도착 예정 선택 UI가 사라집니다.
-- [ ] `도착했어요` action이 사라집니다.
-- [ ] 실제 도착 시각이 표시됩니다.
-- [ ] 상대 화면과 새로고침 snapshot에 반영됩니다.
-- [ ] 반복 요청으로 event가 중복되지 않습니다.
+- [X] 도착 회원 상태가 `ARRIVED`입니다.
+- [X] 첫 도착이면 group이 `IN_PROGRESS`입니다.
+- [X] 본인의 도착 예정 선택 UI가 사라집니다.
+- [X] `도착했어요` action이 사라집니다.
+- [X] 실제 도착 시각이 표시됩니다.
+- [X] 상대 화면과 새로고침 snapshot에 반영됩니다.
+- [X] 반복 요청으로 event가 중복되지 않습니다.
 
 | 판정 | 실행 시각 | 증거/메모 |
 | --- | --- | --- |
-| `PENDING` | | |
+| `PASS` | 2026-08-04| |
 
 ## 9. 자발적 취소
 
@@ -689,62 +696,61 @@ WHERE member_id IN (2, 27)
 
 통과 기준:
 
-- [ ] 취소 API가 200입니다.
-- [ ] 취소 회원은 `CANCELLED`입니다.
-- [ ] `cancel_reason`, `cancelled_at`이 저장됩니다.
-- [ ] penalty event가 없습니다.
-- [ ] cooldown이 없습니다.
-- [ ] 2명 group은 `CANCELLED`입니다.
-- [ ] 남은 비귀책 회원은 `LEFT`입니다.
-- [ ] `MEMBER_CANCELLED`, `MATCH_CANCELLED`가 각각 한 번 생성됩니다.
-- [ ] 양쪽 화면이 종료 상태로 복원됩니다.
-- [ ] 종료 뒤 “다른 참여자의 응답 대기” 화면을 표시하지 않습니다.
+- [X] 취소 API가 200입니다.
+- [X] 취소 회원은 `CANCELLED`입니다.
+- [X] `cancel_reason`, `cancelled_at`이 저장됩니다.
+- [X] penalty event가 없습니다.
+- [X] cooldown이 없습니다.
+- [X] 2명 group은 `CANCELLED`입니다.
+- [X] 남은 비귀책 회원은 `LEFT`입니다.
+- [X] `MEMBER_CANCELLED`, `MATCH_CANCELLED`가 각각 한 번 생성됩니다.
+- [X] 양쪽 화면이 종료 상태로 복원됩니다.
+- [X] 종료 뒤 “다른 참여자의 응답 대기” 화면을 표시하지 않습니다.
 
-| 판정 | group_id | 실행 시각 | 증거/메모 |
-| --- | ---: | --- | --- |
-| `PENDING` | | | |
+| 판정     |   group_id | 실행 시각 | 증거/메모 |
+|--------|-----------:| --- | --- |
+| `PASS` | 2026-08-04 | | |
 
 ### MT-CANCEL-02 확정 후 3분 이후, deadline 전 취소
 
 통과 기준:
 
-- [ ] 취소 API가 200입니다.
-- [ ] 취소 회원은 `CANCELLED`입니다.
-- [ ] `members.penalty_score`가 1 증가합니다.
-- [ ] `match_penalty_events.event_type=CANCEL` 1건이 생성됩니다.
-- [ ] 첫 당일 귀책 취소 cooldown은 10분입니다.
-- [ ] cooldown의 `reason=CANCEL`, `related_group_id`가 일치합니다.
-- [ ] 비귀책 회원에게 penalty/cooldown이 없습니다.
-- [ ] group과 남은 회원 상태가 정책대로 종료됩니다.
-- [ ] 취소 회원 재신청이 cooldown 동안 차단됩니다.
-- [ ] 양쪽 종료 화면이 서로 모순되지 않습니다.
+- [X] 취소 API가 200입니다.
+- [X] 취소 회원은 `CANCELLED`입니다.
+- [X] `members.penalty_score`가 1 증가합니다.
+- [X] `match_penalty_events.event_type=CANCEL` 1건이 생성됩니다.
+- [X] 첫 당일 귀책 취소 cooldown은 10분입니다.
+- [X] cooldown의 `reason=CANCEL`, `related_group_id`가 일치합니다.
+- [X] 비귀책 회원에게 penalty/cooldown이 없습니다.
+- [X] group과 남은 회원 상태가 정책대로 종료됩니다.
+- [X] 취소 회원 재신청이 cooldown 동안 차단됩니다.
+- [X] 양쪽 종료 화면이 서로 모순되지 않습니다.
 
-| 판정 | group_id | 실행 시각 | 증거/메모 |
-| --- | ---: | --- | --- |
-| `FAIL` | | 2026-08-03 | 취소 완료 안내와 응답 대기 화면이 동시에 표시됨. 상태 판정 수정 후 재검증 |
+| 판정     | group_id | 실행 시각 | 증거/메모 |
+|--------| ---: | --- | --- |
+| `PASS` | | 2026-08-04 | 한 회원 ARRIVED 후 상대가 3분 이후 취소. 취소 회원만 penalty score +1·첫 CANCEL 10분 cooldown, 비귀책 회원 즉시 재신청, 양쪽 종료 화면 확인 |
 
 재검증 메모:
 
 - 2026-08-03 양쪽 모두 종료 카드로 전환되는 것을 확인했습니다.
 - 비귀책 회원은 즉시 `다시 신청하기`가 가능합니다.
 - 취소 회원은 약 10분 cooldown과 비활성화된 재신청 버튼이 표시됩니다.
-- 화면 복원 결함은 수정 확인했으며, DB penalty/cooldown 검증 전까지 최종 판정은
-  `PENDING`으로 유지합니다.
+- 화면 복원 결함 수정과 DB penalty/cooldown을 재검증하여 최종 `PASS`로 판정했습니다.
 
 ### MT-CANCEL-03 취소 멱등성
 
 수동 UI에서는 성공 후 action이 사라지므로 자동 통합 테스트를 주 검증으로
 사용합니다. 필요하면 Network 재전송으로 보조 확인합니다.
 
-- [ ] 동일 group/member/cause penalty event는 1건입니다.
-- [ ] cooldown은 1건입니다.
-- [ ] member penalty score는 한 번만 증가합니다.
-- [ ] `MEMBER_CANCELLED` event는 1건입니다.
-- [ ] `MATCH_CANCELLED` event는 1건입니다.
+- [X] 동일 group/member/cause penalty event는 1건입니다.
+- [X] cooldown은 1건입니다.
+- [X] member penalty score는 한 번만 증가합니다.
+- [X] `MEMBER_CANCELLED` event는 1건입니다.
+- [X] `MATCH_CANCELLED` event는 1건입니다.
 
-| 판정 | 실행 시각 | 증거/메모 |
-| --- | --- | --- |
-| `PENDING` | | 자동 통합 테스트 결과와 함께 기록 |
+| 판정     | 실행 시각 | 증거/메모 |
+|--------| --- | --- |
+| `PASS` | 2026-08-04 | 동일 cancellation 요청을 Copy as fetch로 재전송. 최초/재전송 모두 HTTP 200, penalty·cooldown·MEMBER_CANCELLED·MATCH_CANCELLED 각각 1건 유지, penalty score 1회만 증가 |
 
 ## 10. NO_SHOW Scheduler
 
@@ -759,77 +765,506 @@ WHERE member_id IN (2, 27)
 
 통과 기준:
 
-- [ ] deadline 전에는 NO_SHOW로 바뀌지 않습니다.
-- [ ] deadline 정각부터 도착 API를 거절합니다.
-- [ ] Scheduler가 `JOINED`/`ARRIVAL_TIME_SELECTED`를 `NO_SHOW`로 바꿉니다.
-- [ ] `no_show_at`이 저장됩니다.
-- [ ] `MEMBER_NO_SHOW` event가 한 번 생성됩니다.
-- [ ] penalty score가 3 증가합니다.
-- [ ] 첫 당일 NO_SHOW cooldown은 30분입니다.
-- [ ] `reason=NO_SHOW`, `related_group_id`가 일치합니다.
-- [ ] group 유지/취소와 비귀책 회원 상태가 정책과 일치합니다.
-- [ ] 양쪽 화면이 REST snapshot으로 종료 상태를 복원합니다.
+- [X] deadline 전에는 NO_SHOW로 바뀌지 않습니다.
+- [X] deadline 정각부터 도착 API를 거절합니다.
+- [X] Scheduler가 `JOINED`/`ARRIVAL_TIME_SELECTED`를 `NO_SHOW`로 바꿉니다.
+- [X] `no_show_at`이 저장됩니다.
+- [X] `MEMBER_NO_SHOW` event가 한 번 생성됩니다.
+- [X] penalty score가 3 증가합니다.
+- [X] 첫 당일 NO_SHOW cooldown은 30분입니다.
+- [X] `reason=NO_SHOW`, `related_group_id`가 일치합니다.
+- [X] group 유지/취소와 비귀책 회원 상태가 정책과 일치합니다.
+- [X] 양쪽 화면이 REST snapshot으로 종료 상태를 복원합니다.
 
-| 판정 | group_id | 실행 시각 | 증거/메모 |
-| --- | ---: | --- | --- |
-| `PENDING` | | | |
+| 판정     | group_id | 실행 시각 | 증거/메모 |
+|--------| ---: | --- | --- |
+| `PASS` | | 2026-08-04 | 화면·Network·Scheduler 종료, `no_show_at`, 회원별 MEMBER_NO_SHOW·penalty·cooldown 각 1건, related_group_id와 첫 NO_SHOW 30분 확인 |
 
 ### MT-NOSHOW-02 ARRIVED 제외
 
-- [ ] `ARRIVED` 회원은 NO_SHOW 대상이 아닙니다.
-- [ ] `CANCELLED`, `NO_SHOW`, `LEFT`도 다시 처리하지 않습니다.
-- [ ] 비귀책 회원에게 penalty/cooldown을 만들지 않습니다.
+- [X] `ARRIVED` 회원은 NO_SHOW 대상이 아닙니다.
+- [X] `CANCELLED`, `NO_SHOW`, `LEFT`도 다시 처리하지 않습니다.
+- [X] 비귀책 회원에게 penalty/cooldown을 만들지 않습니다.
 
-| 판정 | 실행 시각 | 증거/메모 |
-| --- | --- | --- |
-| `PENDING` | | |
+| 판정     | 실행 시각 | 증거/메모 |
+|--------| --- | --- |
+| `PASS` | | |
 
 ### MT-NOSHOW-03 재실행 멱등성
 
-- [ ] Scheduler 재실행 후 member 상태가 추가 변경되지 않습니다.
-- [ ] `MEMBER_NO_SHOW` event는 1건입니다.
-- [ ] penalty event는 1건입니다.
-- [ ] cooldown은 1건입니다.
-- [ ] penalty score는 한 번만 증가합니다.
+- [X] Scheduler 재실행 후 member 상태가 추가 변경되지 않습니다.
+- [X] `MEMBER_NO_SHOW` event는 1건입니다.
+- [X] penalty event는 1건입니다.
+- [X] cooldown은 1건입니다.
+- [X] penalty score는 한 번만 증가합니다.
 
 | 판정 | 실행 시각 | 증거/메모 |
 | --- | --- | --- |
-| `PENDING` | | 자동 통합 테스트를 주 검증으로 사용 |
+| `PASS` | 2026-08-04 | Scheduler 반복 실행 후 회원별 MEMBER_NO_SHOW·penalty·cooldown 각각 1건 유지 확인 |
 
 ### MT-NOSHOW-04 당일 반복 제한
 
-- [ ] 첫 NO_SHOW cooldown은 30분입니다.
-- [ ] 같은 KST 날짜의 두 번째 이상 NO_SHOW cooldown은 60분입니다.
-- [ ] 기존 active cooldown보다 새 만료가 짧으면 기존 만료를 보존합니다.
-- [ ] `manner_temperature`는 변경하지 않습니다.
+- [X] 첫 NO_SHOW cooldown은 30분입니다.
+- [X] 같은 KST 날짜의 두 번째 이상 NO_SHOW cooldown은 60분입니다.
+- [X] 기존 active cooldown보다 새 만료가 짧으면 기존 만료를 보존합니다.
+- [X] `manner_temperature`는 변경하지 않습니다.
 
 | 판정 | 실행 시각 | 증거/메모 |
 | --- | --- | --- |
-| `PENDING` | | 자동 통합 테스트를 주 검증으로 사용 |
+| `PASS` | 2026-08-04 | member 2에 2시간 `REPORT` cooldown을 준비한 뒤 NO_SHOW 처리. 기존 row는 `EXPIRED`, 새 `NO_SHOW` row는 `ACTIVE`이며 `expires_at`이 동일하게 보존됨. 화면에서도 약 116분 재신청 제한 확인 |
 
 ## 11. 인원 감소와 group 유지
 
 ### MT-GROUP-01 2명 group에서 1명 이탈
 
-- [ ] group은 `CANCELLED`입니다.
-- [ ] 귀책 회원은 `CANCELLED` 또는 `NO_SHOW`를 유지합니다.
-- [ ] 남은 비귀책 회원은 `LEFT`입니다.
-- [ ] `confirmedMemberCount=2` 이력은 유지합니다.
-- [ ] current group 응답은 종료 group을 반환하지 않습니다.
+- [X] group은 `CANCELLED`입니다.
+- [X] 귀책 회원은 `CANCELLED` 또는 `NO_SHOW`를 유지합니다.
+- [X] 남은 비귀책 회원은 `LEFT`입니다.
+- [X] `confirmedMemberCount=2` 이력은 유지합니다.
+- [X] current group 응답은 종료 group을 반환하지 않습니다.
+
+| 판정 | 실행 시각 | 증거/메모 |
+| --- | --- | --- |
+| `PASS` | 2026-08-04 | 한 회원 ARRIVED 후 상대 취소/NO_SHOW에서 2명 group 종료, 귀책 상태 유지, 비귀책 LEFT와 양쪽 current group 종료 확인 |
 
 ### MT-GROUP-02 3명 group에서 2명 유지
 
 두 계정 수동 환경만으로는 모든 경우를 만들기 어려우므로 자동 통합 테스트를
 주 검증으로 사용합니다.
 
-- [ ] 남은 2명 모두 `allow_minimum_two=true`이면 group을 유지합니다.
-- [ ] 한 명이라도 false이면 group을 취소합니다.
-- [ ] 유지 group은 `confirmedMemberCount=3`, `currentMemberCount=2`입니다.
-- [ ] 취소/NO_SHOW 회원은 current group 공개 목록에서 제외합니다.
+- [X] 남은 2명 모두 `allow_minimum_two=true`이면 group을 유지합니다.
+- [X] 한 명이라도 false이면 group을 취소합니다.
+- [X] 유지 group은 `confirmedMemberCount=3`, `currentMemberCount=2`입니다.
+- [X] 취소/NO_SHOW 회원은 current group 공개 목록에서 제외합니다.
 
-## 12. 상황별 DB 확인 SQL
+| 판정 | 실행 시각 | 증거/메모 |
+| --- | --- | --- |
+| `PASS` | 2026-08-04 | 3명 확정 후 남은 두 명 true이면 3→2로 유지하고 취소 회원 제외·무패널티 확인. 남은 두 명 중 false가 있으면 양쪽 종료 확인. 별도로 초기 제안에서 false 회원 취소 후 true 회원 2명의 현재 인원 시작과 2인 상태방 생성 확인 |
 
-### 12.1 최신 group과 전체 member
+## 12. 테스트별 PASS 판정 실행 시트
+
+이 절은 테스트를 수행하면서 그대로 복사해 사용하는 실행용 체크리스트입니다.
+공통 SQL만 보고 검증 쿼리를 다시 조합하지 않습니다.
+
+사용 방법:
+
+1. 테스트를 시작하기 전에 해당 시나리오의 초기화 조건을 확인합니다.
+2. 매칭이 확정되면 아래 SQL로 `group_id`를 확인해 기록합니다.
+3. 화면 동작과 Network 응답을 확인합니다.
+4. 해당 테스트 바로 아래의 DB 검증 SQL을 실행합니다.
+5. 모든 체크박스를 확인한 뒤 최종 판정의 `PENDING`을 `PASS` 또는 `FAIL`로 직접 변경합니다.
+
+변수 표기:
+
+- `:group_id`: 이번 테스트에서 생성된 `match_groups.id`
+- `:actor_member_id`: 도착 또는 취소를 실행한 회원 ID
+- `:other_member_id`: 상대 회원 ID
+- SQL 도구가 이름 있는 변수를 지원하지 않으면 실제 숫자로 바꿉니다.
+
+현재 테스트 group 확인:
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.status AS group_status,
+    g.confirmed_at,
+    g.confirmed_at + INTERVAL '3 minutes' AS penalty_starts_at,
+    g.confirmed_at + INTERVAL '30 minutes' AS arrival_deadline_at,
+    current_timestamp AS db_now,
+    array_agg(gm.member_id ORDER BY gm.member_id) AS member_ids
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.festival_id = 144
+  AND gm.member_id IN (2, 27)
+GROUP BY g.id
+HAVING count(*) FILTER (WHERE gm.member_id IN (2, 27)) = 2
+ORDER BY g.id DESC
+LIMIT 1;
+```
+
+### 12.1 MT-ARRIVAL-05 도착 완료 판정
+
+화면과 Network:
+
+- [ ] `도착했어요` 요청의 HTTP status가 `200`입니다.
+- [ ] 본인의 도착 예정 선택 UI와 `도착했어요` action이 사라집니다.
+- [ ] 실제 도착 시각이 표시됩니다.
+- [ ] 상대 화면과 양쪽 새로고침 snapshot에 반영됩니다.
+
+상태 검증:
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.status AS group_status,
+    g.started_at,
+    gm.member_id,
+    gm.status AS member_status,
+    gm.arrival_minutes,
+    gm.arrival_time_selected_at,
+    gm.arrived_at,
+    (gm.status = 'ARRIVED') AS pass_member_arrived,
+    (gm.arrived_at IS NOT NULL) AS pass_arrived_at_saved,
+    (g.status = 'IN_PROGRESS') AS pass_group_in_progress
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.id = :group_id
+ORDER BY gm.member_id;
+```
+
+판정 방법:
+
+- `actor_member_id` 행의 `pass_member_arrived`, `pass_arrived_at_saved`가 `true`여야 합니다.
+- 첫 도착이면 모든 행의 `pass_group_in_progress`가 `true`여야 합니다.
+- 아직 도착하지 않은 상대 회원은 `JOINED` 또는 `ARRIVAL_TIME_SELECTED` 상태여야 합니다.
+
+도착 event 중복 검증:
+
+```sql
+SELECT
+    :actor_member_id AS actor_member_id,
+    count(*) FILTER (
+        WHERE event_type = 'MEMBER_ARRIVED'
+          AND member_id = :actor_member_id
+    ) AS member_arrived_event_count,
+    count(*) FILTER (
+        WHERE event_type = 'MEMBER_ARRIVED'
+          AND member_id = :actor_member_id
+    ) = 1 AS pass_single_arrived_event
+FROM match_events
+WHERE group_id = :group_id;
+```
+
+| 확인 구분 | 판정 | 실행 시각 | 실제 값/증거 |
+| --- | --- | --- | --- |
+| 화면·Network | `PENDING` | | |
+| member `ARRIVED`, `arrived_at` | `PENDING` | | |
+| group `IN_PROGRESS` | `PENDING` | | |
+| `MEMBER_ARRIVED` 1건 | `PENDING` | | |
+| **MT-ARRIVAL-05 최종** | **`PENDING`** | | |
+
+최종 체크: [ ] `PASS` / [ ] `FAIL` / [ ] `BLOCKED`
+
+### 12.2 MT-CANCEL-01 확정 후 3분 이내 취소 판정
+
+취소 전에 경계를 확인합니다. `penalty_applies_now=false`일 때만 이 테스트를
+계속합니다.
+
+```sql
+SELECT
+    id AS group_id,
+    confirmed_at,
+    confirmed_at + INTERVAL '3 minutes' AS penalty_starts_at,
+    current_timestamp AS db_now,
+    current_timestamp >= confirmed_at + INTERVAL '3 minutes'
+        AS penalty_applies_now
+FROM match_groups
+WHERE id = :group_id;
+```
+
+화면과 Network:
+
+- [ ] 취소 API의 HTTP status가 `200`입니다.
+- [ ] 양쪽 화면이 종료 상태로 전환됩니다.
+- [ ] 취소 회원과 비귀책 회원 모두 응답 대기 화면으로 돌아가지 않습니다.
+
+group/member 검증:
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.status AS group_status,
+    g.cancelled_at AS group_cancelled_at,
+    g.cancel_reason AS group_cancel_reason,
+    gm.member_id,
+    gm.status AS member_status,
+    gm.cancelled_at AS member_cancelled_at,
+    gm.cancel_reason AS member_cancel_reason,
+    (g.status = 'CANCELLED') AS pass_group_cancelled,
+    (g.cancelled_at IS NOT NULL) AS pass_group_cancelled_at,
+    CASE
+        WHEN gm.member_id = :actor_member_id
+            THEN gm.status = 'CANCELLED'
+                 AND gm.cancelled_at IS NOT NULL
+                 AND gm.cancel_reason IS NOT NULL
+        WHEN gm.member_id = :other_member_id
+            THEN gm.status = 'LEFT'
+        ELSE false
+    END AS pass_member_state
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.id = :group_id
+ORDER BY gm.member_id;
+```
+
+패널티와 cooldown 미생성 검증:
+
+```sql
+SELECT
+    count(*) AS penalty_event_count,
+    count(*) = 0 AS pass_no_penalty_event
+FROM match_penalty_events
+WHERE related_group_id = :group_id;
+
+SELECT
+    count(*) AS cooldown_count,
+    count(*) = 0 AS pass_no_cooldown
+FROM match_cooldowns
+WHERE related_group_id = :group_id;
+```
+
+event 검증:
+
+```sql
+SELECT
+    count(*) FILTER (
+        WHERE event_type = 'MEMBER_CANCELLED'
+          AND member_id = :actor_member_id
+    ) AS member_cancelled_count,
+    count(*) FILTER (WHERE event_type = 'MATCH_CANCELLED')
+        AS match_cancelled_count,
+    count(*) FILTER (
+        WHERE event_type = 'MEMBER_CANCELLED'
+          AND member_id = :actor_member_id
+    ) = 1
+      AND count(*) FILTER (WHERE event_type = 'MATCH_CANCELLED') = 1
+        AS pass_event_counts
+FROM match_events
+WHERE group_id = :group_id;
+```
+
+| 확인 구분 | 판정 | 실행 시각 | 실제 값/증거 |
+| --- | --- | --- | --- |
+| 취소 전 3분 이내 | `PENDING` | | `penalty_applies_now=` |
+| 화면·Network | `PENDING` | | |
+| group/member 상태 | `PENDING` | | |
+| penalty 0건 | `PENDING` | | |
+| cooldown 0건 | `PENDING` | | |
+| 취소 event 각각 1건 | `PENDING` | | |
+| **MT-CANCEL-01 최종** | **`PENDING`** | | |
+
+최종 체크: [ ] `PASS` / [ ] `FAIL` / [ ] `BLOCKED`
+
+### 12.3 MT-CANCEL-02 확정 후 3분 이후 취소 판정
+
+취소 전에 12.2의 경계 SQL을 실행하여 `penalty_applies_now=true`인지 확인합니다.
+
+group/member 상태는 12.2의 group/member SQL로 확인합니다. 추가로 아래 SQL을
+실행합니다.
+
+패널티 검증:
+
+```sql
+SELECT
+    pe.id,
+    pe.member_id,
+    pe.event_type,
+    pe.score_delta,
+    pe.reason,
+    pe.related_group_id,
+    pe.created_at,
+    (pe.member_id = :actor_member_id) AS pass_actor,
+    (pe.event_type = 'CANCEL') AS pass_cancel_type,
+    (pe.score_delta = 1) AS pass_score_delta
+FROM match_penalty_events pe
+WHERE pe.related_group_id = :group_id
+ORDER BY pe.id;
+```
+
+예상 결과는 취소 회원의 `CANCEL`, `score_delta=1` 한 행입니다. 상대 회원 행은
+없어야 합니다.
+
+회원 누적 점수와 cooldown 검증:
+
+```sql
+SELECT id, nickname, penalty_score, manner_temperature
+FROM members
+WHERE id IN (:actor_member_id, :other_member_id)
+ORDER BY id;
+
+SELECT
+    id,
+    member_id,
+    reason,
+    status,
+    starts_at,
+    expires_at,
+    related_group_id,
+    (member_id = :actor_member_id) AS pass_actor,
+    (reason = 'CANCEL') AS pass_cancel_reason,
+    (status = 'ACTIVE') AS pass_active,
+    (expires_at - starts_at = INTERVAL '10 minutes') AS pass_first_duration,
+    (starts_at <= current_timestamp AND expires_at > current_timestamp)
+        AS effective_active
+FROM match_cooldowns
+WHERE related_group_id = :group_id
+ORDER BY id;
+```
+
+event는 12.2의 event SQL로 확인합니다.
+
+| 확인 구분 | 판정 | 실행 시각 | 실제 값/증거 |
+| --- | --- | --- | --- |
+| 취소 전 3분 이후 | `PENDING` | | `penalty_applies_now=` |
+| 화면·Network | `PENDING` | | |
+| group/member 상태 | `PENDING` | | |
+| 취소 회원 penalty `+1` 1건 | `PENDING` | | |
+| 취소 회원 cooldown 10분 1건 | `PENDING` | | |
+| 비귀책 회원 penalty/cooldown 없음 | `PENDING` | | |
+| 취소 event 각각 1건 | `PENDING` | | |
+| **MT-CANCEL-02 최종** | **`PENDING`** | | |
+
+최종 체크: [ ] `PASS` / [ ] `FAIL` / [ ] `BLOCKED`
+
+### 12.4 MT-NOSHOW-01 30분 마감 판정
+
+Scheduler 처리 전에 마감 상태를 확인합니다.
+
+```sql
+SELECT
+    id AS group_id,
+    status AS group_status,
+    confirmed_at,
+    confirmed_at + INTERVAL '30 minutes' AS arrival_deadline_at,
+    current_timestamp AS db_now,
+    current_timestamp >= confirmed_at + INTERVAL '30 minutes'
+        AS no_show_due_now
+FROM match_groups
+WHERE id = :group_id;
+```
+
+`no_show_due_now=true`이고 Scheduler 실행 주기가 지난 다음 검증합니다.
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.status AS group_status,
+    g.cancelled_at,
+    g.cancel_reason AS group_cancel_reason,
+    gm.member_id,
+    gm.status AS member_status,
+    gm.arrived_at,
+    gm.no_show_at,
+    gm.cancel_reason AS member_cancel_reason
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.id = :group_id
+ORDER BY gm.member_id;
+
+SELECT
+    id,
+    member_id,
+    event_type,
+    score_delta,
+    related_group_id,
+    created_at
+FROM match_penalty_events
+WHERE related_group_id = :group_id
+ORDER BY id;
+
+SELECT
+    id,
+    member_id,
+    reason,
+    status,
+    starts_at,
+    expires_at,
+    related_group_id,
+    (expires_at - starts_at = INTERVAL '30 minutes') AS pass_first_duration
+FROM match_cooldowns
+WHERE related_group_id = :group_id
+ORDER BY id;
+
+SELECT
+    event_type,
+    member_id,
+    count(*) AS event_count
+FROM match_events
+WHERE group_id = :group_id
+  AND event_type IN ('MEMBER_NO_SHOW', 'MATCH_CANCELLED')
+GROUP BY event_type, member_id
+ORDER BY event_type, member_id;
+```
+
+예상 결과:
+
+- 마감까지 도착하지 않은 회원은 `NO_SHOW`, `no_show_at IS NOT NULL`입니다.
+- `ARRIVED` 회원은 그대로 유지되며 패널티와 cooldown이 없습니다.
+- NO_SHOW 회원마다 `event_type=NO_SHOW`, `score_delta=3` 패널티가 한 건입니다.
+- 첫 당일 NO_SHOW라면 `reason=NO_SHOW`인 30분 cooldown이 한 건입니다.
+- `MEMBER_NO_SHOW`는 대상 회원마다 한 건이며, 2명 유지가 불가능해 종료되면
+  `MATCH_CANCELLED`도 한 건입니다.
+
+| 확인 구분 | 판정 | 실행 시각 | 실제 값/증거 |
+| --- | --- | --- | --- |
+| 30분 마감 경과 | `PENDING` | | `no_show_due_now=` |
+| member `NO_SHOW`, `no_show_at` | `PENDING` | | |
+| ARRIVED 회원 제외 | `PENDING` | | |
+| penalty `+3` | `PENDING` | | |
+| 첫 cooldown 30분 | `PENDING` | | |
+| event 중복 없음 | `PENDING` | | |
+| group/비귀책 회원 상태 | `PENDING` | | |
+| 양쪽 화면 종료 snapshot | `PENDING` | | |
+| **MT-NOSHOW-01 최종** | **`PENDING`** | | |
+
+최종 체크: [ ] `PASS` / [ ] `FAIL` / [ ] `BLOCKED`
+
+### 12.5 MT-CANCEL-03·MT-NOSHOW-03 멱등성 판정
+
+반복 요청 또는 Scheduler 재실행 전과 후에 같은 SQL을 각각 실행하여 개수를
+비교합니다.
+
+```sql
+SELECT
+    event_type,
+    member_id,
+    count(*) AS event_count
+FROM match_events
+WHERE group_id = :group_id
+  AND event_type IN (
+      'MEMBER_CANCELLED',
+      'MEMBER_NO_SHOW',
+      'MATCH_CANCELLED'
+  )
+GROUP BY event_type, member_id
+ORDER BY event_type, member_id;
+
+SELECT
+    member_id,
+    event_type,
+    count(*) AS penalty_event_count,
+    sum(score_delta) AS score_delta_sum
+FROM match_penalty_events
+WHERE related_group_id = :group_id
+GROUP BY member_id, event_type
+ORDER BY member_id, event_type;
+
+SELECT
+    member_id,
+    reason,
+    count(*) AS cooldown_count,
+    min(starts_at) AS first_starts_at,
+    max(expires_at) AS last_expires_at
+FROM match_cooldowns
+WHERE related_group_id = :group_id
+GROUP BY member_id, reason
+ORDER BY member_id, reason;
+```
+
+| 확인 구분 | 판정 | 실행 시각 | 반복 전/후 값 |
+| --- | --- | --- | --- |
+| member event 개수 동일 | `PENDING` | | |
+| `MATCH_CANCELLED` 개수 동일 | `PENDING` | | |
+| penalty 개수·합계 동일 | `PENDING` | | |
+| cooldown 개수·만료 동일 | `PENDING` | | |
+| member 상태·시각 동일 | `PENDING` | | |
+| **멱등성 최종** | **`PENDING`** | | |
+
+최종 체크: [ ] `PASS` / [ ] `FAIL` / [ ] `BLOCKED`
+
+## 13. 공통·상황별 DB 참고 SQL
+
+### 13.1 최신 group과 전체 member
 
 active group 조건을 넣지 않아 취소된 group도 조회합니다.
 
@@ -858,7 +1293,7 @@ WHERE gm.member_id IN (2, 27)
 ORDER BY g.id DESC, gm.id;
 ```
 
-### 12.2 3분과 30분 경계
+### 13.2 3분과 30분 경계
 
 ```sql
 SELECT
@@ -880,7 +1315,7 @@ ORDER BY g.id DESC
 LIMIT 1;
 ```
 
-### 12.3 pool, attempt, proposal과 response
+### 13.3 pool, attempt, proposal과 response
 
 ```sql
 SELECT *
@@ -915,7 +1350,7 @@ WHERE proposal.member_id IN (2, 27)
 ORDER BY response.id DESC;
 ```
 
-### 12.4 penalty와 회원 누적 점수
+### 13.4 penalty와 회원 누적 점수
 
 ```sql
 SELECT id, nickname, penalty_score, manner_temperature
@@ -929,7 +1364,7 @@ WHERE member_id IN (2, 27)
 ORDER BY id DESC;
 ```
 
-### 12.5 cooldown
+### 13.5 cooldown
 
 ```sql
 SELECT
@@ -942,7 +1377,7 @@ WHERE member_id IN (2, 27)
 ORDER BY id DESC;
 ```
 
-### 12.6 group event
+### 13.6 group event
 
 ```sql
 SELECT *
@@ -958,7 +1393,7 @@ ORDER BY id;
 - `MATCH_CANCELLED`
 - 동일 원인 event 중복 여부
 
-### 12.7 current group 정합성
+### 13.7 current group 정합성
 
 ```sql
 SELECT
@@ -977,7 +1412,7 @@ WHERE g.id = :group_id
 GROUP BY g.id, g.confirmed_member_count;
 ```
 
-## 13. 발견 문제 기록
+## 14. 발견 문제 기록
 
 ### ISSUE-MR-001 유효하지 않은 check-in을 일반 연결 오류로 표시
 
@@ -1030,7 +1465,7 @@ GROUP BY g.id, g.confirmed_member_count;
 
 | 항목 | 내용 |
 | --- | --- |
-| 상태 | `OPEN` |
+| 상태 | `FIXED_PENDING_RETEST` |
 | 재현 | 두 회원이 각각 5분, 10분 도착 시간을 선택함 |
 | 실제 결과 | 상대 목록에 `선택한 도착 시간: N분`만 표시 |
 | 기대 결과 | 선택값과 함께 계산된 `예상 도착 시각`을 표시 |
@@ -1039,7 +1474,32 @@ GROUP BY g.id, g.confirmed_member_count;
 | 후보 파일 | `MatchRoomPage.tsx`, 관련 frontend 테스트 |
 | 수정 메모 | 수동 테스트 이슈를 모은 뒤 일괄 수정 |
 
-## 14. 신규 문제 기록 템플릿
+### ISSUE-MR-006 deadline 이후 도착 action 노출
+
+| 항목 | 내용 |
+| --- | --- |
+| 상태 | `FIXED` |
+| 발견 시각(KST) | 2026-08-04 |
+| 재현 | 두 회원이 도착하지 않은 상태에서 `arrivalDeadlineAt` 경과까지 MatchRoom 유지 |
+| 실제 결과 | 도착 예정 시간 선택은 차단되지만 `도착했어요` action은 계속 노출되고, 실행하면 deadline 초과 API 오류를 일반 저장 실패로 표시 |
+| 기대 결과 | deadline부터 도착 예정 선택과 `도착했어요` action을 모두 차단하고, Scheduler 결과를 기다리는 안내를 표시한 뒤 종료 snapshot으로 이동 |
+| 서버 계약 | frontend가 임의로 `NO_SHOW`를 만들지 않고 REST polling/WebSocket refresh로 Scheduler 처리 결과를 복원 |
+| 후보 파일 | `MatchRoomPage.tsx`, 관련 frontend 테스트 |
+| 수정 메모 | action 노출 조건에 deadline을 반영하고 Scheduler 처리 대기 UI를 추가함. frontend 자동 테스트와 두 브라우저 재검증 완료 |
+
+### ISSUE-MR-007 종료 안내가 새 매칭에도 유지됨
+
+| 항목 | 내용 |
+| --- | --- |
+| 상태 | `FIXED` |
+| 발견 시각(KST) | 2026-08-04 |
+| 재현 | MatchRoom 취소·NO_SHOW 종료 후 `/matching`에서 다시 신청하기, 새 조건 선택, 새 매칭 신청 또는 새로고침 |
+| 실제 결과 | 이전 그룹의 `matchRoomNotice`가 Router history state에 남아 새 제안·새 그룹 화면에도 계속 표시 |
+| 기대 결과 | 종료 안내는 최초 `/matching` 진입에서만 표시하고 재신청·새 pool 신청과 새로고침에서는 제거 |
+| 원인 | `MatchingConditionPage`가 `location.state.matchRoomNotice`를 읽기만 하고 history state를 소비하지 않음 |
+| 수정 메모 | 안내를 local 일회성 상태로 옮긴 뒤 Router state에서 즉시 제거하고 재신청·새 pool 신청 시 화면 안내도 제거. frontend 자동 테스트와 브라우저 재검증 완료 |
+
+## 15. 신규 문제 기록 템플릿
 
 ```text
 ### ISSUE-MR-NNN 제목
@@ -1061,7 +1521,7 @@ GROUP BY g.id, g.confirmed_member_count;
 - 수정 요청 메모:
 ```
 
-## 15. 테스트 실행 기록
+## 16. 테스트 실행 기록
 
 | Test ID | 실행 시각 | member/group | 판정 | 증거 | 수정 요청 메모 |
 | --- | --- | --- | --- | --- | --- |
@@ -1069,10 +1529,17 @@ GROUP BY g.id, g.confirmed_member_count;
 | MT-ARRIVAL-01 | 2026-08-03 | member 2/27 | `PASS` | 선택 변경과 상대 반영 | 실제 상대 예상 시각 표시는 ISSUE-MR-005 |
 | MT-ARRIVAL-02 | 2026-08-03 | member 2/27 | `PASS` | 현재 선택 표시·비활성화·미연장 안내 확인 | |
 | MT-ARRIVAL-03 | 2026-08-03 | member 2/27 | `PASS` | 예정 시각 경과 안내, 다른 값 변경, 상대 동기화 확인 | 409 경계는 MT-ARRIVAL-04 |
+| MT-ARRIVAL-04 | 2026-08-04 | member 2/27 | `PASS` | deadline 이후 API 거절, NO_SHOW Scheduler 양쪽 종료 화면과 첫 NO_SHOW 30분 cooldown 확인 | DB 검증은 12.4에서 추가 확인, deadline 이후 action 노출은 ISSUE-MR-006 |
 | MT-CANCEL-02 | 2026-08-03 | member 2/27 | `FAIL` | 종료 안내와 응답 대기 동시 표시 | 상태 복원 수정 후 재검증 |
-| MT-CANCEL-02-R1 | 2026-08-03 | member 2/27 | `PENDING` | 양쪽 종료 카드, 귀책 회원 10분 cooldown 확인 | DB 검증 후 최종 PASS 판정 |
+| MT-CANCEL-02-R1 | 2026-08-04 | member 2/27 | `PASS` | 한 회원 ARRIVED 후 상대 취소, 양쪽 종료 카드, 취소 회원만 +1·10분 cooldown, 비귀책 회원 즉시 재신청 확인 | 기존 FAIL 재검증 완료 |
+| MT-CANCEL-03 | 2026-08-04 | member 2/27 | `PASS` | 동일 cancellation Copy as fetch 재전송, HTTP 200/200 | penalty·cooldown·member/group event 각 1건과 penalty score 1회 증가 유지 |
+| MT-NOSHOW-01 | 2026-08-04 | member 2/27 | `PASS` | deadline 거절, Scheduler 종료, `no_show_at`, penalty/event/cooldown 각 1건, related_group_id와 양쪽 종료 snapshot 확인 | |
+| MT-NOSHOW-03 | 2026-08-04 | member 2/27 | `PASS` | Scheduler 반복 실행 뒤 회원별 MEMBER_NO_SHOW·penalty·cooldown 각 1건 유지 | |
+| MT-NOSHOW-04 | 2026-08-04 | member 2/27 | `PASS` | 첫 NO_SHOW 30분, 같은 KST 날짜 두 번째 NO_SHOW 60분, manner_temperature 불변과 기존 2시간 active cooldown 만료 보존 확인 | 기존 REPORT row EXPIRED, 새 NO_SHOW row ACTIVE 및 expires_at 동일 |
+| MT-GROUP-01 | 2026-08-04 | member 2/27 | `PASS` | 2명 group에서 취소/NO_SHOW 후 group 종료, 귀책 상태 유지와 비귀책 LEFT 확인 | |
+| MT-GROUP-02 | 2026-08-04 | member 1/2/27 | `PASS` | true+true 잔존 시 confirmed 3/current 2 유지, false 포함 잔존 시 group 종료, 취소 회원 제외와 무패널티 확인 | 초기 미달 제안에서 false 회원 취소 후 true 회원 2명의 2인 상태방 생성도 확인 |
 
-## 16. 완료 조건
+## 17. 완료 조건
 
 이 브랜치의 수동 검증 완료는 다음을 모두 만족할 때 선언합니다.
 
