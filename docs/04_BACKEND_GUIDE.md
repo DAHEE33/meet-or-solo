@@ -92,11 +92,20 @@ REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
 
 ## current match group 조회
 
-`PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고 인증
-회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
+현재 `PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고
+인증 회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
 도착이면 group을 IN_PROGRESS로 전환하고 갱신된 전체 snapshot을 반환합니다.
 도착은 `now < confirmedAt + 30분`에서만 허용하고 deadline 정각부터는
 NO_SHOW Scheduler 판정 대상으로 넘깁니다.
+
+후속 단말 위치 확인에서는 신고 완료와 위치정보 약관·동의 적용을 전제로 이
+API가 브라우저에서 측정한 위도·경도, 정확도와 측정 시각을 받습니다. Backend는
+인증 회원의 group snapshot에 저장된 만남 포인트와의 거리를 직접 계산하고,
+정확도·측정값 유효시간·도착 허용 반경을 모두 만족할 때만 기존 상태 전이를
+수행합니다. 클라이언트가 계산한 거리나 `verified` 값은 받거나 신뢰하지
+않습니다. 원본 사용자 좌표는 DB, event와 log에 저장하지 않고 요청 처리 후
+폐기합니다. GPS 조작 가능성이 남으므로 허위 도착 분쟁은 신고와 운영 검토로
+보완합니다.
 
 `PUT /api/matching/groups/me/current/cancellation`은 회원/group 식별자를 받지
 않고 `SCHEDULE_CHANGED`, `TRANSPORTATION_ISSUE`, `OTHER` 중 하나만 받습니다.
@@ -110,6 +119,7 @@ NO_SHOW Scheduler 판정 대상으로 넘깁니다.
 
 - group: `groupId`, `festivalId`, `status`, `confirmedMemberCount`, `confirmedAt`
 - festival: `festivalId`, `title`, `address`, `eventStartDate`, `eventEndDate`
+- meeting point(후속): 장소 ID, 장소명, 주소, 좌표와 단말 확인 반경 안내
 - member: `memberId`, `nickname`, `profileImageUrl`, `status`
 
 group/festival projection 1회와 member/profile projection 1회로 조회해 N+1을

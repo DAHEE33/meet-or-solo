@@ -318,7 +318,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인/매칭 기준점으로 사용한다. |
+| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인 및 만남 장소 후보 검색 기준점으로 사용한다. |
 | 주요 컬럼 | `id`, `content_id`, `content_type_id`, `title`, `address`, `area_code`, `sigungu_code`, `event_start_date`, `event_end_date`, `map_x`, `map_y`, `checkin_radius_meters`, `meeting_radius_meters`, `status`, `last_synced_at`, `raw_data`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | 없음 |
@@ -333,6 +333,17 @@ DATA_CORRECTION
 `id`, `title`, `address`, `event_start_date`, `event_end_date`만 사용합니다.
 기존 `match_groups.festival_id` FK로 join할 수 있어 MatchRoomPage 작업에서는
 신규 migration을 추가하지 않았습니다.
+
+`map_x`, `map_y`는 축제 공식 좌표이며 실제 만남 장소를 뜻하지 않습니다.
+`meeting_radius_meters`는 주변 만남 장소 후보 검색 범위로 사용하고 단말 위치
+확인 반경과 분리합니다. 단말 확인 반경은 Backend 정책값으로 관리하고 current
+group 응답에는 사용자 안내에 필요한 값만 제공합니다.
+
+축제별 검증된 만남 장소 여러 개를 관리하려면 후속 migration에서
+`festival_meeting_points` 테이블을 추가합니다. 장소 ID, 축제 FK, 장소명, 주소,
+`map_x`, `map_y`, 활성 여부와 배정 순서를 관리하고, 그룹 확정 시 선택된 값을
+기존 `match_groups.meeting_*` 컬럼에 snapshot으로 복사합니다. 따라서 후보 관리
+테이블에는 migration이 필요하지만 group snapshot 컬럼은 기존 컬럼을 사용합니다.
 
 ### festival_images
 
@@ -498,7 +509,7 @@ DATA_CORRECTION
 | CHECK | `confirmed_member_count BETWEEN 2 AND 4`, `status IN (...)` |
 | UNIQUE | `attempt_id` |
 | INDEX | `idx_match_groups_festival_status`, `idx_match_groups_status_confirmed_at` |
-| 개인정보/보안 | 만남 포인트는 축제 공식 좌표 또는 공공 장소 기준으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
+| 개인정보/보안 | 축제 좌표 주변에서 확정한 실제 POI를 group snapshot으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
 | MVP 필수 | 필수 |
 
 ### match_group_members
@@ -526,6 +537,10 @@ DATA_CORRECTION
 도착 완료도 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED` event
 type만 사용합니다. 최초 도착에서 group을 IN_PROGRESS로 전환하고 기존 도착
 예정 값은 유지하며 신규 migration은 없습니다.
+
+단말 위치 확인을 추가하더라도 원본 사용자 위도·경도, 계산 거리와 `verified`
+컬럼은 추가하지 않습니다. Backend가 요청의 좌표로 거리를 일회성 계산하고 원본
+위치정보를 폐기한 뒤 기존 도착 상태와 시각만 저장합니다.
 
 `V14`는 group 확정 당시 pool의 `allow_minimum_two`를 member snapshot으로
 저장합니다. 기존 row는 group attempt, attempt member와 pool 관계로
