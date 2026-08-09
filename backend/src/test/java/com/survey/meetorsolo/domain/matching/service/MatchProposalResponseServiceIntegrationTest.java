@@ -141,6 +141,14 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(attemptStatus(attempt)).isEqualTo("CONFIRMED");
         assertThat(jdbc.queryForMap("SELECT status,confirmed_member_count FROM match_groups WHERE attempt_id=?",attempt))
                 .containsEntry("status","CONFIRMED").containsEntry("confirmed_member_count",3);
+        assertThat(jdbc.queryForMap("""
+                SELECT meeting_place_name, meeting_place_address, meeting_place_content_id,
+                       meeting_map_x, meeting_map_y
+                FROM match_groups WHERE attempt_id=?
+                """, attempt))
+                .containsEntry("meeting_place_name", "테스트 만남 장소 A")
+                .containsEntry("meeting_place_address", "강원 테스트로 1")
+                .containsEntry("meeting_place_content_id", "fixture-place-a");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_group_members gm JOIN match_groups g ON g.id=gm.group_id WHERE g.attempt_id=? AND gm.status='JOINED'",Integer.class,attempt)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006,9120010) AND status='MATCHED'",Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT confirmed_at FROM match_attempts WHERE id=?",OffsetDateTime.class,attempt)).isEqualTo(RESPONSE_AT);
@@ -255,6 +263,12 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(groupQueries.currentGroup(9110002).groupId())
                 .isEqualTo(groupQueries.currentGroup(9110006).groupId());
         assertThat(groupQueries.currentGroup(9110002).confirmedMemberCount()).isEqualTo(2);
+        assertThat(groupQueries.currentGroup(9110002).meetingPoint())
+                .isEqualTo(groupQueries.currentGroup(9110006).meetingPoint());
+        assertThat(groupQueries.currentGroup(9110002).meetingPoint().contentId())
+                .isEqualTo("fixture-place-a");
+        assertThat(groupQueries.currentGroup(9110002).meetingPoint().arrivalRadiusMeters())
+                .isEqualTo(150);
     }
 
     @Test void round2_진행동의와_취소_race는_실패_하나로_종료한다() throws Exception {
@@ -370,6 +384,36 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(attemptStatus(first)).isEqualTo("WAITING_RESPONSES"); assertThat(attemptStatus(second)).isEqualTo("WAITING_RESPONSES");
     }
 
+    @Test void 같은_축제의_서로_다른_group_동시_확정은_festival_lock으로_서로_다른_순번을_받는다() throws Exception {
+        long first = prepare(List.of(9120002L, 9120006L), NOW.plusMinutes(1));
+        long second = prepare(List.of(9120010L, 9120011L), NOW.plusMinutes(1));
+        service.respond(proposal(first, 9110002), 9110002, "ACCEPTED", RESPONSE_AT);
+        service.respond(proposal(second, 9110010), 9110010, "ACCEPTED", RESPONSE_AT);
+
+        runConcurrent(
+                () -> service.respond(proposal(first, 9110006), 9110006, "ACCEPTED", RESPONSE_AT.plusSeconds(1)),
+                () -> service.respond(proposal(second, 9110011), 9110011, "ACCEPTED", RESPONSE_AT.plusSeconds(1)));
+
+        assertThat(List.of(groupPlace(first), groupPlace(second)))
+                .containsExactlyInAnyOrder("fixture-place-a", "fixture-place-b");
+    }
+
+    @Test void 기존_snapshot_수에_따라_A_B_A로_순환하고_후보_수정은_과거_snapshot을_바꾸지_않는다() {
+        long first = prepare(List.of(9120002L, 9120006L), NOW.plusMinutes(1));
+        service.respond(proposal(first, 9110002), 9110002, "ACCEPTED", RESPONSE_AT);
+        service.respond(proposal(first, 9110006), 9110006, "ACCEPTED", RESPONSE_AT);
+        assertThat(groupPlace(first)).isEqualTo("fixture-place-a");
+
+        jdbc.update("UPDATE match_pools SET status='WAITING' WHERE id IN (9120010,9120011)");
+        long second = prepare(List.of(9120010L, 9120011L), NOW.plusMinutes(1));
+        service.respond(proposal(second, 9110010), 9110010, "ACCEPTED", RESPONSE_AT.plusSeconds(1));
+        service.respond(proposal(second, 9110011), 9110011, "ACCEPTED", RESPONSE_AT.plusSeconds(1));
+        assertThat(groupPlace(second)).isEqualTo("fixture-place-b");
+
+        jdbc.update("UPDATE festival_meeting_points SET name='수정된 장소', status='INACTIVE' WHERE kakao_place_id='fixture-place-a'");
+        assertThat(groupPlace(first)).isEqualTo("fixture-place-a");
+    }
+
     @Test void DB_unique_constraint가_한_proposal의_response_중복을_차단한다() {
         long attempt=prepare(3,NOW.plusMinutes(1)); long proposal=proposal(attempt,9110002);
         service.respond(proposal,9110002,"ACCEPTED",RESPONSE_AT);
@@ -410,6 +454,23 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(count("match_responses","attempt_id",attempt)).isOne();
         assertThat(count("match_groups","attempt_id",attempt)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006) AND status='PROPOSED'",Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void 대기_중_모든_후보가_비활성화되면_마지막_응답과_group_pool_attempt_event를_rollback한다() {
+        long attempt = prepare(2, NOW.plusMinutes(1));
+        long first = proposal(attempt, 9110002), last = proposal(attempt, 9110006);
+        service.respond(first, 9110002, "ACCEPTED", RESPONSE_AT);
+        jdbc.update("UPDATE festival_meeting_points SET status='INACTIVE' WHERE festival_id=9100001");
+
+        assertThatThrownBy(() -> service.respond(last, 9110006, "ACCEPTED", RESPONSE_AT.plusSeconds(1)))
+                .isInstanceOf(MatchProposalResponseException.class);
+        assertThat(attemptStatus(attempt)).isEqualTo("WAITING_RESPONSES");
+        assertThat(status("match_proposals", attempt, 9110006)).isEqualTo("SENT");
+        assertThat(count("match_responses", "attempt_id", attempt)).isOne();
+        assertThat(count("match_groups", "attempt_id", attempt)).isZero();
+        assertThat(count("match_events", "attempt_id", attempt)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006) AND status='PROPOSED'", Integer.class)).isEqualTo(2);
     }
 
     @ParameterizedTest
@@ -467,6 +528,7 @@ class MatchProposalResponseServiceIntegrationTest {
     private long proposal(long attempt,long member) { return proposal(attempt,member,1); }
     private long proposal(long attempt,long member,int round) { return jdbc.queryForObject("SELECT id FROM match_proposals WHERE attempt_id=? AND member_id=? AND proposal_round=?",Long.class,attempt,member,round); }
     private String attemptStatus(long attempt) { return jdbc.queryForObject("SELECT status FROM match_attempts WHERE id=?",String.class,attempt); }
+    private String groupPlace(long attempt) { return jdbc.queryForObject("SELECT meeting_place_content_id FROM match_groups WHERE attempt_id=?",String.class,attempt); }
     private String status(String table,long attempt,long member) { return jdbc.queryForObject("SELECT status FROM "+table+" WHERE attempt_id=? AND member_id=?",String.class,attempt,member); }
     private int count(String table,String column,long id) { return jdbc.queryForObject("SELECT count(*) FROM "+table+" WHERE "+column+"=?",Integer.class,id); }
     private int penaltyScore(long member) { return jdbc.queryForObject("SELECT penalty_score FROM members WHERE id=?",Integer.class,member); }

@@ -1,5 +1,42 @@
 # 진행 상태 기록
 
+## [10-매칭 24차] 축제별 만남 장소 관리·순환 배정·MatchRoom 지도
+
+상태: 구현 및 Backend·Frontend 자동 회귀 검증 완료
+
+- `V15`에서 축제별 복수 장소, 상태·좌표·배정 순서·Kakao 장소 ID 제약, 활성 후보 index와 nullable group 주소 snapshot을 추가했다.
+- 관리 API는 DB의 `ADMIN` role만 등록·수정·활성/비활성·목록 조회를 허용한다. Admin UI는 현재 mock dashboard 범위를 과도하게 확장하므로 제외했다.
+- 신규 pool은 해당 축제의 `ACTIVE` 장소가 없으면 `MATCHING_MEETING_POINT_NOT_READY`로 차단한다.
+- confirm transaction은 기존 lock 뒤 festival row를 `FOR UPDATE`로 잠그고 `assignment_order, id` 후보를 `assignedGroupCount % candidateCount`로 선택한다. 후보가 없으면 전체 rollback한다.
+- current-group은 snapshot 기반 nullable `meetingPoint`, 후보 검색 반경과 안내 전용 `arrivalRadiusMeters=150`을 반환한다.
+- MatchRoom은 도착 action 위에 장소 카드와 Kakao Maps 단일 핀을 표시하며 SDK 실패 시 장소명·주소를 유지한다. SDK loader는 동시 호출 Promise를 공유하고 실패한 script를 제거해 재진입 시 재시도한다. 정책과 충돌하던 mock route/page/data는 제거했다.
+- 최초 focused Backend 27건은 25건 성공, `FestivalMeetingPointAdminServiceTest`의 nested Mockito stubbing 오류 2건 실패였다. 운영 코드는 변경하지 않고 member mock을 지역 변수로 분리해 수정했다.
+- 수정 후 meeting-point focused unit/Controller 11건, test source compile, PostgreSQL Testcontainers repository 3건과 confirm transaction 46건, matching 전체 266건, Backend 전체 322건이 모두 성공했다.
+- `package-lock.json` 기준 Windows `npm ci`로 의존성을 복원했고 package manager와 lockfile 의미 내용은 변경하지 않았다. WSL npm은 자체 `Exit handler never called` 오류로 완료되지 않아 Windows npm으로 재실행했다.
+- Frontend 전체 Vitest 11 files 119건, `npx tsc --noEmit`, production/PWA build 성공.
+- 저장소 전체 `git diff --check`는 이번 수정 파일이 아닌 기존 working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했다. 이번 작업 파일 대상 검사는 통과했으며 기존 파일의 줄바꿈은 일괄 변경하지 않았다.
+- GPS 검증, 도착 body 변경, 자동 후보 검색, 관광공사 fallback, 장소별 반경, COMPLETED, 채팅과 Redis는 제외했다.
+
+## [10-매칭 23차 준비] 만남 포인트·단말 위치 확인 정책 정합화
+
+상태: 문서 정책 정리 완료, 구현 범위 결정 전
+
+- 관광공사 축제 공식 좌표를 실제 약속 장소가 아닌 주변 POI 검색 중심점으로 재정의
+- 관광공사 `locationBasedList1`은 관광 POI·fallback, Kakao Local API는 카페·편의점·주차장·음식점 등 실제 장소 후보 검색으로 역할 분리
+- Kakao Maps SDK는 최종 만남 포인트 지도와 핀 표시에 사용
+- `2km`는 후보 검색 범위이며 단말 위치 확인 반경이 아님을 명시
+- 위치 확인 기준점을 축제 좌표가 아니라 최종 확정 만남 포인트 좌표로 정리
+- 축제별 검증된 만남 장소를 복수 등록하고 그룹 확정 시 MVP 순환 방식으로
+  1곳을 고정 배정하는 정책 확정
+- 같은 시간대 여러 그룹에 같은 장소가 배정될 수 있으며 향후 혼잡도 기반으로
+  분산하는 확장 방향 명시
+- 위치기반서비스사업 신고와 관련 약관·동의를 전제로 사용자 좌표·정확도·측정
+  시각을 backend에 보내 일회성 거리 판정을 수행하는 정책으로 변경
+- 원본 사용자 좌표는 저장하지 않고 계산 후 폐기하며 허위 도착은 신고와 운영
+  검토로 보완
+- 단말 확인 반경, GPS 정확도와 측정값 유효시간은 결정 필요
+- backend/frontend 코드, Flyway migration, 환경설정과 외부 API 연동은 수정하지 않음
+
 ## [10-매칭 22차] 확정 후 자발적 취소와 30분 마감 NO_SHOW
 
 상태: 구현, dev DB·두 브라우저 수동 검증 및 Frontend 보완 완료. Windows PostgreSQL Testcontainers 전체 재실행은 별도 환경 검증으로 유지

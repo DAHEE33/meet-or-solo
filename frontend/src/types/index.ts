@@ -32,15 +32,6 @@ export interface UserProfile {
   intro?: string;
 }
 
-export interface MeetingPoint {
-  id: number;
-  name: string;
-  category: string;
-  description: string;
-  distanceKm: number;
-  walkMinutes: number;
-}
-
 export interface CourseStop {
   order: number;
   spotName: string;

@@ -56,6 +56,11 @@ class MatchingPoolEnteredAfterCommitTransactionIntegrationTest {
                     status, last_synced_at, created_at, updated_at
                 ) VALUES (?, ?, 15, 'AFTER_COMMIT 테스트 축제', '32', 'ACTIVE', now(), now(), now())
                 """, FESTIVAL_ID, "after-commit-" + FESTIVAL_ID);
+        jdbc.update("""
+                INSERT INTO festival_meeting_points(
+                    festival_id,kakao_place_id,name,address,map_x,map_y,status,assignment_order
+                ) VALUES (?, ?, '커밋 테스트 장소', '강원 커밋로 1', 128.1, 37.1, 'ACTIVE', 1)
+                """, FESTIVAL_ID, "after-commit-place-" + FESTIVAL_ID);
         insertMember(MEMBER_A_ID, "회원A");
         insertMember(MEMBER_B_ID, "회원B");
         insertCheckin(MEMBER_A_ID);
@@ -76,6 +81,7 @@ class MatchingPoolEnteredAfterCommitTransactionIntegrationTest {
                 """, FESTIVAL_ID);
         jdbc.update("DELETE FROM match_pools WHERE member_id IN (?, ?)", MEMBER_A_ID, MEMBER_B_ID);
         jdbc.update("DELETE FROM festival_checkins WHERE member_id IN (?, ?)", MEMBER_A_ID, MEMBER_B_ID);
+        jdbc.update("DELETE FROM festival_meeting_points WHERE festival_id = ?", FESTIVAL_ID);
         jdbc.update("DELETE FROM members WHERE id IN (?, ?)", MEMBER_A_ID, MEMBER_B_ID);
         jdbc.update("DELETE FROM festivals WHERE id = ?", FESTIVAL_ID);
     }

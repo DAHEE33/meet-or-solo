@@ -146,6 +146,15 @@
 - WebSocket refresh와 polling fallback의 상대 변경 감지, 자동 제거와 timer
   cleanup을 fake timer 또는 제어 가능한 scheduler로 검증
 - 도착 완료의 row lock, ARRIVED 멱등성, 최초 IN_PROGRESS 전환과 AFTER_COMMIT 알림 검증
+- 축제 좌표 기반 Kakao Local 후보 검색의 빈 결과, 중복, 거리 정렬과 fallback 검증
+- 축제별 복수 장소의 순환 배정과 후보 소진 후 재사용, 비활성 장소 제외 검증
+- 같은 축제 동시 확정의 festival row lock과 축제별 독립 순환을 PostgreSQL에서 검증
+- pool 진입 뒤 후보가 모두 비활성화되면 response/group/member/pool/attempt/event 전체 rollback 검증
+- 확정 만남 포인트 snapshot이 참여자, REST 복원과 재조회에서 동일한지 검증
+- Backend 거리 판정의 반경 내부·경계·외부, 잘못된 좌표, 낮은 정확도와 오래된 측정값 검증
+- 도착 API가 원본 좌표·정확도·측정 시각을 받고 계산 거리와 `verified`는 받지 않는지 검증
+- 원본 GPS 좌표가 DB, event payload, log와 WebSocket payload에 남지 않는지 검증
+- 허위 도착 신고 사유, 중복 신고 방지와 신고만으로 자동 제재되지 않는지 검증
 - 확정 후 취소의 3분 경계, KST 당일 CANCEL 횟수와 10/30/60분 cooldown 검증
 - 30분 deadline 경계의 NO_SHOW, KST 당일 30/60분 cooldown과 Scheduler 재실행 멱등성 검증
 - `allow_minimum_two` snapshot 기반 3명 이상/동의한 2명 유지와 비귀책 `LEFT` 검증
@@ -179,8 +188,9 @@ rollback된 transaction의 알림이 전달되지 않는지도 함께 확인합�
 - 매칭 제안 수락
 - 인원 미달 팝업 처리
 - `MatchRoomPage` 진입
+- 만남 포인트 지도와 장소명 확인
 - 도착 시간 선택
-- 도착했어요
+- 단말 위치 권한 허용 후 도착했어요
 - 평가/신고
 
 MVP 초기에는 백엔드 통합 테스트와 프론트 mock 테스트로 대체합니다. 추후 Playwright 기반 E2E 테스트 도입을 검토합니다.
@@ -202,7 +212,8 @@ Playwright는 추후 도입 후보로 둡니다.
 - 체크인 성공 mock
 - 매칭 제안 수락 mock
 - `MatchRoomPage` 진입
-- 도착했어요 버튼 클릭
+- 만남 포인트 표시 mock
+- 위치 권한·단말 위치 확인 mock
 - 신고 화면 진입
 
 E2E는 유지보수 비용이 높으므로 전체 기능을 무리하게 자동화하지 않습니다.

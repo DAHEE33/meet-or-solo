@@ -16,12 +16,18 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
                 matching_group.festival_id AS festivalId,
                 matching_group.status AS status,
                 matching_group.confirmed_member_count AS confirmedMemberCount,
+                matching_group.meeting_place_name AS meetingPlaceName,
+                matching_group.meeting_place_address AS meetingPlaceAddress,
+                matching_group.meeting_place_content_id AS meetingPlaceContentId,
+                matching_group.meeting_map_x AS meetingMapX,
+                matching_group.meeting_map_y AS meetingMapY,
                 matching_group.confirmed_at AS confirmedAt,
                 matching_group.started_at AS startedAt,
                 festival.title AS festivalTitle,
                 festival.address AS festivalAddress,
                 festival.event_start_date AS festivalEventStartDate,
-                festival.event_end_date AS festivalEventEndDate
+                festival.event_end_date AS festivalEventEndDate,
+                festival.meeting_radius_meters AS meetingRadiusMeters
             FROM match_groups matching_group
             JOIN match_group_members group_member
               ON group_member.group_id = matching_group.id
@@ -33,6 +39,13 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
             ORDER BY matching_group.id
             """, nativeQuery = true)
     List<ActiveGroupWithFestivalProjection> findActiveByMemberId(@Param("memberId") long memberId);
+
+    @Query(value = """
+            SELECT count(*) FROM match_groups
+            WHERE festival_id = :festivalId
+              AND meeting_place_content_id IS NOT NULL
+            """, nativeQuery = true)
+    long countAssignedMeetingPointGroups(@Param("festivalId") long festivalId);
 
     @Query(value = """
             SELECT matching_group.*
@@ -91,5 +104,11 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
         String getFestivalAddress();
         LocalDate getFestivalEventStartDate();
         LocalDate getFestivalEventEndDate();
+        String getMeetingPlaceName();
+        String getMeetingPlaceAddress();
+        String getMeetingPlaceContentId();
+        java.math.BigDecimal getMeetingMapX();
+        java.math.BigDecimal getMeetingMapY();
+        Integer getMeetingRadiusMeters();
     }
 }

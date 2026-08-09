@@ -68,6 +68,11 @@ class MatchingPoolEnteredEventIntegrationTest {
                 ) VALUES (?, ?, 15, '이벤트 테스트 축제', '32', 'ACTIVE', now(), now(), now())
                 """, FESTIVAL_ID, "trigger-event-" + FESTIVAL_ID);
         jdbc.update("""
+                INSERT INTO festival_meeting_points(
+                    festival_id,kakao_place_id,name,address,map_x,map_y,status,assignment_order
+                ) VALUES (?, ?, '이벤트 장소', '강원 이벤트로 1', 128.1, 37.1, 'ACTIVE', 1)
+                """, FESTIVAL_ID, "event-place-" + FESTIVAL_ID);
+        jdbc.update("""
                 INSERT INTO members(
                     id, provider, provider_user_id, nickname, role, status,
                     penalty_score, created_at, updated_at
@@ -86,6 +91,7 @@ class MatchingPoolEnteredEventIntegrationTest {
     void tearDown() {
         jdbc.update("DELETE FROM match_pools WHERE member_id = ?", MEMBER_ID);
         jdbc.update("DELETE FROM festival_checkins WHERE member_id = ?", MEMBER_ID);
+        jdbc.update("DELETE FROM festival_meeting_points WHERE festival_id = ?", FESTIVAL_ID);
         jdbc.update("DELETE FROM members WHERE id = ?", MEMBER_ID);
         jdbc.update("DELETE FROM festivals WHERE id = ?", FESTIVAL_ID);
     }

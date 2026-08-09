@@ -534,6 +534,8 @@ function ErrorCard({
   const requiresCheckIn = error instanceof ApiClientError
     && error.code === 'MATCHING_INVALID_REQUEST'
     && error.message.includes('체크인');
+  const meetingPointNotReady = error instanceof ApiClientError
+    && error.code === 'MATCHING_MEETING_POINT_NOT_READY';
   return (
     <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-coral/10">
@@ -541,15 +543,19 @@ function ErrorCard({
       </div>
       <div className="flex flex-col gap-1.5">
         <h2 className="text-[17px] font-bold text-ink">
-          {requiresCheckIn ? '축제 체크인이 필요해요' : '요청을 처리하지 못했어요'}
+          {requiresCheckIn
+            ? '축제 체크인이 필요해요'
+            : meetingPointNotReady ? '만남 장소 준비 중이에요' : '요청을 처리하지 못했어요'}
         </h2>
         <p className="text-[13px] text-ink/55">
           {error?.message ?? '진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.'}
         </p>
       </div>
-      <PrimaryButton onClick={requiresCheckIn ? onGoCheckIn : onRetry}>
-        {requiresCheckIn ? '체크인하기' : '다시 시도'}
-      </PrimaryButton>
+      {!meetingPointNotReady && (
+        <PrimaryButton onClick={requiresCheckIn ? onGoCheckIn : onRetry}>
+          {requiresCheckIn ? '체크인하기' : '다시 시도'}
+        </PrimaryButton>
+      )}
     </section>
   );
 }

@@ -17,6 +17,7 @@ public record MatchGroupResponse(
         OffsetDateTime startedAt,
         Long currentMemberId,
         MatchGroupFestivalResponse festival,
+        MatchGroupMeetingPointResponse meetingPoint,
         List<MatchGroupMemberResponse> members
 ) {
 
@@ -42,6 +43,7 @@ public record MatchGroupResponse(
                 null,
                 null,
                 festival,
+                null,
                 members
         );
     }
@@ -67,6 +69,7 @@ public record MatchGroupResponse(
                         : group.getStartedAt().atZone(KOREA_ZONE).toOffsetDateTime(),
                 currentMemberId,
                 MatchGroupFestivalResponse.from(group),
+                MatchGroupMeetingPointResponse.from(group),
                 List.copyOf(members)
         );
     }

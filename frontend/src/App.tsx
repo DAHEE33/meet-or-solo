@@ -5,7 +5,6 @@ import SignupPage from './pages/SignupPage';
 import TourSpotListPage from './pages/TourSpotListPage';
 import TourSpotDetailPage from './pages/TourSpotDetailPage';
 import MatchingConditionPage from './pages/MatchingConditionPage';
-import MeetingPointPage from './pages/MeetingPointPage';
 import SoloCoursePage from './pages/SoloCoursePage';
 import CheckInPage from './pages/CheckInPage';
 import MyPage from './pages/MyPage';
@@ -23,7 +22,6 @@ export default function App() {
         <Route path="/spots/:spotId" element={<TourSpotDetailPage />} />
         <Route path="/matching" element={<MatchingConditionPage />} />
         <Route path="/match-room" element={<MatchRoomPage />} />
-        <Route path="/meeting-point" element={<MeetingPointPage />} />
         <Route path="/solo-course" element={<SoloCoursePage />} />
         <Route path="/check-in" element={<CheckInPage />} />
         <Route path="/mypage" element={<MyPage />} />

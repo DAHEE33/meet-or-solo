@@ -1,5 +1,49 @@
 # 매칭 엔진 구현 기록
 
+## 40. 축제별 만남 장소와 그룹 snapshot
+
+`V15`는 `festival_meeting_points`와 `match_groups.meeting_place_address`를 추가합니다.
+운영자가 등록한 장소는 기본 `INACTIVE`이고 관리자 API로 검증 후 `ACTIVE`로 전환합니다.
+신규 pool은 활성 후보가 한 곳 이상인 축제에만 진입할 수 있습니다.
+
+```text
+attempt FOR UPDATE
+→ proposal FOR UPDATE
+→ attempt member FOR UPDATE
+→ accepted pools FOR UPDATE (id 오름차순)
+→ festival FOR UPDATE
+→ ACTIVE meeting points (assignment_order, id)
+→ snapshot group count
+→ group/member/event 저장
+→ pool MATCHED
+→ attempt CONFIRMED
+```
+
+index는 `assignedSnapshotGroupCount % activeCandidateCount`입니다. 같은 festival은
+festival row lock으로 직렬화되고 다른 festival은 독립적입니다. 후보가 없으면 마지막
+응답을 포함해 rollback하며 후보 수정·비활성화 후에도 기존 snapshot은 변하지 않습니다.
+
+current-group의 nullable `meetingPoint`는 group snapshot을 사용합니다. 후보 검색 반경만
+festival 값이고 도착 안내 반경은 `150`입니다. REST가 최종 원천이며 WebSocket은 재조회
+trigger 역할만 유지합니다. MatchRoom은 읽기 전용 Kakao Maps 단일 핀을 표시하고 SDK
+실패 시에도 장소명·주소를 유지합니다. SDK loader는 module-level Promise로 동시 삽입을
+막고 실패한 script와 상태를 정리해 다음 mount에서 재시도합니다. unmount 이후에는
+component 상태와 지도 DOM을 갱신하지 않습니다.
+
+최초 meeting-point focused Backend 27건은 25건이 성공했고, 2건은 운영 코드가 아닌
+`FestivalMeetingPointAdminServiceTest`의 nested Mockito stubbing 오류로 실패했습니다.
+member mock을 지역 변수로 분리한 뒤 focused unit/Controller 11건과 test source compile이
+성공했습니다. PostgreSQL Testcontainers repository 3건과 confirm transaction 46건,
+matching 전체 266건, Backend 전체 322건도 failure·error·skip 없이 통과했습니다.
+
+`package-lock.json` 기준 `npm ci`로 Frontend 의존성을 복원한 뒤 전체 Vitest 11 files
+119건, TypeScript 검사와 production/PWA build가 성공했습니다. WSL npm의
+`Exit handler never called` 오류 때문에 동일 명령을 Windows npm에서 완료했으며
+package manager와 lockfile 의미 내용은 변경하지 않았습니다.
+이번 작업 파일 대상 `git diff --check`는 통과했습니다. 저장소 전체 검사는 기존
+working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했으며,
+기존 사용자 파일의 줄바꿈은 일괄 변경하지 않았습니다.
+
 ## 1. 문서 목적과 범위
 
 이 문서는 `meet-or-solo` backend에 실제로 구현된 매칭 엔진을 코드 중심으로 설명합니다. 매칭 정책을 새로 정의하거나 DB 설계를 반복하기보다, 정책과 schema가 Spring service, PostgreSQL transaction, JUnit 테스트로 어떻게 연결되는지 정리합니다.
@@ -2921,12 +2965,21 @@ cursor pagination, 취소·안전 event, meeting point, COMPLETED와 자유 채�
 | --- | ---: | --- |
 | 축제 탐색 | 반경 2km | 현재 위치 주변의 진행 중 강원 축제 탐색 |
 | GPS 체크인 | 반경 500m | 선택한 축제 현장 체크인 검증 |
-| 만남 포인트 | 2km 이내 | 축제 공식 좌표 기반 고정 만남 포인트 안내 |
+| 만남 장소 후보 | 2km 이내 | 축제 공식 좌표를 중심으로 실제 POI 검색 |
+| 단말 위치 확인 | 결정 필요 | Backend에서 그룹별 확정 만남 포인트 기준 반경 확인 |
 | 주변 자원·후속 추천 | 반경 3km | 음식점·카페·관광지 밀도와 상황형 동선 추천 |
 
-따라서 `3km`는 만남 포인트 허용 범위가 아니라 관광 자원과 후속 추천 조회
-범위입니다. 매칭 확정 그룹의 만남 포인트는 축제 공식 좌표를 기준으로 1개를
-자동 안내하고, 사용자는 즉시·5분·10분·20분·30분의 구조화된 버튼만 사용합니다.
+따라서 `2km`는 단말 위치 확인 반경이 아니라 만남 장소 후보 검색 범위이고,
+`3km`는 관광 자원과 후속 추천 조회 범위입니다. 관광공사 축제 공식 좌표는
+Kakao Local API의 키워드·카테고리 검색 중심점으로 사용합니다. 최종 만남
+포인트는 실제 장소 ID, 장소명, 주소와 좌표를 가진 POI로 확정해 group에
+snapshot으로 저장합니다. 운영자가 축제별 검증 장소를 여러 개 사전 등록하고,
+그룹 확정 시 MVP 순환 방식으로 1곳을 고정 배정합니다. 후보보다 동시 그룹이
+많으면 같은 장소를 다시 사용할 수 있고 향후 시간대별 혼잡도 기반 배정으로
+확장합니다. 신고와 약관·동의를 전제로 사용자 GPS 좌표, 정확도와 측정 시각을
+Backend에 보내 일회성 거리 판정을 수행하며 원본 좌표는 저장하지 않습니다.
+단말 위치 확인 반경은 구현 전에 결정하고 허위 도착은 신고와 운영 검토로
+보완합니다.
 
 요구사항의 “2km 이내, 30분 내외 도착”과 `INTER-03`의 도착 인증·노쇼 자동
 감지·취소 시점별 패널티를 함께 해석하면, 30분은 매 선택마다 새로 시작하는
@@ -3039,7 +3092,8 @@ feature/wbs-10-b-match-room-no-show
   마감 Scheduler + NO_SHOW + 못 갈 것 같아요 + 취소/노쇼 패널티
 
 feature/wbs-10-b-meeting-point
-  축제 공식 좌표 기반 만남 포인트 API + Kakao Maps 핀
+  축제 좌표 기반 Kakao Local 후보 검색 + 만남 포인트 snapshot
+  + Kakao Maps 핀 + Backend 단말 위치 확인 + 허위 도착 신고 연결
 
 feature/wbs-10-b-match-room-completion
   그룹 완료 조건과 COMPLETED 전환
@@ -3449,7 +3503,8 @@ deadline부터 action을 숨기고 Scheduler 처리 대기 안내를 표시하�
 체크 결과는 `14_MATCH_ROOM_NO_SHOW_MANUAL_TEST.md`를 기준으로 합니다.
 
 이 범위에서 확정 후 취소·NO_SHOW 기능과 수동 검증은 완료했습니다. 다음 기능
-브랜치는 `feature/wbs-10-b-meeting-point`이며 축제 공식 좌표 기반 만남 포인트,
-2km 정책과 Kakao Maps 핀을 구현합니다. 이후
+브랜치는 `feature/wbs-10-b-meeting-point`이며 축제별 복수 만남 장소 등록,
+그룹별 고정 배정, 2km 후보 검색, Kakao Maps 핀과 Backend GPS 도착 판정을
+구현합니다. 이후
 `feature/wbs-10-b-match-room-completion`에서 group 완료 조건과
 `IN_PROGRESS -> COMPLETED` 전환을 구현합니다.
