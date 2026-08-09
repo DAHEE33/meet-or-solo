@@ -11,6 +11,20 @@ INSERT INTO festivals (
     (9100002, 'fixture-festival-2', '15', '다른 강원 축제', '32', '2026-07-01', '2026-07-31',
      128.2000000000, 37.2000000000, 'ACTIVE', '2026-07-17T14:00:00+09:00', '2026-07-17T14:00:00+09:00');
 
+INSERT INTO festival_meeting_points (
+    id, festival_id, kakao_place_id, name, address, map_x, map_y, status,
+    assignment_order, created_at, updated_at
+) VALUES
+    (9100101, 9100001, 'fixture-place-a', '테스트 만남 장소 A', '강원 테스트로 1',
+     128.1001000000, 37.1001000000, 'ACTIVE', 10,
+     '2026-07-17T14:00:00+09:00', '2026-07-17T14:00:00+09:00'),
+    (9100102, 9100001, 'fixture-place-b', '테스트 만남 장소 B', '강원 테스트로 2',
+     128.1002000000, 37.1002000000, 'ACTIVE', 20,
+     '2026-07-17T14:00:00+09:00', '2026-07-17T14:00:00+09:00'),
+    (9100201, 9100002, 'fixture-place-c', '다른 축제 만남 장소', '강원 다른로 1',
+     128.2001000000, 37.2001000000, 'ACTIVE', 10,
+     '2026-07-17T14:00:00+09:00', '2026-07-17T14:00:00+09:00');
+
 INSERT INTO members (
     id, provider, provider_user_id, nickname, role, status, created_at, updated_at
 ) SELECT

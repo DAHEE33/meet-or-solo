@@ -1,5 +1,22 @@
 # 진행 상태 기록
 
+## [10-매칭 24차] 축제별 만남 장소 관리·순환 배정·MatchRoom 지도
+
+상태: 구현 및 Backend·Frontend 자동 회귀 검증 완료
+
+- `V15`에서 축제별 복수 장소, 상태·좌표·배정 순서·Kakao 장소 ID 제약, 활성 후보 index와 nullable group 주소 snapshot을 추가했다.
+- 관리 API는 DB의 `ADMIN` role만 등록·수정·활성/비활성·목록 조회를 허용한다. Admin UI는 현재 mock dashboard 범위를 과도하게 확장하므로 제외했다.
+- 신규 pool은 해당 축제의 `ACTIVE` 장소가 없으면 `MATCHING_MEETING_POINT_NOT_READY`로 차단한다.
+- confirm transaction은 기존 lock 뒤 festival row를 `FOR UPDATE`로 잠그고 `assignment_order, id` 후보를 `assignedGroupCount % candidateCount`로 선택한다. 후보가 없으면 전체 rollback한다.
+- current-group은 snapshot 기반 nullable `meetingPoint`, 후보 검색 반경과 안내 전용 `arrivalRadiusMeters=150`을 반환한다.
+- MatchRoom은 도착 action 위에 장소 카드와 Kakao Maps 단일 핀을 표시하며 SDK 실패 시 장소명·주소를 유지한다. SDK loader는 동시 호출 Promise를 공유하고 실패한 script를 제거해 재진입 시 재시도한다. 정책과 충돌하던 mock route/page/data는 제거했다.
+- 최초 focused Backend 27건은 25건 성공, `FestivalMeetingPointAdminServiceTest`의 nested Mockito stubbing 오류 2건 실패였다. 운영 코드는 변경하지 않고 member mock을 지역 변수로 분리해 수정했다.
+- 수정 후 meeting-point focused unit/Controller 11건, test source compile, PostgreSQL Testcontainers repository 3건과 confirm transaction 46건, matching 전체 266건, Backend 전체 322건이 모두 성공했다.
+- `package-lock.json` 기준 Windows `npm ci`로 의존성을 복원했고 package manager와 lockfile 의미 내용은 변경하지 않았다. WSL npm은 자체 `Exit handler never called` 오류로 완료되지 않아 Windows npm으로 재실행했다.
+- Frontend 전체 Vitest 11 files 119건, `npx tsc --noEmit`, production/PWA build 성공.
+- 저장소 전체 `git diff --check`는 이번 수정 파일이 아닌 기존 working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했다. 이번 작업 파일 대상 검사는 통과했으며 기존 파일의 줄바꿈은 일괄 변경하지 않았다.
+- GPS 검증, 도착 body 변경, 자동 후보 검색, 관광공사 fallback, 장소별 반경, COMPLETED, 채팅과 Redis는 제외했다.
+
 ## [10-매칭 23차 준비] 만남 포인트·단말 위치 확인 정책 정합화
 
 상태: 문서 정책 정리 완료, 구현 범위 결정 전

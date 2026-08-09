@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.matching.entity.MatchGroup;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPoint;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroupMember;
 import com.survey.meetorsolo.domain.matching.repository.MatchEventRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
@@ -22,7 +23,10 @@ class MatchNoShowGroupServiceTest {
     void deadline_정각에_미도착만_NO_SHOW로_전환하고_도착한_두명은_유지한다() {
         OffsetDateTime confirmed = OffsetDateTime.parse("2026-07-31T12:00:00+09:00");
         OffsetDateTime deadline = confirmed.plusMinutes(30);
-        MatchGroup group = MatchGroup.confirmed(20, 30, 3, confirmed);
+        FestivalMeetingPoint meetingPoint = FestivalMeetingPoint.inactive(30, "test-place",
+                "테스트 장소", "강원 테스트로 1", new java.math.BigDecimal("128.1"),
+                new java.math.BigDecimal("37.1"), 1);
+        MatchGroup group = MatchGroup.confirmed(20, 30, 3, meetingPoint, confirmed);
         ReflectionTestUtils.setField(group, "id", 10L);
         MatchGroupMember noShow = member(101, 1, true, confirmed);
         MatchGroupMember arrivedA = member(102, 2, true, confirmed);

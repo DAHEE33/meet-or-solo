@@ -1,5 +1,9 @@
 package com.survey.meetorsolo.domain.matching.service;
 
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPoint;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
+import com.survey.meetorsolo.domain.festival.repository.FestivalMeetingPointRepository;
+import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.matching.entity.*;
 import com.survey.meetorsolo.domain.matching.config.MatchingSchedulerProperties;
 import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
@@ -29,19 +33,26 @@ public class MatchProposalResponseService {
     private final MatchingPenaltyPolicy penaltyPolicy;
     private final Duration proposalTimeout;
     private final ApplicationEventPublisher eventPublisher;
+    private final FestivalRepository festivals;
+    private final FestivalMeetingPointRepository meetingPoints;
+    private final MeetingPointRoundRobinPolicy meetingPointPolicy;
 
     public MatchProposalResponseService(MatchAttemptRepository attempts, MatchProposalRepository proposals,
             MatchAttemptMemberRepository members, MatchResponseRepository responses, MatchPoolRepository pools,
             MatchGroupRepository groups, MatchGroupMemberRepository groupMembers,
             MatchEventRepository events,
             MatchPenaltyCooldownService penaltyCooldowns, MatchingPenaltyPolicy penaltyPolicy,
-            MatchingSchedulerProperties properties, ApplicationEventPublisher eventPublisher) {
+            MatchingSchedulerProperties properties, ApplicationEventPublisher eventPublisher,
+            FestivalRepository festivals, FestivalMeetingPointRepository meetingPoints,
+            MeetingPointRoundRobinPolicy meetingPointPolicy) {
         this.attempts=attempts; this.proposals=proposals; this.members=members; this.responses=responses;
         this.pools=pools; this.groups=groups; this.groupMembers=groupMembers;
         this.events=events;
         this.penaltyCooldowns=penaltyCooldowns; this.penaltyPolicy=penaltyPolicy;
         this.proposalTimeout=properties.proposalTimeout();
         this.eventPublisher=eventPublisher;
+        this.festivals=festivals; this.meetingPoints=meetingPoints;
+        this.meetingPointPolicy=meetingPointPolicy;
     }
 
     @Transactional
@@ -239,8 +250,16 @@ public class MatchProposalResponseService {
         List<MatchPool> lockedPools = pools.findResponsePoolsForUpdate(
                 accepted.stream().map(MatchAttemptMember::getPoolId).sorted().toList());
         if (lockedPools.size() != accepted.size()) throw failure("attempt pool을 모두 잠글 수 없습니다.");
+        festivals.findByIdForUpdate(attempt.getFestivalId())
+                .orElseThrow(() -> failure("festival이 없습니다."));
+        List<FestivalMeetingPoint> activePoints = meetingPoints
+                .findAllByFestivalIdAndStatusOrderByAssignmentOrderAscIdAsc(
+                        attempt.getFestivalId(), FestivalMeetingPointStatus.ACTIVE);
+        if (activePoints.isEmpty()) throw failure("활성 만남 장소가 없어 그룹을 확정할 수 없습니다.");
+        long assignedGroupCount = groups.countAssignedMeetingPointGroups(attempt.getFestivalId());
+        FestivalMeetingPoint meetingPoint = meetingPointPolicy.select(activePoints, assignedGroupCount);
         MatchGroup group = groups.saveAndFlush(MatchGroup.confirmed(
-                attempt.getId(), attempt.getFestivalId(), accepted.size(), now));
+                attempt.getId(), attempt.getFestivalId(), accepted.size(), meetingPoint, now));
         for (MatchAttemptMember value : accepted) {
             MatchPool pool = lockedPools.stream()
                     .filter(candidate -> candidate.getId().equals(value.getPoolId()))

@@ -218,6 +218,10 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
 
 관리자 endpoint는 명시적 admin role이 필요합니다.
 
+축제 만남 장소 관리 API는 access token의 회원 ID로 `members.role`을 다시 조회해
+`ADMIN`인지 확인합니다. 인증 누락은 `401`, 일반 회원은 `403`이며 실제 장소 데이터와
+API Key를 코드에 하드코딩하지 않습니다.
+
 관리자 조치 로그 대상:
 
 - 신고 처리

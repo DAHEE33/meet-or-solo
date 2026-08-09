@@ -269,4 +269,19 @@ describe('terminal retry form', () => {
     (checkInButton?.props.onClick as () => void)();
     expect(onGoCheckIn).toHaveBeenCalledOnce();
   });
+
+  it('활성 만남 장소가 없으면 일반 네트워크 오류가 아닌 준비 안내를 표시한다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'ERROR',
+      error: new ApiClientError(
+        '선택한 축제의 만남 장소를 준비하고 있습니다.',
+        409,
+        'MATCHING_MEETING_POINT_NOT_READY',
+        [],
+      ),
+    })));
+    expect(text(tree)).toContain('만남 장소 준비 중이에요');
+    expect(text(tree)).toContain('선택한 축제의 만남 장소를 준비하고 있습니다.');
+    expect(text(tree)).not.toContain('다시 시도');
+  });
 });

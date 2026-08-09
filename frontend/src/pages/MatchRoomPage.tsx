@@ -9,6 +9,7 @@ import type {
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 import { useMatchRoom, type MatchRoomState } from '../hooks/useMatchRoom';
 import { formatSeoulDateTime } from '../utils/dateTime';
 
@@ -173,6 +174,23 @@ export function CurrentGroupRoom({
           <dt className="text-ink/50">현재 상태</dt><dd className="text-right font-semibold text-teal">{statusText}</dd>
         </dl>
       </section>
+
+      {group.meetingPoint && (
+        <section aria-labelledby="meeting-point-title" className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <div>
+            <h2 id="meeting-point-title" className="text-[16px] font-bold text-ink">만남 장소</h2>
+            <p className="mt-1 text-[12px] text-teal">운영자가 확인한 공개 장소예요.</p>
+          </div>
+          <div>
+            <p className="text-[15px] font-semibold text-ink">{group.meetingPoint.name}</p>
+            <p className="mt-1 text-[13px] text-ink/60">{group.meetingPoint.address}</p>
+          </div>
+          <KakaoMeetingPointMap meetingPoint={group.meetingPoint} />
+          <p className="rounded-xl bg-sand/60 px-3 py-2 text-[12px] text-ink/60">
+            도착 인정 반경은 장소 핀 기준 {group.meetingPoint.arrivalRadiusMeters}m예요.
+          </p>
+        </section>
+      )}
 
       {canArrive && !arrivalDeadlineReached && (
         <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">

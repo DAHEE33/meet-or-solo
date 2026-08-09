@@ -49,6 +49,7 @@ function renderNode(node: ReactNode): ReactNode {
   if (!isValidElement(node)) return node;
   const element = node;
   if (typeof element.type === 'function') {
+    if (element.type.name === 'KakaoMeetingPointMap') return element;
     const Component = element.type as (props: typeof element.props) => ReactNode;
     return renderNode(Component(element.props));
   }
@@ -72,6 +73,29 @@ function text(node: ReactNode): string {
 }
 
 describe('MatchRoomContent', () => {
+  it('만남 장소 카드와 지도 핀 영역을 도착 action보다 먼저 표시한다', () => {
+    const current = group();
+    current.meetingPoint = {
+      name: '강릉단오문화관 정문',
+      address: '강원특별자치도 강릉시 단오장길 1',
+      contentId: 'kakao-place-id',
+      longitude: 128.896123,
+      latitude: 37.752456,
+      candidateSearchRadiusMeters: 2000,
+      arrivalRadiusMeters: 150,
+    };
+    const tree = renderNode(MatchRoomContent({
+      state: { status: 'READY', group: current, events: [], error: null,
+        eventsError: null, actionError: null, isSubmitting: false },
+      onRetry: vi.fn(), onSelectArrivalTime: vi.fn(), onArrive: vi.fn(),
+    }));
+    const renderedText = text(tree);
+    expect(renderedText).toContain('강릉단오문화관 정문');
+    expect(renderedText).toContain('강원특별자치도 강릉시 단오장길 1');
+    expect(renderedText).toContain('도착 인정 반경은 장소 핀 기준 150m');
+    expect(renderedText.indexOf('만남 장소')).toBeLessThan(renderedText.indexOf('도착했어요'));
+  });
+
   it('deadline 전 active 회원에게 세 구조화 취소 사유만 제공하고 자유 입력은 없다', () => {
     const tree = renderNode(MatchRoomContent({
       state: {

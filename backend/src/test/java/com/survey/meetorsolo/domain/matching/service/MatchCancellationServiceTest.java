@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationReason;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroup;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPoint;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroupMember;
 import com.survey.meetorsolo.domain.matching.repository.MatchEventRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
@@ -77,9 +78,14 @@ class MatchCancellationServiceTest {
     }
 
     private MatchGroup group() {
-        MatchGroup group = MatchGroup.confirmed(20, 30, 3, CONFIRMED);
+        MatchGroup group = MatchGroup.confirmed(20, 30, 3, meetingPoint(), CONFIRMED);
         ReflectionTestUtils.setField(group, "id", 10L);
         return group;
+    }
+
+    private FestivalMeetingPoint meetingPoint() {
+        return FestivalMeetingPoint.inactive(30, "test-place", "테스트 장소", "강원 테스트로 1",
+                new java.math.BigDecimal("128.1"), new java.math.BigDecimal("37.1"), 1);
     }
 
     private MatchGroupMember member(long id, long memberId, boolean allowMinimumTwo) {

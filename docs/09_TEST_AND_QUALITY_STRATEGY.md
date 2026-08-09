@@ -148,6 +148,8 @@
 - 도착 완료의 row lock, ARRIVED 멱등성, 최초 IN_PROGRESS 전환과 AFTER_COMMIT 알림 검증
 - 축제 좌표 기반 Kakao Local 후보 검색의 빈 결과, 중복, 거리 정렬과 fallback 검증
 - 축제별 복수 장소의 순환 배정과 후보 소진 후 재사용, 비활성 장소 제외 검증
+- 같은 축제 동시 확정의 festival row lock과 축제별 독립 순환을 PostgreSQL에서 검증
+- pool 진입 뒤 후보가 모두 비활성화되면 response/group/member/pool/attempt/event 전체 rollback 검증
 - 확정 만남 포인트 snapshot이 참여자, REST 복원과 재조회에서 동일한지 검증
 - Backend 거리 판정의 반경 내부·경계·외부, 잘못된 좌표, 낮은 정확도와 오래된 측정값 검증
 - 도착 API가 원본 좌표·정확도·측정 시각을 받고 계산 거리와 `verified`는 받지 않는지 검증

@@ -94,6 +94,16 @@ export type MatchGroupFestival = {
   eventEndDate: string | null;
 };
 
+export type MatchGroupMeetingPoint = {
+  name: string;
+  address: string;
+  contentId: string;
+  longitude: number;
+  latitude: number;
+  candidateSearchRadiusMeters: number;
+  arrivalRadiusMeters: number;
+};
+
 export type CurrentMatchGroup = {
   groupId: number;
   festivalId: number;
@@ -105,6 +115,7 @@ export type CurrentMatchGroup = {
   startedAt?: string | null;
   currentMemberId?: number;
   festival: MatchGroupFestival;
+  meetingPoint?: MatchGroupMeetingPoint | null;
   members: MatchGroupMember[];
 };
 

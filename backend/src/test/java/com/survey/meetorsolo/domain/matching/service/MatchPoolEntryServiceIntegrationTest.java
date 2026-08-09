@@ -69,6 +69,13 @@ class MatchPoolEntryServiceIntegrationTest {
                     id, content_id, content_type_id, title, status, created_at, updated_at
                 ) VALUES (?, 'matching-rest-festival', '15', 'REST 매칭 테스트 축제', 'ACTIVE', ?, ?)
                 """, FESTIVAL_ID, NOW.minusDays(1), NOW.minusDays(1));
+        jdbc.update("""
+                INSERT INTO festival_meeting_points(
+                    festival_id, kakao_place_id, name, address, map_x, map_y, status,
+                    assignment_order, created_at, updated_at
+                ) VALUES (?, 'pool-entry-place', '신청 테스트 장소', '강원 테스트로 1',
+                          128.1, 37.1, 'ACTIVE', 1, ?, ?)
+                """, FESTIVAL_ID, NOW.minusDays(1), NOW.minusDays(1));
         for (long memberId = MEMBER_ID; memberId <= MEMBER_ID + 3; memberId++) {
             jdbc.update("""
                     INSERT INTO members(
@@ -114,6 +121,14 @@ class MatchPoolEntryServiceIntegrationTest {
     void 유효한_체크인이_없거나_만료됐으면_400이다() {
         assertError(MEMBER_ID + 1, ErrorCode.MATCHING_INVALID_REQUEST);
         assertError(MEMBER_ID + 3, ErrorCode.MATCHING_INVALID_REQUEST);
+    }
+
+    @Test
+    void 활성_만남_장소가_없으면_해당_축제_pool_진입만_차단한다() {
+        jdbc.update("UPDATE festival_meeting_points SET status='INACTIVE' WHERE festival_id=?", FESTIVAL_ID);
+        assertError(MEMBER_ID, ErrorCode.MATCHING_MEETING_POINT_NOT_READY);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE member_id=?",
+                Integer.class, MEMBER_ID)).isZero();
     }
 
     @Test
@@ -197,6 +212,7 @@ class MatchPoolEntryServiceIntegrationTest {
         jdbc.update("DELETE FROM match_cooldowns WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM match_pools WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM festival_checkins WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
+        jdbc.update("DELETE FROM festival_meeting_points WHERE festival_id = ?", FESTIVAL_ID);
         jdbc.update("DELETE FROM members WHERE id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM festivals WHERE id = ?", FESTIVAL_ID);
     }

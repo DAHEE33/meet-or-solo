@@ -1,5 +1,11 @@
 # 프론트엔드 가이드
 
+## Kakao Maps 만남 장소
+
+Kakao Maps JavaScript SDK App Key는 `VITE_KAKAO_MAPS_APP_KEY`로만 주입합니다.
+example에는 placeholder만 두고 실제 Key를 저장소에 기록하지 않습니다. SDK가 없거나
+로드에 실패해도 MatchRoom의 장소명과 주소는 계속 표시합니다.
+
 ## 소셜 로그인 버튼
 
 로그인 화면은 기존 카카오 버튼과 네이버 텍스트 버튼을 함께 제공한다. 두 버튼 모두 backend의 `/api/auth/{provider}/login`으로 이동하며 authorize URL을 frontend에서 조립하지 않는다. 이동 중에는 중복 클릭을 막고 OAuth 실패는 provider 공통 안내로 표시한다.

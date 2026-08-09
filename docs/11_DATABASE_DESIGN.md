@@ -339,11 +339,12 @@ DATA_CORRECTION
 확인 반경과 분리합니다. 단말 확인 반경은 Backend 정책값으로 관리하고 current
 group 응답에는 사용자 안내에 필요한 값만 제공합니다.
 
-축제별 검증된 만남 장소 여러 개를 관리하려면 후속 migration에서
-`festival_meeting_points` 테이블을 추가합니다. 장소 ID, 축제 FK, 장소명, 주소,
-`map_x`, `map_y`, 활성 여부와 배정 순서를 관리하고, 그룹 확정 시 선택된 값을
-기존 `match_groups.meeting_*` 컬럼에 snapshot으로 복사합니다. 따라서 후보 관리
-테이블에는 migration이 필요하지만 group snapshot 컬럼은 기존 컬럼을 사용합니다.
+`V15`에서 `festival_meeting_points`를 추가했습니다. 축제 FK, Kakao 장소 ID,
+장소명, 주소, 좌표, `ACTIVE/INACTIVE`, 배정 순서와 생성·수정 시각을 관리합니다.
+좌표 범위와 음수 배정 순서를 CHECK로 거부하고 축제별 Kakao 장소 ID를 unique로
+보장합니다. 활성 후보는 partial index로 `assignment_order, id` 순서로 조회합니다.
+선택값은 기존 `match_groups.meeting_*`와 신규 nullable
+`meeting_place_address`에 snapshot으로 복사합니다.
 
 ### festival_images
 

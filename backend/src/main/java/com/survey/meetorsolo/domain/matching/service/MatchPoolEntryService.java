@@ -1,5 +1,7 @@
 package com.survey.meetorsolo.domain.matching.service;
 
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
+import com.survey.meetorsolo.domain.festival.repository.FestivalMeetingPointRepository;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
@@ -28,6 +30,7 @@ public class MatchPoolEntryService {
     private final MatchCooldownRepository cooldowns;
     private final MatchGroupMemberRepository groupMembers;
     private final ApplicationEventPublisher eventPublisher;
+    private final FestivalMeetingPointRepository meetingPoints;
 
     public MatchPoolEntryService(
             Clock clock,
@@ -35,7 +38,8 @@ public class MatchPoolEntryService {
             MatchPoolRepository pools,
             MatchCooldownRepository cooldowns,
             MatchGroupMemberRepository groupMembers,
-            ApplicationEventPublisher eventPublisher
+            ApplicationEventPublisher eventPublisher,
+            FestivalMeetingPointRepository meetingPoints
     ) {
         this.clock = clock;
         this.members = members;
@@ -43,6 +47,7 @@ public class MatchPoolEntryService {
         this.cooldowns = cooldowns;
         this.groupMembers = groupMembers;
         this.eventPublisher = eventPublisher;
+        this.meetingPoints = meetingPoints;
     }
 
     @Transactional
@@ -61,6 +66,10 @@ public class MatchPoolEntryService {
         }
         if (groupMembers.existsActiveByMemberId(memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 활성 매칭 그룹에 참여 중입니다.");
+        }
+        if (!meetingPoints.existsByFestivalIdAndStatus(
+                request.festivalId(), FestivalMeetingPointStatus.ACTIVE)) {
+            throw new BusinessException(ErrorCode.MATCHING_MEETING_POINT_NOT_READY);
         }
 
         long checkinId = pools.findValidCheckinId(memberId, request.festivalId(), now)

@@ -1,5 +1,11 @@
 # 백엔드 가이드
 
+## 만남 장소 확정 transaction
+
+축제 만남 장소는 기존 proposal 응답 transaction 안에서 확정합니다. 잠금 순서는
+attempt, proposal, attempt member, 정렬된 pool, festival이며 festival row lock 뒤
+활성 후보 조회와 기존 snapshot group 수 계산을 수행합니다.
+
 ## 네이버 OAuth 로그인
 
 - 기존 Kakao OAuth와 같은 `domain/auth`의 회원 조회, JWT, Refresh Token 발급 흐름을 사용한다.

@@ -1,5 +1,49 @@
 # 매칭 엔진 구현 기록
 
+## 40. 축제별 만남 장소와 그룹 snapshot
+
+`V15`는 `festival_meeting_points`와 `match_groups.meeting_place_address`를 추가합니다.
+운영자가 등록한 장소는 기본 `INACTIVE`이고 관리자 API로 검증 후 `ACTIVE`로 전환합니다.
+신규 pool은 활성 후보가 한 곳 이상인 축제에만 진입할 수 있습니다.
+
+```text
+attempt FOR UPDATE
+→ proposal FOR UPDATE
+→ attempt member FOR UPDATE
+→ accepted pools FOR UPDATE (id 오름차순)
+→ festival FOR UPDATE
+→ ACTIVE meeting points (assignment_order, id)
+→ snapshot group count
+→ group/member/event 저장
+→ pool MATCHED
+→ attempt CONFIRMED
+```
+
+index는 `assignedSnapshotGroupCount % activeCandidateCount`입니다. 같은 festival은
+festival row lock으로 직렬화되고 다른 festival은 독립적입니다. 후보가 없으면 마지막
+응답을 포함해 rollback하며 후보 수정·비활성화 후에도 기존 snapshot은 변하지 않습니다.
+
+current-group의 nullable `meetingPoint`는 group snapshot을 사용합니다. 후보 검색 반경만
+festival 값이고 도착 안내 반경은 `150`입니다. REST가 최종 원천이며 WebSocket은 재조회
+trigger 역할만 유지합니다. MatchRoom은 읽기 전용 Kakao Maps 단일 핀을 표시하고 SDK
+실패 시에도 장소명·주소를 유지합니다. SDK loader는 module-level Promise로 동시 삽입을
+막고 실패한 script와 상태를 정리해 다음 mount에서 재시도합니다. unmount 이후에는
+component 상태와 지도 DOM을 갱신하지 않습니다.
+
+최초 meeting-point focused Backend 27건은 25건이 성공했고, 2건은 운영 코드가 아닌
+`FestivalMeetingPointAdminServiceTest`의 nested Mockito stubbing 오류로 실패했습니다.
+member mock을 지역 변수로 분리한 뒤 focused unit/Controller 11건과 test source compile이
+성공했습니다. PostgreSQL Testcontainers repository 3건과 confirm transaction 46건,
+matching 전체 266건, Backend 전체 322건도 failure·error·skip 없이 통과했습니다.
+
+`package-lock.json` 기준 `npm ci`로 Frontend 의존성을 복원한 뒤 전체 Vitest 11 files
+119건, TypeScript 검사와 production/PWA build가 성공했습니다. WSL npm의
+`Exit handler never called` 오류 때문에 동일 명령을 Windows npm에서 완료했으며
+package manager와 lockfile 의미 내용은 변경하지 않았습니다.
+이번 작업 파일 대상 `git diff --check`는 통과했습니다. 저장소 전체 검사는 기존
+working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했으며,
+기존 사용자 파일의 줄바꿈은 일괄 변경하지 않았습니다.
+
 ## 1. 문서 목적과 범위
 
 이 문서는 `meet-or-solo` backend에 실제로 구현된 매칭 엔진을 코드 중심으로 설명합니다. 매칭 정책을 새로 정의하거나 DB 설계를 반복하기보다, 정책과 schema가 Spring service, PostgreSQL transaction, JUnit 테스트로 어떻게 연결되는지 정리합니다.
