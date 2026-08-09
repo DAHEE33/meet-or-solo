@@ -44,6 +44,22 @@ package manager와 lockfile 의미 내용은 변경하지 않았습니다.
 working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했으며,
 기존 사용자 파일의 줄바꿈은 일괄 변경하지 않았습니다.
 
+### 40.1 dev DB·두 브라우저 수동 검증
+
+2026-08-09 local dev DB에서 festival `144`, member `2`, `27`과 유효한
+`ACTIVE` check-in을 사용해 수동 검증했습니다. 첫 번째 확정 group `21`에는
+`assignment_order`가 앞선 `dev-meeting-point-1`이 snapshot으로 저장되었고,
+group 취소 후 같은 조건으로 확정한 두 번째 group `22`에는
+`dev-meeting-point-2`가 저장되었습니다. 이전 group `21`의 장소 snapshot은
+취소 후에도 변경되지 않아 후보 원본과 확정 group snapshot의 분리를 함께
+확인했습니다.
+
+첫 번째 group의 두 브라우저에는 동일한 장소명·주소와
+`arrivalRadiusMeters=150` 안내가 표시되었습니다. Kakao SDK를 불러오지 못한
+환경에서도 장소명·주소 fallback이 유지되었습니다. 실제 Kakao JavaScript Key와
+허용 도메인을 사용한 지도 핀 표시는 이번 local 검증에서 수행하지 않았으며 별도
+환경 검증 항목으로 유지합니다.
+
 ## 1. 문서 목적과 범위
 
 이 문서는 `meet-or-solo` backend에 실제로 구현된 매칭 엔진을 코드 중심으로 설명합니다. 매칭 정책을 새로 정의하거나 DB 설계를 반복하기보다, 정책과 schema가 Spring service, PostgreSQL transaction, JUnit 테스트로 어떻게 연결되는지 정리합니다.

@@ -2,7 +2,7 @@
 
 ## [10-매칭 24차] 축제별 만남 장소 관리·순환 배정·MatchRoom 지도
 
-상태: 구현 및 Backend·Frontend 자동 회귀 검증 완료
+상태: 구현, Backend·Frontend 자동 회귀 및 dev DB·두 브라우저 수동 검증 완료
 
 - `V15`에서 축제별 복수 장소, 상태·좌표·배정 순서·Kakao 장소 ID 제약, 활성 후보 index와 nullable group 주소 snapshot을 추가했다.
 - 관리 API는 DB의 `ADMIN` role만 등록·수정·활성/비활성·목록 조회를 허용한다. Admin UI는 현재 mock dashboard 범위를 과도하게 확장하므로 제외했다.
@@ -14,6 +14,8 @@
 - 수정 후 meeting-point focused unit/Controller 11건, test source compile, PostgreSQL Testcontainers repository 3건과 confirm transaction 46건, matching 전체 266건, Backend 전체 322건이 모두 성공했다.
 - `package-lock.json` 기준 Windows `npm ci`로 의존성을 복원했고 package manager와 lockfile 의미 내용은 변경하지 않았다. WSL npm은 자체 `Exit handler never called` 오류로 완료되지 않아 Windows npm으로 재실행했다.
 - Frontend 전체 Vitest 11 files 119건, `npx tsc --noEmit`, production/PWA build 성공.
+- 2026-08-09 dev DB의 festival `144`, member `2`, `27`과 유효한 `ACTIVE` check-in으로 두 브라우저 수동 검증을 완료했다. 첫 번째 확정 group `21`에는 `dev-meeting-point-1`이, 취소 후 두 번째 확정 group `22`에는 `dev-meeting-point-2`가 배정되어 후보 순환과 group snapshot 저장을 확인했다.
+- 첫 번째 group의 두 회원에게 동일한 장소명·주소와 `arrivalRadiusMeters=150` 안내가 표시되었고, Kakao SDK를 불러오지 못한 환경에서도 장소명·주소 fallback이 유지되었다. 실제 Kakao JavaScript Key와 허용 도메인을 사용한 지도 핀 표시는 별도 운영 환경 검증으로 남겼다.
 - 저장소 전체 `git diff --check`는 이번 수정 파일이 아닌 기존 working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했다. 이번 작업 파일 대상 검사는 통과했으며 기존 파일의 줄바꿈은 일괄 변경하지 않았다.
 - GPS 검증, 도착 body 변경, 자동 후보 검색, 관광공사 fallback, 장소별 반경, COMPLETED, 채팅과 Redis는 제외했다.
 
