@@ -8,6 +8,7 @@ import com.survey.meetorsolo.domain.matching.entity.MatchCooldown;
 import com.survey.meetorsolo.domain.matching.entity.MatchProposal;
 import com.survey.meetorsolo.domain.matching.repository.MatchAttemptRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
+import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchProposalRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
@@ -28,6 +29,8 @@ public class MatchingQueryService {
     private final MatchProposalRepository proposals;
     private final MatchAttemptRepository attempts;
     private final MatchCooldownRepository cooldowns;
+    private final MatchGroupRepository groups;
+    private final MatchCompletionLockPolicy completionLocks;
     private final MemberRepository members;
 
     public MatchingQueryService(
@@ -36,6 +39,8 @@ public class MatchingQueryService {
             MatchProposalRepository proposals,
             MatchAttemptRepository attempts,
             MatchCooldownRepository cooldowns,
+            MatchGroupRepository groups,
+            MatchCompletionLockPolicy completionLocks,
             MemberRepository members
     ) {
         this.clock = clock;
@@ -43,6 +48,8 @@ public class MatchingQueryService {
         this.proposals = proposals;
         this.attempts = attempts;
         this.cooldowns = cooldowns;
+        this.groups = groups;
+        this.completionLocks = completionLocks;
         this.members = members;
     }
 
@@ -68,7 +75,9 @@ public class MatchingQueryService {
         Member member = requireMember(memberId);
         OffsetDateTime now = OffsetDateTime.now(clock);
         MatchCooldown cooldown = cooldowns.findActive(memberId, now).orElse(null);
-        return MatchingRestrictionResponse.of(member.getPenaltyScore(), cooldown, now);
+        var completedGroup = groups.findLatestCompletedByMemberId(memberId).orElse(null);
+        return MatchingRestrictionResponse.of(
+                member.getPenaltyScore(), cooldown, completionLocks.evaluate(completedGroup, now), now);
     }
 
     private Member requireMember(long memberId) {

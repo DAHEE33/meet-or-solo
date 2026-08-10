@@ -521,7 +521,7 @@ group 응답에는 사용자 안내에 필요한 값만 제공합니다.
 | 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `allow_minimum_two`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `no_show_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `member_id -> members.id` |
-| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
+| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `COMPLETED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
 | CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)`, `cancel_reason IN ('SCHEDULE_CHANGED','TRANSPORTATION_ISSUE','OTHER')` |
 | UNIQUE | `(group_id, member_id)`, active 상태의 `member_id` partial unique index 후보 |
 | INDEX | `idx_match_group_members_member_status`, `idx_match_group_members_group_status` |
@@ -535,9 +535,23 @@ group 응답에는 사용자 안내에 필요한 값만 제공합니다.
 `0`, `30`을 유지하면서 신규 `25`를 저장할 수 있도록 CHECK만 교체합니다.
 신규 PUT API는 이 DB 호환 집합과 별도로 `5`, `10`, `20`, `25`만 허용합니다.
 
-도착 완료도 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED` event
-type만 사용합니다. 최초 도착에서 group을 IN_PROGRESS로 전환하고 기존 도착
-예정 값은 유지하며 신규 migration은 없습니다.
+도착 완료는 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED`를 사용하고,
+마지막 유효 회원 도착에서는 group `completed_at`, member `COMPLETED`,
+`MATCH_COMPLETED`를 같은 transaction에서 기록합니다. terminal member는 보존합니다.
+
+정상 완료 후 재매칭 제한은 신규 상태나 active member index 점유로 표현하지
+않습니다. `COMPLETED` member는 계속 active index에서 제외하고 다음 값을 완료
+group에서 파생합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + INTERVAL '1 hour'
+```
+
+정상 완료는 귀책 사유가 아니므로 `match_cooldowns`에 `COMPLETED` reason을
+추가하지 않는 방향을 우선합니다. restriction 조회와 pool 신청 검증에서 최근
+완료 group의 유효시간을 확인합니다. 별도 최대 3회 카운터나 체크인별 횟수
+컬럼은 MVP에 추가하지 않습니다. restriction 조회와 pool 신청 검증은 이 파생값을
+사용하도록 구현했으며 정상 완료에 대한 `match_cooldowns` row는 생성하지 않습니다.
 
 단말 위치 확인을 추가하더라도 원본 사용자 위도·경도, 계산 거리와 `verified`
 컬럼은 추가하지 않습니다. Backend가 요청의 좌표로 거리를 일회성 계산하고 원본
@@ -558,8 +572,8 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MEMBER_NO_SHOW','MATCH_CANCELLED','SAFETY_REMINDER')` |
-| UNIQUE | 없음 |
+| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MEMBER_NO_SHOW','MATCH_CANCELLED','MATCH_COMPLETED','SAFETY_REMINDER')` |
+| UNIQUE | group당 `MATCH_COMPLETED` 1건 partial unique index |
 | INDEX | `idx_match_events_group_created_at`, `idx_match_events_attempt_created_at`, `idx_match_events_member_created_at`, `idx_match_events_type_created_at` |
 | 개인정보/보안 | `payload JSONB`에는 token, GPS 원본 좌표, 민감정보를 저장하지 않는다. |
 | MVP 필수 | 필수 |
@@ -798,11 +812,25 @@ backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sq
 backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
 backend/src/main/resources/db/migration/V13__allow_25_arrival_minutes.sql
 backend/src/main/resources/db/migration/V14__add_match_room_cancellation_no_show.sql
+backend/src/main/resources/db/migration/V15__add_festival_meeting_points.sql
+backend/src/main/resources/db/migration/V16__complete_match_rooms.sql
+backend/src/main/resources/db/migration/V17__enforce_one_hour_checkin_validity.sql
 ```
 
 기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반
 멱등성은 `V12`에서 추가했고, `V13`은
 `chk_match_group_members_arrival_minutes`를 안전하게 교체해
 `NULL 또는 0,5,10,20,25,30`을 허용한다. 기존 `0`, `30` row를 변환하지 않는다.
+
+`V16`은 완료 member/event CHECK와 group별 완료 event unique index를 추가하고
+active member index를 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`로 유지한다.
+기존 `COMPLETED` group은 누락 `completed_at`, 비종료 member와 누락 완료 event를
+backfill하되 `CANCELLED`, `NO_SHOW`, `LEFT`는 보존한다.
+
+`V17`은 기존 `ACTIVE` check-in 중 `checked_in_at + 1시간`을 넘는 `expires_at`을
+1시간 경계로 줄이고, 보정 후 이미 만료된 row를 `EXPIRED`로 전환해 partial unique
+index 점유를 해제합니다. 신규 컬럼이나 constraint는 추가하지 않습니다. 운영
+matching SQL도 저장값과 정책 상한 중 이른 시각을 사용하므로 잘못된 장기 만료
+row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.

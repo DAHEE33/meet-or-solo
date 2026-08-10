@@ -82,6 +82,10 @@ public class MatchEvent {
         return event;
     }
 
+    public static MatchEvent matchCompleted(long groupId, long attemptId, OffsetDateTime now) {
+        return groupEvent(groupId, attemptId, null, "MATCH_COMPLETED", Map.of(), now);
+    }
+
     public static MatchEvent memberCancelled(long groupId, long attemptId, long memberId,
             String reason, OffsetDateTime now) {
         return groupEvent(groupId, attemptId, memberId, "MEMBER_CANCELLED",

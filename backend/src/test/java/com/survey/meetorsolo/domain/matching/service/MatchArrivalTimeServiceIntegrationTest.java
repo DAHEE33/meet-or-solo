@@ -322,6 +322,56 @@ class MatchArrivalTimeServiceIntegrationTest {
     }
 
     @Test
+    void 마지막_도착은_group과_유효_회원을_완료하고_반복_요청에_같은_snapshot을_반환한다() {
+        MatchGroupResponse beforeLast = arrivals.arrive(9_110_001L);
+        assertThat(beforeLast.status()).isEqualTo("IN_PROGRESS");
+        assertThat(beforeLast.completedAt()).isNull();
+
+        MatchGroupResponse completed = arrivals.arrive(9_110_002L);
+        MatchGroupResponse repeated = arrivals.arrive(9_110_002L);
+
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.completedAt()).isNotNull();
+        assertThat(completed.members()).allSatisfy(member ->
+                assertThat(member.status()).isEqualTo("COMPLETED"));
+        assertThat(repeated.completedAt()).isEqualTo(completed.completedAt());
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM match_events
+                WHERE group_id=9171001 AND event_type='MATCH_COMPLETED'
+                """, Integer.class)).isEqualTo(1);
+        assertThat(queries.currentGroup(9_110_001L)).isNull();
+    }
+
+    @Test
+    void 완료_회원은_active_unique_index를_점유하지_않아_새_group에_참여할_수_있다() {
+        arrivals.arrive(9_110_001L);
+        arrivals.arrive(9_110_002L);
+
+        jdbc.update("""
+                INSERT INTO match_attempts (
+                    id, festival_id, target_group_size, status, score, created_by,
+                    started_at, expires_at, created_at, updated_at
+                ) VALUES (9130099, 9100001, 2, 'CONFIRMED', 100, 'SCHEDULER', ?, ?, ?, ?)
+                """, TEST_NOW, TEST_NOW.plusMinutes(1), TEST_NOW, TEST_NOW);
+        jdbc.update("""
+                INSERT INTO match_groups (
+                    id, attempt_id, festival_id, status, confirmed_member_count,
+                    confirmed_at, created_at, updated_at
+                ) VALUES (9171099, 9130099, 9100001, 'CONFIRMED', 2, ?, ?, ?)
+                """, TEST_NOW, TEST_NOW, TEST_NOW);
+
+        assertThat(jdbc.update("""
+                INSERT INTO match_group_members (
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES
+                    (9181098, 9171099, 9110001, 'JOINED', true, ?, ?),
+                    (9181099, 9171099, 9110002, 'JOINED', true, ?, ?)
+                """, TEST_NOW, TEST_NOW, TEST_NOW, TEST_NOW)).isEqualTo(2);
+        assertThat(queries.currentGroup(9_110_001L).groupId()).isEqualTo(9_171_099L);
+        assertThat(arrivals.arrive(9_110_001L).groupId()).isEqualTo(9_171_099L);
+    }
+
+    @Test
     void 서로_다른_회원의_동시_도착은_group_lock으로_직렬화되고_최종_snapshot이_일치한다() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
@@ -339,15 +389,16 @@ class MatchArrivalTimeServiceIntegrationTest {
             first.get(10, TimeUnit.SECONDS);
             second.get(10, TimeUnit.SECONDS);
 
-            MatchGroupResponse firstSnapshot = queries.currentGroup(9_110_001L);
-            MatchGroupResponse secondSnapshot = queries.currentGroup(9_110_002L);
-            assertThat(firstSnapshot.status()).isEqualTo("IN_PROGRESS");
+            MatchGroupResponse firstSnapshot = arrivals.arrive(9_110_001L);
+            MatchGroupResponse secondSnapshot = arrivals.arrive(9_110_002L);
+            assertThat(firstSnapshot.status()).isEqualTo("COMPLETED");
             assertThat(firstSnapshot.startedAt()).isNotNull();
+            assertThat(firstSnapshot.completedAt()).isNotNull();
             assertThat(firstSnapshot.confirmedAt()).isEqualTo(NOW.plusSeconds(10));
             assertThat(firstSnapshot.confirmedMemberCount()).isEqualTo(2);
             assertThat(firstSnapshot.members()).hasSize(2)
                     .allSatisfy(member -> {
-                        assertThat(member.status()).isEqualTo("ARRIVED");
+                        assertThat(member.status()).isEqualTo("COMPLETED");
                         assertThat(member.arrivedAt()).isNotNull();
                     });
             assertThat(secondSnapshot.status()).isEqualTo(firstSnapshot.status());
@@ -364,15 +415,32 @@ class MatchArrivalTimeServiceIntegrationTest {
                     FROM match_group_members
                     WHERE group_id = 9171001
                       AND status IN ('JOINED', 'ARRIVAL_TIME_SELECTED', 'ARRIVED')
-                    """, Integer.class)).isEqualTo(2);
+                    """, Integer.class)).isZero();
             assertThat(jdbc.queryForObject("""
                     SELECT status
                     FROM match_groups
                     WHERE id = 9171001
-                    """, String.class)).isEqualTo("IN_PROGRESS");
+                    """, String.class)).isEqualTo("COMPLETED");
 
-            verifyMemberArrivedNotification("9110001", 2);
-            verifyMemberArrivedNotification("9110002", 2);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM match_events
+                    WHERE group_id = 9171001 AND event_type = 'MATCH_COMPLETED'
+                    """, Integer.class)).isEqualTo(1);
+            assertThat(queries.currentGroup(9_110_001L)).isNull();
+            assertThat(queries.currentGroup(9_110_002L)).isNull();
+
+            verify(messagingTemplate, timeout(1_000).times(1)).convertAndSendToUser(
+                    org.mockito.ArgumentMatchers.eq("9110001"),
+                    org.mockito.ArgumentMatchers.eq("/queue/matching"),
+                    org.mockito.ArgumentMatchers.argThat((MatchingStateChangedNotification notification) ->
+                            "MATCH_COMPLETED".equals(notification.reason()))
+            );
+            verify(messagingTemplate, timeout(1_000).times(1)).convertAndSendToUser(
+                    org.mockito.ArgumentMatchers.eq("9110002"),
+                    org.mockito.ArgumentMatchers.eq("/queue/matching"),
+                    org.mockito.ArgumentMatchers.argThat((MatchingStateChangedNotification notification) ->
+                            "MATCH_COMPLETED".equals(notification.reason()))
+            );
             verify(messagingTemplate, never()).convertAndSendToUser(
                     org.mockito.ArgumentMatchers.eq("9110003"),
                     org.mockito.ArgumentMatchers.anyString(),

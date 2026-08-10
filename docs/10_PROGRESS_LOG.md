@@ -2,7 +2,7 @@
 
 ## [10-매칭 24차] 축제별 만남 장소 관리·순환 배정·MatchRoom 지도
 
-상태: 구현 및 Backend·Frontend 자동 회귀 검증 완료
+상태: 구현, Backend·Frontend 자동 회귀 및 dev DB·두 브라우저 수동 검증 완료
 
 - `V15`에서 축제별 복수 장소, 상태·좌표·배정 순서·Kakao 장소 ID 제약, 활성 후보 index와 nullable group 주소 snapshot을 추가했다.
 - 관리 API는 DB의 `ADMIN` role만 등록·수정·활성/비활성·목록 조회를 허용한다. Admin UI는 현재 mock dashboard 범위를 과도하게 확장하므로 제외했다.
@@ -14,6 +14,8 @@
 - 수정 후 meeting-point focused unit/Controller 11건, test source compile, PostgreSQL Testcontainers repository 3건과 confirm transaction 46건, matching 전체 266건, Backend 전체 322건이 모두 성공했다.
 - `package-lock.json` 기준 Windows `npm ci`로 의존성을 복원했고 package manager와 lockfile 의미 내용은 변경하지 않았다. WSL npm은 자체 `Exit handler never called` 오류로 완료되지 않아 Windows npm으로 재실행했다.
 - Frontend 전체 Vitest 11 files 119건, `npx tsc --noEmit`, production/PWA build 성공.
+- 2026-08-09 dev DB의 festival `144`, member `2`, `27`과 유효한 `ACTIVE` check-in으로 두 브라우저 수동 검증을 완료했다. 첫 번째 확정 group `21`에는 `dev-meeting-point-1`이, 취소 후 두 번째 확정 group `22`에는 `dev-meeting-point-2`가 배정되어 후보 순환과 group snapshot 저장을 확인했다.
+- 첫 번째 group의 두 회원에게 동일한 장소명·주소와 `arrivalRadiusMeters=150` 안내가 표시되었고, Kakao SDK를 불러오지 못한 환경에서도 장소명·주소 fallback이 유지되었다. 실제 Kakao JavaScript Key와 허용 도메인을 사용한 지도 핀 표시는 별도 운영 환경 검증으로 남겼다.
 - 저장소 전체 `git diff --check`는 이번 수정 파일이 아닌 기존 working tree의 광범위한 CRLF 변경을 trailing whitespace로 판정해 실패했다. 이번 작업 파일 대상 검사는 통과했으며 기존 파일의 줄바꿈은 일괄 변경하지 않았다.
 - GPS 검증, 도착 body 변경, 자동 후보 검색, 관광공사 fallback, 장소별 반경, COMPLETED, 채팅과 Redis는 제외했다.
 
@@ -1241,3 +1243,65 @@ dev 서버 기준:
 - Windows 의존성 환경의 `npm run build` 성공, 1,616 modules transformed
 - WSL 명령은 기존 `node_modules`에 `@rollup/rollup-linux-x64-gnu`가 없어 Vitest/Vite 시작 전에 실패
 - backend, check-in, meeting point, WebSocket 코드는 수정하지 않음
+# [10-매칭 25차] MatchRoom 전원 도착 완료와 재매칭 점유 해제
+
+- `V16__complete_match_rooms.sql`에 member `COMPLETED`, event `MATCH_COMPLETED`, 완료 event unique index와 active member partial unique index를 반영했다.
+- 과거 `COMPLETED` group의 누락 완료 시각·유효 member·완료 event를 backfill해 기존 active 점유도 해제한다.
+- group 선잠금과 전체 member ID 순 잠금 뒤 마지막 도착에서 member/group/event를 원자 완료한다.
+- 마지막 도착과 완료 후 반복 요청은 완료 snapshot을 반환하고 current-group은 `null`이다. 새 active group은 과거 완료 group보다 우선한다.
+- 완료 WebSocket은 AFTER_COMMIT으로 전송하며 Frontend는 기존 일회성 notice로 `/matching`에서 완료 안내를 한 번 표시한다.
+- Backend focused unit, PostgreSQL 도착 통합, matching 전체, 전체 `clean build`를 성공했다. 전체 build 종료 중 이미 종료된 Testcontainers DB를 scheduler가 조회한 connection-refused 로그가 있었지만 Gradle 결과는 성공이었다.
+- Frontend focused Vitest 77건, 전체 Vitest 121건, `tsc --noEmit`, production/PWA build를 성공했다.
+- 작업 파일 `git diff --check`는 기존 working tree의 CRLF가 trailing whitespace로 해석되어 실패했다. 신규 `V16` 자체에는 공백 오류가 없으며 CRLF 사용자 변경은 임의 정규화하지 않았다.
+- 별도 완료 버튼, 완료 이력 API, 평가·후기, GPS 판정, Redis, 배포·CI/CD 변경은 제외했다.
+
+## [10-매칭 25차 보완] 1시간 매칭 유효시간과 완료 전용 화면
+
+상태: 코드 구현, 자동 검증 및 완료 기능 브라우저·DB 수동 검증 완료
+
+- 기획서 v5.0의 체크인/매칭 유효시간 2시간을 MVP 기준 각각 1시간으로 조정한다.
+- 매칭 유효 종료 시각은 `confirmed_at + 1시간`이며 30분 NO_SHOW 마감은 유지한다.
+- 정상 완료가 일찍 발생해도 유효 종료 시각 전에는 신규 pool 신청을 Backend에서 거절한다.
+- 정상 완료 제한은 귀책 cooldown이 아니므로 `match_cooldowns` row보다 완료 group 이력에서 파생하는 방향을 사용한다.
+- 별도 최대 3회 제한은 이번 범위에 추가하지 않는다.
+- 현재 수동 검증에서 정상 완료 뒤 상단 안내는 맞지만 본문이 `매칭이 취소됐어요`와 `다시 신청하기`를 표시하는 Frontend 문제를 확인했다.
+- `/matching`에 완료 전용 card, 유효 종료 시각과 countdown, 제한 중 비활성 action을 추가한다.
+- 제한 종료 뒤 체크인이 만료됐으면 재체크인 동선으로 연결한다.
+- 실제 후기 작성 UI, 최근 완료 상세 API, GPS 도착 판정은 후속 범위로 유지한다.
+- `CheckinValidityPolicy`와 matching SQL의 유효 만료 상한을 1시간으로 통일했다.
+- `V17__enforce_one_hour_checkin_validity.sql`로 기존 `ACTIVE` check-in의 1시간 초과
+  만료시각을 보정하고 이미 지난 row를 `EXPIRED` 처리한다.
+- restriction에 귀책 cooldown과 별도인 `completionLock`을 추가하고, pool 신청은
+  active pool/group 우선 검증 뒤 완료 제한 중 `MATCHING_COMPLETION_LOCKED`로 거절한다.
+- Frontend에 `COMPLETED` 상태와 완료 전용 card를 추가해 최신 pool `MATCHED`가
+  남아 있어도 취소 문구를 표시하지 않는다. 제한 종료 뒤 retry form을 거쳐 기존
+  체크인 오류의 `체크인하기` 동선으로 연결한다.
+- Backend focused unit/controller, PostgreSQL Testcontainers 완료 제한 통합 10건,
+  matching 전체와 전체 `clean build` 336건을 성공했다. 종료 시 이미 정지된 일부
+  Testcontainers DB를 scheduler/Hikari가 조회한 connection-refused 로그가 있었지만
+  Gradle 결과는 성공이었다.
+- Frontend focused Vitest 63건, 전체 Vitest 128건, `npx tsc --noEmit`,
+  production/PWA build를 성공했다.
+- 두 브라우저에서 완료 전용 card, 유효 종료 시각/countdown, 제한 중 비활성
+  action을 확인했고 완료 DB 정합성, event 단일성, penalty/cooldown 미생성,
+  active 점유 해제와 completion lock을 수동 검증했다.
+- 정상 완료를 취소 card로 표시하던 `ISSUE-MR-008`은 수동 재검증 후 `CLOSED`로
+  판정했다.
+- 새로고침 직후 신청 form이 잠깐 노출된 뒤 완료 card로 바뀌는 화면 전환은
+  completion 기능과 분리해 Frontend UX 후속 이슈로 이관했다.
+
+## [10-Frontend UX 보완 예정] 비동기 상태 복원과 화면 전환 안정화
+
+상태: 범위 문서화 완료, 별도 브랜치 구현 전
+
+- completion 기능 수동 검증 중 새로고침 직후 자동 매칭 신청 form이 먼저
+  노출되고 restriction 응답 뒤 완료 card로 바뀌는 중간 화면을 확인했다.
+- Backend/DB 정합성과 별개인 Frontend 초기 hydration 문제로 분리한다.
+- 최초 snapshot 전 `LOADING`과 조회 완료 후 실제 빈 상태인 `IDLE`을 구분한다.
+- 최초 진입은 skeleton, 재조회는 기존 정상 화면 유지 원칙을 적용한다.
+- pool/proposal/group/restriction을 원자적인 화면 snapshot으로 판정한다.
+- `/matching`만 임시 수정하지 않고 `/match-room`, 체크인, 인증/프로필,
+  축제 화면의 새로고침·API 지연·일부 실패·WebSocket/polling 전환을 함께 점검한다.
+- Router notice 반복, layout shift와 짧은 spinner 깜빡임도 UX 검증 범위에 포함한다.
+- 권장 별도 브랜치명은 `feature/wbs-10-frontend-async-ux-stabilization`이다.
+- 이 단계에서는 Backend 정책, DB schema, completion transaction을 변경하지 않는다.

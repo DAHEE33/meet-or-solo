@@ -45,37 +45,59 @@ public class MatchArrivalService {
 
     @Transactional
     public MatchGroupResponse arrive(long memberId) {
-        MatchGroup group = requireSingleActiveGroup(memberId);
-        MatchGroupMember member = groupMembers
-                .findByGroupIdAndMemberIdForUpdate(group.getId(), memberId)
+        MatchGroup group = findActiveOrLatestCompletedGroup(memberId);
+        List<MatchGroupMember> members = groupMembers.findAllByGroupIdForUpdate(group.getId());
+        MatchGroupMember member = members.stream()
+                .filter(candidate -> candidate.getMemberId() == memberId)
+                .findFirst()
                 .orElseThrow(this::conflict);
+        if ("COMPLETED".equals(group.getStatus())) {
+            if (!"COMPLETED".equals(member.getStatus())) throw conflict();
+            return groupQueries.snapshot(group.getId(), memberId);
+        }
         validateLockedState(group, member);
         OffsetDateTime now = OffsetDateTime.now(clock);
         if (!now.isBefore(MatchArrivalDeadlinePolicy.deadlineAt(group.getConfirmedAt()))) {
             throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_DEADLINE_EXCEEDED);
         }
-        if ("ARRIVED".equals(member.getStatus())) {
-            return requireSnapshot(memberId);
+        boolean newlyArrived = !"ARRIVED".equals(member.getStatus());
+        if (newlyArrived) {
+            member.arrive(now);
+            group.start(now);
+            events.save(MatchEvent.memberArrived(
+                    group.getId(), group.getAttemptId(), memberId, now
+            ));
         }
 
-        member.arrive(now);
-        group.start(now);
+        List<MatchGroupMember> activeMembers = members.stream().filter(this::isActive).toList();
+        List<Long> activeMemberIds = activeMembers.stream()
+                .map(MatchGroupMember::getMemberId)
+                .toList();
+        boolean completed = !activeMembers.isEmpty()
+                && activeMembers.stream().allMatch(candidate -> "ARRIVED".equals(candidate.getStatus()));
+        if (!newlyArrived && !completed) {
+            return groupQueries.snapshot(group.getId(), memberId);
+        }
+        if (completed) {
+            group.complete(now);
+            activeMembers.forEach(candidate -> candidate.complete(now));
+            events.save(MatchEvent.matchCompleted(group.getId(), group.getAttemptId(), now));
+        }
         groupMembers.flush();
         groups.flush();
-        events.saveAndFlush(MatchEvent.memberArrived(
-                group.getId(), group.getAttemptId(), memberId, now
-        ));
-        List<Long> activeMemberIds = groupMembers.findActiveMemberIdsByGroupId(group.getId());
+        events.flush();
         eventPublisher.publishEvent(new MatchingStateChangedEvent(
-                activeMemberIds, "MEMBER_ARRIVED", now
+                activeMemberIds, completed ? "MATCH_COMPLETED" : "MEMBER_ARRIVED", now
         ));
-        return requireSnapshot(memberId);
+        return groupQueries.snapshot(group.getId(), memberId);
     }
 
-    private MatchGroup requireSingleActiveGroup(long memberId) {
+    private MatchGroup findActiveOrLatestCompletedGroup(long memberId) {
         List<MatchGroup> activeGroups = groups.findActiveByMemberIdForUpdate(memberId);
-        if (activeGroups.size() != 1) throw conflict();
-        return activeGroups.get(0);
+        if (activeGroups.size() > 1) throw conflict();
+        if (activeGroups.size() == 1) return activeGroups.get(0);
+        return groups.findLatestCompletedByMemberIdForUpdate(memberId)
+                .orElseThrow(this::conflict);
     }
 
     private void validateLockedState(MatchGroup group, MatchGroupMember member) {
@@ -87,10 +109,10 @@ public class MatchArrivalService {
         }
     }
 
-    private MatchGroupResponse requireSnapshot(long memberId) {
-        MatchGroupResponse snapshot = groupQueries.currentGroup(memberId);
-        if (snapshot == null) throw conflict();
-        return snapshot;
+    private boolean isActive(MatchGroupMember member) {
+        return "JOINED".equals(member.getStatus())
+                || "ARRIVAL_TIME_SELECTED".equals(member.getStatus())
+                || "ARRIVED".equals(member.getStatus());
     }
 
     private BusinessException conflict() {

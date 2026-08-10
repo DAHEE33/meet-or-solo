@@ -8,6 +8,7 @@ import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import com.survey.meetorsolo.domain.matching.event.MatchingPoolEnteredEvent;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
+import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
@@ -29,6 +30,8 @@ public class MatchPoolEntryService {
     private final MatchPoolRepository pools;
     private final MatchCooldownRepository cooldowns;
     private final MatchGroupMemberRepository groupMembers;
+    private final MatchGroupRepository groups;
+    private final MatchCompletionLockPolicy completionLocks;
     private final ApplicationEventPublisher eventPublisher;
     private final FestivalMeetingPointRepository meetingPoints;
 
@@ -38,6 +41,8 @@ public class MatchPoolEntryService {
             MatchPoolRepository pools,
             MatchCooldownRepository cooldowns,
             MatchGroupMemberRepository groupMembers,
+            MatchGroupRepository groups,
+            MatchCompletionLockPolicy completionLocks,
             ApplicationEventPublisher eventPublisher,
             FestivalMeetingPointRepository meetingPoints
     ) {
@@ -46,6 +51,8 @@ public class MatchPoolEntryService {
         this.pools = pools;
         this.cooldowns = cooldowns;
         this.groupMembers = groupMembers;
+        this.groups = groups;
+        this.completionLocks = completionLocks;
         this.eventPublisher = eventPublisher;
         this.meetingPoints = meetingPoints;
     }
@@ -58,14 +65,19 @@ public class MatchPoolEntryService {
         if (!Member.STATUS_ACTIVE.equals(member.getStatus())) {
             throw new BusinessException(ErrorCode.MATCHING_INVALID_REQUEST, "프로필을 완료한 활성 회원만 매칭을 신청할 수 있습니다.");
         }
-        if (cooldowns.existsActive(memberId, now)) {
-            throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "cooldown 중에는 매칭을 신청할 수 없습니다.");
-        }
         if (pools.existsActiveByMemberId(memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 진행 중인 match pool이 있습니다.");
         }
         if (groupMembers.existsActiveByMemberId(memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 활성 매칭 그룹에 참여 중입니다.");
+        }
+        if (cooldowns.existsActive(memberId, now)) {
+            throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "cooldown 중에는 매칭을 신청할 수 없습니다.");
+        }
+        var completionLock = completionLocks.evaluate(
+                groups.findLatestCompletedByMemberId(memberId).orElse(null), now);
+        if (completionLock.active()) {
+            throw new BusinessException(ErrorCode.MATCHING_COMPLETION_LOCKED);
         }
         if (!meetingPoints.existsByFestivalIdAndStatus(
                 request.festivalId(), FestivalMeetingPointStatus.ACTIVE)) {

@@ -19,6 +19,7 @@ import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationReason;
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchingRestrictionResponse;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
@@ -131,6 +132,27 @@ class MatchingControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    void 정상_완료_제한을_기존_cooldown과_분리해_반환한다() throws Exception {
+        OffsetDateTime startsAt = OffsetDateTime.parse("2026-08-10T12:00:00+09:00");
+        when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
+        when(queries.restrictions(20L)).thenReturn(new MatchingRestrictionResponse(
+                0,
+                new MatchingRestrictionResponse.CooldownResponse(false, null, null, null, 0),
+                new MatchingRestrictionResponse.CompletionLockResponse(
+                        true, "MATCH_VALIDITY", 24L, startsAt, startsAt.plusHours(1), 1_200)
+        ));
+
+        mockMvc.perform(get("/api/matching/me/restrictions")
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cooldown.active").value(false))
+                .andExpect(jsonPath("$.data.completionLock.active").value(true))
+                .andExpect(jsonPath("$.data.completionLock.reason").value("MATCH_VALIDITY"))
+                .andExpect(jsonPath("$.data.completionLock.groupId").value(24))
+                .andExpect(jsonPath("$.data.completionLock.remainingSeconds").value(1_200));
     }
 
     @Test

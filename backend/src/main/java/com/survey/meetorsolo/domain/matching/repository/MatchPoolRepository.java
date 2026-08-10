@@ -29,7 +29,7 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             WHERE checkin.member_id = :memberId
               AND checkin.festival_id = :festivalId
               AND checkin.status = 'ACTIVE'
-              AND checkin.expires_at > :now
+              AND LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
               AND festival.status = 'ACTIVE'
             ORDER BY checkin.checked_in_at DESC, checkin.id DESC
             LIMIT 1
@@ -48,7 +48,7 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
               AND checkin.member_id = pool.member_id
               AND checkin.festival_id = pool.festival_id
               AND checkin.status = 'ACTIVE'
-              AND checkin.expires_at > :now
+              AND LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
               AND NOT EXISTS (
                   SELECT 1 FROM match_cooldowns cooldown
                   WHERE cooldown.member_id = pool.member_id
@@ -81,7 +81,7 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
               AND checkin.member_id = pool.member_id
               AND checkin.festival_id = pool.festival_id
               AND checkin.status = 'ACTIVE'
-              AND checkin.expires_at > :now
+              AND LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
               AND NOT EXISTS (
                   SELECT 1
                   FROM match_cooldowns cooldown
@@ -187,7 +187,7 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
               AND checkin.member_id = pool.member_id
               AND checkin.festival_id = pool.festival_id
               AND checkin.status = 'ACTIVE'
-              AND checkin.expires_at > :now
+              AND LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
               AND NOT EXISTS (
                   SELECT 1
                   FROM match_cooldowns cooldown
@@ -223,7 +223,7 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
               AND checkin.member_id = pool.member_id
               AND checkin.festival_id = pool.festival_id
               AND checkin.status = 'ACTIVE'
-              AND checkin.expires_at > :now
+              AND LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
               AND NOT EXISTS (
                   SELECT 1
                   FROM match_cooldowns cooldown

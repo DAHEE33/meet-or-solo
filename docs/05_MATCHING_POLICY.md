@@ -59,6 +59,24 @@ group 확정 시 각 회원의 `allow_minimum_two`를 `match_group_members`에 s
 
 30초 안에 응답하지 않으면 자동 거절로 처리합니다.
 
+체크인 유효시간과 확정 매칭 유효시간:
+
+```text
+check-in: checked_in_at + 1시간
+confirmed match: confirmed_at + 1시간
+```
+
+기획서 v5.0의 2시간 계약은 MVP 현장 회전과 재검증 편의를 고려해 1시간으로
+조정합니다. 이는 `confirmed_at + 30분`인 도착/NO_SHOW 마감과 별도입니다.
+정상 완료가 1시간보다 먼저 발생해도 확정 매칭 유효 종료 시각까지 새 매칭을
+신청할 수 없습니다. 제한 종료 뒤에는 유효한 체크인이 있어야 하며 체크인이
+만료되었다면 현장에서 다시 체크인합니다.
+
+매칭 신청·검색 실패 횟수를 일괄 차감하는 최대 3회 제한은 MVP에 두지 않습니다.
+동시 active pool/group 단일성, 완료 후 1시간 제한과 기존 귀책 cooldown으로
+먼저 운영하고 실제 남용 데이터가 확인되면 체크인당 확정 group 횟수를 별도
+정책으로 검토합니다.
+
 ## 후보 제외 규칙
 
 아래 사용자는 후보에서 제외합니다.
@@ -496,9 +514,31 @@ member_preference_embeddings
 
 ## MatchRoomPage 상태방 구조
 
+### 전원 도착 완료 정책
+
+- 별도 만남 완료 버튼 없이 기존 `도착했어요` 요청을 사용한다.
+- `CANCELLED`, `NO_SHOW`, `LEFT`를 제외한 유효 참여자를 group row 선잠금 후 member ID 오름차순으로 모두 잠근 상태에서 판정한다.
+- 마지막 도착 transaction에서 `MEMBER_ARRIVED`, group `COMPLETED`, 최초 `completed_at`, 유효 참여자 `COMPLETED`, group당 단일 `MATCH_COMPLETED`를 원자 처리한다.
+- terminal member는 보존하며 `COMPLETED` member는 active unique index를 점유하지 않는다.
+- 마지막 도착과 완료 후 반복 요청은 `COMPLETED` snapshot을 반환한다. 새 active group이 있으면 과거 완료 group보다 우선한다.
+- current-group의 active 의미는 유지하므로 완료 후에는 `data: null`이다.
+- `MATCH_COMPLETED` 신호는 기존 `TransactionalEventListener(AFTER_COMMIT)`으로 commit 뒤 전송한다.
+- Frontend는 완료 응답 또는 완료 신호 뒤 REST `null`에서 `/matching`으로 이동하고 완료 안내를 한 번만 표시한다.
+- 완료 후 재매칭 제한은 `completed_at + 1시간`이 아니라
+  `confirmed_at + 1시간`까지 적용한다.
+- 정상 완료 제한은 penalty/cooldown 이력이 아니며 완료 group에서 파생한다.
+- 완료 화면은 취소·NO_SHOW terminal card와 분리하고 유효 종료 시각과 남은
+  시간을 표시한다. 제한 중에는 새 매칭 신청을 비활성화한다.
+- 완료 후기와 최근 완료 상세 조회 API는 후속 범위다.
+
+위 완료 제한은 Backend restriction과 pool 신청 검증, Frontend 완료 전용 card에
+구현되었습니다. 완료 이력 뒤 더 최신 pool이 생성되면 과거 완료 card를 현재
+상태보다 우선하지 않습니다. 자동 테스트를 완료했으며 브라우저 수동 재검증은
+별도로 남아 있습니다.
+
 첫 active member 도착에서 `CONFIRMED -> IN_PROGRESS`로 전환하고
-`started_at`을 한 번만 설정합니다. ARRIVED 반복은 멱등이며 모든 회원 도착을
-COMPLETED로 연결하는 정책은 후속 범위입니다.
+`started_at`을 한 번만 설정합니다. ARRIVED 반복은 멱등이며 마지막 유효 회원
+도착에서 `COMPLETED`로 전환합니다.
 
 매칭 확정 후 사용자는 `MatchRoomPage`로 이동합니다.
 
