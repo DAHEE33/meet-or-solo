@@ -139,7 +139,8 @@ public class MatchProposalCreationService {
     private int countValidCheckins(List<Long> poolIds, OffsetDateTime now) {
         return queryCount("SELECT count(*) FROM match_pools p JOIN festival_checkins c ON c.id=p.checkin_id "
                 + "WHERE p.id IN (" + placeholders(poolIds.size()) + ") AND c.member_id=p.member_id "
-                + "AND c.festival_id=p.festival_id AND c.status='ACTIVE' AND c.expires_at>?", poolIds, now);
+                + "AND c.festival_id=p.festival_id AND c.status='ACTIVE' "
+                + "AND LEAST(c.expires_at, c.checked_in_at + INTERVAL '1 hour')>?", poolIds, now);
     }
     private int countActiveCooldowns(List<Long> memberIds, OffsetDateTime now) {
         List<Object> args = new ArrayList<>(memberIds); args.add(now); args.add(now);

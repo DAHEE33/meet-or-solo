@@ -47,7 +47,7 @@ INSERT INTO festival_checkins (
     '2026-07-17T14:50:00+09:00',
     CASE WHEN member_id = 9110008
          THEN '2026-07-17T14:59:59+09:00'::timestamptz
-         ELSE '2026-07-17T16:00:00+09:00'::timestamptz END,
+         ELSE '2026-07-17T15:50:00+09:00'::timestamptz END,
     '2026-07-17T14:50:00+09:00',
     '2026-07-17T14:50:00+09:00'
 FROM generate_series(9110001, 9110011) AS series(member_id);

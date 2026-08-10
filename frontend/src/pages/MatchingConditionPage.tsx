@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
 import { ApiClientError } from '../api/apiClient';
-import type { CurrentMatchGroup } from '../api/matching';
+import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
 import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
+import { formatSeoulDateTime } from '../utils/dateTime';
 
 function useCountdown(deadlineIso?: string | null) {
   const [remaining, setRemaining] = useState(0);
@@ -15,7 +16,7 @@ function useCountdown(deadlineIso?: string | null) {
       setRemaining(0);
       return;
     }
-    const tick = () => setRemaining(Math.max(0, Math.round((new Date(deadlineIso).getTime() - Date.now()) / 1000)));
+    const tick = () => setRemaining(countdownSeconds(deadlineIso));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -93,7 +94,8 @@ export default function MatchingConditionPage() {
     respond,
   } = useMatchingSession();
   const terminalPoolFestivalId =
-    isRetryFormOpen && (state.status === 'CANCELLED' || state.status === 'EXPIRED')
+    isRetryFormOpen
+      && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED')
       ? state.pool?.festivalId
       : null;
   const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
@@ -104,9 +106,11 @@ export default function MatchingConditionPage() {
       ? state.proposal?.expiresAt
       : undefined;
   const cooldownDeadline = state.restriction?.cooldown.active ? state.restriction.cooldown.expiresAt : undefined;
+  const completionDeadline = state.restriction?.completionLock.expiresAt;
   const searchRemaining = useCountdown(searchDeadline);
   const responseRemaining = useCountdown(proposalDeadline);
   const cooldownRemaining = useCountdown(cooldownDeadline);
+  const completionRemaining = useCountdown(completionDeadline);
 
   useEffect(() => {
     if (readMatchRoomNotice(location.state) === null) return;
@@ -120,11 +124,14 @@ export default function MatchingConditionPage() {
     const deadlineExpired =
       (searchDeadline && searchRemaining === 0) ||
       (proposalDeadline && responseRemaining === 0) ||
-      (cooldownDeadline && cooldownRemaining === 0);
+      (cooldownDeadline && cooldownRemaining === 0) ||
+      (state.restriction?.completionLock.active && completionDeadline && completionRemaining === 0);
     if (deadlineExpired) void refresh();
   }, [
     cooldownDeadline,
     cooldownRemaining,
+    completionDeadline,
+    completionRemaining,
     proposalDeadline,
     refresh,
     responseRemaining,
@@ -134,7 +141,8 @@ export default function MatchingConditionPage() {
 
   const hasFestival = festivalId !== null;
   const cooldownActive = state.restriction?.cooldown.active === true;
-  const canApply = hasFestival && !isSubmitting && !cooldownActive;
+  const completionLockActive = state.restriction?.completionLock.active === true;
+  const canApply = hasFestival && !isSubmitting && !cooldownActive && !completionLockActive;
   const onStart = () => {
     setMatchRoomNotice(null);
     void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
@@ -171,6 +179,8 @@ export default function MatchingConditionPage() {
           responseRemaining={responseRemaining}
           cooldownRemaining={cooldownRemaining}
           cooldownActive={cooldownActive}
+          completionLock={state.restriction?.completionLock ?? null}
+          completionRemaining={completionRemaining}
           setGroupSize={setGroupSize}
           setAllowMinimum={setAllowMinimum}
           onStart={onStart}
@@ -202,6 +212,8 @@ interface MatchBodyProps {
   responseRemaining: number;
   cooldownRemaining: number;
   cooldownActive: boolean;
+  completionLock: MatchingRestriction['completionLock'] | null;
+  completionRemaining: number;
   setGroupSize: (size: 2 | 3 | 4) => void;
   setAllowMinimum: (allow: boolean) => void;
   onStart: () => void;
@@ -218,7 +230,8 @@ interface MatchBodyProps {
 export function MatchBody(props: MatchBodyProps) {
   const { status } = props;
   const retryableTerminal =
-    props.isRetryFormOpen && (status === 'CANCELLED' || status === 'EXPIRED');
+    props.isRetryFormOpen
+    && (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COMPLETED');
   if (status === 'IDLE' || retryableTerminal) {
     return (
       <IdleForm
@@ -253,6 +266,16 @@ export function MatchBody(props: MatchBodyProps) {
   if (status === 'MATCHED' && props.group) {
     return <ConfirmedCard group={props.group} onEnterRoom={props.onEnterRoom} />;
   }
+  if (status === 'COMPLETED' && props.completionLock) {
+    return (
+      <CompletedCard
+        expiresAt={props.completionLock.expiresAt}
+        active={props.completionLock.active}
+        remaining={props.completionRemaining}
+        onRetry={props.onRetry}
+      />
+    );
+  }
   if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COOLDOWN') {
     const reason =
       status === 'COOLDOWN'
@@ -279,6 +302,49 @@ export function MatchBody(props: MatchBodyProps) {
     );
   }
   return null;
+}
+
+export function countdownSeconds(deadlineIso: string, nowMs = Date.now()): number {
+  return Math.max(0, Math.ceil((new Date(deadlineIso).getTime() - nowMs) / 1000));
+}
+
+function CompletedCard({
+  expiresAt,
+  active,
+  remaining,
+  onRetry,
+}: {
+  expiresAt: string | null;
+  active: boolean;
+  remaining: number;
+  onRetry: () => void;
+}) {
+  const remainingMinutes = Math.max(1, Math.ceil(remaining / 60));
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal/10">
+        <CheckCircle2 size={30} className="text-teal" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">만남이 완료됐어요</h2>
+        <p className="text-[13px] text-ink/55">모든 참여자가 도착했어요.</p>
+      </div>
+      <div className="w-full rounded-2xl bg-sand px-4 py-3 text-left">
+        <p className="text-[12px] text-ink/50">매칭 유효 종료 시각</p>
+        <p className="mt-1 text-[14px] font-semibold text-ink">{formatSeoulDateTime(expiresAt)}</p>
+      </div>
+      {active ? (
+        <span className="rounded-full bg-teal/10 px-4 py-2 text-[13px] font-semibold text-teal tabular-nums">
+          새로운 매칭은 {remainingMinutes}분 후 신청할 수 있어요. ({fmt(remaining)})
+        </span>
+      ) : (
+        <p className="text-[13px] text-ink/55">새로운 매칭을 신청할 수 있어요.</p>
+      )}
+      <PrimaryButton disabled={active} onClick={onRetry} className="mt-1">
+        다시 매칭하기
+      </PrimaryButton>
+    </section>
+  );
 }
 
 // ── 1. 신청 전 ─────────────────────────────────────────

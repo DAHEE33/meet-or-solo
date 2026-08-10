@@ -22,6 +22,7 @@ export type MatchingUiStatus =
   | 'INSUFFICIENT_MEMBERS_PROPOSAL'
   | 'RESPONSE_PENDING'
   | 'MATCHED'
+  | 'COMPLETED'
   | 'CANCELLED'
   | 'EXPIRED'
   | 'COOLDOWN'
@@ -92,6 +93,9 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
       error: null,
     };
   }
+  if (restriction.completionLock.groupId !== null) {
+    return { status: 'COMPLETED', pool, proposal, group, restriction, error: null };
+  }
   if (pool?.status === 'MATCHED') {
     return { status: 'CANCELLED', pool, proposal, group, restriction, error: null };
   }
@@ -127,16 +131,25 @@ export function retrySourceAfterRefresh(
 ): number | null {
   if (retrySourcePoolId === null) return null;
   const sameTerminalPool =
-    (nextState.status === 'CANCELLED' || nextState.status === 'EXPIRED')
+    (nextState.status === 'CANCELLED'
+      || nextState.status === 'EXPIRED'
+      || nextState.status === 'COMPLETED')
     && nextState.pool?.poolId === retrySourcePoolId;
-  return sameTerminalPool && !nextState.restriction?.cooldown.active ? retrySourcePoolId : null;
+  return sameTerminalPool
+    && !nextState.restriction?.cooldown.active
+    && !nextState.restriction?.completionLock.active
+      ? retrySourcePoolId
+      : null;
 }
 
 export function canBeginRetry(state: MatchingSessionState, isSubmitting: boolean): boolean {
-  const isTerminal = state.status === 'CANCELLED' || state.status === 'EXPIRED';
+  const isTerminal = state.status === 'CANCELLED'
+    || state.status === 'EXPIRED'
+    || state.status === 'COMPLETED';
   return isTerminal
     && state.pool !== null
     && !state.restriction?.cooldown.active
+    && !state.restriction?.completionLock.active
     && !isSubmitting;
 }
 
@@ -250,7 +263,10 @@ export function useMatchingSession() {
 
   useEffect(() => {
     if (!isVisible) return;
-    const pollingStatus = state.restriction?.cooldown.active ? 'COOLDOWN' : state.status;
+    const pollingStatus = state.restriction?.cooldown.active
+      || state.restriction?.completionLock.active
+      ? 'COOLDOWN'
+      : state.status;
     const delay = pollingDelay(pollingStatus, consecutiveErrorsRef.current);
     if (delay === null) return;
     const timer = window.setTimeout(() => void refresh(), delay);
@@ -271,7 +287,9 @@ export function useMatchingSession() {
       preferredGroupSize: 2 | 3 | 4,
       allowMinimumTwo: boolean,
     ) => {
-      if (isSubmitting || state.restriction?.cooldown.active) return false;
+      if (isSubmitting
+        || state.restriction?.cooldown.active
+        || state.restriction?.completionLock.active) return false;
       setIsSubmitting(true);
       const controller = new AbortController();
       mutationAbortRef.current?.abort();
@@ -301,7 +319,13 @@ export function useMatchingSession() {
       }
       return false;
     },
-    [isSubmitting, refresh, state.restriction?.cooldown.active, updateRetrySourcePoolId],
+    [
+      isSubmitting,
+      refresh,
+      state.restriction?.completionLock.active,
+      state.restriction?.cooldown.active,
+      updateRetrySourcePoolId,
+    ],
   );
 
   const respond = useCallback(

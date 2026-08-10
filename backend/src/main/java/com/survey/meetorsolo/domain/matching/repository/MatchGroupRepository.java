@@ -23,6 +23,7 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
                 matching_group.meeting_map_y AS meetingMapY,
                 matching_group.confirmed_at AS confirmedAt,
                 matching_group.started_at AS startedAt,
+                matching_group.completed_at AS completedAt,
                 festival.title AS festivalTitle,
                 festival.address AS festivalAddress,
                 festival.event_start_date AS festivalEventStartDate,
@@ -39,6 +40,66 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
             ORDER BY matching_group.id
             """, nativeQuery = true)
     List<ActiveGroupWithFestivalProjection> findActiveByMemberId(@Param("memberId") long memberId);
+
+    @Query(value = """
+            SELECT matching_group.*
+            FROM match_groups matching_group
+            JOIN match_group_members group_member ON group_member.group_id = matching_group.id
+            WHERE group_member.member_id = :memberId
+              AND group_member.status = 'COMPLETED'
+              AND matching_group.status = 'COMPLETED'
+            ORDER BY matching_group.completed_at DESC, matching_group.id DESC
+            LIMIT 1
+            FOR UPDATE OF matching_group
+            """, nativeQuery = true)
+    java.util.Optional<MatchGroup> findLatestCompletedByMemberIdForUpdate(
+            @Param("memberId") long memberId
+    );
+
+    @Query(value = """
+            SELECT matching_group.*
+            FROM match_groups matching_group
+            JOIN match_group_members group_member ON group_member.group_id = matching_group.id
+            WHERE group_member.member_id = :memberId
+              AND group_member.status = 'COMPLETED'
+              AND matching_group.status = 'COMPLETED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM match_pools newer_pool
+                  WHERE newer_pool.member_id = :memberId
+                    AND newer_pool.entered_at > matching_group.confirmed_at
+              )
+            ORDER BY matching_group.completed_at DESC, matching_group.id DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    java.util.Optional<MatchGroup> findLatestCompletedByMemberId(@Param("memberId") long memberId);
+
+    @Query(value = """
+            SELECT
+                matching_group.id AS groupId,
+                matching_group.festival_id AS festivalId,
+                matching_group.status AS status,
+                matching_group.confirmed_member_count AS confirmedMemberCount,
+                matching_group.meeting_place_name AS meetingPlaceName,
+                matching_group.meeting_place_address AS meetingPlaceAddress,
+                matching_group.meeting_place_content_id AS meetingPlaceContentId,
+                matching_group.meeting_map_x AS meetingMapX,
+                matching_group.meeting_map_y AS meetingMapY,
+                matching_group.confirmed_at AS confirmedAt,
+                matching_group.started_at AS startedAt,
+                matching_group.completed_at AS completedAt,
+                festival.title AS festivalTitle,
+                festival.address AS festivalAddress,
+                festival.event_start_date AS festivalEventStartDate,
+                festival.event_end_date AS festivalEventEndDate,
+                festival.meeting_radius_meters AS meetingRadiusMeters
+            FROM match_groups matching_group
+            JOIN festivals festival ON festival.id = matching_group.festival_id
+            WHERE matching_group.id = :groupId
+            """, nativeQuery = true)
+    java.util.Optional<ActiveGroupWithFestivalProjection> findSnapshotById(
+            @Param("groupId") long groupId
+    );
 
     @Query(value = """
             SELECT count(*) FROM match_groups
@@ -100,6 +161,7 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
         Integer getConfirmedMemberCount();
         Instant getConfirmedAt();
         Instant getStartedAt();
+        Instant getCompletedAt();
         String getFestivalTitle();
         String getFestivalAddress();
         LocalDate getFestivalEventStartDate();

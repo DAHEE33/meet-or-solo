@@ -55,6 +55,21 @@ public class MatchGroupQueryService {
         return MatchGroupResponse.from(group, participants, memberId);
     }
 
+    public MatchGroupResponse snapshot(long groupId, long memberId) {
+        ActiveGroupWithFestivalProjection group = groups.findSnapshotById(groupId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MATCHING_CONFLICT));
+        List<MatchGroupMemberResponse> participants = ("COMPLETED".equals(group.getStatus())
+                ? groupMembers.findCompletedMembersWithProfileByGroupId(groupId)
+                : groupMembers.findActiveMembersWithProfileByGroupId(groupId))
+                .stream()
+                .map(MatchGroupMemberResponse::from)
+                .toList();
+        if (participants.stream().noneMatch(member -> member.memberId() == memberId)) {
+            throw new BusinessException(ErrorCode.MATCHING_CONFLICT);
+        }
+        return MatchGroupResponse.from(group, participants, memberId);
+    }
+
     private void requireMember(long memberId) {
         if (!members.existsById(memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_RESOURCE_NOT_FOUND);

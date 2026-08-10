@@ -16,12 +16,262 @@
 - REST 복원, polling, WebSocket 알림 이후 화면 동기화
 - 도착 예정 시간 선택·변경·마감 경계 UX
 
-meeting point, Kakao Maps, `COMPLETED`, 자유 채팅, Redis와 운영 배포는 이
+meeting point, Kakao Maps, 자유 채팅, Redis와 운영 배포는 이
 수동 테스트 범위에 포함하지 않습니다.
 
-이 문서는 테스트 중 발견한 문제를 즉시 고치기 위한 작업 지시서가 아닙니다.
-먼저 증거와 재현 절차를 누적하고, 항목별 판정이 끝난 뒤 수정 범위를 한꺼번에
-요청하기 위한 기준 문서로 사용합니다.
+## 15. 전원 도착 완료 수동 테스트
+
+1. 첫 회원 도착 뒤 group `IN_PROGRESS`, 첫 회원 `ARRIVED`, current-group 유지 여부를 확인한다.
+2. 마지막 회원 도착 응답이 `COMPLETED`, `completedAt` non-null, 유효 member 모두 `COMPLETED`인지 확인한다.
+3. 마지막 요청 브라우저가 `/matching`으로 이동해 `모두 도착해 만남이 완료됐어요.`를 한 번 표시하는지 확인한다.
+4. 상대 브라우저가 `MATCH_COMPLETED` 후 REST `data: null`을 확인하고 같은 안내로 이동하는지 확인한다.
+5. 새로고침·새 매칭에서 안내가 반복되지 않고 취소·NO_SHOW 안내와 구분되는지 확인한다.
+6. 완료 후 반복 도착에서 동일 `completedAt` snapshot과 단일 `MATCH_COMPLETED` event를 확인한다.
+7. 완료 직후에는 취소 card와 활성 `다시 신청하기`가 아니라 완료 전용 card와 `confirmed_at + 1시간` 제한이 표시되는지 확인한다.
+8. 제한 중 신규 pool 신청을 Backend가 거절하고 restriction 종료 시각·남은 초가 화면과 일치하는지 확인한다.
+9. 제한 종료 뒤 체크인이 만료됐으면 재체크인 동선이 표시되는지 확인한다.
+10. 새 active group이 있는 경우 과거 완료 snapshot보다 새 group을 우선하는지 확인한다.
+
+### ISSUE-MR-008 정상 완료를 취소 card로 표시
+
+| 항목 | 내용 |
+| --- | --- |
+| 상태 | `CLOSED` |
+| 발견 시각(KST) | 2026-08-10 |
+| 재현 | 두 회원이 모두 도착해 group/member `COMPLETED`, `MATCH_COMPLETED` 1건 확인 후 `/matching` 이동 |
+| 실제 결과 | 완료 안내와 함께 `매칭이 취소됐어요`, 활성 `다시 신청하기` 표시 |
+| 기대 결과 | 완료 전용 card, `confirmed_at + 1시간` 유효 종료 시각과 남은 시간, 제한 중 신청 비활성화 |
+| DB 증거 | group `24`, 회원별 `MEMBER_ARRIVED` 1건, `MATCH_COMPLETED` 1건 |
+| 구현 결과 | completion restriction/pool 신청 검증, `MatchingUiStatus.COMPLETED`, 완료 전용 card와 관련 자동 테스트 반영 |
+| 자동 검증 | Backend focused/Testcontainers/matching 전체/`clean build` 336건, Frontend focused 63건/전체 128건, `tsc --noEmit`, PWA build 성공 |
+| 수동 검증 | 완료 전용 card, 종료 시각/countdown, 제한 중 비활성 action과 DB 완료 정합성 PASS |
+| 제외 | 후기 작성, 최근 완료 상세 API, GPS 도착 판정 |
+
+`ISSUE-MR-008`은 두 브라우저와 DB 수동 재검증 후 `CLOSED`로 판정했습니다.
+
+### ISSUE-MR-009 새로고침 초기 신청 form 노출
+
+| 항목 | 내용 |
+| --- | --- |
+| 상태 | `OPEN` |
+| 발견 시각(KST) | 2026-08-10 |
+| 재현 | completion lock이 active인 `/matching`을 새로고침 |
+| 실제 결과 | restriction snapshot 도착 전 자동 매칭 신청 form이 잠깐 표시된 뒤 완료 card로 전환 |
+| 기대 결과 | 최초 상태 확인 중 중립 skeleton을 표시하고 최종 완료 card를 한 번만 렌더링 |
+| 기능 정합성 | Backend restriction, 완료 card와 DB 값은 정상 |
+| 분리 사유 | completion 기능 결함이 아닌 Frontend 초기 hydration과 layout transition 공통 문제 |
+| 후속 브랜치 | `feature/wbs-10-frontend-async-ux-stabilization` |
+| 예상 범위 | `LOADING`/`IDLE` 구분, snapshot 원자 판정, 재조회 중 기존 화면 유지, layout shift 점검 |
+
+### 완료 기능 DB 검증 SQL
+
+아래 SQL은 `:group_id`를 이번 완료 테스트 group ID로 바꿔 순서대로 실행합니다.
+DB event 시각 컬럼은 `occurred_at`이 아니라 `created_at`입니다.
+
+#### 1. group/member 완료 정합성
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.status AS group_status,
+    g.confirmed_at,
+    g.started_at,
+    g.completed_at,
+    g.confirmed_at + INTERVAL '1 hour' AS match_valid_until,
+    current_timestamp AS db_now,
+    current_timestamp < g.confirmed_at + INTERVAL '1 hour'
+        AS completion_lock_active,
+    gm.member_id,
+    gm.status AS member_status,
+    gm.arrived_at,
+    (g.status = 'COMPLETED') AS pass_group_completed,
+    (g.completed_at IS NOT NULL) AS pass_completed_at,
+    (gm.status = 'COMPLETED') AS pass_member_completed,
+    (gm.arrived_at IS NOT NULL) AS pass_arrived_at
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.id = :group_id
+ORDER BY gm.member_id;
+```
+
+정상 완료한 유효 참여자는 네 `pass_*` 값이 모두 `true`여야 합니다. 취소,
+`NO_SHOW`, `LEFT` member가 있었던 group이면 해당 terminal 상태는 보존하며
+`pass_member_completed` 판정 대상에서 제외합니다.
+
+#### 2. 인원 수와 완료 event 단일성
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.confirmed_member_count,
+    count(*) FILTER (WHERE gm.status = 'COMPLETED') AS completed_member_count,
+    count(*) FILTER (
+        WHERE gm.status IN ('JOINED', 'ARRIVAL_TIME_SELECTED', 'ARRIVED')
+    ) AS active_member_count,
+    count(*) FILTER (
+        WHERE gm.status = 'COMPLETED' AND gm.arrived_at IS NOT NULL
+    ) AS completed_with_arrival_count,
+    (
+        SELECT count(*)
+        FROM match_events e
+        WHERE e.group_id = g.id
+          AND e.event_type = 'MATCH_COMPLETED'
+    ) AS match_completed_event_count
+FROM match_groups g
+JOIN match_group_members gm ON gm.group_id = g.id
+WHERE g.id = :group_id
+GROUP BY g.id;
+```
+
+2인 정상 완료 기준 예상값은 `completed_member_count=2`,
+`active_member_count=0`, `completed_with_arrival_count=2`,
+`match_completed_event_count=1`입니다.
+
+#### 3. 전체 event와 중복 확인
+
+```sql
+SELECT
+    event_type,
+    member_id,
+    count(*) AS event_count,
+    min(created_at) AS first_created_at,
+    max(created_at) AS last_created_at
+FROM match_events
+WHERE group_id = :group_id
+GROUP BY event_type, member_id
+ORDER BY event_type, member_id;
+```
+
+2인 정상 완료 기준 `MATCH_CONFIRMED` 1건, 각 회원의 `MEMBER_ARRIVED` 1건,
+actor가 없는 `MATCH_COMPLETED` 1건이어야 합니다.
+
+#### 4. 정상 완료 penalty/cooldown 미생성
+
+```sql
+SELECT count(*) AS penalty_event_count
+FROM match_penalty_events
+WHERE related_group_id = :group_id;
+
+SELECT count(*) AS cooldown_count
+FROM match_cooldowns
+WHERE related_group_id = :group_id;
+```
+
+두 결과 모두 `0`이어야 합니다.
+
+#### 5. group과 실제 사용 pool/attempt 연결
+
+```sql
+SELECT
+    g.id AS group_id,
+    g.attempt_id,
+    a.status AS attempt_status,
+    am.member_id,
+    am.pool_id,
+    p.status AS pool_status,
+    p.entered_at,
+    p.search_expires_at
+FROM match_groups g
+JOIN match_attempts a ON a.id = g.attempt_id
+JOIN match_attempt_members am ON am.attempt_id = g.attempt_id
+JOIN match_pools p ON p.id = am.pool_id
+WHERE g.id = :group_id
+ORDER BY am.member_id;
+```
+
+확정에 사용한 pool은 삭제하지 않고 `MATCHED` 이력으로 남는 것이 정상입니다.
+여러 과거 `MATCHED` pool은 active pool 중복이 아닙니다.
+
+#### 6. 완료 회원의 active 점유 해제
+
+```sql
+SELECT
+    target.member_id,
+    EXISTS (
+        SELECT 1
+        FROM match_pools p
+        WHERE p.member_id = target.member_id
+          AND p.status IN ('WAITING', 'LOCKED', 'PROPOSED')
+    ) AS has_active_pool,
+    EXISTS (
+        SELECT 1
+        FROM match_group_members gm
+        JOIN match_groups g ON g.id = gm.group_id
+        WHERE gm.member_id = target.member_id
+          AND gm.status IN ('JOINED', 'ARRIVAL_TIME_SELECTED', 'ARRIVED')
+          AND g.status IN ('CONFIRMED', 'IN_PROGRESS')
+    ) AS has_active_group
+FROM (
+    SELECT member_id
+    FROM match_group_members
+    WHERE group_id = :group_id
+) target
+ORDER BY target.member_id;
+```
+
+완료 직후 두 값은 모두 `false`가 정상입니다. active index 점유는 해제되지만
+아래 완료 유효시간 제한이 신규 신청을 별도로 차단합니다.
+
+#### 7. DB 기준 completion lock 판정
+
+```sql
+SELECT
+    gm.member_id,
+    g.id AS completed_group_id,
+    g.confirmed_at AS lock_starts_at,
+    g.confirmed_at + INTERVAL '1 hour' AS lock_expires_at,
+    current_timestamp AS db_now,
+    greatest(
+        0,
+        floor(extract(epoch FROM (
+            g.confirmed_at + INTERVAL '1 hour' - current_timestamp
+        )))::bigint
+    ) AS remaining_seconds,
+    current_timestamp < g.confirmed_at + INTERVAL '1 hour' AS lock_active
+FROM match_group_members gm
+JOIN match_groups g ON g.id = gm.group_id
+WHERE g.id = :group_id
+  AND g.status = 'COMPLETED'
+  AND gm.status = 'COMPLETED'
+ORDER BY gm.member_id;
+```
+
+화면과 `GET /api/matching/me/restrictions`의 `completionLock.groupId`,
+`expiresAt`, `remainingSeconds`, `active`가 이 결과와 일치해야 합니다. 요청과
+DB 조회 사이의 경과 초 때문에 `remainingSeconds`는 소폭 차이날 수 있습니다.
+
+#### 8. 체크인 1시간 상한
+
+```sql
+SELECT
+    fc.id AS checkin_id,
+    fc.member_id,
+    fc.status,
+    fc.checked_in_at,
+    fc.expires_at AS stored_expires_at,
+    fc.checked_in_at + INTERVAL '1 hour' AS policy_expires_at,
+    least(
+        fc.expires_at,
+        fc.checked_in_at + INTERVAL '1 hour'
+    ) AS effective_expires_at,
+    current_timestamp < least(
+        fc.expires_at,
+        fc.checked_in_at + INTERVAL '1 hour'
+    ) AS effective_unexpired
+FROM festival_checkins fc
+WHERE fc.member_id IN (
+    SELECT member_id
+    FROM match_group_members
+    WHERE group_id = :group_id
+)
+  AND fc.festival_id = (
+    SELECT festival_id FROM match_groups WHERE id = :group_id
+  )
+ORDER BY fc.member_id, fc.id DESC;
+```
+
+신규 check-in은 저장 만료시각도 정책 만료시각을 넘지 않아야 합니다. 과거 row가
+남아 있더라도 Backend는 두 시각 중 이른 값을 유효 만료로 사용합니다.
 
 ## 2. 판정 표기
 
@@ -296,7 +546,7 @@ status = ACTIVE
 - 서로 영향을 주면 안 되는 첫 발생 테스트
 
 이 SQL은 matching 관련 테스트 이력과 member 2, 27의 penalty/cooldown을
-초기화한 뒤 2시간짜리 새 check-in을 만듭니다.
+초기화한 뒤 현재 정책에 맞춘 1시간짜리 새 check-in을 만듭니다.
 
 ```sql
 BEGIN;
@@ -423,7 +673,7 @@ SELECT
     100,
     'ACTIVE',
     current_timestamp,
-    current_timestamp + INTERVAL '2 hours',
+    current_timestamp + INTERVAL '1 hour',
     current_timestamp,
     current_timestamp
 FROM (VALUES (2::bigint), (27::bigint)) AS target(member_id);
@@ -1538,6 +1788,7 @@ GROUP BY g.id, g.confirmed_member_count;
 | MT-NOSHOW-04 | 2026-08-04 | member 2/27 | `PASS` | 첫 NO_SHOW 30분, 같은 KST 날짜 두 번째 NO_SHOW 60분, manner_temperature 불변과 기존 2시간 active cooldown 만료 보존 확인 | 기존 REPORT row EXPIRED, 새 NO_SHOW row ACTIVE 및 expires_at 동일 |
 | MT-GROUP-01 | 2026-08-04 | member 2/27 | `PASS` | 2명 group에서 취소/NO_SHOW 후 group 종료, 귀책 상태 유지와 비귀책 LEFT 확인 | |
 | MT-GROUP-02 | 2026-08-04 | member 1/2/27 | `PASS` | true+true 잔존 시 confirmed 3/current 2 유지, false 포함 잔존 시 group 종료, 취소 회원 제외와 무패널티 확인 | 초기 미달 제안에서 false 회원 취소 후 true 회원 2명의 2인 상태방 생성도 확인 |
+| MT-COMPLETE-01 | 2026-08-10 | member 2/27 | `PASS` | 양쪽 도착 후 group/member COMPLETED, MEMBER_ARRIVED 각 1건, MATCH_COMPLETED 1건, penalty/cooldown 0건 | 완료 전용 card와 1시간 restriction 확인. 초기 화면 전환은 ISSUE-MR-009로 분리 |
 
 ## 17. 완료 조건
 

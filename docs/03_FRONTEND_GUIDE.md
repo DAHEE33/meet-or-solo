@@ -357,6 +357,57 @@ fallback으로 사용합니다. current group이 없으면 `/matching`으로 rep
 GPS 반경 확인은 아직 연결하지 않았습니다. 만남 포인트 지도, 단말 위치 확인,
 신고와 안전 기능은 후속 범위입니다.
 
+정상 완료 후 `/matching` 화면은 취소·NO_SHOW terminal card를 재사용하지
+않습니다. 현재 수동 검증에서 완료 안내와 함께 `매칭이 취소됐어요`,
+`다시 신청하기`가 노출되는 문제가 확인되었으며 다음 Frontend 보완 범위에서
+완료 전용 card로 분리합니다.
+
+완료 전용 card의 계약은 다음과 같습니다.
+
+- 제목은 `만남이 완료됐어요`로 표시하고 취소 문구와 아이콘을 사용하지 않음
+- `confirmedAt + 1시간`인 매칭 유효 종료 시각과 남은 시간을 표시
+- 유효시간 중에는 새 매칭 신청 action을 비활성화
+- 제한 종료 뒤 체크인이 만료되었으면 `다시 체크인하기`, 유효하면
+  `다시 매칭하기` 제공
+- 완료 안내는 Router state에서 한 번만 소비하고 새로고침·새 매칭에서 반복하지 않음
+- 후기 작성 action과 최근 완료 이력 복원은 후속 범위로 유지
+
+이 화면 보완은 구현되었습니다. `useMatchingSession`은 active group/proposal/pool
+상태를 먼저 적용한 뒤 `completionLock.groupId`가 있으면 최신 `MATCHED` pool을
+취소로 해석하지 않고 `COMPLETED`로 복원합니다. 완료 card는 성공 아이콘, 종료
+시각과 countdown을 표시하고 `completionLock.active=true` 동안 action을
+비활성화합니다. 제한 종료 뒤 `다시 매칭하기`로 기존 retry form을 열며, 실제
+체크인이 만료됐다면 기존 신청 API 오류를 통해 `체크인하기` 동선으로 연결합니다.
+Router 완료 notice는 기존처럼 한 번만 소비하고 card 복원은 restriction 응답이
+담당합니다. 자동 테스트는 완료했으며 실제 브라우저 수동 재검증은 남아 있습니다.
+
+## 비동기 화면 전환 안정화 후속 범위
+
+matching 완료 기능과 별도로 Frontend 전체의 최초 상태 복원과 화면 전환을
+점검합니다. 서버 응답 전의 `unknown`을 실제 데이터가 없는 `IDLE`로 해석하면
+새로고침 직후 신청 form이 먼저 노출되고 완료 card로 바뀌는 잘못된 중간 화면이
+발생합니다. 이 보완은 별도 Frontend UX 브랜치에서 수행합니다.
+
+공통 원칙:
+
+- 최초 snapshot을 아직 받지 않은 `LOADING`, 조회 완료 후 실제 데이터가 없는
+  `IDLE`, 완료·취소 같은 terminal 상태를 구분
+- 최초 진입에서만 중립적인 skeleton을 사용하고 신청 form을 placeholder로 사용하지 않음
+- WebSocket, polling과 수동 refresh 중에는 마지막 정상 화면을 유지하고
+  백그라운드에서 새 snapshot을 반영
+- pool, proposal, group, restriction 조회를 하나의 논리 snapshot으로 판정하고
+  일부 응답 순서대로 중간 화면을 연속 렌더링하지 않음
+- active group, proposal, active pool, 완료 제한, cooldown, terminal pool,
+  `IDLE`의 우선순위를 한곳에서 일관되게 적용
+- card와 skeleton의 최소 높이를 맞춰 layout shift를 줄임
+- Router notice는 표시 직후 history state에서 소비하고 새로고침에서 반복하지 않음
+- API 지연, 일부 실패, WebSocket 재연결, polling, 뒤로 가기와 새로고침을
+  화면별 자동·수동 테스트에 포함
+
+우선 점검 대상은 `/matching`, `/match-room`, 체크인, 로그인/프로필 복원,
+축제 목록·상세입니다. 이 절은 후속 작업 계약이며 현재 completion 브랜치에서
+함께 구현하지 않습니다.
+
 필수 요소:
 
 - 매칭 확정 안내 카드

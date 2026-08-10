@@ -35,6 +35,10 @@ public class MatchGroupMember {
         arrivedAt = now;
         updatedAt = now;
     }
+    public void complete(OffsetDateTime now) {
+        status = "COMPLETED";
+        updatedAt = now;
+    }
     public void cancel(String reason, OffsetDateTime now) {
         status = "CANCELLED";
         cancelReason = reason;

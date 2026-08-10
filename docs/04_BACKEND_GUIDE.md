@@ -132,6 +132,32 @@ group/festival projection 1회와 member/profile projection 1회로 조회해 N+
 방지합니다. current group이 없으면 `200 OK`, `data:null`이고 정합성 충돌은
 `MATCHING_CONFLICT`입니다.
 
+### 정상 완료 후 재매칭 제한 계약
+
+MVP의 체크인과 확정 매칭 유효시간은 기존 기획서의 2시간에서 각각 1시간으로
+조정합니다. 정상 완료 group은 active current-group에서 계속 제외하되, 신규
+pool 신청과 restriction 조회에서는 로그인 회원의 최근 `COMPLETED` group을
+확인합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + 1시간
+```
+
+현재 시각이 이 값보다 이르면 신규 pool 신청을 거절하고 restriction 응답에
+종료 시각과 남은 초를 제공합니다. 이 제한은 귀책 penalty가 아니므로
+`match_cooldowns`에 정상 완료 row를 추가하지 않고 완료 group 이력에서
+파생하는 방향을 우선합니다. 새 active group이 있으면 기존 active group 제한을
+가장 먼저 적용합니다. 완료 횟수 최대 3회 같은 별도 횟수 제한은 MVP에 추가하지
+않습니다.
+
+구현은 최근 `COMPLETED` group과 로그인 회원의 `COMPLETED` member 관계만
+조회하고 `confirmed_at + 1시간`을 계산합니다. restriction 응답의
+`completionLock`은 `active`, `reason=MATCH_VALIDITY`, `groupId`, `startsAt`,
+`expiresAt`, `remainingSeconds`를 제공하며 귀책 cooldown과 별도입니다. 신규 pool
+신청은 active pool/group 검증을 먼저 적용한 뒤 cooldown과 완료 제한을 검증하고,
+완료 제한 중에는 `MATCHING_COMPLETION_LOCKED`를 반환합니다. 정확한 경계에서는
+제한이 종료됩니다.
+
 도착 예정 시간은
 `PUT /api/matching/groups/me/current/arrival-time`에서 변경합니다. request에는
 `arrivalMinutes`만 포함하며 신규 요청은 `5`, `10`, `20`, `25`만 허용합니다.

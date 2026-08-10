@@ -71,6 +71,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
   let currentState = INITIAL_STATE;
   let generation = 0;
   let refreshQueued = false;
+  let completionSignalReceived = false;
 
   const clearTimer = () => {
     if (timer !== null) dependencies.cancelSchedule(timer);
@@ -130,7 +131,9 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             events: [],
             error: null,
             eventsError: null,
-            terminationNotice: hadCurrentGroup
+            terminationNotice: completionSignalReceived
+              ? '모두 도착해 만남이 완료됐어요.'
+              : hadCurrentGroup
               ? '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.'
               : currentState.terminationNotice,
             isSubmitting: false,
@@ -188,7 +191,8 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
       connected = false;
       scheduleFallback();
     },
-    onStateChanged: () => {
+    onStateChanged: (notification) => {
+      if (notification.reason === 'MATCH_COMPLETED') completionSignalReceived = true;
       if (!stopped) void refresh(true);
     },
   });
@@ -245,6 +249,21 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     const operation = dependencies.arrive(controller.signal)
       .then(async (group) => {
         if (stopped || controller.signal.aborted) return false;
+        if (group.status === 'COMPLETED') {
+          ++generation;
+          clearTimer();
+          publish({
+            ...currentState,
+            status: 'EMPTY',
+            group: null,
+            events: [],
+            error: null,
+            actionError: null,
+            terminationNotice: '모두 도착해 만남이 완료됐어요.',
+            isSubmitting: false,
+          });
+          return true;
+        }
         const mutationGeneration = ++generation;
         publish({
           ...currentState,

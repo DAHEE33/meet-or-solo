@@ -24,6 +24,26 @@ const restriction = (active = false): MatchingRestriction => ({
     expiresAt: active ? '2026-07-27T12:05:00' : null,
     remainingSeconds: active ? 300 : 0,
   },
+  completionLock: {
+    active: false,
+    reason: null,
+    groupId: null,
+    startsAt: null,
+    expiresAt: null,
+    remainingSeconds: 0,
+  },
+});
+
+const completionRestriction = (active = true): MatchingRestriction => ({
+  ...restriction(),
+  completionLock: {
+    active,
+    reason: 'MATCH_VALIDITY',
+    groupId: 24,
+    startsAt: '2026-08-10T12:00:00+09:00',
+    expiresAt: '2026-08-10T13:00:00+09:00',
+    remainingSeconds: active ? 1_200 : 0,
+  },
 });
 
 const pool = (status: MatchPool['status']): MatchPool => ({
@@ -112,6 +132,16 @@ describe('deriveMatchingState', () => {
     expect(state({ pool: pool('MATCHED'), restriction: restriction(true) }).status).toBe('CANCELLED');
   });
 
+  it('current group이 null이고 최신 pool이 MATCHED여도 완료 이력을 우선한다', () => {
+    expect(state({ pool: pool('MATCHED'), restriction: completionRestriction() }).status)
+      .toBe('COMPLETED');
+  });
+
+  it('완료 제한이 만료돼도 완료 이력은 CANCELLED로 오인하지 않는다', () => {
+    expect(state({ pool: pool('MATCHED'), restriction: completionRestriction(false) }).status)
+      .toBe('COMPLETED');
+  });
+
   it('active 서버 상태가 없으면 cooldown, 그마저 없으면 IDLE을 사용한다', () => {
     expect(state({ restriction: restriction(true) }).status).toBe('COOLDOWN');
     expect(state().status).toBe('IDLE');
@@ -130,6 +160,7 @@ describe('polling policy', () => {
     expect(pollingDelay('MATCHED', 0)).toBeNull();
     expect(pollingDelay('CANCELLED', 0)).toBeNull();
     expect(pollingDelay('EXPIRED', 0)).toBeNull();
+    expect(pollingDelay('COMPLETED', 0)).toBeNull();
     expect(pollingDelay('ERROR', 1)).toBe(2_000);
     expect(pollingDelay('ERROR', 10)).toBe(30_000);
   });
@@ -166,6 +197,8 @@ describe('retry form reconciliation', () => {
     expect(canBeginRetry(state({ pool: pool('CANCELLED'), restriction: restriction(true) }), false)).toBe(false);
     expect(canBeginRetry(state({ pool: pool('CANCELLED') }), true)).toBe(false);
     expect(canBeginRetry(state({ pool: pool('WAITING') }), false)).toBe(false);
+    expect(canBeginRetry(state({ pool: pool('MATCHED'), restriction: completionRestriction() }), false)).toBe(false);
+    expect(canBeginRetry(state({ pool: pool('MATCHED'), restriction: completionRestriction(false) }), false)).toBe(true);
   });
 
   it.each(['WAITING', 'LOCKED'] as const)('POST 성공 pool %s를 즉시 화면 상태에 반영한다', (status) => {

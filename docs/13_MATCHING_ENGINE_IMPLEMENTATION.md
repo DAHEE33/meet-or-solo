@@ -1230,7 +1230,7 @@ SELECT
     100,
     'ACTIVE',
     CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP + INTERVAL '2 hours',
+    CURRENT_TIMESTAMP + INTERVAL '1 hour',
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP
 FROM (VALUES (:member_a_id), (:member_b_id)) AS test_members(member_id);
@@ -2706,7 +2706,7 @@ body 없음
 
 ```text
 group row FOR UPDATE
--> 로그인 회원 group member row FOR UPDATE
+-> group 전체 member row ID 오름차순 FOR UPDATE
 -> 잠금 후 상태 재검증
 -> member/group 변경
 -> MEMBER_ARRIVED 저장과 application event 발행
@@ -2715,8 +2715,10 @@ group row FOR UPDATE
 ```
 
 `ARRIVED -> ARRIVED` 반복은 기존 snapshot을 반환하고 `arrivedAt`, `startedAt`,
-event와 알림을 변경하지 않습니다. inactive member와 종료 group은 거절하며
-모든 회원 도착을 COMPLETED로 연결하지 않습니다.
+event와 알림을 변경하지 않습니다. 마지막 유효 회원 도착에서는 group을
+`COMPLETED`로 전환하고 최초 `completed_at`, 유효 member `COMPLETED`, 단일
+`MATCH_COMPLETED`를 함께 기록합니다. 완료 후 반복 도착은 최근 완료 snapshot을
+반환하되 새 active group이 있으면 새 group을 우선합니다.
 
 ### 33.3 WebSocket, frontend와 검증
 
@@ -3523,4 +3525,64 @@ deadline부터 action을 숨기고 Scheduler 처리 대기 안내를 표시하�
 그룹별 고정 배정, 2km 후보 검색, Kakao Maps 핀과 Backend GPS 도착 판정을
 구현합니다. 이후
 `feature/wbs-10-b-match-room-completion`에서 group 완료 조건과
-`IN_PROGRESS -> COMPLETED` 전환을 구현합니다.
+`IN_PROGRESS -> COMPLETED` 전환을 구현했습니다.
+
+## 41. 완료 수동 검증 후 확인된 후속 보완
+
+group `24` 수동 검증에서 두 회원의 `MEMBER_ARRIVED`와 group당 단일
+`MATCH_COMPLETED`, group/member `COMPLETED` 전환은 정상임을 확인했습니다.
+그러나 `/matching`은 완료 안내를 한 번 표시하면서도 남아 있는 `MATCHED` pool을
+일반 terminal 상태로 해석해 `매칭이 취소됐어요`와 `다시 신청하기` card를 함께
+표시했습니다. Backend 완료 transaction과 별개인 Frontend 완료 결과 표현
+문제로 판정합니다.
+
+구현한 보완 계약은 다음과 같습니다.
+
+- 체크인과 확정 매칭 유효시간을 2시간에서 각각 1시간으로 조정
+- 재매칭 제한 종료 시각은 `completed_at`이 아니라 `confirmed_at + 1시간`
+- 정상 완료 group에서 restriction을 파생하고 신규 pool 신청도 서버에서 거절
+- 완료 전용 card와 countdown을 제공하고 제한 중 신청 action 비활성화
+- 제한 종료 뒤 체크인이 만료됐으면 재체크인 동선 제공
+- 최대 3회 제한, 후기 작성, 최근 완료 상세 API와 GPS 판정은 제외
+
+Backend는 완료 group/member 관계에서 `confirmed_at + 1시간` 제한을 파생하고
+restriction의 `completionLock`과 pool 신청 오류 `MATCHING_COMPLETION_LOCKED`에
+적용했습니다. active pool/group 검증은 완료 제한보다 먼저 적용되며 정상 완료
+penalty/cooldown row는 만들지 않습니다. check-in은 `V17`과 matching SQL에서
+1시간 상한을 강제합니다.
+
+Frontend는 `MatchingUiStatus.COMPLETED`와 완료 전용 card를 추가했습니다. current
+group이 `null`이고 최신 pool이 `MATCHED`여도 완료 이력이 현재 matching lifecycle에
+해당하면 완료로 복원하며, 종료 시각/countdown과 제한 중 비활성 action을
+표시합니다. 제한 종료 뒤에는 retry form을 열고 만료 check-in은 기존 API 오류의
+체크인 동선으로 연결합니다.
+
+Backend focused unit/controller, PostgreSQL Testcontainers 완료 제한 통합,
+matching 전체와 전체 `clean build` 336건을 성공했습니다. Frontend focused
+Vitest 63건, 전체 128건, TypeScript와 production/PWA build도 성공했습니다.
+
+### 41.1 브라우저·DB 수동 재검증 결과
+
+두 브라우저에서 마지막 회원 도착 후 `/matching` 이동, 완료 전용 card,
+`confirmed_at + 1시간` 종료 시각과 countdown, 제한 중 비활성 action을
+확인했습니다. 기존 `매칭이 취소됐어요` 문구는 더 이상 표시되지 않아
+`ISSUE-MR-008`을 `CLOSED`로 판정했습니다.
+
+DB에서는 다음을 모두 확인했습니다.
+
+- group과 두 유효 member `COMPLETED`, `completed_at`과 `arrived_at` 저장
+- 회원별 `MEMBER_ARRIVED` 각 1건과 group당 `MATCH_COMPLETED` 1건
+- 정상 완료 관련 penalty event와 cooldown 0건
+- 완료 회원의 active pool/group 점유 해제
+- 완료 group의 `confirmed_at + 1시간` 기준 completion lock과 화면 countdown 일치
+- check-in 저장 만료시각과 정책상 1시간 유효 상한 적용
+
+따라서 MatchRoom 전원 도착 완료와 1시간 재매칭 제한 범위는 구현, 자동 테스트,
+브라우저·DB 수동 검증까지 완료했습니다.
+
+다만 새로고침 직후 서버 snapshot을 받기 전에 자동 매칭 신청 form이 잠깐
+노출되고 완료 card로 바뀌는 전환을 확인했습니다. 이는 완료 transaction이나
+restriction 정합성 문제가 아니라 Frontend가 초기 `unknown`을 `IDLE`로 먼저
+렌더링하는 hydration UX 문제입니다. 별도
+`feature/wbs-10-frontend-async-ux-stabilization` 브랜치에서 전체 화면의 최초
+loading, 재조회 상태 유지와 layout shift를 함께 보완합니다.

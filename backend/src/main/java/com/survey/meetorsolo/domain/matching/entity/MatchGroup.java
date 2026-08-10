@@ -19,6 +19,7 @@ public class MatchGroup {
     @Column(name="meeting_map_y", precision=13, scale=10) private BigDecimal meetingMapY;
     @Column(name="confirmed_at", nullable=false) private OffsetDateTime confirmedAt;
     @Column(name="started_at") private OffsetDateTime startedAt;
+    @Column(name="completed_at") private OffsetDateTime completedAt;
     @Column(name="cancelled_at") private OffsetDateTime cancelledAt;
     @Column(name="cancel_reason", length=60) private String cancelReason;
     @Column(name="created_at", nullable=false) private OffsetDateTime createdAt;
@@ -46,11 +47,19 @@ public class MatchGroup {
     public BigDecimal getMeetingMapX() { return meetingMapX; }
     public BigDecimal getMeetingMapY() { return meetingMapY; }
     public OffsetDateTime getStartedAt() { return startedAt; }
+    public OffsetDateTime getCompletedAt() { return completedAt; }
     public OffsetDateTime getCancelledAt() { return cancelledAt; }
     public void start(OffsetDateTime now) {
         if ("CONFIRMED".equals(status)) {
             status = "IN_PROGRESS";
             startedAt = now;
+            updatedAt = now;
+        }
+    }
+    public void complete(OffsetDateTime now) {
+        if (!"COMPLETED".equals(status)) {
+            status = "COMPLETED";
+            completedAt = now;
             updatedAt = now;
         }
     }

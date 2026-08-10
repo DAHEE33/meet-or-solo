@@ -146,6 +146,65 @@ class MatchPoolEntryServiceIntegrationTest {
         assertThat(restrictions.cooldown().active()).isTrue();
         assertThat(restrictions.cooldown().reason()).isEqualTo("TIMEOUT");
         assertThat(restrictions.cooldown().remainingSeconds()).isEqualTo(120);
+        assertThat(restrictions.completionLock().active()).isFalse();
+    }
+
+    @Test
+    void 정상_완료_후_confirmedAt_1시간_전에는_restriction과_pool_신청을_차단한다() {
+        insertTerminalGroup(MEMBER_ID, "COMPLETED", "COMPLETED",
+                NOW.minusMinutes(40), NOW.minusMinutes(1));
+
+        var restrictions = queries.restrictions(MEMBER_ID);
+
+        assertThat(restrictions.completionLock().active()).isTrue();
+        assertThat(restrictions.completionLock().reason()).isEqualTo("MATCH_VALIDITY");
+        assertThat(restrictions.completionLock().startsAt()).isEqualTo(NOW.minusMinutes(40));
+        assertThat(restrictions.completionLock().expiresAt()).isEqualTo(NOW.plusMinutes(20));
+        assertThat(restrictions.completionLock().remainingSeconds()).isEqualTo(1_200);
+        assertError(MEMBER_ID, ErrorCode.MATCHING_COMPLETION_LOCKED);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_cooldowns WHERE member_id=?",
+                Integer.class, MEMBER_ID)).isZero();
+    }
+
+    @Test
+    void 정상_완료_제한_경계_후에는_유효한_체크인으로_신청할_수_있다() {
+        insertTerminalGroup(MEMBER_ID, "COMPLETED", "COMPLETED",
+                NOW.minusHours(1), NOW.minusMinutes(5));
+
+        assertThat(queries.restrictions(MEMBER_ID).completionLock().active()).isFalse();
+        assertThat(entries.enter(MEMBER_ID, request()).status()).isEqualTo("WAITING");
+    }
+
+    @Test
+    void 완료_제한이_끝나도_체크인이_만료됐으면_기존_체크인_오류를_유지한다() {
+        insertTerminalGroup(MEMBER_ID + 3, "COMPLETED", "COMPLETED",
+                NOW.minusHours(1), NOW.minusMinutes(5));
+
+        assertError(MEMBER_ID + 3, ErrorCode.MATCHING_INVALID_REQUEST);
+    }
+
+    @Test
+    void cancelled_group과_noShow_cancelled_left_member는_정상_완료_제한에서_제외한다() {
+        insertTerminalGroup(MEMBER_ID, "CANCELLED", "CANCELLED",
+                NOW.minusMinutes(10), null);
+        assertThat(queries.restrictions(MEMBER_ID).completionLock().groupId()).isNull();
+
+        for (String memberStatus : List.of("NO_SHOW", "CANCELLED", "LEFT")) {
+            long memberId = MEMBER_ID + 1;
+            cleanupMatchingHistory(memberId);
+            insertTerminalGroup(memberId, "COMPLETED", memberStatus,
+                    NOW.minusMinutes(10), NOW.minusMinutes(1));
+            assertThat(queries.restrictions(memberId).completionLock().groupId()).isNull();
+        }
+    }
+
+    @Test
+    void active_pool_검증은_과거_완료_제한보다_먼저_적용한다() {
+        entries.enter(MEMBER_ID, request());
+        insertTerminalGroup(MEMBER_ID, "COMPLETED", "COMPLETED",
+                NOW.minusMinutes(10), NOW.minusMinutes(1));
+
+        assertError(MEMBER_ID, ErrorCode.MATCHING_CONFLICT);
     }
 
     @Test
@@ -208,7 +267,47 @@ class MatchPoolEntryServiceIntegrationTest {
                 NOW.minusMinutes(5), NOW.minusMinutes(5));
     }
 
+    private void insertTerminalGroup(
+            long memberId,
+            String groupStatus,
+            String memberStatus,
+            OffsetDateTime confirmedAt,
+            OffsetDateTime completedAt
+    ) {
+        long attemptId = 9_320_000L + memberId;
+        long groupId = 9_330_000L + memberId;
+        jdbc.update("""
+                INSERT INTO match_attempts(
+                    id, festival_id, target_group_size, status, score, created_by,
+                    started_at, expires_at, confirmed_at, created_at, updated_at
+                ) VALUES (?, ?, 2, 'CONFIRMED', 0, 'SCHEDULER', ?, ?, ?, ?, ?)
+                """, attemptId, FESTIVAL_ID, confirmedAt.minusMinutes(1), confirmedAt.plusMinutes(1),
+                confirmedAt, confirmedAt.minusMinutes(1), confirmedAt);
+        jdbc.update("""
+                INSERT INTO match_groups(
+                    id, attempt_id, festival_id, status, confirmed_member_count,
+                    confirmed_at, completed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?)
+                """, groupId, attemptId, FESTIVAL_ID, groupStatus, confirmedAt, completedAt,
+                confirmedAt, completedAt == null ? confirmedAt : completedAt);
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES (?, ?, ?, false, ?, ?)
+                """, groupId, memberId, memberStatus, confirmedAt,
+                completedAt == null ? confirmedAt : completedAt);
+    }
+
+    private void cleanupMatchingHistory(long memberId) {
+        jdbc.update("DELETE FROM match_group_members WHERE member_id=?", memberId);
+        jdbc.update("DELETE FROM match_groups WHERE id=?", 9_330_000L + memberId);
+        jdbc.update("DELETE FROM match_attempts WHERE id=?", 9_320_000L + memberId);
+    }
+
     private void cleanup() {
+        for (long memberId = MEMBER_ID; memberId <= MEMBER_ID + 3; memberId++) {
+            cleanupMatchingHistory(memberId);
+        }
         jdbc.update("DELETE FROM match_cooldowns WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM match_pools WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM festival_checkins WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);

@@ -42,6 +42,26 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
     );
 
     @Query(value = """
+            SELECT
+                group_member.id AS groupMemberId,
+                member.id AS memberId,
+                member.nickname AS nickname,
+                member.profile_image_url AS profileImageUrl,
+                group_member.status AS status,
+                group_member.arrival_minutes AS arrivalMinutes,
+                group_member.arrival_time_selected_at AS arrivalTimeSelectedAt,
+                group_member.arrived_at AS arrivedAt
+            FROM match_group_members group_member
+            JOIN members member ON member.id = group_member.member_id
+            WHERE group_member.group_id = :groupId
+              AND group_member.status = 'COMPLETED'
+            ORDER BY group_member.id
+            """, nativeQuery = true)
+    List<ActiveGroupMemberProjection> findCompletedMembersWithProfileByGroupId(
+            @Param("groupId") long groupId
+    );
+
+    @Query(value = """
             SELECT *
             FROM match_group_members
             WHERE group_id = :groupId

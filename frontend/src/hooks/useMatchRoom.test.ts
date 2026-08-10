@@ -52,6 +52,7 @@ function harness(loadEvents = vi.fn().mockResolvedValue({ events: [] })) {
     minutes: 5 | 10 | 20 | 25;
     request: ReturnType<typeof deferred<CurrentMatchGroup>>;
   }> = [];
+  const arrivals: Array<ReturnType<typeof deferred<CurrentMatchGroup>>> = [];
   const states: MatchRoomState[] = [];
   const scheduled = new Map<number, () => void>();
   const scheduledDelays = new Map<number, number>();
@@ -69,6 +70,12 @@ function harness(loadEvents = vi.fn().mockResolvedValue({ events: [] })) {
       mutationSignals.push(signal);
       const request = deferred<CurrentMatchGroup>();
       mutations.push({ minutes, request });
+      return request.promise;
+    }),
+    arrive: vi.fn((signal) => {
+      mutationSignals.push(signal);
+      const request = deferred<CurrentMatchGroup>();
+      arrivals.push(request);
       return request.promise;
     }),
     connect: (nextCallbacks) => {
@@ -97,6 +104,7 @@ function harness(loadEvents = vi.fn().mockResolvedValue({ events: [] })) {
     signals,
     mutationSignals,
     mutations,
+    arrivals,
     states,
     scheduled,
     scheduledDelays,
@@ -381,5 +389,43 @@ describe('createMatchRoomSession', () => {
 
     expect(test.scheduled.size).toBe(0);
     expect(test.scheduledDelays.size).toBe(0);
+  });
+
+  it('마지막 도착 COMPLETED 응답은 완료 안내와 EMPTY로 전환하고 polling을 정리한다', async () => {
+    const test = harness();
+    test.loads[0].resolve(group);
+    await test.session.refresh();
+
+    const operation = test.session.arrive();
+    test.arrivals[0].resolve({
+      ...group,
+      status: 'COMPLETED',
+      completedAt: '2026-07-27T12:10:00+09:00',
+      members: group.members.map((member) => ({ ...member, status: 'COMPLETED' as const })),
+    });
+
+    await expect(operation).resolves.toBe(true);
+    expect(test.states.at(-1)).toMatchObject({
+      status: 'EMPTY',
+      group: null,
+      terminationNotice: '모두 도착해 만남이 완료됐어요.',
+    });
+    expect(test.scheduled.size).toBe(0);
+  });
+
+  it('MATCH_COMPLETED WebSocket 뒤 REST null이면 취소와 구분된 완료 안내를 만든다', async () => {
+    const test = harness();
+    test.loads[0].resolve(group);
+    await test.session.refresh();
+
+    test.callbacks.onStateChanged({ ...notification, reason: 'MATCH_COMPLETED' });
+    test.loads[1].resolve(null);
+    await test.session.refresh();
+
+    expect(test.states.at(-1)).toMatchObject({
+      status: 'EMPTY',
+      terminationNotice: '모두 도착해 만남이 완료됐어요.',
+    });
+    expect(test.scheduled.size).toBe(0);
   });
 });

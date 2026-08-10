@@ -58,6 +58,14 @@ export type MatchingRestriction = {
     expiresAt: string | null;
     remainingSeconds: number;
   };
+  completionLock: {
+    active: boolean;
+    reason: 'MATCH_VALIDITY' | null;
+    groupId: number | null;
+    startsAt: string | null;
+    expiresAt: string | null;
+    remainingSeconds: number;
+  };
 };
 
 export type ArrivalMinutesSnapshot = 0 | 5 | 10 | 20 | 25 | 30;
@@ -67,7 +75,7 @@ export type MatchGroupMember = {
   memberId: number;
   nickname: string;
   profileImageUrl: string | null;
-  status: 'JOINED' | 'ARRIVAL_TIME_SELECTED' | 'ARRIVED';
+  status: 'JOINED' | 'ARRIVAL_TIME_SELECTED' | 'ARRIVED' | 'COMPLETED';
   arrivalMinutes: ArrivalMinutesSnapshot | null;
   arrivalTimeSelectedAt: string | null;
   arrivedAt?: string | null;
@@ -107,12 +115,13 @@ export type MatchGroupMeetingPoint = {
 export type CurrentMatchGroup = {
   groupId: number;
   festivalId: number;
-  status: 'CONFIRMED' | 'IN_PROGRESS';
+  status: 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED';
   confirmedMemberCount: number;
   currentMemberCount: number;
   confirmedAt: string;
   arrivalDeadlineAt: string;
   startedAt?: string | null;
+  completedAt?: string | null;
   currentMemberId?: number;
   festival: MatchGroupFestival;
   meetingPoint?: MatchGroupMeetingPoint | null;

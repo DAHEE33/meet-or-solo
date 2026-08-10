@@ -12,6 +12,11 @@ public enum ErrorCode {
     MATCHING_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "MATCHING_INVALID_REQUEST", "매칭 요청이 올바르지 않습니다."),
     MATCHING_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "MATCHING_RESOURCE_NOT_FOUND", "매칭 리소스를 찾을 수 없습니다."),
     MATCHING_CONFLICT(HttpStatus.CONFLICT, "MATCHING_CONFLICT", "현재 상태에서는 매칭 요청을 처리할 수 없습니다."),
+    MATCHING_COMPLETION_LOCKED(
+            HttpStatus.CONFLICT,
+            "MATCHING_COMPLETION_LOCKED",
+            "현재 매칭 유효시간이 끝난 뒤 다시 신청할 수 있습니다."
+    ),
     MATCHING_MEETING_POINT_NOT_READY(
             HttpStatus.CONFLICT,
             "MATCHING_MEETING_POINT_NOT_READY",

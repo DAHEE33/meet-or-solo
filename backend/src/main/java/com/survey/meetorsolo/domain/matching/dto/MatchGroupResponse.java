@@ -15,6 +15,7 @@ public record MatchGroupResponse(
         OffsetDateTime confirmedAt,
         OffsetDateTime arrivalDeadlineAt,
         OffsetDateTime startedAt,
+        OffsetDateTime completedAt,
         Long currentMemberId,
         MatchGroupFestivalResponse festival,
         MatchGroupMeetingPointResponse meetingPoint,
@@ -42,6 +43,7 @@ public record MatchGroupResponse(
                 MatchArrivalDeadlinePolicy.deadlineAt(confirmedAt),
                 null,
                 null,
+                null,
                 festival,
                 null,
                 members
@@ -67,6 +69,9 @@ public record MatchGroupResponse(
                 group.getStartedAt() == null
                         ? null
                         : group.getStartedAt().atZone(KOREA_ZONE).toOffsetDateTime(),
+                group.getCompletedAt() == null
+                        ? null
+                        : group.getCompletedAt().atZone(KOREA_ZONE).toOffsetDateTime(),
                 currentMemberId,
                 MatchGroupFestivalResponse.from(group),
                 MatchGroupMeetingPointResponse.from(group),

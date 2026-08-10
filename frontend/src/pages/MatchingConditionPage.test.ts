@@ -4,6 +4,7 @@ import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
 import {
   consumeMatchRoomNotice,
+  countdownSeconds,
   MatchBody,
   readMatchRoomNotice,
   resolveFestivalId,
@@ -57,6 +58,37 @@ const restriction = (active = false): MatchingRestriction => ({
     expiresAt: active ? '2026-07-27T12:05:00' : null,
     remainingSeconds: active ? 300 : 0,
   },
+  completionLock: {
+    active: false,
+    reason: null,
+    groupId: null,
+    startsAt: null,
+    expiresAt: null,
+    remainingSeconds: 0,
+  },
+});
+
+describe('countdown 경계', () => {
+  const deadline = '2026-08-10T13:00:00+09:00';
+  const deadlineMs = new Date(deadline).getTime();
+
+  it('마감 직전의 일부 초를 조기 만료시키지 않는다', () => {
+    expect(countdownSeconds(deadline, deadlineMs - 1)).toBe(1);
+  });
+
+  it('정확한 마감과 마감 이후는 0이다', () => {
+    expect(countdownSeconds(deadline, deadlineMs)).toBe(0);
+    expect(countdownSeconds(deadline, deadlineMs + 1)).toBe(0);
+  });
+});
+
+const completionLock = (active = true): MatchingRestriction['completionLock'] => ({
+  active,
+  reason: 'MATCH_VALIDITY',
+  groupId: 24,
+  startsAt: '2026-08-10T12:00:00+09:00',
+  expiresAt: '2026-08-10T13:00:00+09:00',
+  remainingSeconds: active ? 1_200 : 0,
 });
 
 const group: CurrentMatchGroup = {
@@ -95,6 +127,8 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     responseRemaining: 0,
     cooldownRemaining: 0,
     cooldownActive: false,
+    completionLock: null,
+    completionRemaining: 0,
     setGroupSize: vi.fn(),
     setAllowMinimum: vi.fn(),
     onStart: vi.fn(),
@@ -283,5 +317,53 @@ describe('terminal retry form', () => {
     expect(text(tree)).toContain('만남 장소 준비 중이에요');
     expect(text(tree)).toContain('선택한 축제의 만남 장소를 준비하고 있습니다.');
     expect(text(tree)).not.toContain('다시 시도');
+  });
+});
+
+describe('정상 완료 card', () => {
+  it('완료 전용 문구와 종료 시각, countdown을 표시하고 취소 문구를 표시하지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COMPLETED',
+      completionLock: completionLock(),
+      completionRemaining: 1_200,
+    })));
+
+    expect(text(tree)).toContain('만남이 완료됐어요');
+    expect(text(tree)).toContain('모든 참여자가 도착했어요.');
+    expect(text(tree)).toContain('매칭 유효 종료 시각');
+    expect(text(tree)).toContain('20분 후 신청할 수 있어요');
+    expect(text(tree)).not.toContain('매칭이 취소됐어요');
+    expect(text(tree)).not.toContain('매칭이 종료됐어요');
+  });
+
+  it('제한 중 다시 매칭 action을 비활성화한다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COMPLETED',
+      completionLock: completionLock(),
+      completionRemaining: 1,
+    })));
+    const button = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 매칭하기',
+    );
+
+    expect(text(tree)).toContain('1분 후 신청할 수 있어요');
+    expect(button?.props.disabled).toBe(true);
+  });
+
+  it('제한 종료 후 retry action을 활성화한다', () => {
+    const onRetry = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COMPLETED',
+      completionLock: completionLock(false),
+      completionRemaining: 0,
+      onRetry,
+    })));
+    const button = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 매칭하기',
+    );
+
+    expect(button?.props.disabled).toBe(false);
+    (button?.props.onClick as () => void)();
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });
