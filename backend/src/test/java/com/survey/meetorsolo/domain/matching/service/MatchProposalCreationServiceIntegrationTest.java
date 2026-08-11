@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.stream.IntStream;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -44,6 +46,7 @@ class MatchProposalCreationServiceIntegrationTest {
     @Container @ServiceConnection static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
     @Autowired MatchProposalCreationService service; @Autowired JdbcTemplate jdbc;
+    @Autowired MatchOpponentExclusionService opponentExclusions;
     @Autowired PlatformTransactionManager transactionManager;
 
     @ParameterizedTest @ValueSource(ints = {2,3,4})
@@ -74,6 +77,63 @@ class MatchProposalCreationServiceIntegrationTest {
         jdbc.update("INSERT INTO match_cooldowns(member_id,reason,status,starts_at,expires_at) VALUES (9110002,'TIMEOUT','ACTIVE',?,?)", NOW.minusSeconds(1), NOW.plusSeconds(10));
         assertThatThrownBy(() -> service.createInitial(blocked, TOKEN, NOW, Duration.ofSeconds(30)))
                 .isInstanceOf(MatchProposalCreationException.class).hasMessageContaining("cooldown");
+    }
+
+    @Test void 현재_checkin_pair_exclusion을_proposal_생성_직전에_재검증한다() {
+        MatchGroupCombination group = prepareGroup(2);
+        long sourceProposal = insertExclusionSource();
+        jdbc.update("""
+                INSERT INTO match_opponent_exclusions(
+                    lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,
+                    rejected_by_member_id,source_proposal_id,created_at
+                ) VALUES (9110002,9110006,9120002,9120006,9110002,?,?)
+                """, sourceProposal, NOW);
+
+        assertThatThrownBy(() -> service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)))
+                .isInstanceOf(MatchProposalCreationException.class).hasMessageContaining("제외");
+        assertThat(createdAttemptCount()).isZero();
+        assertLocked(9_120_002L);
+        assertLocked(9_120_006L);
+    }
+
+    @Test void exclusion_commit과_proposal_생성_race는_pair_advisory_lock뒤_재조회로_생성을_차단한다() throws Exception {
+        MatchGroupCombination group = prepareGroup(2);
+        long sourceProposal = insertExclusionSource();
+        MatchOpponentPair pair = MatchOpponentPair.of(9110002L,9120002L,9110006L,9120006L);
+        CountDownLatch exclusionInserted = new CountDownLatch(1);
+        CountDownLatch allowCommit = new CountDownLatch(1);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var rejection = workers.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                opponentExclusions.lockPairs(List.of(pair));
+                jdbc.update("""
+                        INSERT INTO match_opponent_exclusions(
+                            lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,
+                            rejected_by_member_id,source_proposal_id,created_at
+                        ) VALUES (9110002,9110006,9120002,9120006,9110002,?,?)
+                        """, sourceProposal, NOW);
+                exclusionInserted.countDown();
+                try {
+                    if (!allowCommit.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("commit 대기 timeout");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(exception);
+                }
+            }));
+            assertThat(exclusionInserted.await(10, TimeUnit.SECONDS)).isTrue();
+            var proposalCreation = workers.submit(() ->
+                    service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)));
+            allowCommit.countDown();
+            rejection.get(10, TimeUnit.SECONDS);
+
+            assertThatThrownBy(() -> proposalCreation.get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .cause().isInstanceOf(MatchProposalCreationException.class);
+        } finally {
+            allowCommit.countDown();
+            workers.shutdownNow();
+        }
+        assertThat(createdAttemptCount()).isZero();
     }
 
     @Test void 동시_재실행은_하나의_attempt만_생성한다() throws Exception {
@@ -176,7 +236,7 @@ class MatchProposalCreationServiceIntegrationTest {
 
     @Test void 요청_pool수와_잠금_조회수가_다르면_거부한다() {
         MatchGroupCombination group = prepareGroup(2);
-        MatchingCandidate missing = new MatchingCandidate(99_999_999L, 9_110_006L, 9_100_001L, 2,
+        MatchingCandidate missing = new MatchingCandidate(99_999_999L, 9_110_006L, 9_120_006L, 9_100_001L, 2,
                 false, NOW, List.of(TravelStyleCode.PHOTO));
         assertRejectedWithoutCreatedRows(new MatchGroupCombination(List.of(group.candidates().get(0), missing), group.score()));
         assertLocked(9_120_002L);
@@ -250,15 +310,27 @@ class MatchProposalCreationServiceIntegrationTest {
         for (long id : poolIds) jdbc.update("UPDATE match_pools SET preferred_group_size=?,status='LOCKED',locked_at=?,lock_token=?,search_expires_at=? WHERE id=?", size, NOW, TOKEN, NOW.plusMinutes(1), id);
         List<MatchingCandidate> candidates = IntStream.range(0, poolIds.size()).mapToObj(index -> {
             long id = poolIds.get(index);
-            return new MatchingCandidate(id, 9_110_000L + (id - 9_120_000L), 9_100_001L,
+            return new MatchingCandidate(id, 9_110_000L + (id - 9_120_000L), id, 9_100_001L,
                     size, false, NOW.minusSeconds(index), List.of(TravelStyleCode.PHOTO));
         }).toList();
         return new MatchGroupCombination(candidates, new BigDecimal("100.00"));
     }
+    private long insertExclusionSource() {
+        Long attempt = jdbc.queryForObject("""
+                INSERT INTO match_attempts(
+                    festival_id,target_group_size,status,score,created_by,started_at,expires_at,created_at,updated_at
+                ) VALUES (9100001,2,'FAILED',0,'SCHEDULER',?,?,?,?) RETURNING id
+                """, Long.class, NOW.minusMinutes(1), NOW.plusMinutes(1), NOW.minusMinutes(1), NOW);
+        return jdbc.queryForObject("""
+                INSERT INTO match_proposals(
+                    attempt_id,member_id,proposal_type,proposal_round,status,sent_at,expires_at,created_at,updated_at
+                ) VALUES (?,9110002,'INITIAL_MATCH',1,'REJECTED',?,?,?,?) RETURNING id
+                """, Long.class, attempt, NOW.minusSeconds(30), NOW.plusSeconds(30), NOW.minusSeconds(30), NOW);
+    }
     private String ids(int size) { return List.of("9120002", "9120006", "9120010", "9120011").subList(0, size).stream().collect(java.util.stream.Collectors.joining(",")); }
 
     private MatchingCandidate candidate(MatchingCandidate source, long memberId, long festivalId, int preferredSize) {
-        return new MatchingCandidate(source.poolId(), memberId, festivalId, preferredSize, source.allowMinimumTwo(),
+        return new MatchingCandidate(source.poolId(), memberId, source.checkinId(), festivalId, preferredSize, source.allowMinimumTwo(),
                 source.enteredAt(), source.travelStyles());
     }
     private void assertRejectedWithoutCreatedRows(MatchGroupCombination group) {

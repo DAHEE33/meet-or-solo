@@ -796,6 +796,24 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 
 ## 10. Flyway migration 이력
 
+### V18__add_match_opponent_exclusions.sql
+
+`match_opponent_exclusions`는 영구 안전 차단인 `user_blocks`와 분리된 check-in 범위의 재추천 제외 이력입니다.
+
+| 컬럼 | 역할 |
+| --- | --- |
+| `lower_member_id`, `higher_member_id` | member ID 오름차순으로 정규화한 양방향 pair |
+| `lower_checkin_id`, `higher_checkin_id` | 각 member 위치에 대응하는 proposal 당시 check-in |
+| `rejected_by_member_id` | 내부 감사용 명시적 거절 회원 |
+| `source_proposal_id` | round 1 명시적 REJECT 원본 |
+| `created_at` | 생성 시각 |
+
+- `lower_member_id < higher_member_id`, rejector pair 포함, 동일 check-in pair unique와 source proposal/member pair unique를 DB에서 강제한다.
+- member와 check-in에는 `ON DELETE RESTRICT` FK를 사용한다. 회원 또는 check-in을 실제 삭제하려면 관련 exclusion의 보존·익명화 정책을 먼저 적용해야 한다.
+- 기존 `festival_checkins`에 `(id, member_id)` 복합 unique를 추가하는 것은 PK와 중복되고 기존 schema 영향이 커서 복합 FK는 추가하지 않았다. Service가 attempt member → pool을 통해 check-in을 얻고 `festival_checkins.id/member_id/festival_id` 소유 관계를 저장 전에 검증한다.
+- 적용 여부는 현재 후보 두 pool의 member/check-in 정규화 조합과 row가 정확히 일치하는지로 판단한다. 과거 row는 새 check-in에 적용되지 않는다.
+- 즉시 삭제 Scheduler는 두지 않는다. 감사·문제 분석 보존 기간과 삭제 시점은 match event 및 개인정보 보존 정책과 함께 후속 확정한다.
+
 이미 적용된 migration은 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
@@ -815,6 +833,7 @@ backend/src/main/resources/db/migration/V14__add_match_room_cancellation_no_show
 backend/src/main/resources/db/migration/V15__add_festival_meeting_points.sql
 backend/src/main/resources/db/migration/V16__complete_match_rooms.sql
 backend/src/main/resources/db/migration/V17__enforce_one_hour_checkin_validity.sql
+backend/src/main/resources/db/migration/V18__add_match_opponent_exclusions.sql
 ```
 
 기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반

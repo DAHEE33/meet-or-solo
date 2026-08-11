@@ -89,6 +89,7 @@ class PoolEntryMatchingOrchestrationServiceIntegrationTest {
     void tearDown() {
         dropFailureTrigger();
         jdbc.update("DELETE FROM match_responses");
+        jdbc.update("DELETE FROM match_opponent_exclusions");
         jdbc.update("DELETE FROM match_proposals");
         jdbc.update("DELETE FROM match_attempt_members");
         jdbc.update("DELETE FROM match_groups");
@@ -154,6 +155,30 @@ class PoolEntryMatchingOrchestrationServiceIntegrationTest {
         assertThat(result.createdAttemptIds()).isEmpty();
         assertThat(status(REQUESTER_POOL_ID)).isEqualTo("WAITING");
         assertThat(count("match_attempts")).isZero();
+    }
+
+    @Test
+    void Scheduler_batch는_exclusion_pair가_포함된_group을_만들지_않고_lock을_release한다() {
+        long sourceProposal = insertExclusionSource();
+        jdbc.update("""
+                INSERT INTO match_opponent_exclusions(
+                    lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,
+                    rejected_by_member_id,source_proposal_id,created_at
+                ) SELECT LEAST(?,?),GREATEST(?,?),
+                         CASE WHEN ? < ? THEN p1.checkin_id ELSE p2.checkin_id END,
+                         CASE WHEN ? < ? THEN p2.checkin_id ELSE p1.checkin_id END,
+                         ?,?,?
+                  FROM match_pools p1,match_pools p2 WHERE p1.id=? AND p2.id=?
+                """, REQUESTER_MEMBER_ID,CANDIDATE_MEMBER_ID,REQUESTER_MEMBER_ID,CANDIDATE_MEMBER_ID,
+                REQUESTER_MEMBER_ID,CANDIDATE_MEMBER_ID,REQUESTER_MEMBER_ID,CANDIDATE_MEMBER_ID,
+                REQUESTER_MEMBER_ID,sourceProposal,NOW,REQUESTER_POOL_ID,CANDIDATE_POOL_ID);
+
+        MatchingOrchestrationResult result = schedulerOrchestration.runTick();
+
+        assertThat(result.createdAttemptIds()).isEmpty();
+        assertThat(status(REQUESTER_POOL_ID)).isEqualTo("WAITING");
+        assertThat(status(CANDIDATE_POOL_ID)).isEqualTo("WAITING");
+        assertThat(count("match_attempts")).isEqualTo(1);
     }
 
     @Test
@@ -311,6 +336,20 @@ class PoolEntryMatchingOrchestrationServiceIntegrationTest {
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, 2, false, '[]'::jsonb, 'WAITING', ?, ?, ?, ?)
                 """, poolId, memberId, festivalId, checkinId, enteredAt, NOW.plusMinutes(1), enteredAt, enteredAt);
+    }
+
+    private long insertExclusionSource() {
+        Long attempt = jdbc.queryForObject("""
+                INSERT INTO match_attempts(
+                    festival_id,target_group_size,status,score,created_by,started_at,expires_at,created_at,updated_at
+                ) VALUES (?,2,'FAILED',0,'SCHEDULER',?,?,?,?) RETURNING id
+                """, Long.class, FESTIVAL_ID, NOW.minusMinutes(1), NOW.plusMinutes(1), NOW.minusMinutes(1), NOW);
+        return jdbc.queryForObject("""
+                INSERT INTO match_proposals(
+                    attempt_id,member_id,proposal_type,proposal_round,status,sent_at,expires_at,created_at,updated_at
+                ) VALUES (?,?,'INITIAL_MATCH',1,'REJECTED',?,?,?,?) RETURNING id
+                """, Long.class, attempt, REQUESTER_MEMBER_ID,
+                NOW.minusSeconds(30), NOW.plusSeconds(30), NOW.minusSeconds(30), NOW);
     }
 
     private String status(long poolId) {

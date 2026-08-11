@@ -288,3 +288,12 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - arrival-time/arrival 멱등 및 rollback 뒤 event 조회 결과가 증가하지 않는지 검증합니다.
 - Frontend는 group/events 부분 실패, WebSocket 연결·재연결·알림, polling, 늦은 응답 차단과 자유 입력/전송 UI 부재를 검증합니다.
 - 취소 화면은 세 구조화 사유만 표시하고 자유 입력 부재, 중복 제출 방지, 성공 전 snapshot 불변과 유지/종료 결과 이동을 검증합니다.
+
+## 거절 상대 재추천 제외 검증 기준
+
+- 2인·3인 proposal의 명시적 round 1 `REJECTED` pair 생성 범위와 반복 요청 멱등성을 PostgreSQL 통합 테스트로 검증한다.
+- `TIMEOUT`, round 2 취소와 시스템 실패에서 exclusion이 생성되지 않는지 기존 proposal response 회귀와 함께 검증한다.
+- requester 정방향·역방향, Scheduler batch 조합과 proposal 생성 직전 최종 재검증을 각각 focused 테스트로 검증한다.
+- 동일 check-in에서 exclusion 유지, 새 active check-in에서 과거 exclusion 미적용을 실제 `festival_checkins` unique·FK 제약과 함께 검증한다.
+- advisory lock은 pair 정규화·결정적 정렬 단위 테스트와 exclusion commit/proposal 생성 PostgreSQL race 테스트로 검증한다.
+- 기존 `user_blocks`, cooldown, pool claim/release, response/timeout 동시성 테스트는 재작성하지 않고 전체 matching 회귀로 확인한다.

@@ -49,7 +49,9 @@ public class MatchingOrchestrationService {
             if (claimedCount == 0) return new MatchingOrchestrationResult(lockToken, 0, List.of(), 0, 0);
             MatchingBatchReader.MatchingBatch batch = batchReader.read(lockToken);
             List<MatchGroupCombination> groups = groupComposer.compose(batch.candidates(), (left, right) ->
-                    !batch.blockedPairs().contains(MatchingBatchReader.MemberPair.of(left.memberId(), right.memberId())));
+                    !batch.blockedPairs().contains(MatchingBatchReader.MemberPair.of(left.memberId(), right.memberId()))
+                    && !batch.excludedPairs().contains(MatchOpponentPair.of(
+                            left.memberId(), left.checkinId(), right.memberId(), right.checkinId())));
             for (MatchGroupCombination group : groups) {
                 try {
                     attemptIds.add(creationService.createInitial(

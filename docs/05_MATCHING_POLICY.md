@@ -91,6 +91,16 @@ confirmed match: confirmed_at + 1시간
 
 차단 관계는 양방향으로 검사합니다.
 
+### 명시적 거절 상대의 check-in pair 제외
+
+- 재매칭 횟수 제한은 두지 않으며 기획서의 최대 5회 제한은 구현하지 않는다.
+- round 1 `INITIAL_MATCH`에서 사용자가 명시적으로 `REJECTED`를 선택한 경우에만 거절 회원과 같은 proposal의 다른 회원 사이를 양방향 제외한다.
+- 3인 proposal에서 A가 거절하면 A-B와 A-C만 제외하고 B-C는 제외하지 않는다.
+- `TIMEOUT`, round 2 취소, 인원 미달, 시스템 오류, 정상 완료와 MatchRoom 자발적 취소는 이 제외를 생성하지 않는다.
+- 제외는 proposal 당시 두 pool이 사용한 `festival_checkins.id` 조합에만 적용한다. 어느 한 회원이라도 새 check-in을 사용하면 과거 제외는 적용하지 않는다.
+- `user_blocks`는 영구 안전 차단이고 `match_opponent_exclusions`는 check-in 범위의 임시 재추천 제외이므로 저장과 조회 책임을 분리한다.
+- 제외 pair와 거절 회원은 REST, WebSocket과 Frontend에 공개하지 않는다.
+
 ## 후보 선정 기준
 
 초기 MVP scoring은 다음을 고려할 수 있습니다.

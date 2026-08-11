@@ -67,7 +67,7 @@ class PoolEntryMatchingOrchestrationServiceTest {
         when(claimService.claim(1L, 11L, 100L, NOW, 20, "pool-entry-token"))
                 .thenReturn(new MatchPoolClaimResult("pool-entry-token", List.of(1L, 2L)));
         when(batchReader.read("pool-entry-token")).thenReturn(
-                new MatchingBatchReader.MatchingBatch(List.of(requester, other), Set.of())
+                new MatchingBatchReader.MatchingBatch(List.of(requester, other), Set.of(), Set.of())
         );
         when(groupComposer.compose(any(), any())).thenReturn(List.of(requesterGroup));
         when(creationService.createInitial(
@@ -97,7 +97,7 @@ class PoolEntryMatchingOrchestrationServiceTest {
         when(claimService.claim(1L, 11L, 100L, NOW, 20, "pool-entry-token"))
                 .thenReturn(new MatchPoolClaimResult("pool-entry-token", List.of(1L)));
         when(batchReader.read("pool-entry-token")).thenReturn(
-                new MatchingBatchReader.MatchingBatch(List.of(requester), Set.of())
+                new MatchingBatchReader.MatchingBatch(List.of(requester), Set.of(), Set.of())
         );
         when(groupComposer.compose(any(), any())).thenReturn(List.of());
         when(releaseService.release("pool-entry-token", NOW)).thenReturn(new MatchPoolReleaseResult(1));
@@ -113,6 +113,7 @@ class PoolEntryMatchingOrchestrationServiceTest {
         return new MatchingCandidate(
                 poolId,
                 memberId,
+                poolId,
                 100L,
                 2,
                 false,
