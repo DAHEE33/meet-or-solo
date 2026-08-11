@@ -72,7 +72,8 @@ public class PoolEntryMatchingOrchestrationService {
                             batch.candidates(),
                             (left, right) -> !batch.blockedPairs().contains(
                                     MatchingBatchReader.MemberPair.of(left.memberId(), right.memberId())
-                            )
+                            ) && !batch.excludedPairs().contains(MatchOpponentPair.of(
+                                    left.memberId(), left.checkinId(), right.memberId(), right.checkinId()))
                     ).stream()
                     .filter(group -> group.candidates().stream()
                             .anyMatch(candidate -> candidate.poolId() == requesterPoolId))

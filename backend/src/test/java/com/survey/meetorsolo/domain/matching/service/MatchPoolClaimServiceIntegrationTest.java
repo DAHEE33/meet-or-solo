@@ -75,6 +75,37 @@ class MatchPoolClaimServiceIntegrationTest {
     private PlatformTransactionManager transactionManager;
 
     @Test
+    void 상대_exclusion은_requester_양방향에서_후보를_제외하고_새_checkin에는_적용하지_않는다() {
+        long sourceProposal = insertExclusionSource();
+        jdbcTemplate.update("""
+                INSERT INTO match_opponent_exclusions(
+                    lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,
+                    rejected_by_member_id,source_proposal_id,created_at
+                ) VALUES (9110001,9110002,9120001,9120002,9110001,?,?)
+                """, sourceProposal, NOW);
+
+        assertThat(matchPoolRepository.findEligibleWaitingCandidates(
+                FESTIVAL_ID, 9_110_001L, NOW))
+                .extracting(MatchPool::getMemberId).doesNotContain(9_110_002L);
+        assertThat(matchPoolRepository.findEligibleWaitingCandidates(
+                FESTIVAL_ID, 9_110_002L, NOW))
+                .extracting(MatchPool::getMemberId).doesNotContain(9_110_001L);
+
+        long newCheckin = 9_129_902L;
+        jdbcTemplate.update("UPDATE festival_checkins SET status='EXPIRED' WHERE id=9120002");
+        jdbcTemplate.update("""
+                INSERT INTO festival_checkins(
+                    id,member_id,festival_id,distance_meters,status,checked_in_at,expires_at,created_at,updated_at
+                ) VALUES (?,9110002,9100001,100,'ACTIVE',?,?,?,?)
+                """, newCheckin, NOW, NOW.plusHours(1), NOW, NOW);
+        jdbcTemplate.update("UPDATE match_pools SET checkin_id=? WHERE id=9120002", newCheckin);
+
+        assertThat(matchPoolRepository.findEligibleWaitingCandidates(
+                FESTIVAL_ID, 9_110_001L, NOW))
+                .extracting(MatchPool::getMemberId).contains(9_110_002L);
+    }
+
+    @Test
     void 제한_개수만큼_후보를_선점하고_lock_정보를_저장한다() {
         String lockToken = "worker-1-token";
 
@@ -95,6 +126,19 @@ class MatchPoolClaimServiceIntegrationTest {
         assertThat(state.lockToken()).isEqualTo(lockToken);
         assertThat(state.updatedAt().toInstant()).isEqualTo(NOW.toInstant());
         assertThat(countPoolsWithToken(lockToken)).isEqualTo(1);
+    }
+
+    private long insertExclusionSource() {
+        Long attempt = jdbcTemplate.queryForObject("""
+                INSERT INTO match_attempts(
+                    festival_id,target_group_size,status,score,created_by,started_at,expires_at,created_at,updated_at
+                ) VALUES (9100001,2,'FAILED',0,'SCHEDULER',?,?,?,?) RETURNING id
+                """, Long.class, NOW.minusMinutes(1), NOW.plusMinutes(1), NOW.minusMinutes(1), NOW);
+        return jdbcTemplate.queryForObject("""
+                INSERT INTO match_proposals(
+                    attempt_id,member_id,proposal_type,proposal_round,status,sent_at,expires_at,created_at,updated_at
+                ) VALUES (?,9110001,'INITIAL_MATCH',1,'REJECTED',?,?,?,?) RETURNING id
+                """, Long.class, attempt, NOW.minusSeconds(30), NOW.plusSeconds(30), NOW.minusSeconds(30), NOW);
     }
 
     @Test

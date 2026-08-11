@@ -36,6 +36,7 @@ public class MatchProposalResponseService {
     private final FestivalRepository festivals;
     private final FestivalMeetingPointRepository meetingPoints;
     private final MeetingPointRoundRobinPolicy meetingPointPolicy;
+    private final MatchOpponentExclusionService opponentExclusions;
 
     public MatchProposalResponseService(MatchAttemptRepository attempts, MatchProposalRepository proposals,
             MatchAttemptMemberRepository members, MatchResponseRepository responses, MatchPoolRepository pools,
@@ -44,7 +45,8 @@ public class MatchProposalResponseService {
             MatchPenaltyCooldownService penaltyCooldowns, MatchingPenaltyPolicy penaltyPolicy,
             MatchingSchedulerProperties properties, ApplicationEventPublisher eventPublisher,
             FestivalRepository festivals, FestivalMeetingPointRepository meetingPoints,
-            MeetingPointRoundRobinPolicy meetingPointPolicy) {
+            MeetingPointRoundRobinPolicy meetingPointPolicy,
+            MatchOpponentExclusionService opponentExclusions) {
         this.attempts=attempts; this.proposals=proposals; this.members=members; this.responses=responses;
         this.pools=pools; this.groups=groups; this.groupMembers=groupMembers;
         this.events=events;
@@ -53,6 +55,7 @@ public class MatchProposalResponseService {
         this.eventPublisher=eventPublisher;
         this.festivals=festivals; this.meetingPoints=meetingPoints;
         this.meetingPointPolicy=meetingPointPolicy;
+        this.opponentExclusions=opponentExclusions;
     }
 
     @Transactional
@@ -100,6 +103,9 @@ public class MatchProposalResponseService {
         proposal.respond(proposalStatus(effective), now);
         if (isInitial(proposal)) member.respond(effective, now);
         responses.save(MatchResponse.of(proposalId, attempt.getId(), memberId, effective, now));
+        if (isInitial(proposal) && MatchProposal.STATUS_REJECTED.equals(effective)) {
+            createOpponentExclusions(proposal, memberId, now);
+        }
         applyImmediatePenalty(proposal, effective, now);
 
         if (isInitial(proposal)) completeInitialRoundIfReady(attempt, now);
@@ -113,6 +119,17 @@ public class MatchProposalResponseService {
                 now
         ));
         return new MatchProposalResponseResult(attempt.getId(), proposalId, effective, attempt.getStatus());
+    }
+
+    private void createOpponentExclusions(MatchProposal proposal, long rejectedByMemberId, OffsetDateTime now) {
+        List<MatchAttemptMember> attemptMembers = members.findAllByAttemptIdOrderByIdAsc(proposal.getAttemptId());
+        List<Long> poolIds = attemptMembers.stream().map(MatchAttemptMember::getPoolId).sorted().toList();
+        List<MatchPool> attemptPools = pools.findResponsePoolsForUpdate(poolIds);
+        if (attemptPools.size() != poolIds.size()) {
+            throw failure("상대 제외를 위한 attempt pool을 모두 잠글 수 없습니다.");
+        }
+        opponentExclusions.createForExplicitRejection(
+                proposal.getId(), rejectedByMemberId, attemptMembers, attemptPools, now);
     }
 
     private void validateProposalOwnership(MatchAttempt attempt, MatchProposal proposal, long memberId) {

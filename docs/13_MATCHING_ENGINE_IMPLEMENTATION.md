@@ -3527,7 +3527,70 @@ deadline부터 action을 숨기고 Scheduler 처리 대기 안내를 표시하�
 `feature/wbs-10-b-match-room-completion`에서 group 완료 조건과
 `IN_PROGRESS -> COMPLETED` 전환을 구현했습니다.
 
-## 41. 완료 수동 검증 후 확인된 후속 보완
+## 41. 명시적 거절 상대의 check-in pair 재추천 제외
+
+### 41.1 정책과 데이터 경계
+
+기획서 8.3 `MATCH-08`의 거절 상대 자동 제외만 반영하고 최대 5회 제한은 적용하지 않습니다. round 1 `INITIAL_MATCH`의 명시적 `REJECTED`만 거절 회원과 같은 proposal의 다른 회원 pair를 생성합니다. `TIMEOUT`, round 2, 인원 미달·시스템 실패, 정상 완료와 MatchRoom 취소는 생성 원인이 아닙니다.
+
+`V18`의 `match_opponent_exclusions`는 member ID 오름차순과 그 member가 실제 사용한 check-in ID 대응을 함께 보존합니다. 따라서 A-B/B-A는 같은 pair이고 어느 한쪽이 새 check-in을 만들면 과거 row는 후보 조회에 일치하지 않습니다. `user_blocks`는 영구 안전 차단, exclusion은 check-in 범위 임시 재추천 제외로 책임을 분리합니다.
+
+### 41.2 transaction과 advisory lock
+
+REJECT 응답은 기존 `attempt → proposal → attempt member → pool ID 오름차순` 잠금 뒤 response와 exclusion을 같은 transaction에 저장합니다. attempt member의 `pool_id`, pool의 `member_id/checkin_id`와 실제 check-in의 `member_id/festival_id`를 검증해 임의 조합 저장을 막습니다. 반복 REJECT는 기존 response 멱등 경로를 반환하며 DB unique와 `ON CONFLICT DO NOTHING`도 중복 row를 막습니다.
+
+proposal 생성은 기존 pool row 잠금과 status/token/check-in/cooldown/block 재검증 뒤 모든 check-in pair advisory lock을 획득하고 exclusion을 다시 조회합니다. REJECT 생성 경로도 같은 lock을 사용합니다.
+
+```text
+pair 정규화
+→ (lowerMemberId, higherMemberId, lowerCheckinId, higherCheckinId) 정렬
+→ SHA-256(lowerCheckinId:higherCheckinId)의 앞 64bit
+→ pg_advisory_xact_lock(firstInt, secondInt)
+→ exclusion 재조회 또는 insert
+```
+
+두 32-bit key는 합쳐서 64-bit hash 공간을 사용하므로 충돌 가능성은 있으나 매우 낮습니다. hash 충돌이 발생해도 정합성 오류가 아니라 서로 다른 pair가 잠시 불필요하게 직렬화됩니다. 모든 경로가 동일 pair 정렬 순서로 lock을 획득하고 advisory lock은 기존 row lock 뒤에만 잡으므로 신규 역순 lock 경로를 만들지 않습니다.
+
+### 41.3 후보 조회와 최종 방어
+
+- pool-entry requester SQL과 legacy requester SQL은 현재 requester/candidate pool의 check-in pair `NOT EXISTS`를 적용한다. requester 자신은 예외로 계속 포함한다.
+- Scheduler는 pool을 batch 선점한 뒤 `MatchingBatchReader`가 `user_blocks`와 exclusion pair를 별도 집합으로 읽는다.
+- `MatchGroupComposer` compatibility는 block과 exclusion을 모두 통과한 pair만 허용한다.
+- `MatchProposalCreationService`의 `REQUIRES_NEW` 최종 검증이 race 중 commit된 exclusion을 확인하면 attempt/proposal 생성 전 rollback한다.
+
+### 41.4 보존과 공개 범위
+
+현재 적용 여부는 현재 두 check-in ID 조합 일치로만 판단하며 과거 row 즉시 삭제 Scheduler는 추가하지 않습니다. 과거 row는 감사와 문제 분석을 위해 일정 기간 보존할 수 있고 실제 삭제 기간은 match event·개인정보 보존 정책과 함께 후속 확정합니다. FK는 `ON DELETE RESTRICT`이므로 회원/check-in 삭제 전 관련 보존 또는 익명화 정책이 필요합니다.
+
+exclusion pair, rejector와 source proposal은 REST/WebSocket/Frontend DTO와 log에 출력하지 않습니다.
+
+### 41.5 자동 검증
+
+- pair 정규화, 동일 방향 advisory key와 결정적 lock 순서 단위 테스트
+- 2인/3인 REJECT 생성 범위, 반복 REJECT, TIMEOUT과 round 2 비생성 PostgreSQL response 테스트
+- requester 양방향 제외, requester 자기 포함과 새 check-in 미적용 테스트
+- Scheduler batch exclusion 조합 배제 테스트
+- proposal 생성 직전 exclusion 최종 재검증과 exclusion commit race 테스트
+- 기존 block/cooldown/pool claim·release/proposal response·timeout matching 전체 회귀
+
+최종 자동 검증은 matching 전체 288건과 backend `clean build` 전체 347건이 성공했습니다. 전체 build 종료 시 이미 정리된 Testcontainers PostgreSQL 연결을 background Scheduler/Hikari 종료 thread가 확인한 connection warning이 있었지만 테스트 실패는 없었습니다.
+
+Frontend 계약은 변경하지 않았으므로 Frontend 테스트와 build는 실행 대상에서 제외했습니다.
+
+### 41.6 local DB 최소 수동 검증
+
+2026-08-12 local DB에서 다음 항목을 확인했습니다.
+
+- `V18__add_match_opponent_exclusions.sql` 적용: `PASS`
+- `match_opponent_exclusions` 테이블 생성: `PASS`
+- A-B round 1 명시적 거절 후 exclusion 1건 생성: `PASS`
+- 동일 check-in pair 재추천 방지: `PASS`
+- `TIMEOUT` exclusion 미생성: PostgreSQL 자동 통합 테스트로 대체, `PASS`
+
+따라서 명시적 거절 상대의 check-in pair 재추천 제외 범위는 구현, 자동 회귀,
+local DB migration과 최소 수동 검증까지 완료했습니다. 최종 상태는 `완료`입니다.
+
+## 42. 완료 수동 검증 후 확인된 후속 보완
 
 group `24` 수동 검증에서 두 회원의 `MEMBER_ARRIVED`와 group당 단일
 `MATCH_COMPLETED`, group/member `COMPLETED` 전환은 정상임을 확인했습니다.
@@ -3561,7 +3624,7 @@ Backend focused unit/controller, PostgreSQL Testcontainers 완료 제한 통합,
 matching 전체와 전체 `clean build` 336건을 성공했습니다. Frontend focused
 Vitest 63건, 전체 128건, TypeScript와 production/PWA build도 성공했습니다.
 
-### 41.1 브라우저·DB 수동 재검증 결과
+### 42.1 브라우저·DB 수동 재검증 결과
 
 두 브라우저에서 마지막 회원 도착 후 `/matching` 이동, 완료 전용 card,
 `confirmed_at + 1시간` 종료 시각과 countdown, 제한 중 비활성 action을

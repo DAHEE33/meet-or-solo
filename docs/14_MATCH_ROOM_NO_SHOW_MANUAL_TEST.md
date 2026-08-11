@@ -63,6 +63,26 @@ meeting point, Kakao Maps, 자유 채팅, Redis와 운영 배포는 이
 | 후속 브랜치 | `feature/wbs-10-frontend-async-ux-stabilization` |
 | 예상 범위 | `LOADING`/`IDLE` 구분, snapshot 원자 판정, 재조회 중 기존 화면 유지, layout shift 점검 |
 
+### ISSUE-MR-010 재추천 제외 대기 중 WAITING/LOCKED 화면 반복 전환
+
+| 항목 | 내용 |
+| --- | --- |
+| 상태 | `OPEN` |
+| 발견 시각(KST) | 2026-08-12 |
+| 재현 | A-B round 1 명시적 거절 후 30초 `REJECT` cooldown이 끝난 뒤, 같은 check-in으로 두 회원이 다시 매칭 신청 |
+| 실제 결과 | 두 브라우저에서 약 1분 동안 `주변 여행자를 찾고 있어요`와 `함께할 분을 확정하고 있어요` 화면이 반복 전환됨 |
+| 기대 결과 | 실제 제안 가능한 새 후보가 없으면 안정적인 탐색 대기 화면을 유지하고, 내부의 짧은 선점·해제 상태로 큰 card가 반복 전환되지 않음 |
+| 기능 정합성 | A-B exclusion 1건, 같은 check-in pair 재추천 방지와 local DB V18 적용은 `PASS` |
+| 가능성 높은 경계 | Scheduler가 pool을 잠시 `LOCKED`로 선점한 뒤 exclusion 조합을 제외하고 다시 `WAITING`으로 해제하는 동안 polling이 중간 snapshot을 관찰하고 Frontend가 `LOCKED`를 별도 확정 화면으로 렌더링하는 흐름 |
+| 추가 증거 필요 | 화면 전환 시점의 current pool REST 응답, pool `status`·`lock_token`·`locked_at`, Scheduler 주기와 WebSocket 알림 순서 |
+| 분리 사유 | 상대 제외 기능의 DB·후보 정합성 결함이 아니라 내부 비동기 상태 노출과 화면 안정화 문제로 분리 |
+| 후속 브랜치 | `feature/wbs-10-frontend-async-ux-stabilization` |
+| 예상 범위 | `WAITING`/`LOCKED` 표시 정책, polling 중 마지막 안정 화면 유지, transient lock 노출 여부와 상태 전환 자동 테스트 |
+
+제안 단계의 명시적 거절은 현재 정책상 penalty 점수를 만들지 않고 `REJECT` 사유의
+30초 cooldown만 적용합니다. 따라서 위 재신청은 cooldown 종료 뒤 수행한 정상
+시나리오입니다.
+
 ### 완료 기능 DB 검증 SQL
 
 아래 SQL은 `:group_id`를 이번 완료 테스트 group ID로 바꿔 순서대로 실행합니다.

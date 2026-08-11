@@ -65,6 +65,44 @@ class MatchProposalResponseServiceIntegrationTest {
         assertCooldown(proposal(attempt,9110010),9110010,"REJECT",RESPONSE_AT.plusSeconds(2),Duration.ofSeconds(30));
         assertThat(penaltyScore(9110006)).isZero();
         assertThat(penaltyScore(9110010)).isZero();
+        assertThat(jdbc.queryForList("""
+                SELECT lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,rejected_by_member_id
+                FROM match_opponent_exclusions ORDER BY lower_member_id,higher_member_id
+                """))
+                .hasSize(3);
+    }
+
+    @Test void 두명_proposal의_명시적_REJECT는_checkin_pair_exclusion을_한건_생성하고_반복은_멱등하다() {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long rejected=proposal(attempt,9110002);
+
+        service.respond(rejected,9110002,"REJECTED",RESPONSE_AT);
+        service.respond(rejected,9110002,"REJECTED",RESPONSE_AT.plusSeconds(1));
+
+        assertThat(jdbc.queryForMap("""
+                SELECT lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,
+                       rejected_by_member_id,source_proposal_id
+                FROM match_opponent_exclusions
+                """))
+                .containsEntry("lower_member_id",9110002L)
+                .containsEntry("higher_member_id",9110006L)
+                .containsEntry("lower_checkin_id",9120002L)
+                .containsEntry("higher_checkin_id",9120006L)
+                .containsEntry("rejected_by_member_id",9110002L)
+                .containsEntry("source_proposal_id",rejected);
+        assertThat(count("match_opponent_exclusions","source_proposal_id",rejected)).isOne();
+    }
+
+    @Test void 세명_proposal에서_A_REJECT는_A_B와_A_C만_생성한다() {
+        long attempt=prepare(3,NOW.plusMinutes(1));
+
+        service.respond(proposal(attempt,9110002),9110002,"REJECTED",RESPONSE_AT);
+
+        assertThat(jdbc.queryForList("""
+                SELECT lower_member_id,higher_member_id FROM match_opponent_exclusions
+                ORDER BY lower_member_id,higher_member_id
+                """))
+                .extracting(row -> List.of(row.get("lower_member_id"),row.get("higher_member_id")))
+                .containsExactly(List.of(9110002L,9110006L),List.of(9110002L,9110010L));
     }
 
     @Test void 비귀책_pool이_만료됐으면_EXPIRED이며_search_expires_at을_연장하지_않는다() {
@@ -97,6 +135,7 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(count("match_cooldowns","member_id",9110002)).isOne();
         assertThat(count("match_cooldowns","member_id",9110006)).isOne();
         assertThat(count("match_penalty_events","related_attempt_id",attempt)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_opponent_exclusions",Integer.class)).isZero();
     }
 
     @ParameterizedTest @ValueSource(strings={"ACCEPTED","REJECTED"})
@@ -222,6 +261,7 @@ class MatchProposalResponseServiceIntegrationTest {
 
     @Test void round2_취소는_취소자만_CANCELLED하고_비귀책_pool을_반환한다() {
         long attempt=prepareRoundTwo();
+        int initialExclusions=jdbc.queryForObject("SELECT count(*) FROM match_opponent_exclusions",Integer.class);
         service.respond(proposal(attempt,9110002,2),9110002,"START_WITH_CURRENT_MEMBERS",RESPONSE_AT.plusSeconds(2));
         service.respond(proposal(attempt,9110006,2),9110006,"CANCEL_CURRENT_MEMBERS",RESPONSE_AT.plusSeconds(3));
         assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
@@ -231,6 +271,8 @@ class MatchProposalResponseServiceIntegrationTest {
         assertCooldown(cancelledProposal,9110006,"CANCEL",RESPONSE_AT.plusSeconds(3),Duration.ofMinutes(2));
         assertPenalty(cancelledProposal,9110006,"CANCEL",1,"ROUND_2_CANCEL",RESPONSE_AT.plusSeconds(3));
         assertThat(count("match_cooldowns","member_id",9110002)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_opponent_exclusions",Integer.class))
+                .isEqualTo(initialExclusions);
     }
 
     @Test void round2_timeout은_취소와_같이_attempt를_실패시키며_재실행은_멱등하다() {
@@ -362,8 +404,11 @@ class MatchProposalResponseServiceIntegrationTest {
         runConcurrentAllowingFailure(()->service.respond(proposal,9110002,"ACCEPTED",RESPONSE_AT),
                 ()->service.respond(proposal,9110002,"REJECTED",RESPONSE_AT));
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
-        assertThat(jdbc.queryForObject("SELECT response FROM match_responses WHERE proposal_id=?",String.class,proposal))
-                .isIn("ACCEPTED","REJECTED");
+        String savedResponse = jdbc.queryForObject(
+                "SELECT response FROM match_responses WHERE proposal_id=?", String.class, proposal);
+        assertThat(savedResponse).isIn("ACCEPTED","REJECTED");
+        assertThat(count("match_opponent_exclusions","source_proposal_id",proposal))
+                .isEqualTo("REJECTED".equals(savedResponse) ? 2 : 0);
     }
 
     @Test void REJECTED와_TIMEOUT_race는_중복응답없이_직렬화된다() throws Exception {
@@ -371,6 +416,10 @@ class MatchProposalResponseServiceIntegrationTest {
         runConcurrentAllowingFailure(()->service.respond(proposal,9110002,"REJECTED",NOW.plusSeconds(29)),
                 ()->service.timeoutAttempt(attempt,NOW.plusSeconds(30)));
         assertThat(count("match_responses","proposal_id",proposal)).isOne();
+        String savedResponse = jdbc.queryForObject(
+                "SELECT response FROM match_responses WHERE proposal_id=?", String.class, proposal);
+        assertThat(count("match_opponent_exclusions","source_proposal_id",proposal))
+                .isEqualTo("REJECTED".equals(savedResponse) ? 1 : 0);
         assertThat(attemptStatus(attempt)).isIn("WAITING_RESPONSES","FAILED");
         assertThat(count("match_cooldowns","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
         assertThat(count("match_penalty_events","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
@@ -501,7 +550,7 @@ class MatchProposalResponseServiceIntegrationTest {
         int size=poolIds.size();
         for(long id:poolIds) jdbc.update("UPDATE match_pools SET preferred_group_size=?,status='LOCKED',locked_at=?,lock_token=?,search_expires_at=? WHERE id=?",size,NOW,TOKEN,searchExpiresAt,id);
         List<MatchingCandidate> candidates=IntStream.range(0,size).mapToObj(i->{long id=poolIds.get(i); return new MatchingCandidate(
-                id,9110000L+(id-9120000L),9100001L,size,false,NOW.minusSeconds(i),List.of(TravelStyleCode.PHOTO));}).toList();
+                id,9110000L+(id-9120000L),id,9100001L,size,false,NOW.minusSeconds(i),List.of(TravelStyleCode.PHOTO));}).toList();
         return creation.createInitial(new MatchGroupCombination(candidates,new BigDecimal("100.00")),TOKEN,NOW,Duration.ofSeconds(30)).attemptId();
     }
     private long prepareRoundTwo() {
@@ -521,6 +570,7 @@ class MatchProposalResponseServiceIntegrationTest {
         jdbc.update("DELETE FROM match_penalty_events"); jdbc.update("DELETE FROM match_cooldowns");
         jdbc.update("DELETE FROM match_responses"); jdbc.update("DELETE FROM match_events");
         jdbc.update("DELETE FROM match_group_members"); jdbc.update("DELETE FROM match_groups");
+        jdbc.update("DELETE FROM match_opponent_exclusions");
         jdbc.update("DELETE FROM match_proposals"); jdbc.update("DELETE FROM match_attempt_members"); jdbc.update("DELETE FROM match_attempts");
         jdbc.update("UPDATE members SET penalty_score=0");
         jdbc.update("UPDATE match_pools SET preferred_group_size=3,allow_minimum_two=false,status='WAITING',locked_at=NULL,lock_token=NULL,search_expires_at=?",NOW.plusMinutes(1));

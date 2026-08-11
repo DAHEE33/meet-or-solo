@@ -62,7 +62,8 @@ class MatchingOrchestrationServiceTest {
     @Test void 한_group_실패는_다른_group_생성을_막지_않고_마지막에_release한다() {
         MatchGroupCombination first = mock(MatchGroupCombination.class);
         MatchGroupCombination second = mock(MatchGroupCombination.class);
-        MatchingBatchReader.MatchingBatch batch = new MatchingBatchReader.MatchingBatch(List.of(), java.util.Set.of());
+        MatchingBatchReader.MatchingBatch batch = new MatchingBatchReader.MatchingBatch(
+                List.of(), java.util.Set.of(), java.util.Set.of());
         when(claim.claim(NOW, 20, "fixed-token")).thenReturn(new MatchPoolClaimResult("fixed-token", List.of(1L)));
         when(reader.read("fixed-token")).thenReturn(batch);
         when(composer.compose(org.mockito.ArgumentMatchers.eq(batch.candidates()), org.mockito.ArgumentMatchers.any()))

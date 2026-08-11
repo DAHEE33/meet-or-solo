@@ -169,6 +169,7 @@ class MatchGroupComposerTest {
         return new MatchingCandidate(
                 id,
                 100L + id,
+                id,
                 festivalId,
                 groupSize,
                 allowMinimumTwo,

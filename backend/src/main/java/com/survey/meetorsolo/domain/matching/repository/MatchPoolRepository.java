@@ -101,6 +101,23 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
                              AND block.blocked_member_id = :requesterMemberId)
                   )
               )
+              AND (
+                  pool.id = requester.id
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM match_opponent_exclusions exclusion
+                      WHERE exclusion.lower_member_id = LEAST(requester.member_id, pool.member_id)
+                        AND exclusion.higher_member_id = GREATEST(requester.member_id, pool.member_id)
+                        AND exclusion.lower_checkin_id = CASE
+                            WHEN requester.member_id < pool.member_id THEN requester.checkin_id
+                            ELSE pool.checkin_id
+                        END
+                        AND exclusion.higher_checkin_id = CASE
+                            WHEN requester.member_id < pool.member_id THEN pool.checkin_id
+                            ELSE requester.checkin_id
+                        END
+                  )
+              )
             ORDER BY CASE WHEN pool.id = :requesterPoolId THEN 0 ELSE 1 END,
                      pool.entered_at ASC,
                      pool.id ASC
@@ -179,6 +196,10 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
     @Query(value = """
             SELECT pool.*
             FROM match_pools pool
+            JOIN match_pools requester
+              ON requester.member_id = :requesterMemberId
+             AND requester.festival_id = :festivalId
+             AND requester.status IN ('WAITING', 'LOCKED')
             JOIN festival_checkins checkin ON checkin.id = pool.checkin_id
             WHERE pool.festival_id = :festivalId
               AND pool.member_id <> :requesterMemberId
@@ -203,6 +224,20 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
                          AND block.blocked_member_id = pool.member_id)
                      OR (block.blocker_member_id = pool.member_id
                          AND block.blocked_member_id = :requesterMemberId)
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM match_opponent_exclusions exclusion
+                  WHERE exclusion.lower_member_id = LEAST(requester.member_id, pool.member_id)
+                    AND exclusion.higher_member_id = GREATEST(requester.member_id, pool.member_id)
+                    AND exclusion.lower_checkin_id = CASE
+                        WHEN requester.member_id < pool.member_id THEN requester.checkin_id
+                        ELSE pool.checkin_id
+                    END
+                    AND exclusion.higher_checkin_id = CASE
+                        WHEN requester.member_id < pool.member_id THEN pool.checkin_id
+                        ELSE requester.checkin_id
+                    END
               )
             ORDER BY pool.entered_at ASC, pool.id ASC
             """, nativeQuery = true)
@@ -215,6 +250,10 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
     @Query(value = """
             SELECT pool.*
             FROM match_pools pool
+            JOIN match_pools requester
+              ON requester.member_id = :requesterMemberId
+             AND requester.festival_id = :festivalId
+             AND requester.status IN ('WAITING', 'LOCKED')
             JOIN festival_checkins checkin ON checkin.id = pool.checkin_id
             WHERE pool.festival_id = :festivalId
               AND pool.member_id <> :requesterMemberId
@@ -239,6 +278,20 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
                          AND block.blocked_member_id = pool.member_id)
                      OR (block.blocker_member_id = pool.member_id
                          AND block.blocked_member_id = :requesterMemberId)
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM match_opponent_exclusions exclusion
+                  WHERE exclusion.lower_member_id = LEAST(requester.member_id, pool.member_id)
+                    AND exclusion.higher_member_id = GREATEST(requester.member_id, pool.member_id)
+                    AND exclusion.lower_checkin_id = CASE
+                        WHEN requester.member_id < pool.member_id THEN requester.checkin_id
+                        ELSE pool.checkin_id
+                    END
+                    AND exclusion.higher_checkin_id = CASE
+                        WHEN requester.member_id < pool.member_id THEN pool.checkin_id
+                        ELSE requester.checkin_id
+                    END
               )
             ORDER BY pool.entered_at ASC, pool.id ASC
             LIMIT :limit

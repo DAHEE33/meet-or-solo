@@ -1,5 +1,31 @@
 # 진행 상태 기록
 
+## [10-매칭 25차] 명시적 거절 상대의 check-in pair 재추천 제외
+
+상태: 구현·자동 회귀, local DB V18 적용과 최소 수동 검증 완료
+
+- 기획서 `MATCH-08` 중 명시적 거절 상대 자동 제외만 구현하고 재매칭 최대 5회 제한은 적용하지 않았다.
+- 기존 V1~V17을 수정하지 않고 `V18__add_match_opponent_exclusions.sql`을 추가했다.
+- round 1 `INITIAL_MATCH`의 명시적 `REJECTED`만 거절 회원과 나머지 proposal 회원 사이 exclusion을 생성한다. 3인 A 거절은 A-B/A-C만 생성하고 B-C는 생성하지 않는다.
+- `TIMEOUT`은 proposal 종료 처리상 자동 거절에 준하지만 명시적 `REJECTED`가 아니다. 따라서 기존 penalty/cooldown만 적용하고 exclusion은 생성하지 않는다. round 2 취소, 인원 미달 자체, 시스템 오류, 정상 완료와 MatchRoom 취소도 exclusion 원인이 아니다.
+- member ID 정렬과 원래 check-in 대응을 함께 보존하는 `MatchOpponentPair`를 사용하고 동일 check-in pair 및 source proposal/member pair unique 제약과 `ON CONFLICT DO NOTHING`으로 멱등성을 보강했다.
+- response와 exclusion insert는 기존 attempt → proposal → attempt member → 정렬된 pool 잠금 뒤 같은 transaction에서 commit한다. pool/check-in/member 소유 관계도 저장 전에 검증한다.
+- requester/legacy 후보 SQL, Scheduler batch 조합과 proposal 생성 직전 `REQUIRES_NEW` 재검증에 동일 exclusion 정책을 적용했다.
+- exclusion 생성과 최종 proposal 검증은 정렬된 check-in pair별 `pg_advisory_xact_lock(int,int)`을 공유한다. SHA-256의 앞 64비트를 두 key로 사용하며 lock 획득 뒤 exclusion을 다시 조회한다.
+- focused 비컨테이너 4개 class, response PostgreSQL integration, requester/Scheduler/final race PostgreSQL integration과 matching 전체 288건이 성공했다.
+- backend 전체 `clean build` 347건이 성공했다. 종료 중 이미 중지된 Testcontainers 연결을 Scheduler/Hikari 종료 thread가 확인한 warning은 있었지만 test와 build 결과에는 영향을 주지 않았다.
+- 2026-08-12 local DB에 V18이 성공 적용되었고 `match_opponent_exclusions` 테이블 생성을 확인했다.
+- A-B round 1 명시적 거절로 exclusion 1건이 생성되고, 같은 check-in pair가 다시 추천되지 않는 것을 최소 수동 테스트로 확인했다.
+- `TIMEOUT` exclusion 미생성은 PostgreSQL 자동 통합 테스트로 대체했으며 통과했다.
+- 같은 check-in pair의 재추천 제외 수동 검증 중 두 브라우저의 `/matching` 화면이
+  약 1분 동안 `주변 여행자를 찾고 있어요`와 `함께할 분을 확정하고 있어요` 사이를
+  반복 전환하는 현상을 확인했다. exclusion DB 정합성과 재추천 방지는 정상이며,
+  Scheduler의 짧은 `LOCKED` snapshot과 polling 화면 전환을 함께 조사할 Frontend
+  비동기 UX 후속 이슈 `ISSUE-MR-010`으로 분리했다.
+- exclusion 적용 여부는 현재 두 pool의 check-in ID 조합 일치로 판단한다. 새 check-in에서는 과거 row가 적용되지 않으며 즉시 삭제 Scheduler는 추가하지 않았다.
+- 과거 row의 실제 삭제 기간은 match event·개인정보 보존 정책과 함께 후속 확정한다. REST/WebSocket/Frontend와 log에는 pair, 거절자, source proposal 정보를 노출하지 않는다.
+- AI 임베딩, 신고·안전, Frontend UX 안정화와 재매칭 횟수 제한은 제외했다.
+
 ## [10-매칭 24차] 축제별 만남 장소 관리·순환 배정·MatchRoom 지도
 
 상태: 구현, Backend·Frontend 자동 회귀 및 dev DB·두 브라우저 수동 검증 완료
@@ -1305,3 +1331,86 @@ dev 서버 기준:
 - Router notice 반복, layout shift와 짧은 spinner 깜빡임도 UX 검증 범위에 포함한다.
 - 권장 별도 브랜치명은 `feature/wbs-10-frontend-async-ux-stabilization`이다.
 - 이 단계에서는 Backend 정책, DB schema, completion transaction을 변경하지 않는다.
+
+## [10-B 다음 작업 순서] 체크인 이후 매칭 필수 요구사항 완결
+
+상태: 현황 조사 완료, 신규 구현 전
+
+담당 범위는 다른 담당자가 구현하는 체크인 이후의 자동 매칭, MatchRoom과 후속
+기능입니다. 화면 전체가 아직 완성되지 않았으므로 ISSUE-MR-009를 포함한 Frontend
+전체 UX 안정화보다 기획서 v5.0 `8.3 소그룹 자동 매칭`의 필수 요구사항을 먼저
+완결합니다.
+
+### 1. 이미 구현되어 다시 개발하지 않는 항목
+
+- Race Condition 방어는 PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED`, pool 상태,
+  `lock_token`, 짧은 claim transaction과 proposal 생성 전 최종 재검증으로 구현되어
+  있습니다.
+- 동일 회원 active pool/group, 동일 proposal 응답, penalty/cooldown/event 중복은
+  DB 제약과 멱등 처리로 방어합니다.
+- pool-entry trigger와 Scheduler의 동시 선점, 응답과 timeout 경합, 재실행과 rollback
+  관련 PostgreSQL 통합 테스트가 존재합니다.
+- 다음 작업에서 동시성 로직과 테스트를 처음부터 다시 작성하지 않습니다. 신규 정책이
+  기존 transaction 경계를 변경하는 경우에만 관련 focused test를 먼저 실행하고,
+  빠진 race 경계만 추가합니다.
+
+### 2. 차단 회원 양방향 제외 현황
+
+- `user_blocks`에서 `A가 B를 차단`한 관계가 하나라도 있으면 A와 B를 같은 후보
+  그룹에 포함하지 않습니다.
+- `A가 B를 차단`한 경우 A가 매칭을 신청할 때뿐 아니라 B가 먼저 신청한 경우에도
+  서로를 제외하는 것이 양방향 제외입니다. 이는 차단 사실과 차단한 사람을 상대에게
+  노출하지 않으면서 이후 만남을 막기 위한 안전 규칙입니다.
+- requester 후보 조회, Scheduler batch 조합과 proposal 생성 직전 모든 member pair
+  최종 검증에 반영되어 있습니다.
+- 정방향·역방향 차단 repository/service 통합 테스트도 있으므로 신규 구현 항목으로
+  잡지 않습니다.
+- 최종 차단 검증 직후 다른 transaction에서 새 차단이 생성되는 극단적인 race는 현재
+  알려진 한계입니다. isolation level, advisory lock 또는 회원 단위 직렬화의 처리량과
+  deadlock 위험을 비교해야 하므로 차단 API·정책 작업 시 별도 설계합니다.
+
+### 3. 실제 다음 신규 작업: 거절 상대 재매칭 제외 정책
+
+기획서 v5.0 `MATCH-08`의 `재매칭 최대 5회`는 적용하지 않기로 결정했습니다.
+재매칭 횟수 자체를 제한하지 않으므로 횟수 집계, 제한 API, DB counter와 동시 요청
+경계는 구현하지 않습니다. 기획서와 현재 서비스 정책이 다른 항목으로 추적하고 최종
+기획 문서 갱신 시 반영합니다.
+
+남은 신규 작업은 `거절 상대 자동 제외`입니다.
+
+확정 정책:
+
+- 한 회원이 매칭 제안을 명시적으로 거절하면 해당 proposal에서 만난 회원끼리는
+  같은 체크인이 유효한 동안 서로 다시 추천하지 않습니다.
+- 제외는 양방향으로 적용하지만 누가 거절했는지 또는 제외 관계가 생겼는지는 상대에게
+  노출하지 않습니다.
+- 새로운 유효 체크인을 생성하면 이전 체크인에서 생긴 거절 상대 제외는 이어받지
+  않습니다.
+- 인원 미달, 시스템 오류처럼 사용자의 명시적 거절이 아닌 실패는 상대 제외를 만들지
+  않습니다.
+- 미응답 `TIMEOUT`은 proposal 종료 처리상 자동 거절에 준하지만 명시적
+  `REJECTED`가 아닙니다. 기존 penalty/cooldown만 적용하고 상대 exclusion은
+  생성하지 않습니다.
+
+1. attempt/proposal 이력과 check-in 범위를 기준으로 후보 pair 제외 조회를 설계합니다.
+2. requester 경로와 Scheduler batch 조합에 동일한 제외 규칙을 적용합니다.
+3. proposal 생성 직전 현재 check-in과 제외 pair를 최종 재검증합니다.
+4. 기존 matching transaction을 변경하는 범위에 한해 focused 동시성·멱등성
+   통합 테스트를 보강합니다.
+
+권장 브랜치명:
+
+```text
+feature/wbs-10-b-rematch-opponent-exclusion
+```
+
+### 4. 이후 순서
+
+1. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
+2. AI 임베딩 생성·동의·fallback과 scoring 결합
+3. 신고·안전·후기와 관리자 연계
+4. 주요 화면과 실제 API 연결 완료 후 ISSUE-MR-009를 포함한 Frontend 전체 UX 안정화
+
+AI 임베딩은 `member_preference_embeddings`와 pgvector 기반만 준비된 상태입니다.
+외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책이 필요하며, 매칭 상태
+정확성·중복 방지·재매칭 정책보다 먼저 구현하지 않습니다.

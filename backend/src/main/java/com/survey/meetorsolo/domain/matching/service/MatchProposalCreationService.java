@@ -39,13 +39,16 @@ public class MatchProposalCreationService {
     private final TravelStyleScorer scorer;
     private final JdbcTemplate jdbcTemplate;
     private final ApplicationEventPublisher eventPublisher;
+    private final MatchOpponentExclusionService opponentExclusions;
 
     public MatchProposalCreationService(MatchPoolRepository poolRepository, MatchAttemptRepository attemptRepository,
             MatchAttemptMemberRepository memberRepository, MatchProposalRepository proposalRepository,
-            TravelStyleScorer scorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher) {
+            TravelStyleScorer scorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher,
+            MatchOpponentExclusionService opponentExclusions) {
         this.poolRepository = poolRepository; this.attemptRepository = attemptRepository;
         this.memberRepository = memberRepository; this.proposalRepository = proposalRepository;
         this.scorer = scorer; this.jdbcTemplate = jdbcTemplate; this.eventPublisher = eventPublisher;
+        this.opponentExclusions = opponentExclusions;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -122,6 +125,7 @@ public class MatchProposalCreationService {
         for (MatchPool pool : pools) {
             MatchingCandidate candidate = byPool.get(pool.getId());
             if (candidate == null || pool.getMemberId() != candidate.memberId()
+                    || pool.getCheckinId() != candidate.checkinId()
                     || pool.getFestivalId() != candidate.festivalId()
                     || pool.getPreferredGroupSize() != candidate.preferredGroupSize()) fail("pool snapshot이 변경되었습니다.");
             if (!MatchPool.STATUS_LOCKED.equals(pool.getStatus())) fail("LOCKED 상태가 아닌 pool이 포함되었습니다.");
@@ -134,6 +138,7 @@ public class MatchProposalCreationService {
         if (countValidCheckins(poolIds, now) != pools.size()) fail("유효하지 않은 check-in이 포함되었습니다.");
         if (countActiveCooldowns(memberIds, now) > 0) fail("active cooldown 회원이 포함되었습니다.");
         if (countBlocks(memberIds) > 0) fail("차단 관계 회원이 포함되었습니다.");
+        if (opponentExclusions.existsAnyLocked(pools)) fail("현재 check-in에서 제외된 상대가 포함되었습니다.");
     }
 
     private int countValidCheckins(List<Long> poolIds, OffsetDateTime now) {

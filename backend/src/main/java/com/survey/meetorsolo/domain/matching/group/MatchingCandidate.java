@@ -9,6 +9,7 @@ import java.util.Objects;
 public record MatchingCandidate(
         long poolId,
         long memberId,
+        long checkinId,
         long festivalId,
         int preferredGroupSize,
         boolean allowMinimumTwo,
@@ -19,6 +20,7 @@ public record MatchingCandidate(
     public MatchingCandidate(
             long poolId,
             long memberId,
+            long checkinId,
             long festivalId,
             int preferredGroupSize,
             boolean allowMinimumTwo,
@@ -28,6 +30,7 @@ public record MatchingCandidate(
         this(
                 poolId,
                 memberId,
+                checkinId,
                 festivalId,
                 preferredGroupSize,
                 allowMinimumTwo,
@@ -39,6 +42,9 @@ public record MatchingCandidate(
         }
         if (memberId <= 0) {
             throw new IllegalArgumentException("memberId는 양수여야 합니다.");
+        }
+        if (checkinId <= 0) {
+            throw new IllegalArgumentException("checkinId는 양수여야 합니다.");
         }
         if (festivalId <= 0) {
             throw new IllegalArgumentException("festivalId는 양수여야 합니다.");

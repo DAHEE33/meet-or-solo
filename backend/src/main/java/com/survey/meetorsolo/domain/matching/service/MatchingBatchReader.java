@@ -38,10 +38,10 @@ public class MatchingBatchReader {
             }
         }
         List<MatchingCandidate> candidates = pools.stream().map(pool -> new MatchingCandidate(
-                pool.getId(), pool.getMemberId(), pool.getFestivalId(), pool.getPreferredGroupSize(),
+                pool.getId(), pool.getMemberId(), pool.getCheckinId(), pool.getFestivalId(), pool.getPreferredGroupSize(),
                 pool.getAllowMinimumTwo(), pool.getEnteredAt(), styles.getOrDefault(pool.getMemberId(), List.of())
         )).toList();
-        return new MatchingBatch(candidates, readBlockedPairs(memberIds));
+        return new MatchingBatch(candidates, readBlockedPairs(memberIds), readExcludedPairs(candidates));
     }
     private Set<MemberPair> readBlockedPairs(List<Long> memberIds) {
         if (memberIds.size() < 2) return Set.of();
@@ -53,8 +53,26 @@ public class MatchingBatchReader {
                 (RowCallbackHandler) rs -> pairs.add(MemberPair.of(rs.getLong(1), rs.getLong(2))), args.toArray());
         return Set.copyOf(pairs);
     }
-    public record MatchingBatch(List<MatchingCandidate> candidates, Set<MemberPair> blockedPairs) {
-        public MatchingBatch { candidates = List.copyOf(candidates); blockedPairs = Set.copyOf(blockedPairs); }
+    private Set<MatchOpponentPair> readExcludedPairs(List<MatchingCandidate> candidates) {
+        if (candidates.size() < 2) return Set.of();
+        List<Long> checkinIds = candidates.stream().map(MatchingCandidate::checkinId).toList();
+        String placeholders = String.join(",", checkinIds.stream().map(ignored -> "?").toList());
+        List<Object> args = new ArrayList<>(); args.addAll(checkinIds); args.addAll(checkinIds);
+        Set<MatchOpponentPair> pairs = new HashSet<>();
+        jdbcTemplate.query("SELECT lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id "
+                        + "FROM match_opponent_exclusions WHERE lower_checkin_id IN (" + placeholders
+                        + ") AND higher_checkin_id IN (" + placeholders + ")",
+                (RowCallbackHandler) rs -> pairs.add(new MatchOpponentPair(
+                        rs.getLong(1), rs.getLong(2), rs.getLong(3), rs.getLong(4))), args.toArray());
+        return Set.copyOf(pairs);
+    }
+    public record MatchingBatch(List<MatchingCandidate> candidates, Set<MemberPair> blockedPairs,
+                                Set<MatchOpponentPair> excludedPairs) {
+        public MatchingBatch {
+            candidates = List.copyOf(candidates);
+            blockedPairs = Set.copyOf(blockedPairs);
+            excludedPairs = Set.copyOf(excludedPairs);
+        }
     }
     public record MemberPair(long lowerMemberId, long higherMemberId) {
         public static MemberPair of(long left, long right) { return new MemberPair(Math.min(left, right), Math.max(left, right)); }
