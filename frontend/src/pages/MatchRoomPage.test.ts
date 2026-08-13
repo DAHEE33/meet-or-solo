@@ -12,6 +12,8 @@ import {
   matchEventText,
   memberArrivalText,
   CANCELLATION_OPTIONS,
+  ReportDialog,
+  REPORT_REASON_OPTIONS,
 } from './MatchRoomPage';
 
 const group = (status: CurrentMatchGroup['status'] = 'CONFIRMED'): CurrentMatchGroup => ({
@@ -73,6 +75,78 @@ function text(node: ReactNode): string {
 }
 
 describe('MatchRoomContent', () => {
+  it('본인에는 신고 action이 없고 여러 상대에는 각 정확한 action이 있다', () => {
+    const current = group();
+    current.confirmedMemberCount = 3;
+    current.currentMemberCount = 3;
+    current.members.push({
+      memberId: 3, nickname: '여행자C', profileImageUrl: null, status: 'JOINED',
+      arrivalMinutes: null, arrivalTimeSelectedAt: null,
+    });
+    const onOpenReport = vi.fn();
+    const tree = renderNode(MatchRoomContent({
+      state: { status: 'READY', group: current, events: [], error: null,
+        eventsError: null, actionError: null, isSubmitting: false },
+      onRetry: vi.fn(), onSelectArrivalTime: vi.fn(), onOpenReport,
+    }));
+    const reportButtons = elements(tree).filter(
+      (element) => element.type === 'button' && String(element.props['aria-label']).includes('신고하기'),
+    );
+    expect(reportButtons.map((button) => button.props['aria-label'])).toEqual([
+      '여행자B님 신고하기', '여행자C님 신고하기',
+    ]);
+    expect(reportButtons.some((button) => button.props['aria-label'] === '여행자A님 신고하기')).toBe(false);
+    (reportButtons[1].props.onClick as () => void)();
+    expect(onOpenReport).toHaveBeenCalledWith({ memberId: 3, nickname: '여행자C' });
+  });
+
+  it('6개 한국어 사유와 명시적 최종 확인 및 SAFETY 안내를 표시한다', () => {
+    const target = { memberId: 2, nickname: '여행자B' };
+    const reasonTree = renderNode(ReportDialog({
+      state: { target, reasonCode: 'SAFETY', step: 'REASON', submitting: false,
+        error: null, successMessage: null },
+      onSelectReason: vi.fn(), onConfirm: vi.fn(), onBack: vi.fn(), onClose: vi.fn(),
+      onSubmit: vi.fn(),
+    }));
+    const content = text(reasonTree);
+    REPORT_REASON_OPTIONS.forEach((option) => expect(content).toContain(option.label));
+    expect(content).not.toContain('SEXUAL_HARASSMENT');
+    expect(content).toContain('112 등 긴급 기관');
+    expect(elements(reasonTree).some((element) => element.type === 'textarea')).toBe(false);
+
+    const confirmTree = renderNode(ReportDialog({
+      state: { target, reasonCode: 'SCAM', step: 'CONFIRM', submitting: false,
+        error: null, successMessage: null },
+      onSelectReason: vi.fn(), onConfirm: vi.fn(), onBack: vi.fn(), onClose: vi.fn(),
+      onSubmit: vi.fn(),
+    }));
+    expect(text(confirmTree)).toContain('여행자B님');
+    expect(text(confirmTree)).toContain('사기 의심');
+    expect(text(confirmTree)).toContain('신고 즉시 제재가 확정되지는 않아요');
+  });
+
+  it('사유 미선택·제출 중 버튼을 비활성화하고 실패 시 dialog를 유지한다', () => {
+    const target = { memberId: 2, nickname: '여행자B' };
+    const unselected = renderNode(ReportDialog({
+      state: { target, reasonCode: null, step: 'REASON', submitting: false,
+        error: null, successMessage: null },
+      onSelectReason: vi.fn(), onConfirm: vi.fn(), onBack: vi.fn(), onClose: vi.fn(),
+      onSubmit: vi.fn(),
+    }));
+    const next = elements(unselected).find((element) => text(element as never) === '다음');
+    expect(next?.props.disabled).toBe(true);
+
+    const failed = renderNode(ReportDialog({
+      state: { target, reasonCode: 'RUDE', step: 'CONFIRM', submitting: true,
+        error: new Error('network'), successMessage: null },
+      onSelectReason: vi.fn(), onConfirm: vi.fn(), onBack: vi.fn(), onClose: vi.fn(),
+      onSubmit: vi.fn(),
+    }));
+    expect(text(failed)).toContain('신고를 접수하지 못했어요');
+    const submit = elements(failed).find((element) => text(element as never) === '접수 중...');
+    expect(submit?.props.disabled).toBe(true);
+    expect(elements(failed).some((element) => element.props.role === 'dialog')).toBe(true);
+  });
   it('만남 장소 카드와 지도 핀 영역을 도착 action보다 먼저 표시한다', () => {
     const current = group();
     current.meetingPoint = {

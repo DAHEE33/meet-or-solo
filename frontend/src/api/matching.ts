@@ -94,6 +94,28 @@ export type MatchCancellationResult = {
   currentMemberCount: number;
 };
 
+export type MatchReportReasonCode =
+  | 'RUDE'
+  | 'SEXUAL_HARASSMENT'
+  | 'NO_SHOW'
+  | 'SCAM'
+  | 'SAFETY'
+  | 'OTHER';
+
+export type MatchReportRequest = {
+  reportedMemberId: number;
+  reasonCode: MatchReportReasonCode;
+};
+
+export type MatchReportResponse = {
+  reportId: number;
+  groupId: number;
+  reportedMemberId: number;
+  reasonCode: MatchReportReasonCode;
+  status: 'SUBMITTED' | 'REVIEWING' | 'RESOLVED' | 'REJECTED' | 'ACTION_TAKEN';
+  createdAt: string;
+};
+
 export type MatchGroupFestival = {
   festivalId: number;
   title: string;
@@ -204,4 +226,11 @@ export const matchingApi = {
         body: JSON.stringify({ reason }),
       },
     ),
+  submitReport: (groupId: number, request: MatchReportRequest, signal?: AbortSignal) =>
+    apiClient<MatchReportResponse>(`/api/match-groups/${groupId}/reports`, {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
 };

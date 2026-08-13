@@ -1,21 +1,26 @@
-import { CheckCircle2, Clock3, Loader2, RefreshCw, Users } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { CheckCircle2, Clock3, Flag, Loader2, RefreshCw, Users, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   ArrivalMinutesSelection,
   CurrentMatchGroup,
   MatchCancellationReason,
+  MatchReportReasonCode,
 } from '../api/matching';
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 import { useMatchRoom, type MatchRoomState } from '../hooks/useMatchRoom';
+import { useMatchReport, type MatchReportState, type MatchReportTarget } from '../hooks/useMatchReport';
 import { formatSeoulDateTime } from '../utils/dateTime';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
   const { state, refresh, selectArrivalTime, arrive, cancelParticipation } = useMatchRoom();
+  const report = useMatchReport();
+  const reportSubmittingRef = useRef(report.state.submitting);
+  reportSubmittingRef.current = report.state.submitting;
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -35,6 +40,37 @@ export default function MatchRoomPage() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (report.state.step === 'CLOSED') return;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dialog = document.querySelector<HTMLElement>('[data-report-dialog]');
+    dialog?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !reportSubmittingRef.current) report.close();
+      if (event.key !== 'Tab' || !dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>('button:not(:disabled)'),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [report.close, report.state.step]);
+
   return (
     <MobileLayout>
       <PageHeader title="매칭 상태방" />
@@ -45,6 +81,14 @@ export default function MatchRoomPage() {
           onSelectArrivalTime={selectArrivalTime}
           onArrive={arrive}
           onCancel={cancelParticipation}
+          reportState={report.state}
+          onOpenReport={report.open}
+          onSelectReportReason={report.selectReason}
+          onConfirmReport={report.confirm}
+          onBackReport={report.back}
+          onCloseReport={report.close}
+          onSubmitReport={(groupId) => report.submit(groupId)}
+          onClearReportSuccess={report.clearSuccess}
           nowEpochMs={nowEpochMs}
         />
       </main>
@@ -63,6 +107,14 @@ export function MatchRoomContent({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  reportState,
+  onOpenReport,
+  onSelectReportReason,
+  onConfirmReport,
+  onBackReport,
+  onCloseReport,
+  onSubmitReport,
+  onClearReportSuccess,
   nowEpochMs,
 }: {
   state: MatchRoomState;
@@ -70,6 +122,14 @@ export function MatchRoomContent({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive?: () => Promise<boolean>;
   onCancel?: (reason: MatchCancellationReason) => Promise<boolean>;
+  reportState?: MatchReportState;
+  onOpenReport?: (target: MatchReportTarget) => void;
+  onSelectReportReason?: (reason: MatchReportReasonCode) => void;
+  onConfirmReport?: () => void;
+  onBackReport?: () => void;
+  onCloseReport?: () => void;
+  onSubmitReport?: (groupId: number) => Promise<boolean>;
+  onClearReportSuccess?: () => void;
   nowEpochMs?: number;
 }) {
   if (state.status === 'LOADING' || state.status === 'EMPTY') {
@@ -103,6 +163,14 @@ export function MatchRoomContent({
       onSelectArrivalTime={onSelectArrivalTime}
       onArrive={onArrive ?? (() => Promise.resolve(false))}
       onCancel={onCancel ?? (() => Promise.resolve(false))}
+      reportState={reportState}
+      onOpenReport={onOpenReport}
+      onSelectReportReason={onSelectReportReason}
+      onConfirmReport={onConfirmReport}
+      onBackReport={onBackReport}
+      onCloseReport={onCloseReport}
+      onSubmitReport={onSubmitReport}
+      onClearReportSuccess={onClearReportSuccess}
       nowEpochMs={nowEpochMs}
     />
   );
@@ -133,6 +201,14 @@ export function CurrentGroupRoom({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  reportState,
+  onOpenReport,
+  onSelectReportReason,
+  onConfirmReport,
+  onBackReport,
+  onCloseReport,
+  onSubmitReport,
+  onClearReportSuccess,
   nowEpochMs,
 }: {
   group: CurrentMatchGroup;
@@ -144,6 +220,14 @@ export function CurrentGroupRoom({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive: () => Promise<boolean>;
   onCancel: (reason: MatchCancellationReason) => Promise<boolean>;
+  reportState?: MatchReportState;
+  onOpenReport?: (target: MatchReportTarget) => void;
+  onSelectReportReason?: (reason: MatchReportReasonCode) => void;
+  onConfirmReport?: () => void;
+  onBackReport?: () => void;
+  onCloseReport?: () => void;
+  onSubmitReport?: (groupId: number) => Promise<boolean>;
+  onClearReportSuccess?: () => void;
   nowEpochMs?: number;
 }) {
   const effectiveNowEpochMs = nowEpochMs ?? Date.parse(group.confirmedAt);
@@ -340,13 +424,24 @@ export function CurrentGroupRoom({
                 {member.nickname.slice(0, 1)}
               </div>
             )}
-            <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="text-[14px] font-semibold text-ink">{member.nickname}</span>
               <span className="text-[12px] text-teal">{memberArrivalText(member)}</span>
               {member.arrivedAt && (
                 <span className="text-[11px] text-ink/50">{formatSeoulDateTime(member.arrivedAt)}</span>
               )}
             </div>
+            {member.memberId !== group.currentMemberId && onOpenReport && (
+              <button
+                type="button"
+                onClick={() => onOpenReport({ memberId: member.memberId, nickname: member.nickname })}
+                className="shrink-0 rounded-xl px-2 py-2 text-[12px] font-semibold text-ink/55 hover:bg-coral/10 hover:text-coral focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral"
+                aria-label={`${member.nickname}님 신고하기`}
+              >
+                <Flag aria-hidden="true" size={14} className="mr-1 inline" />
+                신고하기
+              </button>
+            )}
           </article>
         ))}
       </section>
@@ -391,7 +486,139 @@ export function CurrentGroupRoom({
         </ol>
       </section>
 
+      {reportState?.successMessage && (
+        <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg">
+          <span>{reportState.successMessage}</span>
+          <button type="button" onClick={onClearReportSuccess} className="ml-2 underline">닫기</button>
+        </div>
+      )}
+
+      {reportState && reportState.step !== 'CLOSED' && reportState.target && (
+        <ReportDialog
+          state={reportState}
+          onSelectReason={onSelectReportReason ?? (() => undefined)}
+          onConfirm={onConfirmReport ?? (() => undefined)}
+          onBack={onBackReport ?? (() => undefined)}
+          onClose={onCloseReport ?? (() => undefined)}
+          onSubmit={() => void onSubmitReport?.(group.groupId)}
+        />
+      )}
+
     </>
+  );
+}
+
+export const REPORT_REASON_OPTIONS: Array<{
+  reasonCode: MatchReportReasonCode;
+  label: string;
+}> = [
+  { reasonCode: 'RUDE', label: '무례한 행동' },
+  { reasonCode: 'SEXUAL_HARASSMENT', label: '성희롱' },
+  { reasonCode: 'NO_SHOW', label: '나타나지 않음' },
+  { reasonCode: 'SCAM', label: '사기 의심' },
+  { reasonCode: 'SAFETY', label: '안전 문제' },
+  { reasonCode: 'OTHER', label: '기타' },
+];
+
+export function ReportDialog({
+  state,
+  onSelectReason,
+  onConfirm,
+  onBack,
+  onClose,
+  onSubmit,
+}: {
+  state: MatchReportState;
+  onSelectReason: (reason: MatchReportReasonCode) => void;
+  onConfirm: () => void;
+  onBack: () => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  if (!state.target || state.step === 'CLOSED') return null;
+  const selectedReason = REPORT_REASON_OPTIONS.find(
+    (option) => option.reasonCode === state.reasonCode,
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-5">
+      <section
+        data-report-dialog
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-dialog-title"
+        className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-xl sm:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="report-dialog-title" className="text-[18px] font-bold text-ink">
+              {state.step === 'REASON' ? '신고 사유를 선택해주세요' : '신고 내용을 확인해주세요'}
+            </h2>
+            <p className="mt-1 text-[13px] text-ink/55">신고 대상: {state.target.nickname}님</p>
+          </div>
+          <button type="button" disabled={state.submitting} onClick={onClose} aria-label="신고 창 닫기" className="rounded-full p-2 text-ink/55 disabled:opacity-50">
+            <X aria-hidden="true" size={20} />
+          </button>
+        </div>
+
+        {state.step === 'REASON' ? (
+          <>
+            <fieldset className="mt-5 grid gap-2">
+              <legend className="sr-only">신고 사유</legend>
+              {REPORT_REASON_OPTIONS.map((option) => (
+                <button
+                  key={option.reasonCode}
+                  type="button"
+                  aria-pressed={state.reasonCode === option.reasonCode}
+                  onClick={() => onSelectReason(option.reasonCode)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-[14px] font-semibold ${state.reasonCode === option.reasonCode ? 'border-coral bg-coral/10 text-coral' : 'border-line text-ink'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </fieldset>
+            {state.reasonCode === 'SAFETY' && (
+              <p role="note" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-ink/70">
+                긴급한 위험이 있다면 신고 접수만 기다리지 말고 112 등 긴급 기관에 연락해주세요.
+              </p>
+            )}
+            <p className="mt-4 text-[12px] leading-5 text-ink/55">
+              신고는 운영 검토 대상이며 접수만으로 제재가 확정되지는 않아요.
+            </p>
+            <button type="button" disabled={!state.reasonCode} onClick={onConfirm} className="mt-4 w-full rounded-2xl bg-coral px-4 py-3 text-[15px] font-bold text-white disabled:opacity-40">
+              다음
+            </button>
+          </>
+        ) : (
+          <>
+            <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 rounded-2xl bg-sand/50 p-4 text-[14px]">
+              <dt className="text-ink/50">신고 대상</dt>
+              <dd className="text-right font-semibold text-ink">{state.target.nickname}님</dd>
+              <dt className="text-ink/50">신고 사유</dt>
+              <dd className="text-right font-semibold text-ink">{selectedReason?.label}</dd>
+            </dl>
+            {state.reasonCode === 'SAFETY' && (
+              <p role="note" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-ink/70">
+                긴급한 위험이 있다면 112 등 긴급 기관에 연락해주세요.
+              </p>
+            )}
+            <p className="mt-4 text-[12px] leading-5 text-ink/55">
+              제출 후 운영자가 내용을 검토하며, 신고 즉시 제재가 확정되지는 않아요.
+            </p>
+            {state.error && (
+              <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-coral">
+                신고를 접수하지 못했어요. 잠시 후 다시 시도해주세요.
+              </p>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" disabled={state.submitting} onClick={onBack} className="rounded-2xl border border-line px-3 py-3 font-semibold disabled:opacity-50">이전</button>
+              <button type="button" disabled={state.submitting} onClick={onSubmit} className="rounded-2xl bg-coral px-3 py-3 font-bold text-white disabled:opacity-50">
+                {state.submitting ? '접수 중...' : '신고 접수하기'}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
   );
 }
 

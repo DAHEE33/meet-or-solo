@@ -3649,3 +3649,111 @@ restriction 정합성 문제가 아니라 Frontend가 초기 `unknown`을 `IDLE`
 렌더링하는 hydration UX 문제입니다. 별도
 `feature/wbs-10-frontend-async-ux-stabilization` 브랜치에서 전체 화면의 최초
 loading, 재조회 상태 유지와 layout shift를 함께 보완합니다.
+
+## 43. MatchRoom 상대 회원 구조화 신고 Backend 1차
+
+### 43.1 API와 권한 계약
+
+```http
+POST /api/match-groups/{groupId}/reports
+Cookie: access_token=<ACCESS_TOKEN>
+Content-Type: application/json
+```
+
+```json
+{
+  "reportedMemberId": 27,
+  "reasonCode": "RUDE"
+}
+```
+
+Controller는 reporter ID를 받지 않고 JWT cookie에서만 계산합니다. Service는 group
+row를 `FOR SHARE`로 잠근 뒤 신고자와 피신고자가 모두 같은 group의
+`match_group_members` 이력을 갖는지 확인합니다. group 또는 어느 참여 관계가 없든
+동일한 `REPORT_RESOURCE_NOT_FOUND`를 반환해 IDOR과 ID 탐색을 방어합니다.
+
+진행 중인 `CONFIRMED`, `IN_PROGRESS`는 신고할 수 있습니다. 종료 group은
+`COMPLETED.completed_at`, `CANCELLED.cancelled_at`부터 30일 이내이며 정확히 30일도
+허용합니다. terminal timestamp 누락은 `updated_at` 같은 임의 시각으로 대체하지
+않고 `REPORT_CONFLICT`로 거절합니다.
+
+### 43.2 응답과 멱등성
+
+신규 생성과 동일 멱등 재요청은 모두 `201 Created`로 같은 resource 계약을 반환합니다.
+
+```json
+{
+  "reportId": 1,
+  "groupId": 10,
+  "reportedMemberId": 27,
+  "reasonCode": "RUDE",
+  "status": "SUBMITTED",
+  "createdAt": "2026-08-12T06:42:00+09:00"
+}
+```
+
+V4의 `(reporter_member_id, reported_member_id, group_id, reason_code)` UNIQUE와
+`INSERT ... ON CONFLICT DO NOTHING`을 함께 사용합니다. conflict 시 기존 row를 다시
+조회하므로 동시 요청도 한 건으로 수렴하고, 이미 `REVIEWING` 등으로 바뀐 status와
+최초 `created_at`을 초기화하지 않습니다.
+
+응답은 reporter ID, 회원 프로필과 `detail_encrypted`를 포함하지 않습니다. 신고
+transaction은 report 외의 penalty/cooldown/member/match event를 변경하지 않으며
+WebSocket과 application event를 발행하지 않습니다.
+
+### 43.3 자동 검증 결과
+
+- 신고 focused PostgreSQL Testcontainers 13건 성공
+- matching 전체 288건 성공
+- backend 전체 360건 성공
+- failure, error, skip 모두 0건
+
+최초 focused 실행의 30일 초과 1건은 나노초 차이가 PostgreSQL `TIMESTAMPTZ`
+정밀도에서 경계로 정규화된 테스트 데이터 문제였습니다. 운영 비교는 유지하고
+경계 밖 fixture를 1초 차이로 수정한 뒤 재실행했습니다. backend 전체 종료 중 이전
+context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한 기존 경고가 있었지만
+Gradle은 `BUILD SUCCESSFUL`로 종료했습니다.
+
+1차 범위에는 Frontend 신고 UI, 차단, 관리자 처리, 자동 penalty/cooldown,
+`manner_temperature`, 자유 입력과 자유 채팅을 포함하지 않습니다. 후속 MatchRoom UI는
+current group의 상대 `memberId`와 이 API를 연결하고, 차단은 신고 성공과 독립된 명시적
+사용자 선택 API로 연결합니다.
+
+## 44. MatchRoom 상대 회원 구조화 신고 Frontend
+
+### 44.1 UI와 API 경계
+
+MatchRoom의 current group snapshot에서 본인을 제외한 각 member 카드에만 신고
+action을 표시합니다. dialog는 여섯 사유 중 하나를 고른 뒤 대상 nickname과 한국어
+사유를 다시 확인해야 제출할 수 있습니다. 자유 입력, 첨부, 채팅과 차단 action은
+포함하지 않습니다.
+
+API client는 current snapshot의 `groupId`와 선택 카드의 `memberId`를 사용해
+`POST /api/match-groups/{groupId}/reports`를 호출합니다. body는
+`reportedMemberId`, `reasonCode`만 포함하며 reporter 정보는 cookie 인증을 사용하는
+Backend에 맡깁니다. 공통 `apiClient`의 `credentials: include`, `ApiResponse` 및
+오류 parsing을 그대로 사용하고 HTTP 201 신규·멱등 응답을 모두 정상 처리합니다.
+
+### 44.2 상태와 비동기 방어
+
+신고 상태는 MatchRoom의 REST/WebSocket snapshot 상태와 분리합니다. 선택 대상·사유,
+사유/확인 단계, submitting, 성공·오류 feedback만 신고 session이 소유합니다.
+submit 함수의 동기 in-flight guard가 같은 promise를 반환해 빠른 이중 클릭도 API 한
+번으로 수렴합니다. dialog 취소, 다른 상대 선택과 unmount는 요청을 abort하고 request
+identity를 갱신하므로 늦은 성공·실패가 새 dialog를 덮어쓰지 않습니다.
+
+성공 시 신고 dialog만 닫고 완료 안내를 표시하며 current group을 재조회하거나
+WebSocket event를 보내지 않습니다. 실패 시 대상·사유·확인 단계와 기존 group
+snapshot을 유지해 재시도합니다. 신고만으로 penalty/cooldown, `penalty_score`,
+`manner_temperature` 또는 차단 상태가 바뀐다고 안내하지 않습니다.
+
+### 44.3 자동·수동 검증
+
+- focused Frontend Vitest: 3 files, 52 tests 성공
+- TypeScript `npx tsc --noEmit`: 성공
+- Frontend 전체 Vitest: 12 files, 137 tests 성공
+- TypeScript/Vite production build 및 PWA `generateSW`: 성공
+- 두 브라우저·dev DB 수동 검증: 실행 전 `PENDING`
+
+수동 절차와 읽기 전용 DB SQL은 `docs/15_MATCH_ROOM_REPORT_MANUAL_TEST.md`에
+분리했습니다. 실제 수행 전에는 PASS로 기록하지 않습니다.

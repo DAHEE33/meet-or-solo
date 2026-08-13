@@ -160,4 +160,40 @@ describe('matchingApi', () => {
       );
     },
   );
+
+  it.each([
+    ['신규', 201],
+    ['멱등 재요청', 201],
+  ] as const)('%s 신고 HTTP %s를 성공으로 처리한다', async (_case, status) => {
+    const response = {
+      reportId: 1,
+      groupId: 30,
+      reportedMemberId: 27,
+      reasonCode: 'RUDE',
+      status: 'SUBMITTED',
+      createdAt: '2026-08-12T12:00:00+09:00',
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: response, error: null }), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(matchingApi.submitReport(30, {
+      reportedMemberId: 27,
+      reasonCode: 'RUDE',
+    })).resolves.toEqual(response);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/match-groups/30/reports',
+      expect.objectContaining({
+        credentials: 'include',
+        method: 'POST',
+        body: JSON.stringify({ reportedMemberId: 27, reasonCode: 'RUDE' }),
+      }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('reporterMemberId');
+  });
 });

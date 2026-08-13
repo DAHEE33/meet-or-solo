@@ -214,6 +214,23 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
 - local/dev/prod의 handshake origin은 기존 `CORS_ALLOWED_ORIGINS` 경계를 재사용합니다.
 - 알림에는 token, GPS, 이메일, OAuth 식별자와 다른 회원의 개인정보를 포함하지 않습니다.
 
+## MatchRoom 신고 인가와 정보 최소화
+
+- `POST /api/match-groups/{groupId}/reports`의 신고자는 request가 아니라 HttpOnly
+  `access_token`에서 얻은 회원 ID로만 결정한다. client가 `reporterMemberId`를
+  추가해도 저장 기준으로 사용하지 않는다.
+- group row를 transaction에서 잠근 뒤 신고자와 피신고자의
+  `match_group_members(group_id, member_id)` 전체 참여 이력을 모두 확인한다.
+- group이 없거나 신고자가 참여하지 않았거나 피신고자가 참여하지 않은 경우 같은
+  `REPORT_RESOURCE_NOT_FOUND`를 반환해 임의 group ID와 회원 ID 탐색을 막는다.
+- 응답은 report ID, group ID, 피신고자 ID, 구조화 사유, 상태와 생성 시각만 포함한다.
+  reporter ID, 회원 프로필, `detail_encrypted`와 내부 암호화 필드는 반환하지 않는다.
+- 신고 접수 transaction은 report 이외의 회원·매칭 상태를 변경하지 않고
+  WebSocket/application event도 발행하지 않아 피신고자에게 신고 사실과 신고자
+  신원을 노출하지 않는다.
+- 자유 입력 상세는 1차 API에서 받지 않으며, 관리자 조회·처리 API를 구현할 때
+  `detail_encrypted` 접근 권한과 audit 정책을 별도로 확정한다.
+
 ## 관리자 보안
 
 관리자 endpoint는 명시적 admin role이 필요합니다.

@@ -1,5 +1,56 @@
 # 진행 상태 기록
 
+## [10-안전 2차] MatchRoom 상대 회원 구조화 신고 Frontend
+
+상태: Frontend 구현 및 자동 검증 완료, 두 브라우저·dev DB 수동 검증 PENDING
+
+- 상대 회원 카드에만 신고 action을 제공하고 여섯 한국어 구조화 사유, 대상·사유
+  최종 확인, 운영 검토 및 SAFETY 긴급 연락 안내를 추가했다.
+- current group snapshot의 `groupId`와 카드의 `memberId`를 사용해
+  `POST /api/match-groups/{groupId}/reports`를 호출하며 reporter ID와 자유 입력은
+  request에 포함하지 않는다.
+- 동기 in-flight guard, `AbortController`와 request identity로 빠른 이중 클릭,
+  dialog 취소 및 다른 상대 선택 뒤 도착한 늦은 응답을 방어한다.
+- 성공은 dialog를 닫고 접수 안내만 표시한다. 실패는 기존 snapshot과 dialog를
+  유지해 재시도하며 차단, 자동 제재, current group 재조회와 WebSocket event를
+  실행하지 않는다.
+- focused Vitest 3 files 52건, Frontend 전체 Vitest 12 files 137건과
+  `npx tsc --noEmit`을 성공했다.
+- `npm run build`의 TypeScript build, Vite production bundle과 PWA `generateSW`
+  산출물 생성을 성공했다.
+- 실제 두 브라우저 및 dev DB 수동 검증은 실행하지 않았으며
+  `docs/15_MATCH_ROOM_REPORT_MANUAL_TEST.md` 기준 `PENDING`이다.
+
+## [10-안전 1차] MatchRoom 상대 회원 구조화 신고 Backend
+
+상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend·관리자 처리 제외
+
+- `POST /api/match-groups/{groupId}/reports`를 추가하고 reporter는 request가 아니라
+  HttpOnly `access_token`의 인증 회원 ID만 사용한다.
+- request는 `reportedMemberId`, `reasonCode`만 계약으로 사용하며 V4 CHECK와 같은
+  `RUDE`, `SEXUAL_HARASSMENT`, `NO_SHOW`, `SCAM`, `SAFETY`, `OTHER`만 허용한다.
+- group row `FOR SHARE` 뒤 신고자와 피신고자의 전체 참여 이력을 확인해 본인 신고,
+  비참여 회원과 임의 group ID IDOR을 거절한다. 참여·존재 불일치는 동일 404로 숨긴다.
+- 진행 중 `CONFIRMED`·`IN_PROGRESS`는 허용하고, `COMPLETED.completed_at` 또는
+  `CANCELLED.cancelled_at`부터 30일 이내와 정확한 경계를 허용한다. terminal 시각
+  누락은 임의 fallback 없이 conflict로 거절한다.
+- 신규·멱등 재요청 모두 `201 Created`와 같은 report resource snapshot을 반환한다.
+  V4 UNIQUE와 `INSERT ... ON CONFLICT DO NOTHING`으로 반복·동시 요청을 한 건으로
+  수렴시키고 기존 status와 생성 시각을 초기화하지 않는다.
+- 응답은 report ID, group ID, 피신고자 ID, 사유, 상태와 생성 시각만 포함하며
+  reporter, `detail_encrypted`와 회원 개인정보를 노출하지 않는다.
+- 신고 접수는 penalty/cooldown, 회원 점수·매너온도와 match event를 변경하지 않고
+  WebSocket/application event를 발행하지 않는다.
+- 기존 V4 schema와 terminal timestamp로 계약을 충족해 신규 migration은 추가하지 않았다.
+- 최초 focused 13건 중 30일 초과 테스트 1건은 `minusNanos(1)`이 PostgreSQL
+  `TIMESTAMPTZ` 정밀도에서 경계로 정규화되어 실패했다. 경계 밖 값을 1초 차이로
+  고친 뒤 focused 13건이 모두 성공했다.
+- matching 전체 288건과 backend 전체 360건이 failure·error·skip 없이 성공했다.
+  전체 종료 중 이전 context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한
+  경고가 있었지만 Gradle 결과에는 영향을 주지 않았다.
+- 차단 API/UI, 관리자 신고 처리 API/UI, 자동 제재, manner temperature 변경,
+  자유 입력, Frontend 신고 UI와 자유 채팅은 제외했다.
+
 ## [10-매칭 25차] 명시적 거절 상대의 check-in pair 재추천 제외
 
 상태: 구현·자동 회귀, local DB V18 적용과 최소 수동 검증 완료

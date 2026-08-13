@@ -505,3 +505,22 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
 - current group 조회가 성공하고 events만 실패하면 기존 group 화면을 유지하고 상태 기록 영역에 별도 재시도를 제공합니다.
 - 타임라인은 `MATCH_CONFIRMED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`만 표시하며 KST formatter를 사용합니다.
 - 자유 text input, 메시지 작성, 전송 버튼과 client STOMP `SEND`는 제공하지 않습니다.
+
+## MatchRoomPage 구조화 신고
+
+- current group snapshot의 `groupId`, 상대 카드의 `memberId`만 신고 API에 사용하며
+  본인 카드에는 신고 action을 표시하지 않습니다.
+- 신고 dialog는 `무례한 행동`, `성희롱`, `나타나지 않음`, `사기 의심`,
+  `안전 문제`, `기타`의 구조화 사유만 제공하고 자유 입력을 제공하지 않습니다.
+- 사유 선택 뒤 대상과 한국어 사유를 다시 보여주는 최종 확인 단계를 거칩니다.
+- `POST /api/match-groups/{groupId}/reports`에는 `reportedMemberId`, `reasonCode`만
+  전송합니다. reporter는 HttpOnly JWT cookie를 해석하는 Backend 책임입니다.
+- 제출 중 동기 in-flight guard로 이중 클릭을 막고 dialog 취소·대상 변경 시
+  `AbortController`와 request identity를 함께 갱신해 늦은 응답을 무시합니다.
+- 실패하면 current group snapshot을 변경하지 않고 dialog에서 재시도하며, 성공하면
+  dialog를 닫고 접수 안내만 표시합니다. current group 재조회, WebSocket event 전송,
+  차단 또는 자동 제재는 실행하지 않습니다.
+- `SAFETY` 선택 시 긴급 상황은 신고 접수만 기다리지 말고 112 등 긴급 기관에
+  연락하라는 짧은 안내를 제공합니다.
+- dialog는 접근 가능한 title/label과 `Escape` 닫기, 최초 버튼 focus 및 닫은 뒤
+  기존 focus 복원을 제공합니다. 제출 중에는 닫기와 이전 이동을 비활성화합니다.

@@ -27,6 +27,10 @@ public enum ErrorCode {
             "MATCHING_ARRIVAL_DEADLINE_EXCEEDED",
             "도착 예정 시간을 최종 마감 안으로 선택해주세요."
     ),
+    REPORT_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "REPORT_INVALID_REQUEST", "신고 요청이 올바르지 않습니다."),
+    REPORT_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "REPORT_RESOURCE_NOT_FOUND", "신고할 매칭 정보를 찾을 수 없습니다."),
+    REPORT_WINDOW_EXPIRED(HttpStatus.CONFLICT, "REPORT_WINDOW_EXPIRED", "신고 가능한 기간이 지났습니다."),
+    REPORT_CONFLICT(HttpStatus.CONFLICT, "REPORT_CONFLICT", "현재 상태에서는 신고를 접수할 수 없습니다."),
     INVALID_PROFILE_IMAGE(HttpStatus.BAD_REQUEST, "INVALID_PROFILE_IMAGE", "JPEG, PNG, WEBP 이미지 파일만 업로드할 수 있습니다."),
     PROFILE_IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "PROFILE_IMAGE_TOO_LARGE", "프로필 이미지 파일 크기 제한을 초과했습니다."),
     PROFILE_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "PROFILE_IMAGE_NOT_FOUND", "등록된 프로필 이미지가 없습니다."),

@@ -297,3 +297,28 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - 동일 check-in에서 exclusion 유지, 새 active check-in에서 과거 exclusion 미적용을 실제 `festival_checkins` unique·FK 제약과 함께 검증한다.
 - advisory lock은 pair 정규화·결정적 정렬 단위 테스트와 exclusion commit/proposal 생성 PostgreSQL race 테스트로 검증한다.
 - 기존 `user_blocks`, cooldown, pool claim/release, response/timeout 동시성 테스트는 재작성하지 않고 전체 matching 회귀로 확인한다.
+
+## MatchRoom 구조화 신고 검증 기준
+
+- mock만으로 끝내지 않고 `pgvector/pgvector:pg16` Testcontainers와 Flyway V1~V18이
+  적용된 실제 PostgreSQL에서 Controller부터 transaction과 UNIQUE까지 검증한다.
+- JWT 회원 ID만 reporter로 저장되는지, 본인 신고와 양측 비참여 및 임의 group ID
+  IDOR이 거절되는지 확인한다.
+- DB CHECK와 같은 여섯 reason code만 허용하고 응답에서 reporter와
+  `detail_encrypted`가 제외되는지 확인한다.
+- 반복 및 동시 동일 요청에서 row가 한 건이고 기존 report status와 생성 시각이
+  초기화되지 않는지 검증한다.
+- 고정 `Clock`으로 종료 30일 직전, 정확한 경계와 초과를 검증하며 PostgreSQL 시간
+  정밀도를 고려해 경계 밖 비교는 안정적인 1초 차이를 사용한다.
+- insert 실패 rollback과 신고 전후 penalty event, cooldown, `penalty_score`,
+  `manner_temperature`, match event 불변을 확인한다.
+- focused 신고 테스트 뒤 matching 전체와 backend 전체 회귀를 순서대로 실행한다.
+- Frontend API 단위 테스트는 URL, POST method, cookie credentials, `groupId`,
+  `reportedMemberId`, `reasonCode`와 `reporterMemberId` 부재를 검증한다. 신규와 멱등
+  응답의 HTTP 201은 모두 같은 성공으로 처리한다.
+- MatchRoom UI 테스트는 본인 action 부재, 여러 상대별 정확한 action, 여섯 한국어
+  사유, 미선택 차단, 최종 확인, SAFETY 안내와 자유 입력·채팅 부재를 검증한다.
+- 신고 상태 테스트는 제출 중 비활성화, 빠른 이중 호출 1회, 실패 후 snapshot을
+  건드리지 않는 재시도, 취소 초기화와 늦은 응답의 새 대상 상태 비덮어쓰기를 검증한다.
+- 신고 성공 뒤 차단 API, current group 재조회와 WebSocket 발행이 없음을 구현 경계와
+  MatchRoom 기존 회귀 테스트로 확인한다.

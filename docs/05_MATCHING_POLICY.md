@@ -378,6 +378,23 @@ NO_SHOW Scheduler는 기본 비활성화하고 명시적 환경 설정에서만 
 constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock에 의존하지
 않습니다.
 
+## MatchRoom 구조화 신고 1차 정책
+
+- 인증 회원은 자신이 실제 참여한 match group의 다른 실제 참여자만 신고할 수 있다.
+- API는 reporter ID를 받지 않고 HttpOnly `access_token`의 회원 ID를 사용한다.
+- 본인 신고와 양쪽 중 한 명이라도 group 참여 이력이 없는 요청은 거절한다.
+- `CONFIRMED`, `IN_PROGRESS` group은 진행 중 신고를 허용한다.
+- `COMPLETED`는 `completed_at`, `CANCELLED`는 `cancelled_at`부터 30일 이내 신고를
+  허용하며 정확히 30일 경계도 허용한다. terminal timestamp가 없으면 임의 시각으로
+  대체하지 않고 정합성 충돌로 거절한다.
+- 허용 사유는 `RUDE`, `SEXUAL_HARASSMENT`, `NO_SHOW`, `SCAM`, `SAFETY`, `OTHER`이다.
+  자유 입력 상세는 1차 범위에서 받거나 저장하지 않는다.
+- 동일 reporter/reported/group/reason 요청은 기존 신고 snapshot을 반환하는 멱등
+  성공이며 `SUBMITTED` 이후 관리 상태를 초기화하지 않는다.
+- 신고 접수만으로 penalty, cooldown, `penalty_score`, `manner_temperature`를
+  변경하지 않는다. 피신고자 WebSocket/event도 발행하지 않는다.
+- 차단, 관리자 검토와 제재, MatchRoom 신고 UI는 후속 범위다.
+
 ## 최초 proposal 응답 처리 정책
 
 `INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.
