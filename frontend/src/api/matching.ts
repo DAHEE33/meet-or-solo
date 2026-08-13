@@ -116,6 +116,16 @@ export type MatchReportResponse = {
   createdAt: string;
 };
 
+export type MatchBlockRequest = {
+  blockedMemberId: number;
+};
+
+export type MatchBlockResponse = {
+  blockId: number;
+  blockedMemberId: number;
+  createdAt: string;
+};
+
 export type MatchGroupFestival = {
   festivalId: number;
   title: string;
@@ -228,6 +238,13 @@ export const matchingApi = {
     ),
   submitReport: (groupId: number, request: MatchReportRequest, signal?: AbortSignal) =>
     apiClient<MatchReportResponse>(`/api/match-groups/${groupId}/reports`, {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
+  submitBlock: (groupId: number, request: MatchBlockRequest, signal?: AbortSignal) =>
+    apiClient<MatchBlockResponse>(`/api/match-groups/${groupId}/blocks`, {
       method: 'POST',
       signal,
       headers: { 'Content-Type': 'application/json' },

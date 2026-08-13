@@ -3789,7 +3789,49 @@ lock을 추가로 요구하지 않아 신규 역순 교착 경로를 만들지 �
 
 ### 45.4 검증 상태
 
-Docker Java 17의 `testClasses` 컴파일은 성공했다. PostgreSQL focused 실행은 중첩 Docker의
-Ryuk 연결 실패 뒤 host override로 재시도했으나 Docker Desktop daemon이 `unexpected EOF`로
-응답 불능이 되어 완료하지 못했다. focused 차단, matching 전체, backend 전체는 daemon
-복구 후 이 순서로 실행하며 현재 문서에서는 `PASS`로 표시하지 않는다.
+fixture의 두 group이 같은 attempt를 참조해 `uq_match_groups_attempt`와 충돌한 문제를
+고정된 두 번째 attempt와 종료된 첫 group 참여 이력으로 교정했습니다. production 계약과
+migration은 변경하지 않았습니다. `MatchBlockIntegrationTest` 11건,
+`MatchProposalCreationServiceIntegrationTest` 31건과 backend 전체 372건이 모두 성공했습니다.
+
+## 46. MatchRoom 상대 회원 차단 Frontend
+
+### 46.1 UI와 API 경계
+
+본인을 제외한 상대 카드에 신고와 독립된 `차단하기` action을 둡니다. 최종 확인 dialog는
+대상 nickname, 앞으로 서로 매칭되지 않는 효과, 차단 사실과 주체의 상대 비노출 및 현재
+화면에서 해제할 수 없음을 안내합니다. 성공해도 현재 group이나 상대 카드를 제거하지 않습니다.
+차단은 현재 MatchRoom 퇴장이나 group 종료가 아니라 이후 신규 매칭의 양방향 후보 제외입니다.
+신고 역시 접수만으로 현재 상태방을 변경하지 않으며, 두 기능 모두 기존 도착·취소·완료 흐름과
+분리합니다. 성공 안내는 현재 상태방 유지와 다음 매칭부터의 처리 경계를 설명합니다.
+
+API client는 current group snapshot의 `groupId`와 선택 카드의 `memberId`만 사용해
+`POST /api/match-groups/{groupId}/blocks`를 호출합니다. body는 `blockedMemberId`만 포함하고
+공통 `apiClient`의 cookie credentials와 error parsing을 사용합니다. 응답의 `blockId`는
+내부 처리 결과일 뿐 화면에 노출하지 않으며 신규·멱등 HTTP 201을 같은 성공으로 처리합니다.
+
+### 46.2 상태·비동기·접근성
+
+차단 session은 신고 및 MatchRoom REST/WebSocket 상태와 분리합니다. 동기 in-flight guard가
+빠른 이중 제출을 한 Promise로 수렴시키고, dialog 취소·다른 대상 선택·unmount는 진행 요청을
+abort합니다. request identity까지 비교해 이전 요청의 늦은 성공·실패가 새 대상을 덮어쓰지
+않습니다. 실패는 대상과 dialog를 유지하고 성공은 dialog를 닫아 완료 안내만 표시합니다.
+
+dialog는 title과 description을 연결하고 최초 활성 버튼으로 focus를 옮깁니다. `Escape`와
+취소를 지원하고 닫힌 뒤 진입 버튼으로 focus를 복원하며 `Tab`/`Shift+Tab`이 dialog 안에서
+순환합니다. submitting 중에는 닫기·취소·최종 확인을 모두 비활성화합니다.
+
+### 46.3 자동·수동 검증
+
+- API client focused: 1 file, 20 tests 성공
+- 차단 hook focused: 1 file, 4 tests 성공
+- MatchRoomPage focused: 1 file, 36 tests 성공
+- Frontend 전체 Vitest: 13 files, 149 tests 성공
+- `npx tsc --noEmit`: 성공
+- TypeScript/Vite production build 및 PWA `generateSW`: 성공
+- 두 브라우저·dev DB 수동 검증: 차단 생성·멱등성·상대 비노출·자동 제재 미생성과
+  신규 매칭 양방향 제외까지 `PASS`
+
+수동 절차와 읽기 전용 SQL은 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`에 분리했습니다.
+재매칭 제한은 실제 1시간 대기 대신 local dev DB의 대상 완료 group `confirmed_at`을
+과거로 조정해 만료를 재현했으며 차단 row와 후보 제외 결과는 수정하지 않았습니다.

@@ -409,6 +409,10 @@ constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock�
 - 차단은 penalty, cooldown, `penalty_score`, `manner_temperature`, `match_events`를 변경하지
   않고 WebSocket/application event를 발행하지 않는다. 상대에게 차단 사실과 blocker를
   노출하지 않는다.
+- 신고 접수나 차단 생성만으로 현재 확정 group을 종료하거나 참여자를 퇴장시키지 않는다.
+  현재 MatchRoom 상태방과 상대 카드는 유지하고 기존 도착·취소·완료 정책을 계속 적용한다.
+  신고는 관리자 검토 대상으로 남고, 차단의 양방향 제외 효과는 이후 신규 매칭 후보 선정부터
+  적용한다.
 - proposal 생성은 pool row를 ID 오름차순으로 잠근 뒤 정렬된 member pair별
   `pg_advisory_xact_lock(int,int)`을 획득하고 `user_blocks`를 다시 조회한다. 차단 API도
   같은 member-pair lock을 획득한 뒤 insert하므로, 먼저 lock을 얻은 transaction의 commit
@@ -416,7 +420,7 @@ constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock�
 - member-pair lock은 `member-block:{lowerMemberId}:{higherMemberId}`의 SHA-256 앞 64비트를
   사용한다. 기존 check-in pair exclusion lock과 namespace가 다르며, proposal 경로는
   pool row lock → member-pair lock → check-in-pair lock 순서를 유지한다.
-- 차단 해제 API와 관리 화면, Frontend 차단 UI, 신고 후 자동 차단은 후속 범위다.
+- 차단 해제 API와 관리 화면, 신고 후 자동 차단은 후속 범위다.
 
 ## 최초 proposal 응답 처리 정책
 

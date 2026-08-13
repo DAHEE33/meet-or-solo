@@ -334,3 +334,17 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
   block commit race를 member-pair advisory lock으로 검증한다.
 - penalty/cooldown/회원 점수와 MatchRoom event 불변, 최소 응답 계약과 내부 정보 비노출을
   함께 검증한다. 실행 순서는 focused 차단 → matching 전체 → backend 전체다.
+
+## MatchRoom 상대 회원 차단 Frontend 검증
+
+- API client는 current group ID가 포함된 URL, POST와 cookie credentials, body의
+  `blockedMemberId` 단일 필드 및 `blockerMemberId` 부재를 검증한다. 신규·멱등 201을
+  모두 정상 성공으로 처리한다.
+- 차단 session은 동기 이중 제출 1회, submitting 상태, 실패 후 대상 유지와 재시도,
+  취소·대상 변경·unmount abort 및 request identity가 다른 늦은 응답 무시를 검증한다.
+- MatchRoom UI는 본인 action 부재, 3~4인 상대별 정확한 ID, 신고와 독립된 action,
+  대상 nickname과 양방향 제외·비노출·해제 불가 안내, 제출 중 action 차단을 검증한다.
+- 성공·실패 모두 기존 MatchRoom snapshot을 임의 변경하지 않으며 성공 후 상대 카드 유지,
+  신고 API·current group 재조회·WebSocket SEND 부재를 기존 경계와 전체 회귀로 확인한다.
+- 접근 가능한 dialog title/description, `Escape`, focus 복원과 `Tab` 순환을 구현 경계로
+  확인하고 자유 입력·상대 추론·채팅 UI가 추가되지 않았는지 회귀한다.

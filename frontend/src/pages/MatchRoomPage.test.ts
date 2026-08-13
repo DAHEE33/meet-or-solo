@@ -7,11 +7,13 @@ import {
   formatRemainingTime,
   formatFestivalPeriod,
   getEstimatedArrivalAt,
+  handleDialogKeyDown,
   MatchRoomContent,
   matchRoomRedirectPath,
   matchEventText,
   memberArrivalText,
   CANCELLATION_OPTIONS,
+  BlockDialog,
   ReportDialog,
   REPORT_REASON_OPTIONS,
 } from './MatchRoomPage';
@@ -75,6 +77,143 @@ function text(node: ReactNode): string {
 }
 
 describe('MatchRoomContent', () => {
+  it('본인에는 차단 action이 없고 여러 상대의 memberId를 정확히 선택한다', () => {
+    const current = group();
+    current.confirmedMemberCount = 3;
+    current.currentMemberCount = 3;
+    current.members.push({
+      memberId: 3, nickname: '여행자C', profileImageUrl: null, status: 'JOINED',
+      arrivalMinutes: null, arrivalTimeSelectedAt: null,
+    });
+    const onOpenBlock = vi.fn();
+    const tree = renderNode(MatchRoomContent({
+      state: { status: 'READY', group: current, events: [], error: null,
+        eventsError: null, actionError: null, isSubmitting: false },
+      onRetry: vi.fn(), onSelectArrivalTime: vi.fn(), onOpenBlock,
+    }));
+    const blockButtons = elements(tree).filter(
+      (element) => element.type === 'button' && String(element.props['aria-label']).includes('차단하기'),
+    );
+    expect(blockButtons.map((button) => button.props['aria-label'])).toEqual([
+      '여행자B님 차단하기', '여행자C님 차단하기',
+    ]);
+    expect(blockButtons.some((button) => button.props['aria-label'] === '여행자A님 차단하기'))
+      .toBe(false);
+    (blockButtons[1].props.onClick as () => void)();
+    expect(onOpenBlock).toHaveBeenCalledWith({ memberId: 3, nickname: '여행자C' });
+  });
+
+  it('신고와 차단 action을 독립적으로 유지한다', () => {
+    const onOpenReport = vi.fn();
+    const onOpenBlock = vi.fn();
+    const tree = renderNode(MatchRoomContent({
+      state: { status: 'READY', group: group(), events: [], error: null,
+        eventsError: null, actionError: null, isSubmitting: false },
+      onRetry: vi.fn(), onSelectArrivalTime: vi.fn(), onOpenReport, onOpenBlock,
+    }));
+    const buttons = elements(tree).filter((element) => element.type === 'button');
+    (buttons.find((button) => button.props['aria-label'] === '여행자B님 신고하기')
+      ?.props.onClick as () => void)();
+    expect(onOpenReport).toHaveBeenCalledOnce();
+    expect(onOpenBlock).not.toHaveBeenCalled();
+    (buttons.find((button) => button.props['aria-label'] === '여행자B님 차단하기')
+      ?.props.onClick as () => void)();
+    expect(onOpenBlock).toHaveBeenCalledOnce();
+  });
+
+  it('차단 최종 확인에 대상·비노출·해제 불가 안내와 접근성 연결을 표시한다', () => {
+    const tree = renderNode(BlockDialog({
+      state: {
+        target: { memberId: 2, nickname: '여행자B' }, open: true,
+        submitting: false, error: null, successMessage: null,
+      },
+      onClose: vi.fn(), onSubmit: vi.fn(),
+    }));
+    const content = text(tree);
+    expect(content).toContain('여행자B님을 차단할까요?');
+    expect(content).toContain('앞으로 서로 매칭되지 않습니다');
+    expect(content).toContain('차단 사실이나 누가 차단했는지는 알려지지 않습니다');
+    expect(content).toContain('차단을 해제할 수 없습니다');
+    expect(content).toContain('현재 진행 중인 매칭방과 상대 카드는 그대로 유지됩니다');
+    expect(content).not.toContain('blockId');
+    expect(content).not.toContain('blocker');
+    expect(elements(tree).find((element) => element.props.role === 'dialog')?.props)
+      .toMatchObject({
+        'aria-modal': 'true',
+        'aria-labelledby': 'block-dialog-title',
+        'aria-describedby': 'block-dialog-description',
+      });
+  });
+
+  it('dialog Escape를 지원하고 제출 중에는 닫지 않으며 Tab focus를 순환한다', () => {
+    const onClose = vi.fn();
+    const preventDefault = vi.fn();
+    const first = { focus: vi.fn() } as unknown as HTMLElement;
+    const last = { focus: vi.fn() } as unknown as HTMLElement;
+
+    handleDialogKeyDown(
+      { key: 'Escape', shiftKey: false, preventDefault }, [first, last], first, false, onClose,
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    handleDialogKeyDown(
+      { key: 'Escape', shiftKey: false, preventDefault }, [first, last], first, true, onClose,
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+
+    handleDialogKeyDown(
+      { key: 'Tab', shiftKey: false, preventDefault }, [first, last], last, false, onClose,
+    );
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(first.focus).toHaveBeenCalledOnce();
+    handleDialogKeyDown(
+      { key: 'Tab', shiftKey: true, preventDefault }, [first, last], first, false, onClose,
+    );
+    expect(last.focus).toHaveBeenCalledOnce();
+  });
+
+  it('취소는 제출하지 않고 제출 중 닫기·취소·확인을 막으며 실패 dialog를 유지한다', () => {
+    const onClose = vi.fn();
+    const onSubmit = vi.fn();
+    const ready = renderNode(BlockDialog({
+      state: { target: { memberId: 2, nickname: '여행자B' }, open: true,
+        submitting: false, error: null, successMessage: null },
+      onClose, onSubmit,
+    }));
+    const cancel = elements(ready).find((element) => text(element as never) === '취소');
+    (cancel?.props.onClick as () => void)();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    const failed = renderNode(BlockDialog({
+      state: { target: { memberId: 2, nickname: '여행자B' }, open: true,
+        submitting: true, error: new Error('network'), successMessage: null },
+      onClose, onSubmit,
+    }));
+    expect(text(failed)).toContain('대상은 유지되며 다시 시도할 수 있어요');
+    expect(elements(failed).filter((element) => element.type === 'button')
+      .every((button) => button.props.disabled === true)).toBe(true);
+    expect(elements(failed).some((element) => element.props.role === 'dialog')).toBe(true);
+  });
+
+  it('차단 성공 안내 뒤에도 상대 카드와 기존 snapshot을 유지한다', () => {
+    const current = group();
+    const onRetry = vi.fn();
+    const onOpenReport = vi.fn();
+    const tree = renderNode(MatchRoomContent({
+      state: { status: 'READY', group: current, events: [], error: null,
+        eventsError: null, actionError: null, isSubmitting: false },
+      onRetry, onSelectArrivalTime: vi.fn(), onOpenReport,
+      blockState: { target: null, open: false, submitting: false, error: null,
+        successMessage: '회원을 차단했어요. 앞으로 서로 매칭되지 않아요.' },
+      onClearBlockSuccess: vi.fn(),
+    }));
+    expect(text(tree)).toContain('회원을 차단했어요. 앞으로 서로 매칭되지 않아요.');
+    expect(text(tree)).toContain('여행자B');
+    expect(current.members).toHaveLength(2);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(onOpenReport).not.toHaveBeenCalled();
+  });
+
   it('본인에는 신고 action이 없고 여러 상대에는 각 정확한 action이 있다', () => {
     const current = group();
     current.confirmedMemberCount = 3;

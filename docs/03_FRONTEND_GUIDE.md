@@ -524,3 +524,21 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   연락하라는 짧은 안내를 제공합니다.
 - dialog는 접근 가능한 title/label과 `Escape` 닫기, 최초 버튼 focus 및 닫은 뒤
   기존 focus 복원을 제공합니다. 제출 중에는 닫기와 이전 이동을 비활성화합니다.
+
+## MatchRoomPage 상대 회원 차단
+
+- 본인을 제외한 각 상대 카드에 신고와 독립된 `차단하기` action을 표시합니다.
+- 최종 확인 dialog는 대상 nickname과 향후 양방향 매칭 제외, 상대에게 차단 사실·주체를
+  알리지 않음, 현재 화면에서 해제 불가를 안내합니다.
+- current group snapshot의 `groupId`와 선택한 상대 카드의 `memberId`만 사용해
+  `POST /api/match-groups/{groupId}/blocks`에 `blockedMemberId` 한 필드만 전송합니다.
+- 차단 session은 동기 in-flight guard, `AbortController`와 request identity로 빠른
+  이중 클릭, dialog 취소, 대상 변경, unmount 뒤 늦은 응답을 방어합니다.
+- 실패하면 대상과 dialog를 유지해 재시도합니다. 성공하면 접근 가능한 완료 안내만
+  표시하고 기존 group과 상대 카드를 유지하며 REST 재조회나 WebSocket event를 만들지 않습니다.
+- 차단 성공은 현재 MatchRoom의 퇴장·종료 명령이 아닙니다. 현재 상태방과 상대 카드는
+  그대로 유지하고, 완료 안내에서 차단 효과가 다음 매칭부터 적용됨을 설명합니다.
+- 신고도 접수만으로 현재 group이나 상대 카드를 제거하지 않습니다. 신고는 운영 검토로,
+  차단은 향후 양방향 후보 제외로 이어지며 현재 상태방의 도착·취소·완료 흐름과 분리합니다.
+- dialog title과 설명을 연결하고 최초 focus, `Escape`, 닫은 뒤 focus 복원과 `Tab`
+  순환을 제공합니다. 제출 중에는 닫기·취소·확인 action을 비활성화합니다.

@@ -1,8 +1,32 @@
 # 진행 상태 기록
 
+## [10-안전 4차] MatchRoom 상대 회원 차단 Frontend
+
+상태: Frontend 구현·자동 검증 및 차단 생성부터 신규 매칭 양방향 제외까지 수동 검증 완료
+
+- 본인을 제외한 상대 카드에 신고와 독립된 차단 action과 대상 nickname을 포함한 최종
+  확인 dialog를 추가했다. 향후 양방향 매칭 제외, 상대 비노출, 현재 해제 불가를 안내한다.
+- current group의 `groupId`와 카드의 `memberId`를 사용하며 request body에는
+  `blockedMemberId`만 포함한다. blocker identity, 자유 reason과 내부 `blockId`는 표시하지 않는다.
+- 차단 상태는 신고와 MatchRoom snapshot에서 분리했다. 동기 in-flight guard,
+  `AbortController`, request identity로 이중 클릭과 취소·대상 변경·unmount 뒤 늦은 응답을 방어한다.
+- 실패는 대상/dialog와 기존 snapshot을 유지해 재시도한다. 성공은 완료 안내만 표시하며
+  group 종료, 상대 카드 제거, 신고 호출, REST 재조회와 WebSocket SEND를 실행하지 않는다.
+- API focused 20건, 차단 hook focused 4건, MatchRoomPage focused 36건이 성공했다.
+  Frontend 전체 Vitest 13 files 149건, `npx tsc --noEmit`, production build와 PWA
+  `generateSW`도 성공했다.
+- 2026-08-14 두 브라우저와 dev DB에서 차단 생성, 동일 요청 row 1건 유지, 현재
+  MatchRoom과 상대 카드 유지, 상대 비노출 및 penalty/cooldown/event 0건을 확인했다.
+- 신고·차단은 현재 상태방을 종료하거나 참여자를 퇴장시키지 않는다. 신고는 운영 검토,
+  차단은 이후 신규 매칭의 양방향 후보 제외로 처리하며 기존 도착·취소·완료 흐름을 유지한다.
+- local dev DB에서 대상 완료 group의 `confirmed_at`을 과거로 조정해 1시간 재매칭 제한
+  만료를 재현한 뒤 A/B가 다시 같은 매칭으로 묶이지 않음을 확인했다. `user_blocks`나
+  후보 제외 결과는 수정하지 않았으며 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`의 최종
+  수동 판정을 `PASS`로 마감했다.
+
 ## [10-안전 3차] MatchRoom 상대 회원 차단 Backend 1차
 
-상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend 연결 제외
+상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend 연결 완료
 
 - `POST /api/match-groups/{groupId}/blocks`를 추가한다. request는 `blockedMemberId`만
   계약으로 사용하고 blocker는 JWT cookie의 인증 회원으로 결정한다.
