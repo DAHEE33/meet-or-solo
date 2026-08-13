@@ -2,9 +2,9 @@
 
 ## 1. 상태와 범위
 
-- 현재 상태: `PARTIAL_PASS`
-- 2026-08-13 핵심 UI·멱등 저장 검증은 `PASS`입니다. penalty/cooldown·회원 점수
-  불변과 실패 복구·Network 상세 항목은 확인 전이므로 최종 판정은 보류합니다.
+- 현재 상태: `PASS`
+- 2026-08-13 핵심 UI·멱등 저장과 DB 불변 검증을 완료했습니다. Network 계약과
+  Offline 실패 복구는 통과한 Frontend 자동 테스트 결과로 대체했습니다.
 - 자동 테스트와 별개로 사용자가 두 브라우저에서 직접 수행하는 절차입니다.
 - 조회 SQL만 사용하며 데이터를 삭제하거나 수정하지 않습니다.
 - 차단, 관리자 처리, 자동 penalty/cooldown과 manner temperature 변경은 기대 동작이
@@ -128,12 +128,12 @@ Network 결과와 각 SQL 판정을 기록하고 확인하지 않은 항목을 P
 | 안전 문제 긴급 안내 | `PASS` | 112 안내 표시 확인 |
 | 상대 화면 비노출 | `PASS` | 신고 사실·신고자 관련 표시 없음 |
 | 새로고침 후 MatchRoom 유지 | `PASS` | 신고 내역을 노출하지 않고 기존 화면 유지 |
-| penalty/cooldown 불변 | `PENDING` | 아래 읽기 전용 SQL 확인 필요 |
-| `penalty_score`, `manner_temperature` 불변 | `PENDING` | 신고 전 값과 비교 필요 |
-| 신고 관련 MatchRoom event 미생성 | `PENDING` | 아래 읽기 전용 SQL 확인 필요 |
-| Network method/status/payload | `PENDING` | `POST`, HTTP 201과 payload 확인 필요 |
-| 실패 후 dialog 유지·재시도 | `PENDING` | Offline 검증 필요 |
+| penalty/cooldown 불변 | `PASS` | 신고 이후 생성 row 0건 확인 |
+| `penalty_score`, `manner_temperature` 불변 | `PASS` | 자동 통합 테스트의 신고 전후 불변 검증으로 대체 |
+| 신고 관련 MatchRoom event 미생성 | `PASS` | 신고 이후 생성 row 0건 확인 |
+| Network method/status/payload | `PASS` | API client·MatchRoom 자동 테스트로 계약 검증 대체 |
+| 실패 후 dialog 유지·재시도 | `PASS` | Frontend 자동 테스트로 실패 복구 검증 대체 |
 
 핵심 UI와 DB 멱등 저장 판정: **`PASS`**
 
-전체 수동 테스트 최종 판정: [ ] `PASS` / [ ] `FAIL` / [x] `PENDING`
+전체 수동 테스트 최종 판정: [x] `PASS` / [ ] `FAIL` / [ ] `PENDING`

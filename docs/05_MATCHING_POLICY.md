@@ -395,6 +395,29 @@ constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock�
   변경하지 않는다. 피신고자 WebSocket/event도 발행하지 않는다.
 - 차단, 관리자 검토와 제재, MatchRoom 신고 UI는 후속 범위다.
 
+## MatchRoom 상대 회원 차단 Backend 1차 정책
+
+- 인증 회원은 자신과 상대가 모두 실제 참여한 match group에서만 상대를 차단할 수
+  있다. blocker는 HttpOnly `access_token`으로만 결정하며 request body에서 받지 않는다.
+- 본인 차단은 금지한다. group이 없거나 blocker 또는 blocked가 참여하지 않은 경우는
+  모두 `404 BLOCK_RESOURCE_NOT_FOUND`로 처리해 IDOR 탐색을 막는다.
+- `CONFIRMED`, `IN_PROGRESS`는 허용한다. `COMPLETED`는 `completed_at`, `CANCELLED`는
+  `cancelled_at`부터 정확히 30일까지 허용하며 terminal timestamp가 없으면 거절한다.
+- `(blocker_member_id, blocked_member_id)`는 group과 무관하게 멱등이다. 신규·반복 요청은
+  모두 같은 resource snapshot과 `201 Created`를 반환하며 기존 `created_at`과 reason을
+  갱신하지 않는다. reason은 개인정보 없는 `MATCH_ROOM_MEMBER_BLOCK` 고정 내부 값이다.
+- 차단은 penalty, cooldown, `penalty_score`, `manner_temperature`, `match_events`를 변경하지
+  않고 WebSocket/application event를 발행하지 않는다. 상대에게 차단 사실과 blocker를
+  노출하지 않는다.
+- proposal 생성은 pool row를 ID 오름차순으로 잠근 뒤 정렬된 member pair별
+  `pg_advisory_xact_lock(int,int)`을 획득하고 `user_blocks`를 다시 조회한다. 차단 API도
+  같은 member-pair lock을 획득한 뒤 insert하므로, 먼저 lock을 얻은 transaction의 commit
+  순서대로 차단 생성과 proposal 생성을 직렬화한다.
+- member-pair lock은 `member-block:{lowerMemberId}:{higherMemberId}`의 SHA-256 앞 64비트를
+  사용한다. 기존 check-in pair exclusion lock과 namespace가 다르며, proposal 경로는
+  pool row lock → member-pair lock → check-in-pair lock 순서를 유지한다.
+- 차단 해제 API와 관리 화면, Frontend 차단 UI, 신고 후 자동 차단은 후속 범위다.
+
 ## 최초 proposal 응답 처리 정책
 
 `INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.

@@ -3757,3 +3757,39 @@ snapshot을 유지해 재시도합니다. 신고만으로 penalty/cooldown, `pen
 
 수동 절차와 읽기 전용 DB SQL은 `docs/15_MATCH_ROOM_REPORT_MANUAL_TEST.md`에
 분리했습니다. 실제 수행 전에는 PASS로 기록하지 않습니다.
+
+## 45. MatchRoom 상대 회원 차단 Backend 1차
+
+### 45.1 API와 권한 경계
+
+`POST /api/match-groups/{groupId}/blocks`는 `{ "blockedMemberId": 27 }`만 받는다.
+blocker는 `access_token`에서 계산한다. group row를 `FOR SHARE`로 읽은 뒤 양쪽의 전체
+참여 이력을 확인하며, group/참여 불일치는 모두 `BLOCK_RESOURCE_NOT_FOUND`로 통합한다.
+응답은 `blockId`, `blockedMemberId`, `createdAt`만 포함하고 `201 Created`를 사용한다.
+
+### 45.2 멱등 저장과 시간 정책
+
+V3의 pair UNIQUE와 `ON CONFLICT DO NOTHING`을 사용하고, 충돌하면 기존 row를 다시
+조회한다. 다른 group을 통한 반복 요청도 같은 row를 반환하며 기존 생성 시각과 reason을
+갱신하지 않는다. 진행 중 상태와 종료 후 정확히 30일 경계를 허용하고 terminal timestamp
+누락은 거절한다.
+
+### 45.3 proposal race 직렬화
+
+기존 exclusion lock은 check-in pair 수명이라 영구 member block과 같은 key로 직접 재사용할
+수 없다. 대신 같은 SHA-256/두 int advisory transaction lock 패턴을 member pair namespace로
+확장했다. proposal은 pool row lock 뒤 모든 member pair lock을 결정적 순서로 획득하고
+`user_blocks`를 다시 읽은 다음 기존 check-in pair lock을 얻는다. block API는 group share
+lock 뒤 해당 member pair lock을 얻고 insert한다. 양쪽 모두 advisory lock 이후 서로의 row
+lock을 추가로 요구하지 않아 신규 역순 교착 경로를 만들지 않는다.
+
+이 보장은 차단 API와 현재 `MatchProposalCreationService`를 통과하는 proposal 생성 사이에
+적용된다. DB 밖에서 `user_blocks`에 직접 쓰거나 pair lock을 지키지 않는 미래 쓰기 경로는
+보장 대상이 아니므로 모든 후속 차단 쓰기는 같은 service/lock 규칙을 사용해야 한다.
+
+### 45.4 검증 상태
+
+Docker Java 17의 `testClasses` 컴파일은 성공했다. PostgreSQL focused 실행은 중첩 Docker의
+Ryuk 연결 실패 뒤 host override로 재시도했으나 Docker Desktop daemon이 `unexpected EOF`로
+응답 불능이 되어 완료하지 못했다. focused 차단, matching 전체, backend 전체는 daemon
+복구 후 이 순서로 실행하며 현재 문서에서는 `PASS`로 표시하지 않는다.

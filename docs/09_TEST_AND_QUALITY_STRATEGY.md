@@ -322,3 +322,15 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
   건드리지 않는 재시도, 취소 초기화와 늦은 응답의 새 대상 상태 비덮어쓰기를 검증한다.
 - 신고 성공 뒤 차단 API, current group 재조회와 WebSocket 발행이 없음을 구현 경계와
   MatchRoom 기존 회귀 테스트로 확인한다.
+
+## MatchRoom 상대 회원 차단 Backend 검증
+
+- `MatchBlockIntegrationTest`는 실제 PostgreSQL에서 정상 차단, 본인 차단, 양쪽 참여
+  권한과 IDOR, 진행/종료 상태와 30일 경계, terminal timestamp 누락을 검증한다.
+- UNIQUE와 `ON CONFLICT DO NOTHING`의 반복·동시 요청 멱등성, 다른 group에서 같은 pair
+  반복, 기존 `created_at`/reason 불변과 실패 rollback을 검증한다.
+- 차단 API 생성 후 requester 양방향 후보 조회와 Scheduler batch pair 제외를 검증하고,
+  기존 `MatchProposalCreationServiceIntegrationTest`에서 proposal 직전 차단 재검증과
+  block commit race를 member-pair advisory lock으로 검증한다.
+- penalty/cooldown/회원 점수와 MatchRoom event 불변, 최소 응답 계약과 내부 정보 비노출을
+  함께 검증한다. 실행 순서는 focused 차단 → matching 전체 → backend 전체다.

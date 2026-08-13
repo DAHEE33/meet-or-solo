@@ -242,6 +242,15 @@ API Key를 코드에 하드코딩하지 않습니다.
 관리자 조치 로그 대상:
 
 - 신고 처리
+- 차단 API는 JWT cookie의 인증 회원만 blocker로 사용하고 request/response에 blocker ID를
+  포함하지 않는다. group과 양쪽 참여 이력 중 하나라도 확인되지 않으면 같은 404를
+  반환한다.
+- 차단 응답은 block ID, blocked member ID, 생성 시각만 포함한다. 내부 reason, 회원
+  개인정보, 양방향 매칭 제외 구현 상세는 반환하지 않는다.
+- 동일 pair 요청은 DB UNIQUE와 `ON CONFLICT DO NOTHING`으로 멱등 처리하며 충돌 후 기존
+  row를 조회한다. update/upsert 갱신으로 기존 생성 시각이나 내부 값을 초기화하지 않는다.
+- 차단 transaction은 상대 알림, WebSocket/event, penalty/cooldown과 회원 점수 변경을
+  수행하지 않는다.
 - 회원 제재
 - 수동 penalty
 - blacklist 변경

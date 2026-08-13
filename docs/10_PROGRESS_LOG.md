@@ -1,5 +1,38 @@
 # 진행 상태 기록
 
+## [10-안전 3차] MatchRoom 상대 회원 차단 Backend 1차
+
+상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend 연결 제외
+
+- `POST /api/match-groups/{groupId}/blocks`를 추가한다. request는 `blockedMemberId`만
+  계약으로 사용하고 blocker는 JWT cookie의 인증 회원으로 결정한다.
+- 본인 차단을 금지하고 양쪽의 실제 group 참여 이력을 확인한다. group/참여 불일치는
+  같은 404로 통합한다.
+- `CONFIRMED`, `IN_PROGRESS`와 terminal 시각 기준 종료 후 정확히 30일까지 허용한다.
+  terminal timestamp 누락과 기간 초과는 fallback 없이 거절한다.
+- `user_blocks` UNIQUE와 `INSERT ... ON CONFLICT DO NOTHING`을 최종 방어선으로 사용하며,
+  반복·동시·다른 group 요청에도 기존 row snapshot과 `201 Created`를 반환한다.
+- 기존 후보 조회, Scheduler batch 조합, proposal 생성 직전 양방향 차단 제외는 재작성하지
+  않고 회귀 테스트로 연결한다.
+- 차단 생성과 proposal 생성은 정렬된 member pair advisory transaction lock을 공유한다.
+  proposal은 기존 pool row lock 후 member-pair lock을 얻고 block을 재조회하며, 이후 기존
+  check-in-pair exclusion lock을 얻는다. 따라서 차단 transaction이 먼저 lock/commit하면
+  proposal이 차단을 관찰하고, proposal이 먼저 lock을 얻으면 그 proposal transaction이
+  끝난 뒤 차단이 생성된다.
+- Frontend 차단 UI, 차단 해제/관리, 관리자 기능, 신고 후 자동 차단, 상대 알림과 자유
+  사유는 제외한다. Frontend 수동 검증은 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`에
+  `PENDING`으로 정리한다.
+- 최초 `MatchBlockIntegrationTest` 11건 중 다른 group 멱등 테스트 1건은 두 group이
+  같은 fixture `attempt_id=9130001`을 사용해 V3 `uq_match_groups_attempt`와 충돌했다.
+  production 경로가 실행되기 전 fixture insert에서 실패한 것으로 확인했다.
+- 해당 테스트는 고정된 두 번째 attempt를 먼저 만들고 첫 group 참여를 종료한 다음
+  두 번째 active group을 생성하도록 수정했다. 이로써 V3/V16의 한 attempt당 group 1개와
+  회원당 active group 1개 제약을 모두 지키며 다른 group 반복 계약을 검증한다.
+- `MatchBlockIntegrationTest` 11건과 `MatchProposalCreationServiceIntegrationTest`가
+  성공했다. backend 전체 테스트 372건도 failure 0, error 0, skipped 0으로 성공했다.
+  전체 종료 중 이전 context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한
+  경고가 있었지만 Gradle 결과에는 영향을 주지 않았다.
+
 ## [10-안전 2차] MatchRoom 상대 회원 구조화 신고 Frontend
 
 상태: Frontend 구현 및 자동 검증 완료, 두 브라우저·dev DB 수동 검증 PENDING
