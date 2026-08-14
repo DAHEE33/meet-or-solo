@@ -9,10 +9,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.safety.block.repository.MemberBlockRepository;
+import com.survey.meetorsolo.domain.safety.block.service.MemberBlockService;
+import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
+import com.survey.meetorsolo.domain.matching.service.MatchingBatchReader;
 import java.lang.reflect.RecordComponent;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,6 +63,9 @@ class MemberBlockIntegrationTest {
     @Autowired JwtProvider jwtProvider;
     @Autowired JdbcTemplate jdbc;
     @Autowired MemberBlockRepository repository;
+    @Autowired MemberBlockService service;
+    @Autowired MatchPoolRepository pools;
+    @Autowired MatchingBatchReader batchReader;
 
     @BeforeEach
     void profile() {
@@ -113,6 +125,54 @@ class MemberBlockIntegrationTest {
         mockMvc.perform(delete("/api/members/me/blocks/{id}", BLOCKED).cookie(cookie(ME)))
                 .andExpect(status().isNoContent()).andExpect(content().string(""));
         assertThat(blockExists(ME, BLOCKED)).isFalse();
+    }
+
+    @Test
+    void 동일_DELETE_동시요청은_모두_성공하고_최종_row는_0건이다() throws Exception {
+        int workerCount = 6;
+        var executor = Executors.newFixedThreadPool(workerCount);
+        var ready = new CountDownLatch(workerCount);
+        var start = new CountDownLatch(1);
+        List<Future<Void>> futures = new ArrayList<>();
+        try {
+            for (int index = 0; index < workerCount; index++) {
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+                    service.unblock(ME, BLOCKED);
+                    return null;
+                }));
+            }
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            for (Future<Void> future : futures) assertThat(future.get(10, TimeUnit.SECONDS)).isNull();
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+        assertThat(blockExists(ME, BLOCKED)).isFalse();
+    }
+
+    @Test
+    void 해제_전_양방향과_batch에서_제외하고_해제_후_양방향_후보로_복귀한다() {
+        OffsetDateTime now = OffsetDateTime.parse("2026-07-17T15:00:00+09:00");
+        assertThat(pools.findEligibleWaitingCandidates(9_100_001L, ME, now))
+                .extracting(pool -> pool.getMemberId()).doesNotContain(BLOCKED);
+        assertThat(pools.findEligibleWaitingCandidates(9_100_001L, BLOCKED, now))
+                .extracting(pool -> pool.getMemberId()).doesNotContain(ME);
+        jdbc.update("UPDATE match_pools SET status='LOCKED', lock_token='unblock-batch' WHERE member_id IN (?,?)", ME, BLOCKED);
+        assertThat(batchReader.read("unblock-batch").blockedPairs())
+                .contains(MatchingBatchReader.MemberPair.of(ME, BLOCKED));
+
+        service.unblock(ME, BLOCKED);
+        jdbc.update("UPDATE match_pools SET status='WAITING', locked_at=NULL, lock_token=NULL WHERE member_id IN (?,?)", ME, BLOCKED);
+        assertThat(pools.findEligibleWaitingCandidates(9_100_001L, ME, now))
+                .extracting(pool -> pool.getMemberId()).contains(BLOCKED);
+        assertThat(pools.findEligibleWaitingCandidates(9_100_001L, BLOCKED, now))
+                .extracting(pool -> pool.getMemberId()).contains(ME);
+        jdbc.update("UPDATE match_pools SET status='LOCKED', lock_token='unblock-batch' WHERE member_id IN (?,?)", ME, BLOCKED);
+        assertThat(batchReader.read("unblock-batch").blockedPairs())
+                .doesNotContain(MatchingBatchReader.MemberPair.of(ME, BLOCKED));
     }
 
     @Test

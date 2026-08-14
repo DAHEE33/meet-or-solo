@@ -357,4 +357,17 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - 정상·반복 해제를 같은 `204`로 처리하고 row count를 노출하지 않는지 확인한다.
 - 해제 전후 penalty/cooldown/event, 회원 점수와 group membership이 불변인지 확인한다.
 - focused 조회·해제 테스트와 기존 차단 생성·신고 회귀를 실행한다. matching 전체 회귀,
-  proposal 생성 race와 실제 후보 복귀 통합 테스트는 2단계로 분리한다.
+  proposal 생성 race와 실제 후보 복귀 통합 테스트도 2단계에서 실행한다.
+
+## 차단 해제 동시성·Frontend 관리 검증
+
+- 실제 PostgreSQL Testcontainers의 서로 다른 thread/transaction과 latch를 사용해 동시 DELETE
+  전부 성공·최종 row 0건, 해제 선행 proposal race와 기존 차단 생성 race를 검증한다.
+- 해제 전 requester 양방향 제외, 해제 후 양방향 후보 복귀, Scheduler batch pair 복귀와
+  proposal 직전 최종 상태 반영을 검증한다. sleep, Mockito 대체와 테스트 전용 production
+  분기는 사용하지 않는다.
+- Frontend API는 정확한 path ID, body·`blockerMemberId` 부재와 HTTP 204를 검증한다. hook은
+  loading/빈 목록/오류 재시도, 이중 제출 1회, 실패 유지, 대상별 제거와 늦은 응답 무시를
+  검증한다.
+- 마이페이지 진입과 공개 필드, dialog 정책·접근성, 기존 MatchRoom 신고·차단, current group
+  재조회와 WebSocket SEND 부재를 focused 및 전체 Vitest로 회귀 검증한다.

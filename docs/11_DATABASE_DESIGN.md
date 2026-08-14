@@ -862,3 +862,7 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
   물리 삭제한다. 삭제 건수는 서비스/API 계약으로 전달하지 않는다.
 - 기존 unique/check/FK/index와 migration은 변경하지 않는다. soft delete와 감사 테이블은
   이번 MVP 범위가 아니다.
+- 차단 해제는 정규화 member pair의 `pg_advisory_xact_lock`을 얻은 같은 transaction에서
+  위 DELETE를 수행한다. 이는 schema 변경이 아니며 기존 migration을 수정하지 않는다.
+- pair lock을 준수하는 차단 생성·해제와 proposal 생성 경로 사이만 직렬화한다. DB 직접
+  쓰기처럼 lock 규칙을 우회하는 미래 경로는 보장하지 않는다.

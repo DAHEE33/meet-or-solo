@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil } from 'lucide-react';
+import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX } from 'lucide-react';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import { checkInRecords } from '../data/mock/checkIns';
 import { tourSpots } from '../data/mock/tourSpots';
@@ -120,6 +120,12 @@ export default function MyPage() {
             ))}
           </div>
         </section>
+
+        <Link to="/mypage/blocks" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
+          <ShieldX size={18} className="text-coral" aria-hidden="true" />
+          <span className="flex-1 text-[14px] font-semibold text-ink">차단 회원 관리</span>
+          <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
+        </Link>
 
         <button
           type="button"

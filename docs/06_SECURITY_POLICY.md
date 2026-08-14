@@ -304,3 +304,8 @@ MVP 초기 방향:
   `blocker_member_id`와 `blocked_member_id`를 함께 조건으로 사용해 타인·역방향 row를 보호한다.
 - 역방향 차단 여부, 다른 회원의 관계, `user_blocks.id`, reason과 삭제 row count는 외부에
   노출하지 않는다. 없는 row도 같은 `204`로 처리해 존재 여부 추론을 막는다.
+- 해제는 정규화 member-pair advisory transaction lock 뒤 정방향 row만 물리 삭제한다.
+  MVP는 차단 감사 이력을 별도로 저장하지 않으며 상대 알림, 현재 MatchRoom 변경,
+  penalty/cooldown/event와 회원 점수 변경을 수행하지 않는다.
+- 해제로 상대가 후보로 복귀할 수 있다는 사실은 해제한 본인에게만 안내한다. 역방향 차단이
+  남아 있는지 또는 상대가 나를 차단했는지는 목록·DELETE 응답으로 구분할 수 없다.

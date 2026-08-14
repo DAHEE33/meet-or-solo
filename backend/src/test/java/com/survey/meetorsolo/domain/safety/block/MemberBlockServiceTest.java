@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.survey.meetorsolo.domain.safety.block.repository.MemberBlockRepository;
 import com.survey.meetorsolo.domain.safety.block.repository.MemberBlockRepository.MemberBlockSnapshot;
 import com.survey.meetorsolo.domain.safety.block.service.MemberBlockService;
+import com.survey.meetorsolo.domain.matching.service.MatchMemberPairLockService;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class MemberBlockServiceTest {
     @Mock MemberBlockRepository repository;
+    @Mock MatchMemberPairLockService memberPairLocks;
 
     @Test
     void repository_snapshot을_공개_DTO로만_변환한다() {
@@ -24,7 +26,7 @@ class MemberBlockServiceTest {
         when(repository.findAllByBlockerMemberId(1L)).thenReturn(List.of(
                 new MemberBlockSnapshot(2L, "상대", "https://image", blockedAt)));
 
-        var result = new MemberBlockService(repository).getMyBlocks(1L);
+        var result = new MemberBlockService(repository, memberPairLocks).getMyBlocks(1L);
 
         assertThat(result).singleElement().satisfies(block -> {
             assertThat(block.blockedMemberId()).isEqualTo(2L);
@@ -36,7 +38,8 @@ class MemberBlockServiceTest {
 
     @Test
     void 해제는_인증회원과_대상_ID를_repository에_그대로_전달한다() {
-        new MemberBlockService(repository).unblock(1L, 2L);
+        new MemberBlockService(repository, memberPairLocks).unblock(1L, 2L);
+        verify(memberPairLocks).lock(1L, 2L);
         verify(repository).delete(1L, 2L);
     }
 }

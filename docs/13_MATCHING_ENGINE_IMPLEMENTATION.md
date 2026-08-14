@@ -3853,3 +3853,28 @@ Service는 삭제 건수를 분기하거나 반환하지 않으며 기존 row와
 발행하지 않습니다. focused 단위 테스트와 실제 PostgreSQL Testcontainers 통합 테스트에서
 목록 격리·정렬·필드 제한·인증·멱등 삭제·부수 상태 불변을 검증했습니다. 해제 commit과
 proposal 생성의 race 보강 및 해제 상대의 실제 후보 복귀 통합 검증은 2단계로 남깁니다.
+
+## 48. 차단 해제 동시성·마이페이지 관리 UI
+
+`MemberBlockService.unblock`은 정규화 member pair의 advisory transaction lock을 얻은 뒤
+정방향 `user_blocks` row를 삭제합니다. proposal은 기존처럼 pool row를 먼저 잠근 뒤 모든
+member pair lock을 결정적 순서로 얻으므로 잠금 순서를 바꾸거나 역순 경로를 추가하지 않습니다.
+proposal이 먼저 끝나면 해제가 기존 proposal/group을 변경하지 않고, 해제가 먼저 commit되면
+후속 proposal 최종 차단 조회가 삭제 상태를 관찰합니다. pair lock을 우회한 DB 직접 쓰기는
+보장 범위가 아닙니다.
+
+PostgreSQL 통합 테스트는 동시 멱등 DELETE, 양 requester와 Scheduler batch 후보 복귀,
+proposal 직전 해제 상태, 해제 선행 race 및 기존 block 선행 race를 검증합니다. 후보 복귀는
+차단 조건만 제거하며 cooldown, check-in, active pool/group과 완료 제한은 그대로 적용됩니다.
+
+Frontend는 `/mypage/blocks`에서 정방향 목록의 공개 필드만 표시하고 body 없는 DELETE 204를
+성공 처리합니다. 성공 전 optimistic removal을 하지 않으며 성공한 대상만 제거합니다. 동기
+in-flight guard, AbortController/request identity, dialog action 제한과 focus trap/Escape/focus
+복원/live region을 적용했습니다. 해제 성공은 current MatchRoom REST 재조회나 WebSocket SEND를
+일으키지 않습니다. 실제 수동 검증은 아직 `PENDING`입니다.
+
+자동 검증 결과는 `MemberBlockServiceTest` 2건, `MemberBlockIntegrationTest` 7건,
+`MatchBlockIntegrationTest` 11건, `MatchReportIntegrationTest` 13건,
+`MatchProposalCreationServiceIntegrationTest` 34건과 Backend 전체 384건이 모두 성공했습니다.
+Frontend는 관리 API/hook/UI 및 기존 MatchRoom focused 56건, 전체 17 files/160 tests,
+typecheck와 PWA production build가 성공했습니다.

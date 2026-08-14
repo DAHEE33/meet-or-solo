@@ -1,5 +1,25 @@
 # 진행 상태 기록
 
+## [10-안전 6차] 차단 해제 동시성·마이페이지 관리 UI
+
+상태: 구현·자동 검증 완료, 수동 검증 `PENDING`
+
+- 해제 DELETE에 차단 생성·proposal 생성과 같은 정규화 member-pair advisory transaction
+  lock을 적용했다. 기존 pool row lock → pair lock 순서는 유지한다.
+- 동시 DELETE 최종 row 0건, 해제 전후 requester 양방향·Scheduler batch 후보 복귀,
+  proposal 직전 및 해제 선행 race와 기존 차단 생성 race를 PostgreSQL 통합 테스트로 보강했다.
+- 마이페이지에 `/mypage/blocks` 진입, 목록 loading/빈 목록/오류 재시도, 최종 확인 dialog와
+  204 성공 뒤 대상 항목만 제거하는 UI를 추가했다.
+- Frontend는 in-flight guard, abort/request identity, 실패 전 optimistic removal 금지,
+  dialog focus/Escape/Tab 순환과 live region을 적용했다. 현재 MatchRoom 재조회와 WebSocket
+  SEND는 추가하지 않았다.
+- migration과 Backend API 계약은 변경하지 않았다. 실제 두 브라우저·dev DB 수동 검증은
+  `docs/17_MEMBER_BLOCK_MANAGEMENT_MANUAL_TEST.md`에 `PENDING`으로 준비한다.
+- Backend focused/safety/matching/전체 테스트와 build가 성공했다. 최종 전체 결과는
+  384 tests, failures/errors/skipped 0건이다.
+- Frontend focused 56건, 전체 Vitest 17 files/160 tests, `npx tsc --noEmit`과 PWA
+  production build가 성공했다.
+
 ## [10-안전 4차] MatchRoom 상대 회원 차단 Frontend
 
 상태: Frontend 구현·자동 검증 및 차단 생성부터 신규 매칭 양방향 제외까지 수동 검증 완료

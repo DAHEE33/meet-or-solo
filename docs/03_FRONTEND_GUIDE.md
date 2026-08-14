@@ -542,3 +542,18 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   차단은 향후 양방향 후보 제외로 이어지며 현재 상태방의 도착·취소·완료 흐름과 분리합니다.
 - dialog title과 설명을 연결하고 최초 focus, `Escape`, 닫은 뒤 focus 복원과 `Tab`
   순환을 제공합니다. 제출 중에는 닫기·취소·확인 action을 비활성화합니다.
+
+## 마이페이지 차단 회원 관리
+
+- 마이페이지의 `차단 회원 관리`는 `/mypage/blocks`로 이동하며 본인이 생성한 정방향
+  차단만 조회합니다. nickname, 공개 profile image와 차단 시각 외 내부 ID·reason·차단
+  주체는 표시하지 않습니다.
+- loading, `차단한 회원이 없어요`, 오류와 재시도 상태를 구분합니다. 최종 확인 dialog는
+  향후 재매칭 가능성, 현재 MatchRoom 불변과 상대 알림 부재를 안내합니다.
+- DELETE의 body 없는 `204`를 신규·반복 해제 모두 성공으로 처리합니다. 성공 전에는 목록을
+  낙관적으로 제거하지 않고, 성공한 `blockedMemberId` 항목만 제거합니다.
+- 동기 in-flight guard, `AbortController`와 request identity로 이중 클릭, 대상 변경,
+  화면 이탈·unmount 및 늦은 성공·실패를 방어합니다. 해제 성공 뒤 current MatchRoom을
+  재조회하거나 WebSocket `SEND`를 하지 않습니다.
+- dialog는 `role=dialog`, `aria-modal`, title/description 연결, 최초 focus, `Escape`, focus
+  복원과 `Tab` 순환을 제공하며 loading·성공·오류는 live region으로 알립니다.

@@ -90,6 +90,40 @@ export function apiClientNullable<T>(
   return request<T>(path, options);
 }
 
+export async function apiClientVoid(
+  path: string,
+  options: ApiClientOptions = {},
+): Promise<void> {
+  const response = await fetch(buildApiUrl(path), {
+    credentials: 'include',
+    ...options,
+    headers: { Accept: 'application/json', ...options.headers },
+  });
+  if (response.ok && response.status === 204) return;
+
+  let body: ApiResponse<unknown> | null = null;
+  try {
+    body = (await response.json()) as ApiResponse<unknown>;
+  } catch {
+    redirectToLoginIfUnauthorized(response.status);
+    throw new ApiClientError(
+      `API 응답을 해석할 수 없습니다. HTTP ${response.status}`,
+      response.status,
+      null,
+      undefined,
+    );
+  }
+  if (!response.ok || !body.success) {
+    redirectToLoginIfUnauthorized(response.status);
+    throw new ApiClientError(
+      getErrorMessage(body, `API 요청 실패: HTTP ${response.status}`),
+      response.status,
+      body.error?.code ?? null,
+      body.error?.fields,
+    );
+  }
+}
+
 function redirectToLoginIfUnauthorized(status: number): void {
   if (status !== 401 || window.location.pathname === '/login') return;
   window.location.replace('/login');

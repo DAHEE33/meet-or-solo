@@ -706,4 +706,11 @@ WebSocket 알림은 유실되거나 중복될 수 있는 보조 신호입니다.
   일치하는 row만 물리 삭제한다. 존재 여부와 삭제 건수에 관계없이 `204 No Content`이다.
 - 해제는 상대 알림, WebSocket, match event를 만들지 않고 penalty/cooldown, 회원 점수와
   현재 group 상태를 변경하지 않는다. 감사 이력과 soft delete는 MVP 범위에서 제외한다.
-- 해제된 상대의 실제 후보 복귀와 proposal 생성 경합 보강은 2단계 통합 범위로 남긴다.
+- 해제는 차단 생성·proposal 생성과 동일한 정규화 member-pair advisory transaction lock
+  안에서 DELETE한다. 기존 proposal 경로의 pool row lock → member-pair lock 순서를 바꾸지
+  않으며 반대 순서의 신규 잠금 경로를 만들지 않는다.
+- proposal transaction이 pair lock을 먼저 얻으면 종료 뒤 해제하고 기존 proposal/group은
+  취소하지 않는다. 해제가 먼저 lock을 얻고 commit되면 이후 proposal 최종 검증은 차단이
+  없는 상태를 관찰한다. 효과는 이후 신규 proposal 후보 검증부터 적용한다.
+- 해제 뒤에도 cooldown, check-in, active pool/group과 정상 완료 제한 등 다른 제외 조건은
+  유지한다. DB 직접 쓰기처럼 공통 pair lock을 우회하는 미래 경로는 이 race 보장 밖이다.

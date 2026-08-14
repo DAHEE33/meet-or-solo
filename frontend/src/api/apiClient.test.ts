@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiClient, apiClientNullable, ApiClientError } from './apiClient';
+import { apiClient, apiClientNullable, apiClientVoid, ApiClientError } from './apiClient';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -79,5 +79,10 @@ describe('apiClient', () => {
     const abortError = new DOMException('aborted', 'AbortError');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
     await expect(apiClientNullable('/api/test', { signal: new AbortController().signal })).rejects.toBe(abortError);
+  });
+
+  it('body 없는 HTTP 204를 성공으로 처리한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    await expect(apiClientVoid('/api/members/me/blocks/27', { method: 'DELETE' })).resolves.toBeUndefined();
   });
 });
