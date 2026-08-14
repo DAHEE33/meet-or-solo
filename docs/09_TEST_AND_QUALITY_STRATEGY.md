@@ -348,3 +348,13 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
   신고 API·current group 재조회·WebSocket SEND 부재를 기존 경계와 전체 회귀로 확인한다.
 - 접근 가능한 dialog title/description, `Escape`, focus 복원과 `Tab` 순환을 구현 경계로
   확인하고 자유 입력·상대 추론·채팅 UI가 추가되지 않았는지 회귀한다.
+## 회원 본인 차단 목록 조회·해제 Backend 검증
+
+- Controller/API는 JWT cookie 미인증 거절, `200` 빈 배열, 공개 필드 제한과 `204` 빈 body를 검증한다.
+- Service는 repository snapshot의 DTO 매핑과 인증 회원/대상 ID 전달을 검증한다.
+- 실제 PostgreSQL Testcontainers에서 정방향 목록만 노출되는지, 역방향·타인 관계 비노출,
+  `blockedAt DESC, id DESC` 정렬과 두 ID 조건의 물리 삭제를 검증한다.
+- 정상·반복 해제를 같은 `204`로 처리하고 row count를 노출하지 않는지 확인한다.
+- 해제 전후 penalty/cooldown/event, 회원 점수와 group membership이 불변인지 확인한다.
+- focused 조회·해제 테스트와 기존 차단 생성·신고 회귀를 실행한다. matching 전체 회귀,
+  proposal 생성 race와 실제 후보 복귀 통합 테스트는 2단계로 분리한다.

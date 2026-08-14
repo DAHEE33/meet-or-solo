@@ -853,3 +853,12 @@ matching SQL도 저장값과 정책 상한 중 이른 시각을 사용하므로 
 row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.
+## `user_blocks` 조회·해제 접근 규칙
+
+- 목록은 `user_blocks.blocker_member_id = :authenticated_member_id`로 제한하고
+  `members.id = blocked_member_id`를 조인해 nickname과 profile image만 조회한다.
+- 정렬은 `created_at DESC, id DESC`이며 `id`는 tie-breaker로만 사용하고 API에 노출하지 않는다.
+- 해제 SQL은 `DELETE FROM user_blocks WHERE blocker_member_id = ? AND blocked_member_id = ?`로
+  물리 삭제한다. 삭제 건수는 서비스/API 계약으로 전달하지 않는다.
+- 기존 unique/check/FK/index와 migration은 변경하지 않는다. soft delete와 감사 테이블은
+  이번 MVP 범위가 아니다.

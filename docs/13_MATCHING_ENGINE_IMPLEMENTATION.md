@@ -3835,3 +3835,21 @@ dialog는 title과 description을 연결하고 최초 활성 버튼으로 focus�
 수동 절차와 읽기 전용 SQL은 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`에 분리했습니다.
 재매칭 제한은 실제 1시간 대기 대신 local dev DB의 대상 완료 group `confirmed_at`을
 과거로 조정해 만료를 재현했으며 차단 row와 후보 제외 결과는 수정하지 않았습니다.
+
+## 47. 회원 본인 차단 목록 조회·해제 Backend 1차
+
+회원 설정용 API는 MatchRoom 차단 생성과 분리해 `/api/members/me/blocks`에 둡니다.
+Controller는 JWT cookie에서 회원 ID를 얻고 request로 blocker ID를 받지 않습니다.
+Repository 조회는 정방향 관계만 회원 프로필과 조인하며 `created_at DESC, id DESC`로
+정렬합니다. DTO는 `blockedMemberId`, `nickname`, `profileImageUrl`, `blockedAt` 네 필드만
+가집니다.
+
+해제는 인증 회원과 path 대상 ID를 모두 조건으로 `user_blocks` row를 물리 삭제합니다.
+Service는 삭제 건수를 분기하거나 반환하지 않으며 기존 row와 없는 row 모두 Controller가
+`204 No Content`로 응답합니다. 이 경계 때문에 타인의 row와 역방향 row는 삭제되지 않고
+상대가 나를 차단했는지 응답 차이로 추론할 수도 없습니다.
+
+해제 transaction은 `user_blocks` 외 테이블을 수정하지 않으며 알림, WebSocket과 match event를
+발행하지 않습니다. focused 단위 테스트와 실제 PostgreSQL Testcontainers 통합 테스트에서
+목록 격리·정렬·필드 제한·인증·멱등 삭제·부수 상태 불변을 검증했습니다. 해제 commit과
+proposal 생성의 race 보강 및 해제 상대의 실제 후보 복귀 통합 검증은 2단계로 남깁니다.

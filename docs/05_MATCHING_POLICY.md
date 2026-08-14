@@ -696,3 +696,14 @@ WebSocket 알림은 유실되거나 중복될 수 있는 보조 신호입니다.
 - 별도 미팅 시작 event가 없으므로 `startedAt`이나 첫 `MEMBER_ARRIVED`에서 “미팅이 시작됐어요” 항목을 중복 합성하지 않습니다.
 - 같은 도착 예정 값과 동일 ARRIVED 멱등 요청은 새 `match_events`를 만들지 않으므로 타임라인도 증가하지 않습니다.
 - 최근 50건만 제공하며 cursor pagination은 후속 범위입니다.
+## 회원 본인 차단 목록 조회·해제 정책
+
+- `GET /api/members/me/blocks`는 JWT cookie 회원이 `blocker_member_id`인 정방향
+  `user_blocks`만 조회한다. 역방향 관계와 다른 회원의 관계는 노출하지 않는다.
+- 응답 항목은 `blockedMemberId`, `nickname`, `profileImageUrl`, `blockedAt`으로 제한하고
+  `blocked_at DESC`, 내부 `id DESC`로 결정적으로 정렬한다. 내부 ID와 reason은 응답하지 않는다.
+- `DELETE /api/members/me/blocks/{blockedMemberId}`는 인증 회원과 path 대상이 정확히
+  일치하는 row만 물리 삭제한다. 존재 여부와 삭제 건수에 관계없이 `204 No Content`이다.
+- 해제는 상대 알림, WebSocket, match event를 만들지 않고 penalty/cooldown, 회원 점수와
+  현재 group 상태를 변경하지 않는다. 감사 이력과 soft delete는 MVP 범위에서 제외한다.
+- 해제된 상대의 실제 후보 복귀와 proposal 생성 경합 보강은 2단계 통합 범위로 남긴다.

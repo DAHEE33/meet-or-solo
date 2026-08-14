@@ -1522,3 +1522,15 @@ feature/wbs-10-b-rematch-opponent-exclusion
 AI 임베딩은 `member_preference_embeddings`와 pgvector 기반만 준비된 상태입니다.
 외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책이 필요하며, 매칭 상태
 정확성·중복 방지·재매칭 정책보다 먼저 구현하지 않습니다.
+## [10-B 안전 후속] 차단 목록 조회·해제 Backend 1차
+
+상태: 기본 API·정책·자동 테스트 구현 완료
+
+- `GET /api/members/me/blocks`, `DELETE /api/members/me/blocks/{blockedMemberId}`를 추가했다.
+- JWT cookie 회원을 blocker로 고정하고 정방향 목록만 최소 프로필과 함께 반환한다.
+- 목록은 `blocked_at DESC, user_blocks.id DESC`, 빈 목록은 `200`과 빈 배열이다.
+- 해제는 두 member ID를 조건으로 물리 삭제하며 존재 여부와 무관하게 body 없는 `204`이다.
+- 타인·역방향 관계, 내부 block ID/reason/삭제 건수는 노출하거나 삭제하지 않는다.
+- penalty/cooldown/event/회원 점수/group 상태는 변경하지 않으며 migration은 변경하지 않았다.
+- Controller/DTO/Service/Repository 경계와 실제 PostgreSQL Testcontainers focused 테스트를 추가했다.
+- proposal 생성 race 보강, matching 전체 회귀와 실제 후보 복귀 통합 검증은 2단계로 남긴다.

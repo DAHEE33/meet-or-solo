@@ -296,3 +296,11 @@ MVP 초기 방향:
 - raw payload, GPS, 이메일, OAuth 식별자, token, penalty/cooldown과 Secret은 반환하지 않습니다.
 - actor의 ID/nickname은 같은 active group의 active member 관계가 query에서 확인된 경우에만 공개합니다.
 - malformed payload 원문을 응답이나 로그에 기록하지 않고 해당 event만 안전하게 제외합니다.
+## 차단 목록 IDOR 방어
+
+- 차단 목록의 `blockerMemberId`는 request body/query/path에서 받지 않고 JWT cookie의
+  `access_token`에서만 결정한다.
+- 조회와 삭제 SQL 모두 인증 회원을 `blocker_member_id`에 고정한다. 삭제 SQL은
+  `blocker_member_id`와 `blocked_member_id`를 함께 조건으로 사용해 타인·역방향 row를 보호한다.
+- 역방향 차단 여부, 다른 회원의 관계, `user_blocks.id`, reason과 삭제 row count는 외부에
+  노출하지 않는다. 없는 row도 같은 `204`로 처리해 존재 여부 추론을 막는다.
