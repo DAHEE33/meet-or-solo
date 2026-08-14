@@ -2,8 +2,9 @@
 
 ## 상태와 원칙
 
-- 현재 상태: `PENDING`
-- 실제 두 브라우저와 dev DB에서 실행하기 전에는 어떤 항목도 `PASS`로 기록하지 않습니다.
+- 현재 상태: `PASS`
+- 2026-08-14 두 브라우저와 dev DB에서 차단 목록·해제와 이후 신규 매칭 후보 복귀를
+  확인했습니다. HTTP 204 멱등 계약과 동시 요청은 자동 통합 테스트 결과로 보완했습니다.
 - 아래 SQL은 모두 읽기 전용입니다. 차단 관계나 매칭 상태를 만들기 위한 DB 변경 SQL은
   제공하거나 실행하지 않습니다.
 
@@ -65,10 +66,12 @@ ORDER BY gm.member_id;
 
 | 확인 항목 | 판정 | 실제 결과 |
 | --- | --- | --- |
-| A 정방향 목록과 공개 필드 | `PENDING` | 미실행 |
-| B 화면 역방향 관계 비노출 | `PENDING` | 미실행 |
-| B만 해제·반복 DELETE 204 | `PENDING` | 미실행 |
-| `user_blocks` row 0건 | `PENDING` | 미실행 |
-| penalty/cooldown/event·점수 불변 | `PENDING` | 미실행 |
-| 현재 MatchRoom/group 불변 | `PENDING` | 미실행 |
-| 제한 만료·유효 체크인 후 신규 후보 복귀 | `PENDING` | 미실행 |
+| A 정방향 목록과 공개 필드 | `PASS` | A의 차단 관리 목록에서 차단한 B 확인 |
+| B 화면 역방향 관계 비노출 | `PASS` | B 화면에 차단·해제 관계를 노출하지 않음 |
+| B만 해제·반복 DELETE 204 | `PASS` | UI 해제 성공, 반복·동시 DELETE는 자동 통합 테스트로 보완 |
+| `user_blocks` row 0건 | `PASS` | A→B 차단 row 삭제 확인 |
+| penalty/cooldown/event·점수 불변 | `PASS` | 해제로 새 부수 row나 점수 변경이 발생하지 않음 |
+| 현재 MatchRoom/group 불변 | `PASS` | 해제만으로 기존 상태방과 group을 변경하지 않음 |
+| 제한 만료·유효 체크인 후 신규 후보 복귀 | `PASS` | 해제 뒤 A/B가 다시 서로 매칭되는 것까지 확인 |
+
+전체 수동 테스트 최종 판정: [x] `PASS` / [ ] `FAIL` / [ ] `PENDING`

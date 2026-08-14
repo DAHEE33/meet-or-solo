@@ -2,7 +2,7 @@
 
 ## [10-안전 6차] 차단 해제 동시성·마이페이지 관리 UI
 
-상태: 구현·자동 검증 완료, 수동 검증 `PENDING`
+상태: 구현·자동 검증 및 두 브라우저·dev DB 수동 검증 완료
 
 - 해제 DELETE에 차단 생성·proposal 생성과 같은 정규화 member-pair advisory transaction
   lock을 적용했다. 기존 pool row lock → pair lock 순서는 유지한다.
@@ -13,12 +13,29 @@
 - Frontend는 in-flight guard, abort/request identity, 실패 전 optimistic removal 금지,
   dialog focus/Escape/Tab 순환과 live region을 적용했다. 현재 MatchRoom 재조회와 WebSocket
   SEND는 추가하지 않았다.
-- migration과 Backend API 계약은 변경하지 않았다. 실제 두 브라우저·dev DB 수동 검증은
-  `docs/17_MEMBER_BLOCK_MANAGEMENT_MANUAL_TEST.md`에 `PENDING`으로 준비한다.
+- migration과 Backend API 계약은 변경하지 않았다. 2026-08-14 두 브라우저·dev DB에서
+  정방향 목록, 역방향 비노출, 해제 후 `user_blocks` 0건, 부수 상태 불변과 신규 매칭
+  후보 복귀를 확인해 `docs/17_MEMBER_BLOCK_MANAGEMENT_MANUAL_TEST.md`를 `PASS`로 마감했다.
 - Backend focused/safety/matching/전체 테스트와 build가 성공했다. 최종 전체 결과는
   384 tests, failures/errors/skipped 0건이다.
 - Frontend focused 56건, 전체 Vitest 17 files/160 tests, `npx tsc --noEmit`과 PWA
   production build가 성공했다.
+
+## [10-매칭 후속] Proposal 조기 종료·서버 시각 타이머 동기화
+
+상태: 재현 및 코드 원인 조사 완료, 신규 구현 전
+
+- 최초 proposal에서 한 회원이 `REJECTED`를 제출해도 다른 회원이 응답하거나 만료될 때까지
+  attempt가 끝나지 않아, 이미 성사 불가능한 2인 proposal의 상대가 `TIMEOUT` 2분 cooldown을
+  받는 현상을 확인했다.
+- 같은 종료 화면에서 거절 회원은 약 30초, timeout 회원은 약 2분의 서로 다른 cooldown을
+  표시한다. 이는 단순 countdown 오차가 아니라 서로 다른 귀책 정책 결과이나 사용자에게
+  원인이 설명되지 않아 타이머 불일치처럼 보인다.
+- Frontend countdown은 `expiresAt - Date.now()`로 계산하므로 서로 다른 기기의 로컬 시각
+  편차와 REST 수신 시점 차이를 보정하지 않는다. 동일 proposal의 deadline 일치와 서버 시각
+  offset 기반 countdown을 함께 검증해야 한다.
+- 다음 작업의 상세 인계는 `docs/18_PROPOSAL_TERMINATION_TIMER_SYNC.md`를 기준으로 한다.
+- 권장 브랜치: `fix/wbs-10-b-proposal-termination-timer-sync`
 
 ## [10-안전 4차] MatchRoom 상대 회원 차단 Frontend
 
