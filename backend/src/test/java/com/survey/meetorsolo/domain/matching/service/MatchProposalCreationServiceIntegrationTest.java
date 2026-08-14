@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.survey.meetorsolo.domain.matching.group.MatchGroupCombination;
 import com.survey.meetorsolo.domain.matching.group.MatchingCandidate;
 import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
+import com.survey.meetorsolo.domain.safety.block.service.MatchBlockService;
+import com.survey.meetorsolo.domain.safety.block.service.MemberBlockService;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -16,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -47,7 +50,10 @@ class MatchProposalCreationServiceIntegrationTest {
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
     @Autowired MatchProposalCreationService service; @Autowired JdbcTemplate jdbc;
     @Autowired MatchOpponentExclusionService opponentExclusions;
+    @Autowired MatchBlockService blockService;
+    @Autowired MemberBlockService memberBlockService;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired DataSource dataSource;
 
     @ParameterizedTest @ValueSource(ints = {2,3,4})
     void 정확한_인원으로_attempt_member_proposal과_PROPOSED_pool을_원자_생성한다(int size) {
@@ -134,6 +140,135 @@ class MatchProposalCreationServiceIntegrationTest {
             workers.shutdownNow();
         }
         assertThat(createdAttemptCount()).isZero();
+    }
+
+    @Test void block_commit과_proposal_생성_race는_member_pair_lock뒤_재조회로_생성을_차단한다() throws Exception {
+        MatchGroupCombination group = prepareGroup(2);
+        jdbc.update("""
+                INSERT INTO match_groups(
+                    id,attempt_id,festival_id,status,confirmed_member_count,confirmed_at,created_at,updated_at
+                ) VALUES (9170099,9130001,9100001,'IN_PROGRESS',2,?,?,?)
+                """, NOW, NOW, NOW);
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    id,group_id,member_id,status,allow_minimum_two,created_at,updated_at
+                ) VALUES (9180098,9170099,9110002,'JOINED',true,?,?),
+                         (9180099,9170099,9110006,'JOINED',true,?,?)
+                """, NOW, NOW, NOW, NOW);
+        CountDownLatch blockInserted = new CountDownLatch(1);
+        CountDownLatch allowCommit = new CountDownLatch(1);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var blocking = workers.submit(() -> new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(status -> {
+                        blockService.block(9110002L, 9170099L, 9110006L);
+                        blockInserted.countDown();
+                        try {
+                            if (!allowCommit.await(10, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("block commit 대기 timeout");
+                            }
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(exception);
+                        }
+                    }));
+            assertThat(blockInserted.await(10, TimeUnit.SECONDS)).isTrue();
+            var proposalCreation = workers.submit(() ->
+                    service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)));
+            allowCommit.countDown();
+            blocking.get(10, TimeUnit.SECONDS);
+
+            assertThatThrownBy(() -> proposalCreation.get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .cause().isInstanceOf(MatchProposalCreationException.class);
+        } finally {
+            allowCommit.countDown();
+            workers.shutdownNow();
+        }
+        assertThat(createdAttemptCount()).isZero();
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM user_blocks
+                WHERE blocker_member_id=9110002 AND blocked_member_id=9110006
+                """, Integer.class)).isOne();
+    }
+
+    @Test void proposal_생성_직전_해제되면_최종_검증에서_해제_상태를_반영한다() {
+        MatchGroupCombination group = prepareGroup(2);
+        jdbc.update("INSERT INTO user_blocks(blocker_member_id,blocked_member_id,reason) VALUES (9110002,9110006,'TEST')");
+        memberBlockService.unblock(9_110_002L, 9_110_006L);
+
+        service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30));
+
+        assertThat(createdAttemptCount()).isOne();
+    }
+
+    @Test void 해제_선행_race는_commit후_proposal이_차단없는_상태를_관찰한다() throws Exception {
+        MatchGroupCombination group = prepareGroup(2);
+        jdbc.update("INSERT INTO user_blocks(blocker_member_id,blocked_member_id,reason) VALUES (9110002,9110006,'TEST')");
+        CountDownLatch deletedBeforeCommit = new CountDownLatch(1);
+        CountDownLatch allowCommit = new CountDownLatch(1);
+        var workers = Executors.newFixedThreadPool(2);
+        try {
+            var unblock = workers.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                memberBlockService.unblock(9_110_002L, 9_110_006L);
+                deletedBeforeCommit.countDown();
+                try {
+                    if (!allowCommit.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("commit 대기 timeout");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(exception);
+                }
+            }));
+            assertThat(deletedBeforeCommit.await(10, TimeUnit.SECONDS)).isTrue();
+            var proposal = workers.submit(() -> service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)));
+            allowCommit.countDown();
+            unblock.get(10, TimeUnit.SECONDS);
+            assertThat(proposal.get(10, TimeUnit.SECONDS).attemptId()).isPositive();
+        } finally {
+            allowCommit.countDown();
+            workers.shutdownNow();
+        }
+        assertThat(createdAttemptCount()).isOne();
+    }
+
+    @Test void proposal_선행_race는_transaction_종료후_해제하고_진행중_proposal을_변경하지_않는다() throws Exception {
+        MatchGroupCombination group = prepareGroup(2);
+        jdbc.update("INSERT INTO user_blocks(blocker_member_id,blocked_member_id,reason) VALUES (9110002,9110006,'TEST')");
+        var workers = Executors.newFixedThreadPool(2);
+        try (var gate = dataSource.getConnection()) {
+            gate.setAutoCommit(false);
+            gate.createStatement().execute("LOCK TABLE user_blocks IN ACCESS EXCLUSIVE MODE");
+            var proposal = workers.submit(() -> service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)));
+            awaitProposalBlockRead();
+            var unblock = workers.submit(() -> memberBlockService.unblock(9_110_002L, 9_110_006L));
+            gate.commit();
+
+            assertThatThrownBy(() -> proposal.get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .cause().isInstanceOf(MatchProposalCreationException.class);
+            unblock.get(10, TimeUnit.SECONDS);
+        } finally {
+            workers.shutdownNow();
+        }
+        assertThat(createdAttemptCount()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM user_blocks WHERE blocker_member_id=9110002 AND blocked_member_id=9110006", Integer.class)).isZero();
+    }
+
+    private void awaitProposalBlockRead() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Boolean waiting = jdbc.queryForObject("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE pid <> pg_backend_pid()
+                          AND wait_event_type = 'Lock'
+                          AND query LIKE '%count(*) FROM user_blocks%'
+                    )
+                    """, Boolean.class);
+            if (Boolean.TRUE.equals(waiting)) return;
+            Thread.onSpinWait();
+        }
+        throw new IllegalStateException("proposal 차단 재조회 대기 timeout");
     }
 
     @Test void 동시_재실행은_하나의_attempt만_생성한다() throws Exception {

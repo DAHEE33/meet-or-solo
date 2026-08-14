@@ -378,6 +378,50 @@ NO_SHOW Scheduler는 기본 비활성화하고 명시적 환경 설정에서만 
 constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock에 의존하지
 않습니다.
 
+## MatchRoom 구조화 신고 1차 정책
+
+- 인증 회원은 자신이 실제 참여한 match group의 다른 실제 참여자만 신고할 수 있다.
+- API는 reporter ID를 받지 않고 HttpOnly `access_token`의 회원 ID를 사용한다.
+- 본인 신고와 양쪽 중 한 명이라도 group 참여 이력이 없는 요청은 거절한다.
+- `CONFIRMED`, `IN_PROGRESS` group은 진행 중 신고를 허용한다.
+- `COMPLETED`는 `completed_at`, `CANCELLED`는 `cancelled_at`부터 30일 이내 신고를
+  허용하며 정확히 30일 경계도 허용한다. terminal timestamp가 없으면 임의 시각으로
+  대체하지 않고 정합성 충돌로 거절한다.
+- 허용 사유는 `RUDE`, `SEXUAL_HARASSMENT`, `NO_SHOW`, `SCAM`, `SAFETY`, `OTHER`이다.
+  자유 입력 상세는 1차 범위에서 받거나 저장하지 않는다.
+- 동일 reporter/reported/group/reason 요청은 기존 신고 snapshot을 반환하는 멱등
+  성공이며 `SUBMITTED` 이후 관리 상태를 초기화하지 않는다.
+- 신고 접수만으로 penalty, cooldown, `penalty_score`, `manner_temperature`를
+  변경하지 않는다. 피신고자 WebSocket/event도 발행하지 않는다.
+- 차단, 관리자 검토와 제재, MatchRoom 신고 UI는 후속 범위다.
+
+## MatchRoom 상대 회원 차단 Backend 1차 정책
+
+- 인증 회원은 자신과 상대가 모두 실제 참여한 match group에서만 상대를 차단할 수
+  있다. blocker는 HttpOnly `access_token`으로만 결정하며 request body에서 받지 않는다.
+- 본인 차단은 금지한다. group이 없거나 blocker 또는 blocked가 참여하지 않은 경우는
+  모두 `404 BLOCK_RESOURCE_NOT_FOUND`로 처리해 IDOR 탐색을 막는다.
+- `CONFIRMED`, `IN_PROGRESS`는 허용한다. `COMPLETED`는 `completed_at`, `CANCELLED`는
+  `cancelled_at`부터 정확히 30일까지 허용하며 terminal timestamp가 없으면 거절한다.
+- `(blocker_member_id, blocked_member_id)`는 group과 무관하게 멱등이다. 신규·반복 요청은
+  모두 같은 resource snapshot과 `201 Created`를 반환하며 기존 `created_at`과 reason을
+  갱신하지 않는다. reason은 개인정보 없는 `MATCH_ROOM_MEMBER_BLOCK` 고정 내부 값이다.
+- 차단은 penalty, cooldown, `penalty_score`, `manner_temperature`, `match_events`를 변경하지
+  않고 WebSocket/application event를 발행하지 않는다. 상대에게 차단 사실과 blocker를
+  노출하지 않는다.
+- 신고 접수나 차단 생성만으로 현재 확정 group을 종료하거나 참여자를 퇴장시키지 않는다.
+  현재 MatchRoom 상태방과 상대 카드는 유지하고 기존 도착·취소·완료 정책을 계속 적용한다.
+  신고는 관리자 검토 대상으로 남고, 차단의 양방향 제외 효과는 이후 신규 매칭 후보 선정부터
+  적용한다.
+- proposal 생성은 pool row를 ID 오름차순으로 잠근 뒤 정렬된 member pair별
+  `pg_advisory_xact_lock(int,int)`을 획득하고 `user_blocks`를 다시 조회한다. 차단 API도
+  같은 member-pair lock을 획득한 뒤 insert하므로, 먼저 lock을 얻은 transaction의 commit
+  순서대로 차단 생성과 proposal 생성을 직렬화한다.
+- member-pair lock은 `member-block:{lowerMemberId}:{higherMemberId}`의 SHA-256 앞 64비트를
+  사용한다. 기존 check-in pair exclusion lock과 namespace가 다르며, proposal 경로는
+  pool row lock → member-pair lock → check-in-pair lock 순서를 유지한다.
+- 차단 해제 API와 관리 화면, 신고 후 자동 차단은 후속 범위다.
+
 ## 최초 proposal 응답 처리 정책
 
 `INITIAL_MATCH`, `proposal_round=1` 응답은 동일 attempt의 `match_attempts` row를 먼저 잠가 직렬화합니다. 잠금 순서는 attempt, proposal, attempt member 순서로 고정합니다.
@@ -652,3 +696,21 @@ WebSocket 알림은 유실되거나 중복될 수 있는 보조 신호입니다.
 - 별도 미팅 시작 event가 없으므로 `startedAt`이나 첫 `MEMBER_ARRIVED`에서 “미팅이 시작됐어요” 항목을 중복 합성하지 않습니다.
 - 같은 도착 예정 값과 동일 ARRIVED 멱등 요청은 새 `match_events`를 만들지 않으므로 타임라인도 증가하지 않습니다.
 - 최근 50건만 제공하며 cursor pagination은 후속 범위입니다.
+## 회원 본인 차단 목록 조회·해제 정책
+
+- `GET /api/members/me/blocks`는 JWT cookie 회원이 `blocker_member_id`인 정방향
+  `user_blocks`만 조회한다. 역방향 관계와 다른 회원의 관계는 노출하지 않는다.
+- 응답 항목은 `blockedMemberId`, `nickname`, `profileImageUrl`, `blockedAt`으로 제한하고
+  `blocked_at DESC`, 내부 `id DESC`로 결정적으로 정렬한다. 내부 ID와 reason은 응답하지 않는다.
+- `DELETE /api/members/me/blocks/{blockedMemberId}`는 인증 회원과 path 대상이 정확히
+  일치하는 row만 물리 삭제한다. 존재 여부와 삭제 건수에 관계없이 `204 No Content`이다.
+- 해제는 상대 알림, WebSocket, match event를 만들지 않고 penalty/cooldown, 회원 점수와
+  현재 group 상태를 변경하지 않는다. 감사 이력과 soft delete는 MVP 범위에서 제외한다.
+- 해제는 차단 생성·proposal 생성과 동일한 정규화 member-pair advisory transaction lock
+  안에서 DELETE한다. 기존 proposal 경로의 pool row lock → member-pair lock 순서를 바꾸지
+  않으며 반대 순서의 신규 잠금 경로를 만들지 않는다.
+- proposal transaction이 pair lock을 먼저 얻으면 종료 뒤 해제하고 기존 proposal/group은
+  취소하지 않는다. 해제가 먼저 lock을 얻고 commit되면 이후 proposal 최종 검증은 차단이
+  없는 상태를 관찰한다. 효과는 이후 신규 proposal 후보 검증부터 적용한다.
+- 해제 뒤에도 cooldown, check-in, active pool/group과 정상 완료 제한 등 다른 제외 조건은
+  유지한다. DB 직접 쓰기처럼 공통 pair lock을 우회하는 미래 경로는 이 race 보장 밖이다.

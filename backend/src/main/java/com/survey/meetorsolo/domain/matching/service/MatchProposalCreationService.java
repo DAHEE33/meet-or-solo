@@ -40,15 +40,18 @@ public class MatchProposalCreationService {
     private final JdbcTemplate jdbcTemplate;
     private final ApplicationEventPublisher eventPublisher;
     private final MatchOpponentExclusionService opponentExclusions;
+    private final MatchMemberPairLockService memberPairLocks;
 
     public MatchProposalCreationService(MatchPoolRepository poolRepository, MatchAttemptRepository attemptRepository,
             MatchAttemptMemberRepository memberRepository, MatchProposalRepository proposalRepository,
             TravelStyleScorer scorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher,
-            MatchOpponentExclusionService opponentExclusions) {
+            MatchOpponentExclusionService opponentExclusions,
+            MatchMemberPairLockService memberPairLocks) {
         this.poolRepository = poolRepository; this.attemptRepository = attemptRepository;
         this.memberRepository = memberRepository; this.proposalRepository = proposalRepository;
         this.scorer = scorer; this.jdbcTemplate = jdbcTemplate; this.eventPublisher = eventPublisher;
         this.opponentExclusions = opponentExclusions;
+        this.memberPairLocks = memberPairLocks;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -137,6 +140,7 @@ public class MatchProposalCreationService {
         List<Long> memberIds = pools.stream().map(MatchPool::getMemberId).toList();
         if (countValidCheckins(poolIds, now) != pools.size()) fail("유효하지 않은 check-in이 포함되었습니다.");
         if (countActiveCooldowns(memberIds, now) > 0) fail("active cooldown 회원이 포함되었습니다.");
+        memberPairLocks.lockAllMembers(memberIds);
         if (countBlocks(memberIds) > 0) fail("차단 관계 회원이 포함되었습니다.");
         if (opponentExclusions.existsAnyLocked(pools)) fail("현재 check-in에서 제외된 상대가 포함되었습니다.");
     }

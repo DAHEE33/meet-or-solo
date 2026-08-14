@@ -214,6 +214,23 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
 - local/dev/prod의 handshake origin은 기존 `CORS_ALLOWED_ORIGINS` 경계를 재사용합니다.
 - 알림에는 token, GPS, 이메일, OAuth 식별자와 다른 회원의 개인정보를 포함하지 않습니다.
 
+## MatchRoom 신고 인가와 정보 최소화
+
+- `POST /api/match-groups/{groupId}/reports`의 신고자는 request가 아니라 HttpOnly
+  `access_token`에서 얻은 회원 ID로만 결정한다. client가 `reporterMemberId`를
+  추가해도 저장 기준으로 사용하지 않는다.
+- group row를 transaction에서 잠근 뒤 신고자와 피신고자의
+  `match_group_members(group_id, member_id)` 전체 참여 이력을 모두 확인한다.
+- group이 없거나 신고자가 참여하지 않았거나 피신고자가 참여하지 않은 경우 같은
+  `REPORT_RESOURCE_NOT_FOUND`를 반환해 임의 group ID와 회원 ID 탐색을 막는다.
+- 응답은 report ID, group ID, 피신고자 ID, 구조화 사유, 상태와 생성 시각만 포함한다.
+  reporter ID, 회원 프로필, `detail_encrypted`와 내부 암호화 필드는 반환하지 않는다.
+- 신고 접수 transaction은 report 이외의 회원·매칭 상태를 변경하지 않고
+  WebSocket/application event도 발행하지 않아 피신고자에게 신고 사실과 신고자
+  신원을 노출하지 않는다.
+- 자유 입력 상세는 1차 API에서 받지 않으며, 관리자 조회·처리 API를 구현할 때
+  `detail_encrypted` 접근 권한과 audit 정책을 별도로 확정한다.
+
 ## 관리자 보안
 
 관리자 endpoint는 명시적 admin role이 필요합니다.
@@ -225,6 +242,15 @@ API Key를 코드에 하드코딩하지 않습니다.
 관리자 조치 로그 대상:
 
 - 신고 처리
+- 차단 API는 JWT cookie의 인증 회원만 blocker로 사용하고 request/response에 blocker ID를
+  포함하지 않는다. group과 양쪽 참여 이력 중 하나라도 확인되지 않으면 같은 404를
+  반환한다.
+- 차단 응답은 block ID, blocked member ID, 생성 시각만 포함한다. 내부 reason, 회원
+  개인정보, 양방향 매칭 제외 구현 상세는 반환하지 않는다.
+- 동일 pair 요청은 DB UNIQUE와 `ON CONFLICT DO NOTHING`으로 멱등 처리하며 충돌 후 기존
+  row를 조회한다. update/upsert 갱신으로 기존 생성 시각이나 내부 값을 초기화하지 않는다.
+- 차단 transaction은 상대 알림, WebSocket/event, penalty/cooldown과 회원 점수 변경을
+  수행하지 않는다.
 - 회원 제재
 - 수동 penalty
 - blacklist 변경
@@ -270,3 +296,16 @@ MVP 초기 방향:
 - raw payload, GPS, 이메일, OAuth 식별자, token, penalty/cooldown과 Secret은 반환하지 않습니다.
 - actor의 ID/nickname은 같은 active group의 active member 관계가 query에서 확인된 경우에만 공개합니다.
 - malformed payload 원문을 응답이나 로그에 기록하지 않고 해당 event만 안전하게 제외합니다.
+## 차단 목록 IDOR 방어
+
+- 차단 목록의 `blockerMemberId`는 request body/query/path에서 받지 않고 JWT cookie의
+  `access_token`에서만 결정한다.
+- 조회와 삭제 SQL 모두 인증 회원을 `blocker_member_id`에 고정한다. 삭제 SQL은
+  `blocker_member_id`와 `blocked_member_id`를 함께 조건으로 사용해 타인·역방향 row를 보호한다.
+- 역방향 차단 여부, 다른 회원의 관계, `user_blocks.id`, reason과 삭제 row count는 외부에
+  노출하지 않는다. 없는 row도 같은 `204`로 처리해 존재 여부 추론을 막는다.
+- 해제는 정규화 member-pair advisory transaction lock 뒤 정방향 row만 물리 삭제한다.
+  MVP는 차단 감사 이력을 별도로 저장하지 않으며 상대 알림, 현재 MatchRoom 변경,
+  penalty/cooldown/event와 회원 점수 변경을 수행하지 않는다.
+- 해제로 상대가 후보로 복귀할 수 있다는 사실은 해제한 본인에게만 안내한다. 역방향 차단이
+  남아 있는지 또는 상대가 나를 차단했는지는 목록·DELETE 응답으로 구분할 수 없다.

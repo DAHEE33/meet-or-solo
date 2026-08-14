@@ -3649,3 +3649,232 @@ restriction 정합성 문제가 아니라 Frontend가 초기 `unknown`을 `IDLE`
 렌더링하는 hydration UX 문제입니다. 별도
 `feature/wbs-10-frontend-async-ux-stabilization` 브랜치에서 전체 화면의 최초
 loading, 재조회 상태 유지와 layout shift를 함께 보완합니다.
+
+## 43. MatchRoom 상대 회원 구조화 신고 Backend 1차
+
+### 43.1 API와 권한 계약
+
+```http
+POST /api/match-groups/{groupId}/reports
+Cookie: access_token=<ACCESS_TOKEN>
+Content-Type: application/json
+```
+
+```json
+{
+  "reportedMemberId": 27,
+  "reasonCode": "RUDE"
+}
+```
+
+Controller는 reporter ID를 받지 않고 JWT cookie에서만 계산합니다. Service는 group
+row를 `FOR SHARE`로 잠근 뒤 신고자와 피신고자가 모두 같은 group의
+`match_group_members` 이력을 갖는지 확인합니다. group 또는 어느 참여 관계가 없든
+동일한 `REPORT_RESOURCE_NOT_FOUND`를 반환해 IDOR과 ID 탐색을 방어합니다.
+
+진행 중인 `CONFIRMED`, `IN_PROGRESS`는 신고할 수 있습니다. 종료 group은
+`COMPLETED.completed_at`, `CANCELLED.cancelled_at`부터 30일 이내이며 정확히 30일도
+허용합니다. terminal timestamp 누락은 `updated_at` 같은 임의 시각으로 대체하지
+않고 `REPORT_CONFLICT`로 거절합니다.
+
+### 43.2 응답과 멱등성
+
+신규 생성과 동일 멱등 재요청은 모두 `201 Created`로 같은 resource 계약을 반환합니다.
+
+```json
+{
+  "reportId": 1,
+  "groupId": 10,
+  "reportedMemberId": 27,
+  "reasonCode": "RUDE",
+  "status": "SUBMITTED",
+  "createdAt": "2026-08-12T06:42:00+09:00"
+}
+```
+
+V4의 `(reporter_member_id, reported_member_id, group_id, reason_code)` UNIQUE와
+`INSERT ... ON CONFLICT DO NOTHING`을 함께 사용합니다. conflict 시 기존 row를 다시
+조회하므로 동시 요청도 한 건으로 수렴하고, 이미 `REVIEWING` 등으로 바뀐 status와
+최초 `created_at`을 초기화하지 않습니다.
+
+응답은 reporter ID, 회원 프로필과 `detail_encrypted`를 포함하지 않습니다. 신고
+transaction은 report 외의 penalty/cooldown/member/match event를 변경하지 않으며
+WebSocket과 application event를 발행하지 않습니다.
+
+### 43.3 자동 검증 결과
+
+- 신고 focused PostgreSQL Testcontainers 13건 성공
+- matching 전체 288건 성공
+- backend 전체 360건 성공
+- failure, error, skip 모두 0건
+
+최초 focused 실행의 30일 초과 1건은 나노초 차이가 PostgreSQL `TIMESTAMPTZ`
+정밀도에서 경계로 정규화된 테스트 데이터 문제였습니다. 운영 비교는 유지하고
+경계 밖 fixture를 1초 차이로 수정한 뒤 재실행했습니다. backend 전체 종료 중 이전
+context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한 기존 경고가 있었지만
+Gradle은 `BUILD SUCCESSFUL`로 종료했습니다.
+
+1차 범위에는 Frontend 신고 UI, 차단, 관리자 처리, 자동 penalty/cooldown,
+`manner_temperature`, 자유 입력과 자유 채팅을 포함하지 않습니다. 후속 MatchRoom UI는
+current group의 상대 `memberId`와 이 API를 연결하고, 차단은 신고 성공과 독립된 명시적
+사용자 선택 API로 연결합니다.
+
+## 44. MatchRoom 상대 회원 구조화 신고 Frontend
+
+### 44.1 UI와 API 경계
+
+MatchRoom의 current group snapshot에서 본인을 제외한 각 member 카드에만 신고
+action을 표시합니다. dialog는 여섯 사유 중 하나를 고른 뒤 대상 nickname과 한국어
+사유를 다시 확인해야 제출할 수 있습니다. 자유 입력, 첨부, 채팅과 차단 action은
+포함하지 않습니다.
+
+API client는 current snapshot의 `groupId`와 선택 카드의 `memberId`를 사용해
+`POST /api/match-groups/{groupId}/reports`를 호출합니다. body는
+`reportedMemberId`, `reasonCode`만 포함하며 reporter 정보는 cookie 인증을 사용하는
+Backend에 맡깁니다. 공통 `apiClient`의 `credentials: include`, `ApiResponse` 및
+오류 parsing을 그대로 사용하고 HTTP 201 신규·멱등 응답을 모두 정상 처리합니다.
+
+### 44.2 상태와 비동기 방어
+
+신고 상태는 MatchRoom의 REST/WebSocket snapshot 상태와 분리합니다. 선택 대상·사유,
+사유/확인 단계, submitting, 성공·오류 feedback만 신고 session이 소유합니다.
+submit 함수의 동기 in-flight guard가 같은 promise를 반환해 빠른 이중 클릭도 API 한
+번으로 수렴합니다. dialog 취소, 다른 상대 선택과 unmount는 요청을 abort하고 request
+identity를 갱신하므로 늦은 성공·실패가 새 dialog를 덮어쓰지 않습니다.
+
+성공 시 신고 dialog만 닫고 완료 안내를 표시하며 current group을 재조회하거나
+WebSocket event를 보내지 않습니다. 실패 시 대상·사유·확인 단계와 기존 group
+snapshot을 유지해 재시도합니다. 신고만으로 penalty/cooldown, `penalty_score`,
+`manner_temperature` 또는 차단 상태가 바뀐다고 안내하지 않습니다.
+
+### 44.3 자동·수동 검증
+
+- focused Frontend Vitest: 3 files, 52 tests 성공
+- TypeScript `npx tsc --noEmit`: 성공
+- Frontend 전체 Vitest: 12 files, 137 tests 성공
+- TypeScript/Vite production build 및 PWA `generateSW`: 성공
+- 두 브라우저·dev DB 수동 검증: 실행 전 `PENDING`
+
+수동 절차와 읽기 전용 DB SQL은 `docs/15_MATCH_ROOM_REPORT_MANUAL_TEST.md`에
+분리했습니다. 실제 수행 전에는 PASS로 기록하지 않습니다.
+
+## 45. MatchRoom 상대 회원 차단 Backend 1차
+
+### 45.1 API와 권한 경계
+
+`POST /api/match-groups/{groupId}/blocks`는 `{ "blockedMemberId": 27 }`만 받는다.
+blocker는 `access_token`에서 계산한다. group row를 `FOR SHARE`로 읽은 뒤 양쪽의 전체
+참여 이력을 확인하며, group/참여 불일치는 모두 `BLOCK_RESOURCE_NOT_FOUND`로 통합한다.
+응답은 `blockId`, `blockedMemberId`, `createdAt`만 포함하고 `201 Created`를 사용한다.
+
+### 45.2 멱등 저장과 시간 정책
+
+V3의 pair UNIQUE와 `ON CONFLICT DO NOTHING`을 사용하고, 충돌하면 기존 row를 다시
+조회한다. 다른 group을 통한 반복 요청도 같은 row를 반환하며 기존 생성 시각과 reason을
+갱신하지 않는다. 진행 중 상태와 종료 후 정확히 30일 경계를 허용하고 terminal timestamp
+누락은 거절한다.
+
+### 45.3 proposal race 직렬화
+
+기존 exclusion lock은 check-in pair 수명이라 영구 member block과 같은 key로 직접 재사용할
+수 없다. 대신 같은 SHA-256/두 int advisory transaction lock 패턴을 member pair namespace로
+확장했다. proposal은 pool row lock 뒤 모든 member pair lock을 결정적 순서로 획득하고
+`user_blocks`를 다시 읽은 다음 기존 check-in pair lock을 얻는다. block API는 group share
+lock 뒤 해당 member pair lock을 얻고 insert한다. 양쪽 모두 advisory lock 이후 서로의 row
+lock을 추가로 요구하지 않아 신규 역순 교착 경로를 만들지 않는다.
+
+이 보장은 차단 API와 현재 `MatchProposalCreationService`를 통과하는 proposal 생성 사이에
+적용된다. DB 밖에서 `user_blocks`에 직접 쓰거나 pair lock을 지키지 않는 미래 쓰기 경로는
+보장 대상이 아니므로 모든 후속 차단 쓰기는 같은 service/lock 규칙을 사용해야 한다.
+
+### 45.4 검증 상태
+
+fixture의 두 group이 같은 attempt를 참조해 `uq_match_groups_attempt`와 충돌한 문제를
+고정된 두 번째 attempt와 종료된 첫 group 참여 이력으로 교정했습니다. production 계약과
+migration은 변경하지 않았습니다. `MatchBlockIntegrationTest` 11건,
+`MatchProposalCreationServiceIntegrationTest` 31건과 backend 전체 372건이 모두 성공했습니다.
+
+## 46. MatchRoom 상대 회원 차단 Frontend
+
+### 46.1 UI와 API 경계
+
+본인을 제외한 상대 카드에 신고와 독립된 `차단하기` action을 둡니다. 최종 확인 dialog는
+대상 nickname, 앞으로 서로 매칭되지 않는 효과, 차단 사실과 주체의 상대 비노출 및 현재
+화면에서 해제할 수 없음을 안내합니다. 성공해도 현재 group이나 상대 카드를 제거하지 않습니다.
+차단은 현재 MatchRoom 퇴장이나 group 종료가 아니라 이후 신규 매칭의 양방향 후보 제외입니다.
+신고 역시 접수만으로 현재 상태방을 변경하지 않으며, 두 기능 모두 기존 도착·취소·완료 흐름과
+분리합니다. 성공 안내는 현재 상태방 유지와 다음 매칭부터의 처리 경계를 설명합니다.
+
+API client는 current group snapshot의 `groupId`와 선택 카드의 `memberId`만 사용해
+`POST /api/match-groups/{groupId}/blocks`를 호출합니다. body는 `blockedMemberId`만 포함하고
+공통 `apiClient`의 cookie credentials와 error parsing을 사용합니다. 응답의 `blockId`는
+내부 처리 결과일 뿐 화면에 노출하지 않으며 신규·멱등 HTTP 201을 같은 성공으로 처리합니다.
+
+### 46.2 상태·비동기·접근성
+
+차단 session은 신고 및 MatchRoom REST/WebSocket 상태와 분리합니다. 동기 in-flight guard가
+빠른 이중 제출을 한 Promise로 수렴시키고, dialog 취소·다른 대상 선택·unmount는 진행 요청을
+abort합니다. request identity까지 비교해 이전 요청의 늦은 성공·실패가 새 대상을 덮어쓰지
+않습니다. 실패는 대상과 dialog를 유지하고 성공은 dialog를 닫아 완료 안내만 표시합니다.
+
+dialog는 title과 description을 연결하고 최초 활성 버튼으로 focus를 옮깁니다. `Escape`와
+취소를 지원하고 닫힌 뒤 진입 버튼으로 focus를 복원하며 `Tab`/`Shift+Tab`이 dialog 안에서
+순환합니다. submitting 중에는 닫기·취소·최종 확인을 모두 비활성화합니다.
+
+### 46.3 자동·수동 검증
+
+- API client focused: 1 file, 20 tests 성공
+- 차단 hook focused: 1 file, 4 tests 성공
+- MatchRoomPage focused: 1 file, 36 tests 성공
+- Frontend 전체 Vitest: 13 files, 149 tests 성공
+- `npx tsc --noEmit`: 성공
+- TypeScript/Vite production build 및 PWA `generateSW`: 성공
+- 두 브라우저·dev DB 수동 검증: 차단 생성·멱등성·상대 비노출·자동 제재 미생성과
+  신규 매칭 양방향 제외까지 `PASS`
+
+수동 절차와 읽기 전용 SQL은 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`에 분리했습니다.
+재매칭 제한은 실제 1시간 대기 대신 local dev DB의 대상 완료 group `confirmed_at`을
+과거로 조정해 만료를 재현했으며 차단 row와 후보 제외 결과는 수정하지 않았습니다.
+
+## 47. 회원 본인 차단 목록 조회·해제 Backend 1차
+
+회원 설정용 API는 MatchRoom 차단 생성과 분리해 `/api/members/me/blocks`에 둡니다.
+Controller는 JWT cookie에서 회원 ID를 얻고 request로 blocker ID를 받지 않습니다.
+Repository 조회는 정방향 관계만 회원 프로필과 조인하며 `created_at DESC, id DESC`로
+정렬합니다. DTO는 `blockedMemberId`, `nickname`, `profileImageUrl`, `blockedAt` 네 필드만
+가집니다.
+
+해제는 인증 회원과 path 대상 ID를 모두 조건으로 `user_blocks` row를 물리 삭제합니다.
+Service는 삭제 건수를 분기하거나 반환하지 않으며 기존 row와 없는 row 모두 Controller가
+`204 No Content`로 응답합니다. 이 경계 때문에 타인의 row와 역방향 row는 삭제되지 않고
+상대가 나를 차단했는지 응답 차이로 추론할 수도 없습니다.
+
+해제 transaction은 `user_blocks` 외 테이블을 수정하지 않으며 알림, WebSocket과 match event를
+발행하지 않습니다. focused 단위 테스트와 실제 PostgreSQL Testcontainers 통합 테스트에서
+목록 격리·정렬·필드 제한·인증·멱등 삭제·부수 상태 불변을 검증했습니다. 해제 commit과
+proposal 생성의 race 보강 및 해제 상대의 실제 후보 복귀 통합 검증은 2단계로 남깁니다.
+
+## 48. 차단 해제 동시성·마이페이지 관리 UI
+
+`MemberBlockService.unblock`은 정규화 member pair의 advisory transaction lock을 얻은 뒤
+정방향 `user_blocks` row를 삭제합니다. proposal은 기존처럼 pool row를 먼저 잠근 뒤 모든
+member pair lock을 결정적 순서로 얻으므로 잠금 순서를 바꾸거나 역순 경로를 추가하지 않습니다.
+proposal이 먼저 끝나면 해제가 기존 proposal/group을 변경하지 않고, 해제가 먼저 commit되면
+후속 proposal 최종 차단 조회가 삭제 상태를 관찰합니다. pair lock을 우회한 DB 직접 쓰기는
+보장 범위가 아닙니다.
+
+PostgreSQL 통합 테스트는 동시 멱등 DELETE, 양 requester와 Scheduler batch 후보 복귀,
+proposal 직전 해제 상태, 해제 선행 race 및 기존 block 선행 race를 검증합니다. 후보 복귀는
+차단 조건만 제거하며 cooldown, check-in, active pool/group과 완료 제한은 그대로 적용됩니다.
+
+Frontend는 `/mypage/blocks`에서 정방향 목록의 공개 필드만 표시하고 body 없는 DELETE 204를
+성공 처리합니다. 성공 전 optimistic removal을 하지 않으며 성공한 대상만 제거합니다. 동기
+in-flight guard, AbortController/request identity, dialog action 제한과 focus trap/Escape/focus
+복원/live region을 적용했습니다. 해제 성공은 current MatchRoom REST 재조회나 WebSocket SEND를
+일으키지 않습니다. 실제 수동 검증은 아직 `PENDING`입니다.
+
+자동 검증 결과는 `MemberBlockServiceTest` 2건, `MemberBlockIntegrationTest` 7건,
+`MatchBlockIntegrationTest` 11건, `MatchReportIntegrationTest` 13건,
+`MatchProposalCreationServiceIntegrationTest` 34건과 Backend 전체 384건이 모두 성공했습니다.
+Frontend는 관리 API/hook/UI 및 기존 MatchRoom focused 56건, 전체 17 files/160 tests,
+typecheck와 PWA production build가 성공했습니다.

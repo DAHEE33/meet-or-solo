@@ -297,3 +297,77 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - 동일 check-in에서 exclusion 유지, 새 active check-in에서 과거 exclusion 미적용을 실제 `festival_checkins` unique·FK 제약과 함께 검증한다.
 - advisory lock은 pair 정규화·결정적 정렬 단위 테스트와 exclusion commit/proposal 생성 PostgreSQL race 테스트로 검증한다.
 - 기존 `user_blocks`, cooldown, pool claim/release, response/timeout 동시성 테스트는 재작성하지 않고 전체 matching 회귀로 확인한다.
+
+## MatchRoom 구조화 신고 검증 기준
+
+- mock만으로 끝내지 않고 `pgvector/pgvector:pg16` Testcontainers와 Flyway V1~V18이
+  적용된 실제 PostgreSQL에서 Controller부터 transaction과 UNIQUE까지 검증한다.
+- JWT 회원 ID만 reporter로 저장되는지, 본인 신고와 양측 비참여 및 임의 group ID
+  IDOR이 거절되는지 확인한다.
+- DB CHECK와 같은 여섯 reason code만 허용하고 응답에서 reporter와
+  `detail_encrypted`가 제외되는지 확인한다.
+- 반복 및 동시 동일 요청에서 row가 한 건이고 기존 report status와 생성 시각이
+  초기화되지 않는지 검증한다.
+- 고정 `Clock`으로 종료 30일 직전, 정확한 경계와 초과를 검증하며 PostgreSQL 시간
+  정밀도를 고려해 경계 밖 비교는 안정적인 1초 차이를 사용한다.
+- insert 실패 rollback과 신고 전후 penalty event, cooldown, `penalty_score`,
+  `manner_temperature`, match event 불변을 확인한다.
+- focused 신고 테스트 뒤 matching 전체와 backend 전체 회귀를 순서대로 실행한다.
+- Frontend API 단위 테스트는 URL, POST method, cookie credentials, `groupId`,
+  `reportedMemberId`, `reasonCode`와 `reporterMemberId` 부재를 검증한다. 신규와 멱등
+  응답의 HTTP 201은 모두 같은 성공으로 처리한다.
+- MatchRoom UI 테스트는 본인 action 부재, 여러 상대별 정확한 action, 여섯 한국어
+  사유, 미선택 차단, 최종 확인, SAFETY 안내와 자유 입력·채팅 부재를 검증한다.
+- 신고 상태 테스트는 제출 중 비활성화, 빠른 이중 호출 1회, 실패 후 snapshot을
+  건드리지 않는 재시도, 취소 초기화와 늦은 응답의 새 대상 상태 비덮어쓰기를 검증한다.
+- 신고 성공 뒤 차단 API, current group 재조회와 WebSocket 발행이 없음을 구현 경계와
+  MatchRoom 기존 회귀 테스트로 확인한다.
+
+## MatchRoom 상대 회원 차단 Backend 검증
+
+- `MatchBlockIntegrationTest`는 실제 PostgreSQL에서 정상 차단, 본인 차단, 양쪽 참여
+  권한과 IDOR, 진행/종료 상태와 30일 경계, terminal timestamp 누락을 검증한다.
+- UNIQUE와 `ON CONFLICT DO NOTHING`의 반복·동시 요청 멱등성, 다른 group에서 같은 pair
+  반복, 기존 `created_at`/reason 불변과 실패 rollback을 검증한다.
+- 차단 API 생성 후 requester 양방향 후보 조회와 Scheduler batch pair 제외를 검증하고,
+  기존 `MatchProposalCreationServiceIntegrationTest`에서 proposal 직전 차단 재검증과
+  block commit race를 member-pair advisory lock으로 검증한다.
+- penalty/cooldown/회원 점수와 MatchRoom event 불변, 최소 응답 계약과 내부 정보 비노출을
+  함께 검증한다. 실행 순서는 focused 차단 → matching 전체 → backend 전체다.
+
+## MatchRoom 상대 회원 차단 Frontend 검증
+
+- API client는 current group ID가 포함된 URL, POST와 cookie credentials, body의
+  `blockedMemberId` 단일 필드 및 `blockerMemberId` 부재를 검증한다. 신규·멱등 201을
+  모두 정상 성공으로 처리한다.
+- 차단 session은 동기 이중 제출 1회, submitting 상태, 실패 후 대상 유지와 재시도,
+  취소·대상 변경·unmount abort 및 request identity가 다른 늦은 응답 무시를 검증한다.
+- MatchRoom UI는 본인 action 부재, 3~4인 상대별 정확한 ID, 신고와 독립된 action,
+  대상 nickname과 양방향 제외·비노출·해제 불가 안내, 제출 중 action 차단을 검증한다.
+- 성공·실패 모두 기존 MatchRoom snapshot을 임의 변경하지 않으며 성공 후 상대 카드 유지,
+  신고 API·current group 재조회·WebSocket SEND 부재를 기존 경계와 전체 회귀로 확인한다.
+- 접근 가능한 dialog title/description, `Escape`, focus 복원과 `Tab` 순환을 구현 경계로
+  확인하고 자유 입력·상대 추론·채팅 UI가 추가되지 않았는지 회귀한다.
+## 회원 본인 차단 목록 조회·해제 Backend 검증
+
+- Controller/API는 JWT cookie 미인증 거절, `200` 빈 배열, 공개 필드 제한과 `204` 빈 body를 검증한다.
+- Service는 repository snapshot의 DTO 매핑과 인증 회원/대상 ID 전달을 검증한다.
+- 실제 PostgreSQL Testcontainers에서 정방향 목록만 노출되는지, 역방향·타인 관계 비노출,
+  `blockedAt DESC, id DESC` 정렬과 두 ID 조건의 물리 삭제를 검증한다.
+- 정상·반복 해제를 같은 `204`로 처리하고 row count를 노출하지 않는지 확인한다.
+- 해제 전후 penalty/cooldown/event, 회원 점수와 group membership이 불변인지 확인한다.
+- focused 조회·해제 테스트와 기존 차단 생성·신고 회귀를 실행한다. matching 전체 회귀,
+  proposal 생성 race와 실제 후보 복귀 통합 테스트도 2단계에서 실행한다.
+
+## 차단 해제 동시성·Frontend 관리 검증
+
+- 실제 PostgreSQL Testcontainers의 서로 다른 thread/transaction과 latch를 사용해 동시 DELETE
+  전부 성공·최종 row 0건, 해제 선행 proposal race와 기존 차단 생성 race를 검증한다.
+- 해제 전 requester 양방향 제외, 해제 후 양방향 후보 복귀, Scheduler batch pair 복귀와
+  proposal 직전 최종 상태 반영을 검증한다. sleep, Mockito 대체와 테스트 전용 production
+  분기는 사용하지 않는다.
+- Frontend API는 정확한 path ID, body·`blockerMemberId` 부재와 HTTP 204를 검증한다. hook은
+  loading/빈 목록/오류 재시도, 이중 제출 1회, 실패 유지, 대상별 제거와 늦은 응답 무시를
+  검증한다.
+- 마이페이지 진입과 공개 필드, dialog 정책·접근성, 기존 MatchRoom 신고·차단, current group
+  재조회와 WebSocket SEND 부재를 focused 및 전체 Vitest로 회귀 검증한다.

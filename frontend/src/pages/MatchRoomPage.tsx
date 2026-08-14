@@ -1,21 +1,26 @@
-import { CheckCircle2, Clock3, Loader2, RefreshCw, Users } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { CheckCircle2, Clock3, Flag, Loader2, RefreshCw, ShieldOff, Users, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
   ArrivalMinutesSelection,
   CurrentMatchGroup,
   MatchCancellationReason,
+  MatchReportReasonCode,
 } from '../api/matching';
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 import { useMatchRoom, type MatchRoomState } from '../hooks/useMatchRoom';
+import { useMatchBlock, type MatchBlockState, type MatchBlockTarget } from '../hooks/useMatchBlock';
+import { useMatchReport, type MatchReportState, type MatchReportTarget } from '../hooks/useMatchReport';
 import { formatSeoulDateTime } from '../utils/dateTime';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
   const { state, refresh, selectArrivalTime, arrive, cancelParticipation } = useMatchRoom();
+  const report = useMatchReport();
+  const block = useMatchBlock();
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -35,6 +40,14 @@ export default function MatchRoomPage() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useDialogFocusTrap(
+    report.state.step !== 'CLOSED',
+    report.state.submitting,
+    '[data-report-dialog]',
+    report.close,
+  );
+  useDialogFocusTrap(block.state.open, block.state.submitting, '[data-block-dialog]', block.close);
+
   return (
     <MobileLayout>
       <PageHeader title="매칭 상태방" />
@@ -45,12 +58,83 @@ export default function MatchRoomPage() {
           onSelectArrivalTime={selectArrivalTime}
           onArrive={arrive}
           onCancel={cancelParticipation}
+          reportState={report.state}
+          onOpenReport={report.open}
+          onSelectReportReason={report.selectReason}
+          onConfirmReport={report.confirm}
+          onBackReport={report.back}
+          onCloseReport={report.close}
+          onSubmitReport={(groupId) => report.submit(groupId)}
+          onClearReportSuccess={report.clearSuccess}
+          blockState={block.state}
+          onOpenBlock={block.open}
+          onCloseBlock={block.close}
+          onSubmitBlock={(groupId) => block.submit(groupId)}
+          onClearBlockSuccess={block.clearSuccess}
           nowEpochMs={nowEpochMs}
         />
       </main>
       <ArrivalChangeSnackbar message={state.arrivalChangeNotice} />
     </MobileLayout>
   );
+}
+
+function useDialogFocusTrap(
+  open: boolean,
+  submitting: boolean,
+  selector: string,
+  onClose: () => void,
+) {
+  const submittingRef = useRef(submitting);
+  submittingRef.current = submitting;
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dialog = document.querySelector<HTMLElement>(selector);
+    dialog?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      const focusable = Array.from(
+        dialog?.querySelectorAll<HTMLElement>('button:not(:disabled)') ?? [],
+      );
+      handleDialogKeyDown(
+        event,
+        focusable,
+        document.activeElement instanceof HTMLElement ? document.activeElement : null,
+        submittingRef.current,
+        onClose,
+      );
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [onClose, open, selector]);
+}
+
+export function handleDialogKeyDown(
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
+  focusable: HTMLElement[],
+  activeElement: HTMLElement | null,
+  submitting: boolean,
+  onClose: () => void,
+) {
+  if (event.key === 'Escape') {
+    if (!submitting) onClose();
+    return;
+  }
+  if (event.key !== 'Tab' || focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 export function matchRoomRedirectPath(status: MatchRoomState['status']): string | null {
@@ -63,6 +147,19 @@ export function MatchRoomContent({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  reportState,
+  onOpenReport,
+  onSelectReportReason,
+  onConfirmReport,
+  onBackReport,
+  onCloseReport,
+  onSubmitReport,
+  onClearReportSuccess,
+  blockState,
+  onOpenBlock,
+  onCloseBlock,
+  onSubmitBlock,
+  onClearBlockSuccess,
   nowEpochMs,
 }: {
   state: MatchRoomState;
@@ -70,6 +167,19 @@ export function MatchRoomContent({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive?: () => Promise<boolean>;
   onCancel?: (reason: MatchCancellationReason) => Promise<boolean>;
+  reportState?: MatchReportState;
+  onOpenReport?: (target: MatchReportTarget) => void;
+  onSelectReportReason?: (reason: MatchReportReasonCode) => void;
+  onConfirmReport?: () => void;
+  onBackReport?: () => void;
+  onCloseReport?: () => void;
+  onSubmitReport?: (groupId: number) => Promise<boolean>;
+  onClearReportSuccess?: () => void;
+  blockState?: MatchBlockState;
+  onOpenBlock?: (target: MatchBlockTarget) => void;
+  onCloseBlock?: () => void;
+  onSubmitBlock?: (groupId: number) => Promise<boolean>;
+  onClearBlockSuccess?: () => void;
   nowEpochMs?: number;
 }) {
   if (state.status === 'LOADING' || state.status === 'EMPTY') {
@@ -103,6 +213,19 @@ export function MatchRoomContent({
       onSelectArrivalTime={onSelectArrivalTime}
       onArrive={onArrive ?? (() => Promise.resolve(false))}
       onCancel={onCancel ?? (() => Promise.resolve(false))}
+      reportState={reportState}
+      onOpenReport={onOpenReport}
+      onSelectReportReason={onSelectReportReason}
+      onConfirmReport={onConfirmReport}
+      onBackReport={onBackReport}
+      onCloseReport={onCloseReport}
+      onSubmitReport={onSubmitReport}
+      onClearReportSuccess={onClearReportSuccess}
+      blockState={blockState}
+      onOpenBlock={onOpenBlock}
+      onCloseBlock={onCloseBlock}
+      onSubmitBlock={onSubmitBlock}
+      onClearBlockSuccess={onClearBlockSuccess}
       nowEpochMs={nowEpochMs}
     />
   );
@@ -133,6 +256,19 @@ export function CurrentGroupRoom({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  reportState,
+  onOpenReport,
+  onSelectReportReason,
+  onConfirmReport,
+  onBackReport,
+  onCloseReport,
+  onSubmitReport,
+  onClearReportSuccess,
+  blockState,
+  onOpenBlock,
+  onCloseBlock,
+  onSubmitBlock,
+  onClearBlockSuccess,
   nowEpochMs,
 }: {
   group: CurrentMatchGroup;
@@ -144,6 +280,19 @@ export function CurrentGroupRoom({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive: () => Promise<boolean>;
   onCancel: (reason: MatchCancellationReason) => Promise<boolean>;
+  reportState?: MatchReportState;
+  onOpenReport?: (target: MatchReportTarget) => void;
+  onSelectReportReason?: (reason: MatchReportReasonCode) => void;
+  onConfirmReport?: () => void;
+  onBackReport?: () => void;
+  onCloseReport?: () => void;
+  onSubmitReport?: (groupId: number) => Promise<boolean>;
+  onClearReportSuccess?: () => void;
+  blockState?: MatchBlockState;
+  onOpenBlock?: (target: MatchBlockTarget) => void;
+  onCloseBlock?: () => void;
+  onSubmitBlock?: (groupId: number) => Promise<boolean>;
+  onClearBlockSuccess?: () => void;
   nowEpochMs?: number;
 }) {
   const effectiveNowEpochMs = nowEpochMs ?? Date.parse(group.confirmedAt);
@@ -340,13 +489,39 @@ export function CurrentGroupRoom({
                 {member.nickname.slice(0, 1)}
               </div>
             )}
-            <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="text-[14px] font-semibold text-ink">{member.nickname}</span>
               <span className="text-[12px] text-teal">{memberArrivalText(member)}</span>
               {member.arrivedAt && (
                 <span className="text-[11px] text-ink/50">{formatSeoulDateTime(member.arrivedAt)}</span>
               )}
             </div>
+            {member.memberId !== group.currentMemberId && (onOpenReport || onOpenBlock) && (
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                {onOpenReport && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReport({ memberId: member.memberId, nickname: member.nickname })}
+                    className="rounded-xl px-2 py-2 text-[12px] font-semibold text-ink/55 hover:bg-coral/10 hover:text-coral focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral"
+                    aria-label={`${member.nickname}님 신고하기`}
+                  >
+                    <Flag aria-hidden="true" size={14} className="mr-1 inline" />
+                    신고하기
+                  </button>
+                )}
+                {onOpenBlock && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenBlock({ memberId: member.memberId, nickname: member.nickname })}
+                    className="rounded-xl border border-ink/20 px-2 py-2 text-[12px] font-bold text-ink/70 hover:border-coral hover:bg-coral/10 hover:text-coral focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral"
+                    aria-label={`${member.nickname}님 차단하기`}
+                  >
+                    <ShieldOff aria-hidden="true" size={14} className="mr-1 inline" />
+                    차단하기
+                  </button>
+                )}
+              </div>
+            )}
           </article>
         ))}
       </section>
@@ -391,7 +566,214 @@ export function CurrentGroupRoom({
         </ol>
       </section>
 
+      {reportState?.successMessage && (
+        <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg">
+          <span>{reportState.successMessage}</span>
+          <button type="button" onClick={onClearReportSuccess} className="ml-2 underline">닫기</button>
+        </div>
+      )}
+
+      {blockState?.successMessage && (
+        <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg">
+          <span>{blockState.successMessage}</span>
+          <button type="button" onClick={onClearBlockSuccess} className="ml-2 underline">닫기</button>
+        </div>
+      )}
+
+      {reportState && reportState.step !== 'CLOSED' && reportState.target && (
+        <ReportDialog
+          state={reportState}
+          onSelectReason={onSelectReportReason ?? (() => undefined)}
+          onConfirm={onConfirmReport ?? (() => undefined)}
+          onBack={onBackReport ?? (() => undefined)}
+          onClose={onCloseReport ?? (() => undefined)}
+          onSubmit={() => void onSubmitReport?.(group.groupId)}
+        />
+      )}
+
+      {blockState?.open && blockState.target && (
+        <BlockDialog
+          state={blockState}
+          onClose={onCloseBlock ?? (() => undefined)}
+          onSubmit={() => void onSubmitBlock?.(group.groupId)}
+        />
+      )}
+
     </>
+  );
+}
+
+export function BlockDialog({
+  state,
+  onClose,
+  onSubmit,
+}: {
+  state: MatchBlockState;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  if (!state.open || !state.target) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-5">
+      <section
+        data-block-dialog
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="block-dialog-title"
+        aria-describedby="block-dialog-description"
+        className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-xl sm:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="block-dialog-title" className="text-[18px] font-bold text-ink">
+              {state.target.nickname}님을 차단할까요?
+            </h2>
+            <p id="block-dialog-description" className="mt-1 text-[13px] leading-5 text-ink/60">
+              차단 전에 아래 내용을 확인해주세요.
+            </p>
+          </div>
+          <button type="button" disabled={state.submitting} onClick={onClose} aria-label="차단 창 닫기" className="rounded-full p-2 text-ink/55 disabled:opacity-50">
+            <X aria-hidden="true" size={20} />
+          </button>
+        </div>
+
+        <ul className="mt-5 list-disc space-y-2 rounded-2xl bg-sand/50 py-4 pl-9 pr-4 text-[14px] leading-6 text-ink/75">
+          <li>차단하면 앞으로 서로 매칭되지 않습니다.</li>
+          <li>상대에게 차단 사실이나 누가 차단했는지는 알려지지 않습니다.</li>
+          <li>현재는 이 화면에서 차단을 해제할 수 없습니다.</li>
+        </ul>
+        <p className="mt-3 text-[12px] leading-5 text-ink/55">
+          현재 진행 중인 매칭방과 상대 카드는 그대로 유지됩니다.
+        </p>
+        {state.error && (
+          <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-coral">
+            회원을 차단하지 못했어요. 대상은 유지되며 다시 시도할 수 있어요.
+          </p>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" disabled={state.submitting} onClick={onClose} className="rounded-2xl border border-line px-3 py-3 font-semibold disabled:opacity-50">
+            취소
+          </button>
+          <button type="button" disabled={state.submitting} onClick={onSubmit} className="rounded-2xl bg-coral px-3 py-3 font-bold text-white disabled:opacity-50">
+            {state.submitting ? '차단 중...' : '이 회원 차단하기'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export const REPORT_REASON_OPTIONS: Array<{
+  reasonCode: MatchReportReasonCode;
+  label: string;
+}> = [
+  { reasonCode: 'RUDE', label: '무례한 행동' },
+  { reasonCode: 'SEXUAL_HARASSMENT', label: '성희롱' },
+  { reasonCode: 'NO_SHOW', label: '나타나지 않음' },
+  { reasonCode: 'SCAM', label: '사기 의심' },
+  { reasonCode: 'SAFETY', label: '안전 문제' },
+  { reasonCode: 'OTHER', label: '기타' },
+];
+
+export function ReportDialog({
+  state,
+  onSelectReason,
+  onConfirm,
+  onBack,
+  onClose,
+  onSubmit,
+}: {
+  state: MatchReportState;
+  onSelectReason: (reason: MatchReportReasonCode) => void;
+  onConfirm: () => void;
+  onBack: () => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  if (!state.target || state.step === 'CLOSED') return null;
+  const selectedReason = REPORT_REASON_OPTIONS.find(
+    (option) => option.reasonCode === state.reasonCode,
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 p-0 sm:items-center sm:p-5">
+      <section
+        data-report-dialog
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-dialog-title"
+        className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-xl sm:rounded-3xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="report-dialog-title" className="text-[18px] font-bold text-ink">
+              {state.step === 'REASON' ? '신고 사유를 선택해주세요' : '신고 내용을 확인해주세요'}
+            </h2>
+            <p className="mt-1 text-[13px] text-ink/55">신고 대상: {state.target.nickname}님</p>
+          </div>
+          <button type="button" disabled={state.submitting} onClick={onClose} aria-label="신고 창 닫기" className="rounded-full p-2 text-ink/55 disabled:opacity-50">
+            <X aria-hidden="true" size={20} />
+          </button>
+        </div>
+
+        {state.step === 'REASON' ? (
+          <>
+            <fieldset className="mt-5 grid gap-2">
+              <legend className="sr-only">신고 사유</legend>
+              {REPORT_REASON_OPTIONS.map((option) => (
+                <button
+                  key={option.reasonCode}
+                  type="button"
+                  aria-pressed={state.reasonCode === option.reasonCode}
+                  onClick={() => onSelectReason(option.reasonCode)}
+                  className={`rounded-2xl border px-4 py-3 text-left text-[14px] font-semibold ${state.reasonCode === option.reasonCode ? 'border-coral bg-coral/10 text-coral' : 'border-line text-ink'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </fieldset>
+            {state.reasonCode === 'SAFETY' && (
+              <p role="note" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-ink/70">
+                긴급한 위험이 있다면 신고 접수만 기다리지 말고 112 등 긴급 기관에 연락해주세요.
+              </p>
+            )}
+            <p className="mt-4 text-[12px] leading-5 text-ink/55">
+              신고는 운영 검토 대상이며 접수만으로 제재가 확정되지는 않아요.
+            </p>
+            <button type="button" disabled={!state.reasonCode} onClick={onConfirm} className="mt-4 w-full rounded-2xl bg-coral px-4 py-3 text-[15px] font-bold text-white disabled:opacity-40">
+              다음
+            </button>
+          </>
+        ) : (
+          <>
+            <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 rounded-2xl bg-sand/50 p-4 text-[14px]">
+              <dt className="text-ink/50">신고 대상</dt>
+              <dd className="text-right font-semibold text-ink">{state.target.nickname}님</dd>
+              <dt className="text-ink/50">신고 사유</dt>
+              <dd className="text-right font-semibold text-ink">{selectedReason?.label}</dd>
+            </dl>
+            {state.reasonCode === 'SAFETY' && (
+              <p role="note" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-ink/70">
+                긴급한 위험이 있다면 112 등 긴급 기관에 연락해주세요.
+              </p>
+            )}
+            <p className="mt-4 text-[12px] leading-5 text-ink/55">
+              제출 후 운영자가 내용을 검토하며, 신고 즉시 제재가 확정되지는 않아요.
+            </p>
+            {state.error && (
+              <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-4 py-3 text-[13px] text-coral">
+                신고를 접수하지 못했어요. 잠시 후 다시 시도해주세요.
+              </p>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" disabled={state.submitting} onClick={onBack} className="rounded-2xl border border-line px-3 py-3 font-semibold disabled:opacity-50">이전</button>
+              <button type="button" disabled={state.submitting} onClick={onSubmit} className="rounded-2xl bg-coral px-3 py-3 font-bold text-white disabled:opacity-50">
+                {state.submitting ? '접수 중...' : '신고 접수하기'}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
   );
 }
 

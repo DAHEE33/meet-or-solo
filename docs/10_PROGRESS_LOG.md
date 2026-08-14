@@ -1,5 +1,150 @@
 # 진행 상태 기록
 
+## [10-안전 6차] 차단 해제 동시성·마이페이지 관리 UI
+
+상태: 구현·자동 검증 및 두 브라우저·dev DB 수동 검증 완료
+
+- 해제 DELETE에 차단 생성·proposal 생성과 같은 정규화 member-pair advisory transaction
+  lock을 적용했다. 기존 pool row lock → pair lock 순서는 유지한다.
+- 동시 DELETE 최종 row 0건, 해제 전후 requester 양방향·Scheduler batch 후보 복귀,
+  proposal 직전 및 해제 선행 race와 기존 차단 생성 race를 PostgreSQL 통합 테스트로 보강했다.
+- 마이페이지에 `/mypage/blocks` 진입, 목록 loading/빈 목록/오류 재시도, 최종 확인 dialog와
+  204 성공 뒤 대상 항목만 제거하는 UI를 추가했다.
+- Frontend는 in-flight guard, abort/request identity, 실패 전 optimistic removal 금지,
+  dialog focus/Escape/Tab 순환과 live region을 적용했다. 현재 MatchRoom 재조회와 WebSocket
+  SEND는 추가하지 않았다.
+- migration과 Backend API 계약은 변경하지 않았다. 2026-08-14 두 브라우저·dev DB에서
+  정방향 목록, 역방향 비노출, 해제 후 `user_blocks` 0건, 부수 상태 불변과 신규 매칭
+  후보 복귀를 확인해 `docs/17_MEMBER_BLOCK_MANAGEMENT_MANUAL_TEST.md`를 `PASS`로 마감했다.
+- Backend focused/safety/matching/전체 테스트와 build가 성공했다. 최종 전체 결과는
+  384 tests, failures/errors/skipped 0건이다.
+- Frontend focused 56건, 전체 Vitest 17 files/160 tests, `npx tsc --noEmit`과 PWA
+  production build가 성공했다.
+
+## [10-매칭 후속] Proposal 조기 종료·서버 시각 타이머 동기화
+
+상태: 재현 및 코드 원인 조사 완료, 신규 구현 전
+
+- 최초 proposal에서 한 회원이 `REJECTED`를 제출해도 다른 회원이 응답하거나 만료될 때까지
+  attempt가 끝나지 않아, 이미 성사 불가능한 2인 proposal의 상대가 `TIMEOUT` 2분 cooldown을
+  받는 현상을 확인했다.
+- 같은 종료 화면에서 거절 회원은 약 30초, timeout 회원은 약 2분의 서로 다른 cooldown을
+  표시한다. 이는 단순 countdown 오차가 아니라 서로 다른 귀책 정책 결과이나 사용자에게
+  원인이 설명되지 않아 타이머 불일치처럼 보인다.
+- Frontend countdown은 `expiresAt - Date.now()`로 계산하므로 서로 다른 기기의 로컬 시각
+  편차와 REST 수신 시점 차이를 보정하지 않는다. 동일 proposal의 deadline 일치와 서버 시각
+  offset 기반 countdown을 함께 검증해야 한다.
+- 다음 작업의 상세 인계는 `docs/18_PROPOSAL_TERMINATION_TIMER_SYNC.md`를 기준으로 한다.
+- 권장 브랜치: `fix/wbs-10-b-proposal-termination-timer-sync`
+
+## [10-안전 4차] MatchRoom 상대 회원 차단 Frontend
+
+상태: Frontend 구현·자동 검증 및 차단 생성부터 신규 매칭 양방향 제외까지 수동 검증 완료
+
+- 본인을 제외한 상대 카드에 신고와 독립된 차단 action과 대상 nickname을 포함한 최종
+  확인 dialog를 추가했다. 향후 양방향 매칭 제외, 상대 비노출, 현재 해제 불가를 안내한다.
+- current group의 `groupId`와 카드의 `memberId`를 사용하며 request body에는
+  `blockedMemberId`만 포함한다. blocker identity, 자유 reason과 내부 `blockId`는 표시하지 않는다.
+- 차단 상태는 신고와 MatchRoom snapshot에서 분리했다. 동기 in-flight guard,
+  `AbortController`, request identity로 이중 클릭과 취소·대상 변경·unmount 뒤 늦은 응답을 방어한다.
+- 실패는 대상/dialog와 기존 snapshot을 유지해 재시도한다. 성공은 완료 안내만 표시하며
+  group 종료, 상대 카드 제거, 신고 호출, REST 재조회와 WebSocket SEND를 실행하지 않는다.
+- API focused 20건, 차단 hook focused 4건, MatchRoomPage focused 36건이 성공했다.
+  Frontend 전체 Vitest 13 files 149건, `npx tsc --noEmit`, production build와 PWA
+  `generateSW`도 성공했다.
+- 2026-08-14 두 브라우저와 dev DB에서 차단 생성, 동일 요청 row 1건 유지, 현재
+  MatchRoom과 상대 카드 유지, 상대 비노출 및 penalty/cooldown/event 0건을 확인했다.
+- 신고·차단은 현재 상태방을 종료하거나 참여자를 퇴장시키지 않는다. 신고는 운영 검토,
+  차단은 이후 신규 매칭의 양방향 후보 제외로 처리하며 기존 도착·취소·완료 흐름을 유지한다.
+- local dev DB에서 대상 완료 group의 `confirmed_at`을 과거로 조정해 1시간 재매칭 제한
+  만료를 재현한 뒤 A/B가 다시 같은 매칭으로 묶이지 않음을 확인했다. `user_blocks`나
+  후보 제외 결과는 수정하지 않았으며 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`의 최종
+  수동 판정을 `PASS`로 마감했다.
+
+## [10-안전 3차] MatchRoom 상대 회원 차단 Backend 1차
+
+상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend 연결 완료
+
+- `POST /api/match-groups/{groupId}/blocks`를 추가한다. request는 `blockedMemberId`만
+  계약으로 사용하고 blocker는 JWT cookie의 인증 회원으로 결정한다.
+- 본인 차단을 금지하고 양쪽의 실제 group 참여 이력을 확인한다. group/참여 불일치는
+  같은 404로 통합한다.
+- `CONFIRMED`, `IN_PROGRESS`와 terminal 시각 기준 종료 후 정확히 30일까지 허용한다.
+  terminal timestamp 누락과 기간 초과는 fallback 없이 거절한다.
+- `user_blocks` UNIQUE와 `INSERT ... ON CONFLICT DO NOTHING`을 최종 방어선으로 사용하며,
+  반복·동시·다른 group 요청에도 기존 row snapshot과 `201 Created`를 반환한다.
+- 기존 후보 조회, Scheduler batch 조합, proposal 생성 직전 양방향 차단 제외는 재작성하지
+  않고 회귀 테스트로 연결한다.
+- 차단 생성과 proposal 생성은 정렬된 member pair advisory transaction lock을 공유한다.
+  proposal은 기존 pool row lock 후 member-pair lock을 얻고 block을 재조회하며, 이후 기존
+  check-in-pair exclusion lock을 얻는다. 따라서 차단 transaction이 먼저 lock/commit하면
+  proposal이 차단을 관찰하고, proposal이 먼저 lock을 얻으면 그 proposal transaction이
+  끝난 뒤 차단이 생성된다.
+- Frontend 차단 UI, 차단 해제/관리, 관리자 기능, 신고 후 자동 차단, 상대 알림과 자유
+  사유는 제외한다. Frontend 수동 검증은 `docs/16_MATCH_ROOM_BLOCK_MANUAL_TEST.md`에
+  `PENDING`으로 정리한다.
+- 최초 `MatchBlockIntegrationTest` 11건 중 다른 group 멱등 테스트 1건은 두 group이
+  같은 fixture `attempt_id=9130001`을 사용해 V3 `uq_match_groups_attempt`와 충돌했다.
+  production 경로가 실행되기 전 fixture insert에서 실패한 것으로 확인했다.
+- 해당 테스트는 고정된 두 번째 attempt를 먼저 만들고 첫 group 참여를 종료한 다음
+  두 번째 active group을 생성하도록 수정했다. 이로써 V3/V16의 한 attempt당 group 1개와
+  회원당 active group 1개 제약을 모두 지키며 다른 group 반복 계약을 검증한다.
+- `MatchBlockIntegrationTest` 11건과 `MatchProposalCreationServiceIntegrationTest`가
+  성공했다. backend 전체 테스트 372건도 failure 0, error 0, skipped 0으로 성공했다.
+  전체 종료 중 이전 context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한
+  경고가 있었지만 Gradle 결과에는 영향을 주지 않았다.
+
+## [10-안전 2차] MatchRoom 상대 회원 구조화 신고 Frontend
+
+상태: Frontend 구현 및 자동 검증 완료, 두 브라우저·dev DB 수동 검증 PENDING
+
+- 상대 회원 카드에만 신고 action을 제공하고 여섯 한국어 구조화 사유, 대상·사유
+  최종 확인, 운영 검토 및 SAFETY 긴급 연락 안내를 추가했다.
+- current group snapshot의 `groupId`와 카드의 `memberId`를 사용해
+  `POST /api/match-groups/{groupId}/reports`를 호출하며 reporter ID와 자유 입력은
+  request에 포함하지 않는다.
+- 동기 in-flight guard, `AbortController`와 request identity로 빠른 이중 클릭,
+  dialog 취소 및 다른 상대 선택 뒤 도착한 늦은 응답을 방어한다.
+- 성공은 dialog를 닫고 접수 안내만 표시한다. 실패는 기존 snapshot과 dialog를
+  유지해 재시도하며 차단, 자동 제재, current group 재조회와 WebSocket event를
+  실행하지 않는다.
+- focused Vitest 3 files 52건, Frontend 전체 Vitest 12 files 137건과
+  `npx tsc --noEmit`을 성공했다.
+- `npm run build`의 TypeScript build, Vite production bundle과 PWA `generateSW`
+  산출물 생성을 성공했다.
+- 실제 두 브라우저 및 dev DB 수동 검증은 실행하지 않았으며
+  `docs/15_MATCH_ROOM_REPORT_MANUAL_TEST.md` 기준 `PENDING`이다.
+
+## [10-안전 1차] MatchRoom 상대 회원 구조화 신고 Backend
+
+상태: Backend 구현 및 PostgreSQL 통합·전체 자동 회귀 완료, Frontend·관리자 처리 제외
+
+- `POST /api/match-groups/{groupId}/reports`를 추가하고 reporter는 request가 아니라
+  HttpOnly `access_token`의 인증 회원 ID만 사용한다.
+- request는 `reportedMemberId`, `reasonCode`만 계약으로 사용하며 V4 CHECK와 같은
+  `RUDE`, `SEXUAL_HARASSMENT`, `NO_SHOW`, `SCAM`, `SAFETY`, `OTHER`만 허용한다.
+- group row `FOR SHARE` 뒤 신고자와 피신고자의 전체 참여 이력을 확인해 본인 신고,
+  비참여 회원과 임의 group ID IDOR을 거절한다. 참여·존재 불일치는 동일 404로 숨긴다.
+- 진행 중 `CONFIRMED`·`IN_PROGRESS`는 허용하고, `COMPLETED.completed_at` 또는
+  `CANCELLED.cancelled_at`부터 30일 이내와 정확한 경계를 허용한다. terminal 시각
+  누락은 임의 fallback 없이 conflict로 거절한다.
+- 신규·멱등 재요청 모두 `201 Created`와 같은 report resource snapshot을 반환한다.
+  V4 UNIQUE와 `INSERT ... ON CONFLICT DO NOTHING`으로 반복·동시 요청을 한 건으로
+  수렴시키고 기존 status와 생성 시각을 초기화하지 않는다.
+- 응답은 report ID, group ID, 피신고자 ID, 사유, 상태와 생성 시각만 포함하며
+  reporter, `detail_encrypted`와 회원 개인정보를 노출하지 않는다.
+- 신고 접수는 penalty/cooldown, 회원 점수·매너온도와 match event를 변경하지 않고
+  WebSocket/application event를 발행하지 않는다.
+- 기존 V4 schema와 terminal timestamp로 계약을 충족해 신규 migration은 추가하지 않았다.
+- 최초 focused 13건 중 30일 초과 테스트 1건은 `minusNanos(1)`이 PostgreSQL
+  `TIMESTAMPTZ` 정밀도에서 경계로 정규화되어 실패했다. 경계 밖 값을 1초 차이로
+  고친 뒤 focused 13건이 모두 성공했다.
+- matching 전체 288건과 backend 전체 360건이 failure·error·skip 없이 성공했다.
+  전체 종료 중 이전 context의 닫힌 Testcontainers 연결을 Scheduler/Hikari가 확인한
+  경고가 있었지만 Gradle 결과에는 영향을 주지 않았다.
+- 차단 API/UI, 관리자 신고 처리 API/UI, 자동 제재, manner temperature 변경,
+  자유 입력, Frontend 신고 UI와 자유 채팅은 제외했다.
+
 ## [10-매칭 25차] 명시적 거절 상대의 check-in pair 재추천 제외
 
 상태: 구현·자동 회귀, local DB V18 적용과 최소 수동 검증 완료
@@ -1414,3 +1559,15 @@ feature/wbs-10-b-rematch-opponent-exclusion
 AI 임베딩은 `member_preference_embeddings`와 pgvector 기반만 준비된 상태입니다.
 외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책이 필요하며, 매칭 상태
 정확성·중복 방지·재매칭 정책보다 먼저 구현하지 않습니다.
+## [10-B 안전 후속] 차단 목록 조회·해제 Backend 1차
+
+상태: 기본 API·정책·자동 테스트 구현 완료
+
+- `GET /api/members/me/blocks`, `DELETE /api/members/me/blocks/{blockedMemberId}`를 추가했다.
+- JWT cookie 회원을 blocker로 고정하고 정방향 목록만 최소 프로필과 함께 반환한다.
+- 목록은 `blocked_at DESC, user_blocks.id DESC`, 빈 목록은 `200`과 빈 배열이다.
+- 해제는 두 member ID를 조건으로 물리 삭제하며 존재 여부와 무관하게 body 없는 `204`이다.
+- 타인·역방향 관계, 내부 block ID/reason/삭제 건수는 노출하거나 삭제하지 않는다.
+- penalty/cooldown/event/회원 점수/group 상태는 변경하지 않으며 migration은 변경하지 않았다.
+- Controller/DTO/Service/Repository 경계와 실제 PostgreSQL Testcontainers focused 테스트를 추가했다.
+- proposal 생성 race 보강, matching 전체 회귀와 실제 후보 복귀 통합 검증은 2단계로 남긴다.
