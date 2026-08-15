@@ -1,26 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
 import { ApiClientError } from '../api/apiClient';
-import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
+import type { CurrentMatchGroup, MatchingRestriction, MatchTerminationReason } from '../api/matching';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
 import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
 import { formatSeoulDateTime } from '../utils/dateTime';
+import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverClock';
 
-function useCountdown(deadlineIso?: string | null) {
+function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
   const [remaining, setRemaining] = useState(0);
+  const previousRef = useRef<{ deadlineKey: string; seconds: number } | null>(null);
   useEffect(() => {
     if (!deadlineIso) {
+      previousRef.current = null;
       setRemaining(0);
       return;
     }
-    const tick = () => setRemaining(countdownSeconds(deadlineIso));
+    const key = deadlineKey ?? deadlineIso;
+    const tick = () => {
+      const next = stabilizeRemainingSeconds(
+        previousRef.current,
+        key,
+        remainingSeconds(deadlineIso, serverOffsetMs),
+      );
+      previousRef.current = { deadlineKey: key, seconds: next };
+      setRemaining(next);
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [deadlineIso]);
+  }, [deadlineIso, deadlineKey, serverOffsetMs]);
   return remaining;
 }
 
@@ -92,6 +104,7 @@ export default function MatchingConditionPage() {
     beginRetry,
     enterPool,
     respond,
+    serverOffsetMs,
   } = useMatchingSession();
   const terminalPoolFestivalId =
     isRetryFormOpen
@@ -107,10 +120,14 @@ export default function MatchingConditionPage() {
       : undefined;
   const cooldownDeadline = state.restriction?.cooldown.active ? state.restriction.cooldown.expiresAt : undefined;
   const completionDeadline = state.restriction?.completionLock.expiresAt;
-  const searchRemaining = useCountdown(searchDeadline);
-  const responseRemaining = useCountdown(proposalDeadline);
-  const cooldownRemaining = useCountdown(cooldownDeadline);
-  const completionRemaining = useCountdown(completionDeadline);
+  const searchRemaining = useCountdown(searchDeadline, serverOffsetMs, `search:${state.pool?.poolId ?? ''}:${searchDeadline ?? ''}`);
+  const responseRemaining = useCountdown(
+    proposalDeadline,
+    serverOffsetMs,
+    `proposal:${state.proposal?.attemptId ?? ''}:${state.proposal?.proposalRound ?? ''}:${proposalDeadline ?? ''}`,
+  );
+  const cooldownRemaining = useCountdown(cooldownDeadline, serverOffsetMs, `cooldown:${cooldownDeadline ?? ''}`);
+  const completionRemaining = useCountdown(completionDeadline, serverOffsetMs, `completion:${completionDeadline ?? ''}`);
 
   useEffect(() => {
     if (readMatchRoomNotice(location.state) === null) return;
@@ -179,6 +196,7 @@ export default function MatchingConditionPage() {
           responseRemaining={responseRemaining}
           cooldownRemaining={cooldownRemaining}
           cooldownActive={cooldownActive}
+          terminationReason={state.pool?.terminationReason ?? null}
           completionLock={state.restriction?.completionLock ?? null}
           completionRemaining={completionRemaining}
           setGroupSize={setGroupSize}
@@ -212,6 +230,7 @@ interface MatchBodyProps {
   responseRemaining: number;
   cooldownRemaining: number;
   cooldownActive: boolean;
+  terminationReason?: MatchTerminationReason | null;
   completionLock: MatchingRestriction['completionLock'] | null;
   completionRemaining: number;
   setGroupSize: (size: 2 | 3 | 4) => void;
@@ -277,12 +296,12 @@ export function MatchBody(props: MatchBodyProps) {
     );
   }
   if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COOLDOWN') {
-    const reason =
-      status === 'COOLDOWN'
+    const reason = terminationMessage(props.terminationReason ?? null)
+      ?? (status === 'COOLDOWN'
         ? '잠시 후 다시 매칭을 신청할 수 있어요'
         : status === 'EXPIRED'
-          ? '응답 시간이 만료됐어요'
-          : '매칭이 취소됐어요';
+          ? '이번 매칭을 진행할 수 없어요.'
+          : '이번 매칭을 진행할 수 없어요.');
     return (
       <CancelledCard
         reason={reason}
@@ -306,6 +325,16 @@ export function MatchBody(props: MatchBodyProps) {
 
 export function countdownSeconds(deadlineIso: string, nowMs = Date.now()): number {
   return Math.max(0, Math.ceil((new Date(deadlineIso).getTime() - nowMs) / 1000));
+}
+
+export function terminationMessage(reason: MatchTerminationReason | null): string | null {
+  switch (reason) {
+    case 'SELF_REJECTED': return '매칭 제안을 거절했어요.';
+    case 'NON_FAULT_TERMINATED': return '이번 매칭을 진행할 수 없어 종료됐어요.';
+    case 'SELF_TIMEOUT': return '응답 시간이 지나 매칭이 종료됐어요.';
+    case 'SYSTEM_TERMINATED': return '이번 매칭을 진행할 수 없어요.';
+    default: return null;
+  }
 }
 
 function CompletedCard({

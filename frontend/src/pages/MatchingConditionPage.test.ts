@@ -51,6 +51,7 @@ describe('resolveFestivalId', () => {
 
 const restriction = (active = false): MatchingRestriction => ({
   penaltyScore: 0,
+  serverNow: '2026-07-27T12:00:00+09:00',
   cooldown: {
     active,
     reason: active ? 'REJECTED_PROPOSAL' : null,
@@ -127,6 +128,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     responseRemaining: 0,
     cooldownRemaining: 0,
     cooldownActive: false,
+    terminationReason: null,
     completionLock: null,
     completionRemaining: 0,
     setGroupSize: vi.fn(),
@@ -280,6 +282,34 @@ describe('terminal retry form', () => {
       (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
     );
     expect(retryButton?.props.disabled).toBe(true);
+  });
+
+  it.each([
+    ['SELF_REJECTED', '매칭 제안을 거절했어요.'],
+    ['NON_FAULT_TERMINATED', '이번 매칭을 진행할 수 없어 종료됐어요.'],
+    ['SELF_TIMEOUT', '응답 시간이 지나 매칭이 종료됐어요.'],
+    ['SYSTEM_TERMINATED', '이번 매칭을 진행할 수 없어요.'],
+  ] as const)('%s 종료 문구를 개인정보 없이 표시한다', (terminationReason, message) => {
+    const tree = renderNode(MatchBody(bodyProps({ terminationReason })));
+    expect(text(tree)).toContain(message);
+  });
+
+  it('비귀책 종료는 cooldown을 표시하지 않고 즉시 재신청할 수 있다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ terminationReason: 'NON_FAULT_TERMINATED' })));
+    const retryButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
+    );
+    expect(text(tree)).not.toContain('후 재신청 가능');
+    expect(retryButton?.props.disabled).toBe(false);
+  });
+
+  it('직접 거절은 REJECT cooldown countdown을 표시한다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      terminationReason: 'SELF_REJECTED',
+      cooldownActive: true,
+      cooldownRemaining: 30,
+    })));
+    expect(text(tree)).toContain('0:30 후 재신청 가능');
   });
 
   it('유효 체크인 오류는 일반 연결 오류 대신 체크인 안내를 표시한다', () => {

@@ -28,7 +28,14 @@ export type MatchPool = {
   status: MatchPoolStatus;
   enteredAt: string;
   searchExpiresAt: string;
+  terminationReason: MatchTerminationReason | null;
 };
+
+export type MatchTerminationReason =
+  | 'SELF_REJECTED'
+  | 'NON_FAULT_TERMINATED'
+  | 'SELF_TIMEOUT'
+  | 'SYSTEM_TERMINATED';
 
 export type ActiveMatchProposal = {
   proposalId: number;
@@ -51,6 +58,7 @@ export type MatchProposalActionResponse = {
 
 export type MatchingRestriction = {
   penaltyScore: number;
+  serverNow: string;
   cooldown: {
     active: boolean;
     reason: string | null;

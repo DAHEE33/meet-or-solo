@@ -8,7 +8,8 @@ import java.time.OffsetDateTime;
 public record MatchingRestrictionResponse(
         int penaltyScore,
         CooldownResponse cooldown,
-        CompletionLockResponse completionLock
+        CompletionLockResponse completionLock,
+        OffsetDateTime serverNow
 ) {
     public static MatchingRestrictionResponse of(
             int penaltyScore,
@@ -19,7 +20,8 @@ public record MatchingRestrictionResponse(
         return new MatchingRestrictionResponse(
                 penaltyScore,
                 cooldown == null ? CooldownResponse.inactive() : activeCooldown(cooldown, now),
-                CompletionLockResponse.from(completionLock)
+                CompletionLockResponse.from(completionLock),
+                now
         );
     }
 

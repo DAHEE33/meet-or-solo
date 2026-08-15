@@ -100,7 +100,7 @@ class MatchingControllerTest {
         OffsetDateTime now = OffsetDateTime.parse("2026-07-23T15:00:00+09:00");
         MatchPoolEntryRequest request = new MatchPoolEntryRequest(10L, 2, false, List.of());
         MatchPoolResponse response = new MatchPoolResponse(
-                30L, 10L, 2, false, List.of(), "WAITING", now, now.plusSeconds(60));
+                30L, 10L, 2, false, List.of(), "WAITING", now, now.plusSeconds(60), null);
         when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
         when(poolEntries.enter(20L, request)).thenReturn(response);
 
@@ -142,7 +142,8 @@ class MatchingControllerTest {
                 0,
                 new MatchingRestrictionResponse.CooldownResponse(false, null, null, null, 0),
                 new MatchingRestrictionResponse.CompletionLockResponse(
-                        true, "MATCH_VALIDITY", 24L, startsAt, startsAt.plusHours(1), 1_200)
+                        true, "MATCH_VALIDITY", 24L, startsAt, startsAt.plusHours(1), 1_200),
+                startsAt.plusMinutes(40)
         ));
 
         mockMvc.perform(get("/api/matching/me/restrictions")
@@ -152,7 +153,8 @@ class MatchingControllerTest {
                 .andExpect(jsonPath("$.data.completionLock.active").value(true))
                 .andExpect(jsonPath("$.data.completionLock.reason").value("MATCH_VALIDITY"))
                 .andExpect(jsonPath("$.data.completionLock.groupId").value(24))
-                .andExpect(jsonPath("$.data.completionLock.remainingSeconds").value(1_200));
+                .andExpect(jsonPath("$.data.completionLock.remainingSeconds").value(1_200))
+                .andExpect(jsonPath("$.data.serverNow").value("2026-08-10T12:40:00+09:00"));
     }
 
     @Test

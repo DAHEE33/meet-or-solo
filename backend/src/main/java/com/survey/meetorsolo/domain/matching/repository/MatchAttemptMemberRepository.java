@@ -11,4 +11,5 @@ public interface MatchAttemptMemberRepository extends JpaRepository<MatchAttempt
     @Query(value="SELECT * FROM match_attempt_members WHERE attempt_id=:attemptId AND member_id=:memberId FOR UPDATE", nativeQuery=true)
     Optional<MatchAttemptMember> findForUpdate(@Param("attemptId") long attemptId, @Param("memberId") long memberId);
     List<MatchAttemptMember> findAllByAttemptIdOrderByIdAsc(long attemptId);
+    Optional<MatchAttemptMember> findFirstByPoolIdOrderByIdDesc(long poolId);
 }

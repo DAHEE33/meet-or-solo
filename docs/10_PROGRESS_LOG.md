@@ -23,7 +23,7 @@
 
 ## [10-매칭 후속] Proposal 조기 종료·서버 시각 타이머 동기화
 
-상태: 재현 및 코드 원인 조사 완료, 신규 구현 전
+상태: 구현·Backend/Frontend 자동 검증 및 두 브라우저 핵심 수동 검증 완료
 
 - 최초 proposal에서 한 회원이 `REJECTED`를 제출해도 다른 회원이 응답하거나 만료될 때까지
   attempt가 끝나지 않아, 이미 성사 불가능한 2인 proposal의 상대가 `TIMEOUT` 2분 cooldown을
@@ -34,8 +34,38 @@
 - Frontend countdown은 `expiresAt - Date.now()`로 계산하므로 서로 다른 기기의 로컬 시각
   편차와 REST 수신 시점 차이를 보정하지 않는다. 동일 proposal의 deadline 일치와 서버 시각
   offset 기반 countdown을 함께 검증해야 한다.
-- 다음 작업의 상세 인계는 `docs/18_PROPOSAL_TERMINATION_TIMER_SYNC.md`를 기준으로 한다.
-- 권장 브랜치: `fix/wbs-10-b-proposal-termination-timer-sync`
+- 2인 거절은 같은 transaction에서 attempt를 즉시 실패시키고 미응답 proposal/member를
+  `EXPIRED`/`EXCLUDED`로 비귀책 종료한다. 거절자에게만 기존 exclusion과 30초 cooldown을
+  적용하며 비귀책 pool은 검색 시각 경계에 따라 `WAITING` 또는 `EXPIRED`로 복귀한다.
+- 3~4인은 목표 인원 가능성, 최소 2인 가능성과 확정 여부를 응답마다 계산한다. 목표가
+  불가능해진 뒤 최소 2명 수락과 전원 허용이 확정되면 미응답자를 비귀책 종료하고 round 2로
+  즉시 전환한다. 수락자 중 `allowMinimumTwo=false`가 있거나 두 가능성이 모두 사라지면 즉시
+  실패한다.
+- 최신 pool 응답에 개인정보 없는 회원별 `terminationReason` 네 값을 추가했고 restriction에
+  동일 Backend `Clock`의 `serverNow`를 추가했다. migration은 추가하지 않았다.
+- Frontend는 `serverClock.ts`에서 offset·보정 현재 시각·남은 초·동일 deadline의 역방향 점프
+  억제를 계산한다. round/deadline key가 바뀌면 실제 연장을 반영하며 0초에는 REST refresh만
+  수행한다. WebSocket은 계속 REST refresh trigger로만 사용한다.
+- 최종 검토에서 Controller의 `serverNow` JSON 직렬화 기대값과 PostgreSQL 통합 테스트의
+  `allowMinimumTwo` fixture 전제가 실제 설정과 다른 두 곳을 바로잡았다. 운영 코드는 추가로
+  변경하지 않았다.
+- WSL `/mnt/c`는 `9p`/DrvFS bind mount이고 Windows C: 여유 공간이 약 6.3GB(98% 사용)인
+  상태였다. Gradle output repository의 고빈도 metadata 쓰기에서 발생한 `Input/output error`는
+  권한이나 구현 결함이 아니라 이 조합의 파일시스템 오류로 진단했다.
+- 저장소의 `build`/`.gradle`을 삭제하거나 초기화하지 않고 Backend source를 `/tmp`의 새 Linux
+  filesystem 작업 디렉터리로 `rsync`한 뒤 Docker Gradle JDK 17과 disposable PostgreSQL
+  Testcontainers로 검증했다. matching focused는 37 suites/294 tests, Backend 전체는
+  59 suites/386 tests이며 failures/errors/skipped 0건으로 통과했다.
+- Frontend 전체 Vitest 18 files/170 tests, `npx tsc --noEmit`, production/PWA build의 기존
+  성공 결과를 유지한다. 이번 최종 검증에서는 Frontend 코드를 변경하지 않아 재실행하지 않았다.
+- `docs/05_MATCHING_POLICY.md`의 기존 round 1 전체 terminal 집계와 cooldown 시작 설명을
+  최신 조기 종료 정책 및 실제 구현과 일치하도록 정리했다.
+- 2026-08-15 두 브라우저에서 2인 proposal 거절 직후 양쪽 terminal 전환, 거절자의 30초
+  cooldown, 비귀책 상대의 cooldown 미표시와 상대 identity 비노출을 확인했다. dev DB
+  읽기 전용 조회에서도 거절자만 `REJECTED` response와 cooldown 1건이 있고 비귀책 상대는
+  proposal/member `EXPIRED`/`EXCLUDED`, response·penalty·cooldown 0건임을 확인했다.
+- 새로고침과 탭 비활성화·복귀 뒤 상태·countdown 복원을 확인했다. WebSocket 강제 차단과
+  client clock 강제 편차 수동 주입은 실행하지 않고 통과한 Frontend 자동 테스트로 대체했다.
 
 ## [10-안전 4차] MatchRoom 상대 회원 차단 Frontend
 

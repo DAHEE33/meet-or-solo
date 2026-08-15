@@ -49,27 +49,27 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(status("match_attempt_members",attempt,9110002)).isEqualTo("ACCEPTED");
     }
 
-    @Test void 거절이_있어도_round1_전체_terminal까지_기다린_뒤_실패한다() {
+    @Test void 목표와_최소인원이_불가능해지면_미응답자를_비귀책_종료하고_즉시_실패한다() {
         long attempt=prepare(3,NOW.plusMinutes(1));
+        disableMinimumTwo(9120002L,9120006L,9120010L);
         long accepted=proposal(attempt,9110002); service.respond(accepted,9110002,"ACCEPTED",RESPONSE_AT);
         long rejected=proposal(attempt,9110006); service.respond(rejected,9110006,"REJECTED",RESPONSE_AT.plusSeconds(1));
-        assertThat(attemptStatus(attempt)).isEqualTo("WAITING_RESPONSES");
-        service.respond(proposal(attempt,9110010),9110010,"REJECTED",RESPONSE_AT.plusSeconds(2));
         assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
-        assertThat(status("match_proposals",attempt,9110010)).isEqualTo("REJECTED");
-        assertThat(status("match_attempt_members",attempt,9110010)).isEqualTo("REJECTED");
+        assertThat(status("match_proposals",attempt,9110010)).isEqualTo("EXPIRED");
+        assertThat(status("match_attempt_members",attempt,9110010)).isEqualTo("EXCLUDED");
         assertPool(9120006,"CANCELLED",NOW.plusMinutes(1));
         assertPool(9120002,"WAITING",NOW.plusMinutes(1));
-        assertPool(9120010,"CANCELLED",NOW.plusMinutes(1));
-        assertCooldown(rejected,9110006,"REJECT",RESPONSE_AT.plusSeconds(2),Duration.ofSeconds(30));
-        assertCooldown(proposal(attempt,9110010),9110010,"REJECT",RESPONSE_AT.plusSeconds(2),Duration.ofSeconds(30));
+        assertPool(9120010,"WAITING",NOW.plusMinutes(1));
+        assertCooldown(rejected,9110006,"REJECT",RESPONSE_AT.plusSeconds(1),Duration.ofSeconds(30));
+        assertThat(count("match_cooldowns","member_id",9110010)).isZero();
+        assertThat(count("match_penalty_events","member_id",9110010)).isZero();
         assertThat(penaltyScore(9110006)).isZero();
         assertThat(penaltyScore(9110010)).isZero();
         assertThat(jdbc.queryForList("""
                 SELECT lower_member_id,higher_member_id,lower_checkin_id,higher_checkin_id,rejected_by_member_id
                 FROM match_opponent_exclusions ORDER BY lower_member_id,higher_member_id
                 """))
-                .hasSize(3);
+                .hasSize(2);
     }
 
     @Test void 두명_proposal의_명시적_REJECT는_checkin_pair_exclusion을_한건_생성하고_반복은_멱등하다() {
@@ -90,6 +90,14 @@ class MatchProposalResponseServiceIntegrationTest {
                 .containsEntry("rejected_by_member_id",9110002L)
                 .containsEntry("source_proposal_id",rejected);
         assertThat(count("match_opponent_exclusions","source_proposal_id",rejected)).isOne();
+        assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
+        assertThat(status("match_proposals",attempt,9110006)).isEqualTo("EXPIRED");
+        assertThat(status("match_attempt_members",attempt,9110006)).isEqualTo("EXCLUDED");
+        assertCooldown(rejected,9110002,"REJECT",RESPONSE_AT,Duration.ofSeconds(30));
+        assertThat(count("match_cooldowns","member_id",9110006)).isZero();
+        assertThat(count("match_penalty_events","member_id",9110006)).isZero();
+        assertPool(9120002,"CANCELLED",NOW.plusMinutes(1));
+        assertPool(9120006,"WAITING",NOW.plusMinutes(1));
     }
 
     @Test void 세명_proposal에서_A_REJECT는_A_B와_A_C만_생성한다() {
@@ -108,7 +116,6 @@ class MatchProposalResponseServiceIntegrationTest {
     @Test void 비귀책_pool이_만료됐으면_EXPIRED이며_search_expires_at을_연장하지_않는다() {
         long attempt=prepare(2,NOW.plusSeconds(5)); long rejected=proposal(attempt,9110002);
         service.respond(rejected,9110002,"REJECTED",RESPONSE_AT);
-        service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT);
         assertPool(9120002,"CANCELLED",NOW.plusSeconds(5));
         assertPool(9120006,"EXPIRED",NOW.plusSeconds(5));
     }
@@ -116,10 +123,10 @@ class MatchProposalResponseServiceIntegrationTest {
     @Test void expires_at과_같은_응답은_TIMEOUT으로_처리한다() {
         long attempt=prepare(2,NOW.plusMinutes(1)); long proposal=proposal(attempt,9110002);
         var result=service.respond(proposal,9110002,"ACCEPTED",NOW.plusSeconds(30));
-        assertThat(result.response()).isEqualTo("TIMEOUT"); assertThat(attemptStatus(attempt)).isEqualTo("WAITING_RESPONSES");
-        service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",NOW.plusSeconds(29));
+        assertThat(result.response()).isEqualTo("TIMEOUT");
         assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
         assertResponse(proposal,attempt,9110002,"TIMEOUT",NOW.plusSeconds(30));
+        assertThat(status("match_attempt_members",attempt,9110006)).isEqualTo("EXCLUDED");
         assertPool(9120002,"CANCELLED",NOW.plusMinutes(1)); assertPool(9120006,"WAITING",NOW.plusMinutes(1));
         assertCooldown(proposal,9110002,"TIMEOUT",NOW.plusSeconds(30),Duration.ofMinutes(2));
         assertPenalty(proposal,9110002,"TIMEOUT",1,"ROUND_1_TIMEOUT",NOW.plusSeconds(30));
@@ -130,11 +137,11 @@ class MatchProposalResponseServiceIntegrationTest {
         var first=service.timeoutAttempt(attempt,NOW.plusSeconds(30));
         var second=service.timeoutAttempt(attempt,NOW.plusSeconds(31));
         var third=service.timeoutAttempt(attempt,NOW.plusSeconds(32));
-        assertThat(first.response()).isEqualTo("TIMEOUT"); assertThat(second.response()).isEqualTo("TIMEOUT");
-        assertThat(third).isNull(); assertThat(count("match_responses","attempt_id",attempt)).isEqualTo(2);
+        assertThat(first.response()).isEqualTo("TIMEOUT"); assertThat(second).isNull();
+        assertThat(third).isNull(); assertThat(count("match_responses","attempt_id",attempt)).isOne();
         assertThat(count("match_cooldowns","member_id",9110002)).isOne();
-        assertThat(count("match_cooldowns","member_id",9110006)).isOne();
-        assertThat(count("match_penalty_events","related_attempt_id",attempt)).isEqualTo(2);
+        assertThat(count("match_cooldowns","member_id",9110006)).isZero();
+        assertThat(count("match_penalty_events","related_attempt_id",attempt)).isOne();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_opponent_exclusions",Integer.class)).isZero();
     }
 
@@ -208,6 +215,9 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(attemptStatus(attempt)).isEqualTo("INSUFFICIENT_MEMBERS");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_round=2",Integer.class,attempt)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_round=2 AND proposal_type='INSUFFICIENT_MEMBERS_CONFIRMATION' AND status='SENT'",Integer.class,attempt)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(DISTINCT expires_at) FROM match_proposals WHERE attempt_id=? AND proposal_round=2",
+                Integer.class,attempt)).isOne();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND member_id=9110010 AND proposal_round=2",Integer.class,attempt)).isZero();
         assertPool(9120010,"CANCELLED",NOW.plusMinutes(1));
         assertThat(jdbc.queryForObject("SELECT expires_at FROM match_attempts WHERE id=?",OffsetDateTime.class,attempt))
@@ -217,9 +227,12 @@ class MatchProposalResponseServiceIntegrationTest {
     @Test void 네명_목표에서_두명이나_세명_수락도_round2에_진입한다() {
         long twoAccepted=prepare(List.of(9120002L,9120006L,9120010L,9120011L),NOW.plusMinutes(1));
         enableMinimumTwo(9120002L,9120006L);
-        respondInitial(twoAccepted,List.of(9110002L,9110006L),List.of(9110010L,9110011L));
+        service.respond(proposal(twoAccepted,9110002),9110002,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(twoAccepted,9110006),9110006,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(twoAccepted,9110010),9110010,"REJECTED",RESPONSE_AT.plusSeconds(1));
         assertThat(attemptStatus(twoAccepted)).isEqualTo("INSUFFICIENT_MEMBERS");
         assertThat(roundTwoCount(twoAccepted)).isEqualTo(2);
+        assertThat(status("match_attempt_members",twoAccepted,9110011)).isEqualTo("EXCLUDED");
 
         resetFoundation();
         long threeAccepted=prepare(List.of(9120002L,9120006L,9120010L,9120011L),NOW.plusMinutes(1));
@@ -231,13 +244,30 @@ class MatchProposalResponseServiceIntegrationTest {
 
     @Test void 수락자가_한명이거나_allowMinimumTwo_false를_포함하면_round2없이_실패한다() {
         long oneAccepted=prepare(3,NOW.plusMinutes(1)); enableMinimumTwo(9120002L);
-        respondInitial(oneAccepted,List.of(9110002L),List.of(9110006L,9110010L));
+        disableMinimumTwo(9120010L);
+        service.respond(proposal(oneAccepted,9110002),9110002,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(oneAccepted,9110006),9110006,"REJECTED",RESPONSE_AT.plusSeconds(1));
         assertThat(attemptStatus(oneAccepted)).isEqualTo("FAILED"); assertThat(roundTwoCount(oneAccepted)).isZero();
 
         resetFoundation();
         long disallowed=prepare(3,NOW.plusMinutes(1)); enableMinimumTwo(9120002L);
-        respondInitial(disallowed,List.of(9110002L,9110006L),List.of(9110010L));
+        service.respond(proposal(disallowed,9110002),9110002,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(disallowed,9110006),9110006,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(disallowed,9110010),9110010,"REJECTED",RESPONSE_AT.plusSeconds(1));
         assertThat(attemptStatus(disallowed)).isEqualTo("FAILED"); assertThat(roundTwoCount(disallowed)).isZero();
+    }
+
+    @Test void 목표는_불가능하지만_최소2인_가능성이_남으면_필요한_응답을_기다린다() {
+        long attempt=prepare(4,NOW.plusMinutes(1));
+        enableMinimumTwo(9120002L,9120006L,9120010L);
+        service.respond(proposal(attempt,9110002),9110002,"ACCEPTED",RESPONSE_AT);
+        service.respond(proposal(attempt,9110011),9110011,"REJECTED",RESPONSE_AT.plusSeconds(1));
+
+        assertThat(attemptStatus(attempt)).isEqualTo("WAITING_RESPONSES");
+        service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT.plusSeconds(2));
+        assertThat(attemptStatus(attempt)).isEqualTo("INSUFFICIENT_MEMBERS");
+        assertThat(status("match_attempt_members",attempt,9110010)).isEqualTo("EXCLUDED");
+        assertThat(roundTwoCount(attempt)).isEqualTo(2);
     }
 
     @Test void round2_전원_진행_동의는_실제_2명으로_group을_확정한다() {
@@ -362,12 +392,11 @@ class MatchProposalResponseServiceIntegrationTest {
                 """,NOW.minusMinutes(2),NOW.minusMinutes(1));
 
         service.respond(rejected,9110002,"REJECTED",RESPONSE_AT);
-        service.respond(proposal(attempt,9110006),9110006,"ACCEPTED",RESPONSE_AT.plusSeconds(1));
 
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM match_cooldowns WHERE member_id=9110002 AND status='EXPIRED'",
                 Integer.class)).isOne();
-        assertCooldown(rejected,9110002,"REJECT",RESPONSE_AT.plusSeconds(1),Duration.ofSeconds(30));
+        assertCooldown(rejected,9110002,"REJECT",RESPONSE_AT,Duration.ofSeconds(30));
     }
 
     @Test void 마지막_두_회원_동시_수락에도_group은_한개다() throws Exception {
@@ -420,7 +449,7 @@ class MatchProposalResponseServiceIntegrationTest {
                 "SELECT response FROM match_responses WHERE proposal_id=?", String.class, proposal);
         assertThat(count("match_opponent_exclusions","source_proposal_id",proposal))
                 .isEqualTo("REJECTED".equals(savedResponse) ? 1 : 0);
-        assertThat(attemptStatus(attempt)).isIn("WAITING_RESPONSES","FAILED");
+        assertThat(attemptStatus(attempt)).isEqualTo("FAILED");
         assertThat(count("match_cooldowns","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
         assertThat(count("match_penalty_events","related_proposal_id",proposal)).isLessThanOrEqualTo(1);
     }
@@ -430,7 +459,7 @@ class MatchProposalResponseServiceIntegrationTest {
         long second=prepare(List.of(9120010L,9120011L),NOW.plusMinutes(1));
         runConcurrent(()->service.respond(proposal(first,9110002),9110002,"REJECTED",RESPONSE_AT),
                 ()->service.respond(proposal(second,9110010),9110010,"REJECTED",RESPONSE_AT));
-        assertThat(attemptStatus(first)).isEqualTo("WAITING_RESPONSES"); assertThat(attemptStatus(second)).isEqualTo("WAITING_RESPONSES");
+        assertThat(attemptStatus(first)).isEqualTo("FAILED"); assertThat(attemptStatus(second)).isEqualTo("FAILED");
     }
 
     @Test void 같은_축제의_서로_다른_group_동시_확정은_festival_lock으로_서로_다른_순번을_받는다() throws Exception {
@@ -543,6 +572,29 @@ class MatchProposalResponseServiceIntegrationTest {
         assertThat(penaltyScore(9110002)).isZero();
     }
 
+    @Test void 조기_종료_attempt갱신_실패는_response_exclusion_cooldown_pool_member를_모두_rollback한다() {
+        long attempt=prepare(2,NOW.plusMinutes(1)); long rejected=proposal(attempt,9110002);
+        String trigger="test_early_termination_rollback";
+        installFailureTrigger("match_attempts",trigger,"TG_OP='UPDATE' AND NEW.status='FAILED'");
+        try {
+            assertThatThrownBy(()->service.respond(rejected,9110002,"REJECTED",RESPONSE_AT))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            dropFailureTrigger("match_attempts",trigger);
+        }
+        assertThat(attemptStatus(attempt)).isEqualTo("WAITING_RESPONSES");
+        assertThat(status("match_proposals",attempt,9110002)).isEqualTo("SENT");
+        assertThat(status("match_proposals",attempt,9110006)).isEqualTo("SENT");
+        assertThat(status("match_attempt_members",attempt,9110002)).isEqualTo("PROPOSED");
+        assertThat(status("match_attempt_members",attempt,9110006)).isEqualTo("PROPOSED");
+        assertThat(count("match_responses","attempt_id",attempt)).isZero();
+        assertThat(count("match_cooldowns","related_proposal_id",rejected)).isZero();
+        assertThat(count("match_opponent_exclusions","source_proposal_id",rejected)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM match_pools WHERE id IN (9120002,9120006) AND status='PROPOSED'",
+                Integer.class)).isEqualTo(2);
+    }
+
     private long prepare(int size, OffsetDateTime searchExpiresAt) {
         return prepare(List.of(9120002L,9120006L,9120010L,9120011L).subList(0,size),searchExpiresAt);
     }
@@ -564,6 +616,9 @@ class MatchProposalResponseServiceIntegrationTest {
     }
     private void enableMinimumTwo(Long... poolIds) {
         for(long poolId:poolIds) jdbc.update("UPDATE match_pools SET allow_minimum_two=true WHERE id=?",poolId);
+    }
+    private void disableMinimumTwo(Long... poolIds) {
+        for(long poolId:poolIds) jdbc.update("UPDATE match_pools SET allow_minimum_two=false WHERE id=?",poolId);
     }
     private int roundTwoCount(long attempt) { return jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_round=2",Integer.class,attempt); }
     private void resetFoundation() {

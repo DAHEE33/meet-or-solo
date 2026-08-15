@@ -129,11 +129,11 @@ confirmed match: confirmed_at + 1시간
 6. 후보 전원에게 match_proposal을 생성한다.
 7. 각 후보에게 MATCH_PROPOSED를 발행한다.
 8. 사용자는 30초 안에 수락/거절한다.
-9. 미응답 사용자는 자동 거절된다.
+9. 응답 기한까지 미응답한 사용자는 timeout 처리하되, 조기 종료된 미응답자는 비귀책 종료한다.
 10. 목표 인원이 모두 수락하면 매칭을 확정한다.
 11. 목표 인원에는 미달하지만 2명 이상 수락했고 수락자가 모두 2명 진행을 허용하면 같은 attempt 안에서 인원 미달 재확인 proposal을 새로 생성한다.
 12. 현재 인원으로 시작을 선택하면 매칭을 확정한다.
-13. 조건을 만족하지 못하면 기존 attempt를 실패 처리하고 재대기, cooldown, penalty를 적용한다.
+13. 조건을 만족하지 못하면 기존 attempt를 실패 처리하고 귀책 회원에게만 cooldown, penalty를 적용한다.
 14. 새로운 상대를 다시 탐색하는 완전한 재매칭에서는 새 attempt를 생성한다.
 ```
 
@@ -207,8 +207,10 @@ CANCELLED
 구현 정책은 다음과 같이 확정합니다.
 
 - 목표 인원이 3명 또는 4명인 최초 제안만 인원 미달 재확인 대상이다.
-- 최초 제안의 모든 회원이 `ACCEPTED`, `REJECTED`, `TIMEOUT` 중 하나가 된 뒤 수락자 집합을 확정한다.
-- 수락자가 2명 이상이고 목표 인원보다 적으며 수락자 전원의 `allow_minimum_two`가 `true`일 때만 round 2를 생성한다.
+- round 1은 응답이 들어올 때마다 목표 인원 성사 가능성과 최소 2인 진행 가능성을 다시 계산한다.
+- 2인 최초 제안은 한 명이 `REJECTED`를 제출하면 즉시 종료한다.
+- 3~4인 최초 제안에서 목표 인원 성사가 불가능해진 뒤 수락자가 최소 2명이고 수락자 전원의 `allow_minimum_two`가 `true`로 확정되면, 아직 응답하지 않은 회원을 proposal `EXPIRED`, attempt member `EXCLUDED`로 비귀책 종료하고 즉시 round 2를 생성한다.
+- 목표 인원 성사와 최소 2인 진행이 모두 불가능해진 경우에는 남은 미응답 회원을 같은 방식으로 비귀책 종료하고 attempt를 즉시 실패 처리한다.
 - round 2는 같은 `attempt_id`, 새로운 `proposal_id`, `proposal_round=2`, `INSUFFICIENT_MEMBERS_CONFIRMATION`을 사용한다.
 - round 2 timeout은 최초 제안과 같은 30초를 사용하고 `match_attempts.expires_at`을 round 2 만료 시각으로 갱신한다.
 - `responded_at < expires_at`만 유효하며 같은 시각은 timeout이다.
@@ -253,7 +255,7 @@ MVP는 단순 cooldown window로 시작합니다. `penalty_score`는 단기 재�
 
 | 원인 | cooldown 시작 | 기간 | penalty score |
 | --- | --- | ---: | ---: |
-| round 1 `REJECTED` | round 1 전체 응답이 terminal이 되어 최종 집계되는 시각 | 30초 | 없음 |
+| round 1 `REJECTED` | 거절 응답 처리 시각 | 30초 | 없음 |
 | round 1 `TIMEOUT` | timeout 처리 시각 | 2분 | `+1` |
 | round 2 `CANCEL_CURRENT_MEMBERS` | 취소 처리 시각 | 2분 | `+1` |
 | round 2 `TIMEOUT` | timeout 처리 시각 | 5분 | `+2` |
@@ -261,7 +263,7 @@ MVP는 단순 cooldown window로 시작합니다. `penalty_score`는 단기 재�
 - 첫 1회 면제는 두지 않는다.
 - 반복 window, 가중치, score decay는 운영 데이터 확인 후 별도 정책으로 이월한다.
 - 귀책 pool은 `CANCELLED`로 유지하고, 회원의 재신청 제한은 `match_cooldowns`로 분리한다.
-- 비귀책 회원에게는 cooldown과 penalty score를 적용하지 않는다.
+- 조기 종료된 미응답 비귀책 회원에게는 response와 timeout penalty/cooldown을 생성하지 않는다.
 - cooldown은 `starts_at <= now AND expires_at > now`일 때 active로 판단한다.
 - 신규 cooldown 생성 전 같은 회원의 `expires_at <= now`인 `ACTIVE` row를 `EXPIRED`로 lazy 전환한다.
 - 각 귀책 proposal의 `proposal_id`를 cooldown과 penalty event의 멱등성 원인 key로 사용한다.
@@ -428,13 +430,31 @@ constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock�
 
 - 사용자 응답은 `responded_at < expires_at`일 때만 허용하며 같은 시각이면 timeout이다.
 - 동일한 수락 또는 거절 반복은 기존 성공 결과를 반환하고, 최초 응답 이후 다른 응답으로 변경하지 않는다.
-- 거절 또는 timeout이 한 건이라도 발생하면 attempt를 즉시 `FAILED`로 종료한다.
+- 2인 proposal은 명시적 거절 또는 timeout 한 건으로 성사가 불가능해지는 즉시 attempt를
+  `FAILED`로 종료한다. 아직 응답하지 않은 상대 proposal은 `EXPIRED`, attempt member는
+  `EXCLUDED`로 비귀책 종료하며 response, penalty, cooldown을 만들지 않는다.
+- 3~4인은 응답마다 `accepted + proposed == targetGroupSize`인지 먼저 확인해 목표 인원
+  가능성이 남으면 기다린다. 목표 인원이 불가능해진 뒤에는 이미 수락한 회원 중
+  `allowMinimumTwo=false`가 없어야 하며, 수락자와 해당 옵션을 허용한 미응답자를 합쳐
+  최소 2명이 가능한 동안 필요한 응답을 기다린다.
+- 목표 인원은 불가능하고 최소 2명 수락이 확정됐으며 수락자 전원이
+  `allowMinimumTwo=true`이면 남은 미응답자를 비귀책 종료하고 같은 transaction에서 round 2
+  `INSUFFICIENT_MEMBERS_CONFIRMATION`으로 즉시 전환한다. 목표·최소 인원이 모두 불가능하면
+  즉시 `FAILED`로 종료한다.
 - 귀책 회원의 pool은 `CANCELLED`, 비귀책 회원의 pool은 기존 검색 시간이 유효하면 `WAITING`, 만료됐으면 `EXPIRED`로 전환한다.
 - 비귀책 pool의 `search_expires_at`은 연장하지 않고 임시 lock 정보는 제거한다.
+- 명시적 round 1 `REJECTED`만 기존 상대 exclusion과 `REJECT` 30초 cooldown을 생성한다.
+  조기 종료된 미응답자에게는 `TIMEOUT` 정책을 적용하지 않는다.
 - 전원이 수락하면 마지막 응답 transaction에서 group, group member, pool `MATCHED`, attempt `CONFIRMED`를 원자적으로 생성·전환한다.
 - timeout Scheduler는 기존 matching Scheduler의 활성화 조건, fixed delay, batch size를 재사용하되 attempt별 독립 transaction으로 처리한다.
 - 거절·timeout cooldown과 penalty는 위 확정 정책과 proposal 기반 멱등성 계약에 따라 생성한다.
 - 인원 미달 round 2는 앞의 확정된 인원 미달 정책에 따라 별도 proposal 회차로 처리한다.
+- 최신 pool 조회는 회원 본인의 상태만으로 `SELF_REJECTED`, `NON_FAULT_TERMINATED`,
+  `SELF_TIMEOUT`, `SYSTEM_TERMINATED` 종료 사유를 제공하며 상대 identity·응답·제한은 노출하지
+  않는다.
+- restriction 응답의 `serverNow`는 cooldown과 완료 제한 `remainingSeconds`를 계산한 동일
+  `Clock` 시각이다. Frontend의 탐색·proposal·cooldown·완료 제한 countdown은 이 시각과
+  client 수신 시각의 offset을 사용한다.
 
 ## PostgreSQL 기반 상태 관리
 
