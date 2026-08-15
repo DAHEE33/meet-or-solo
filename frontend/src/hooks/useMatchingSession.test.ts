@@ -17,6 +17,7 @@ import {
 
 const restriction = (active = false): MatchingRestriction => ({
   penaltyScore: 0,
+  serverNow: '2026-07-27T12:00:00+09:00',
   cooldown: {
     active,
     reason: active ? 'REJECTED_PROPOSAL' : null,
@@ -55,6 +56,7 @@ const pool = (status: MatchPool['status']): MatchPool => ({
   status,
   enteredAt: '2026-07-27T12:00:00',
   searchExpiresAt: '2026-07-27T12:01:00',
+  terminationReason: null,
 });
 
 const proposal = (proposalType: ActiveMatchProposal['proposalType']): ActiveMatchProposal => ({

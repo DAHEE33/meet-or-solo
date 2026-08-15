@@ -1,5 +1,16 @@
 # 프론트엔드 가이드
 
+## Matching 서버 시각과 종료 사유
+
+- `GET /api/matching/me/restrictions`의 `serverNow`와 REST 왕복 중간 client 시각으로 offset을
+  계산하며 탐색, proposal, cooldown, 완료 제한 countdown 모두 `Date.now() + offset`을 쓴다.
+- offset은 REST refresh마다 갱신한다. 동일 attempt/round/deadline에서는 countdown 증가를
+  막고 round 또는 deadline 변경은 실제 연장으로 반영한다.
+- countdown 0초는 client timeout 상태를 만들지 않고 REST refresh만 요청한다. WebSocket,
+  재연결, polling fallback과 visible 복귀도 모두 REST snapshot 갱신만 유도한다.
+- 최신 pool의 `terminationReason` 네 값으로 직접 거절, 비귀책 종료, 본인 timeout, 시스템
+  종료 문구를 구분한다. 비귀책 종료에는 cooldown countdown을 표시하지 않는다.
+
 ## Kakao Maps 만남 장소
 
 Kakao Maps JavaScript SDK App Key는 `VITE_KAKAO_MAPS_APP_KEY`로만 주입합니다.

@@ -9,6 +9,7 @@ import {
   type MatchingRestriction,
 } from '../api/matching';
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
+import { calculateServerOffsetMs } from '../utils/serverClock';
 
 const ACTIVE_POLL_MS = 2_000;
 const COOLDOWN_POLL_MS = 5_000;
@@ -182,6 +183,7 @@ export function useMatchingSession() {
   const [retryForm, setRetryForm] = useState<RetryFormState>(INITIAL_RETRY_FORM_STATE);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVisible, setIsVisible] = useState(() => document.visibilityState !== 'hidden');
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const mountedRef = useRef(true);
   const inFlightRef = useRef<Promise<void> | null>(null);
   const queryAbortRef = useRef<AbortController | null>(null);
@@ -198,6 +200,7 @@ export function useMatchingSession() {
     if (inFlightRef.current) return inFlightRef.current;
 
     const controller = new AbortController();
+    const requestStartedAt = Date.now();
     queryAbortRef.current = controller;
     const operation = Promise.all([
       matchingApi.getCurrentPool(controller.signal),
@@ -208,6 +211,11 @@ export function useMatchingSession() {
       .then(([pool, proposal, group, restriction]) => {
         if (!mountedRef.current || controller.signal.aborted) return;
         consecutiveErrorsRef.current = 0;
+        const responseReceivedAt = Date.now();
+        setServerOffsetMs(calculateServerOffsetMs(
+          restriction.serverNow,
+          requestStartedAt + (responseReceivedAt - requestStartedAt) / 2,
+        ));
         const nextState = deriveMatchingState({ pool, proposal, group, restriction });
         const nextRetrySourcePoolId = retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
         if (nextRetrySourcePoolId !== retrySourcePoolIdRef.current) {
@@ -367,6 +375,7 @@ export function useMatchingSession() {
     beginRetry,
     enterPool,
     respond,
+    serverOffsetMs,
   };
 }
 

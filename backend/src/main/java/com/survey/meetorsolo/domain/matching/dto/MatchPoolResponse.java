@@ -12,9 +12,14 @@ public record MatchPoolResponse(
         List<String> tags,
         String status,
         OffsetDateTime enteredAt,
-        OffsetDateTime searchExpiresAt
+        OffsetDateTime searchExpiresAt,
+        String terminationReason
 ) {
     public static MatchPoolResponse from(MatchPool pool) {
+        return from(pool, null);
+    }
+
+    public static MatchPoolResponse from(MatchPool pool, String terminationReason) {
         return new MatchPoolResponse(
                 pool.getId(),
                 pool.getFestivalId(),
@@ -23,7 +28,8 @@ public record MatchPoolResponse(
                 pool.getTags(),
                 pool.getStatus(),
                 pool.getEnteredAt(),
-                pool.getSearchExpiresAt()
+                pool.getSearchExpiresAt(),
+                terminationReason
         );
     }
 }

@@ -1,5 +1,15 @@
 # 백엔드 가이드
 
+## Proposal 조기 종료와 matching 시각 계약
+
+- 최초 proposal 응답은 attempt를 먼저 잠그고 proposal, attempt member, 정렬된 pool 순서로
+  처리한다. 응답마다 목표 인원과 최소 2인 가능성을 다시 계산하며 조기 종료 미응답자는
+  비귀책 `EXCLUDED` 처리한다.
+- 최신 pool 응답의 `terminationReason`은 회원 본인의 proposal/member 상태에서만 파생하며
+  상대 identity·응답·제한 정보를 포함하지 않는다.
+- restriction의 `serverNow`는 cooldown 및 완료 제한 remainingSeconds를 계산한 같은 `Clock`
+  값이다. 같은 attempt와 round의 proposal deadline 불일치는 응답 transaction에서 거부한다.
+
 ## 만남 장소 확정 transaction
 
 축제 만남 장소는 기존 proposal 응답 transaction 안에서 확정합니다. 잠금 순서는

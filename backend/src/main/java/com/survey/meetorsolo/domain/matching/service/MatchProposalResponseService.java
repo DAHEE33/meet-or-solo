@@ -89,6 +89,7 @@ public class MatchProposalResponseService {
             String requestedResponse, OffsetDateTime now, boolean schedulerTimeout) {
         MatchProposal proposal = proposals.findByIdForUpdate(proposalId).orElseThrow(() -> failure("proposal이 없습니다."));
         validateProposalOwnership(attempt, proposal, memberId);
+        validateCommonRoundDeadline(proposal);
         MatchAttemptMember member = members.findForUpdate(attempt.getId(), memberId)
                 .orElseThrow(() -> failure("attempt member가 없습니다."));
         MatchResponse existing = responses.findByProposalIdAndMemberId(proposalId, memberId).orElse(null);
@@ -151,23 +152,49 @@ public class MatchProposalResponseService {
 
     private void completeInitialRoundIfReady(MatchAttempt attempt, OffsetDateTime now) {
         List<MatchAttemptMember> attemptMembers = members.findAllByAttemptIdOrderByIdAsc(attempt.getId());
-        if (attemptMembers.stream().anyMatch(value -> MatchAttemptMember.STATUS_PROPOSED.equals(value.getStatus()))) return;
-        applyRoundOneRejectionCooldowns(attempt.getId(), now);
         List<MatchAttemptMember> accepted = attemptMembers.stream()
                 .filter(value -> MatchAttemptMember.STATUS_ACCEPTED.equals(value.getStatus())).toList();
         if (accepted.size() == attempt.getTargetGroupSize()) {
             confirmAttempt(attempt, accepted, now);
             return;
         }
+        int pendingCount = (int) attemptMembers.stream()
+                .filter(value -> MatchAttemptMember.STATUS_PROPOSED.equals(value.getStatus())).count();
+        if (accepted.size() + pendingCount == attempt.getTargetGroupSize()) return;
+
         Map<Long, MatchPool> lockedPools = lockAttemptPools(attemptMembers);
-        if (canStartInsufficientRound(attempt, accepted, lockedPools)) {
+        boolean acceptedAllowMinimum = accepted.stream()
+                .map(value -> lockedPools.get(value.getPoolId()))
+                .allMatch(pool -> pool != null && Boolean.TRUE.equals(pool.getAllowMinimumTwo()));
+        if (canStartInsufficientRound(attempt, accepted, lockedPools) && acceptedAllowMinimum) {
+            excludePending(attempt, attemptMembers, now);
             startInsufficientRound(attempt, accepted, attemptMembers, lockedPools, now);
             return;
         }
+        long eligiblePending = attemptMembers.stream()
+                .filter(value -> MatchAttemptMember.STATUS_PROPOSED.equals(value.getStatus()))
+                .map(value -> lockedPools.get(value.getPoolId()))
+                .filter(pool -> pool != null && Boolean.TRUE.equals(pool.getAllowMinimumTwo()))
+                .count();
+        if (attempt.getTargetGroupSize() >= 3 && acceptedAllowMinimum
+                && accepted.size() + eligiblePending >= 2) return;
+
+        excludePending(attempt, attemptMembers, now);
         finishFailedAttempt(attempt, attemptMembers, lockedPools, "INITIAL_MATCH_INSUFFICIENT", now);
     }
 
+    private void validateCommonRoundDeadline(MatchProposal proposal) {
+        boolean mismatch = proposals.findAllByAttemptIdOrderByIdAsc(proposal.getAttemptId()).stream()
+                .filter(candidate -> candidate.getProposalRound().equals(proposal.getProposalRound()))
+                .anyMatch(candidate -> !candidate.getExpiresAt().isEqual(proposal.getExpiresAt()));
+        if (mismatch) throw failure("같은 attempt와 round의 proposal deadline이 일치하지 않습니다.");
+    }
+
     private void applyImmediatePenalty(MatchProposal proposal, String response, OffsetDateTime now) {
+        if (isInitial(proposal) && MatchProposal.STATUS_REJECTED.equals(response)) {
+            penaltyCooldowns.apply(proposal, penaltyPolicy.roundOneRejected(), now);
+            return;
+        }
         if (isInitial(proposal) && MatchProposal.STATUS_TIMEOUT.equals(response)) {
             penaltyCooldowns.apply(proposal, penaltyPolicy.roundOneTimeout(), now);
             return;
@@ -180,14 +207,6 @@ public class MatchProposalResponseService {
         } else if (MatchProposal.STATUS_TIMEOUT.equals(response)) {
             penaltyCooldowns.apply(proposal, penaltyPolicy.roundTwoTimeout(), now);
         }
-    }
-
-    private void applyRoundOneRejectionCooldowns(long attemptId, OffsetDateTime now) {
-        proposals.findAllByAttemptIdOrderByIdAsc(attemptId).stream()
-                .filter(this::isInitial)
-                .filter(proposal -> MatchProposal.STATUS_REJECTED.equals(proposal.getStatus()))
-                .forEach(proposal -> penaltyCooldowns.apply(
-                        proposal, penaltyPolicy.roundOneRejected(), now));
     }
 
     private boolean canStartInsufficientRound(MatchAttempt attempt, List<MatchAttemptMember> accepted,
@@ -252,7 +271,28 @@ public class MatchProposalResponseService {
     private void settleInitialNonAcceptedPools(List<MatchAttemptMember> attemptMembers,
             Map<Long, MatchPool> lockedPools, OffsetDateTime now) {
         attemptMembers.stream().filter(value -> !MatchAttemptMember.STATUS_ACCEPTED.equals(value.getStatus()))
-                .map(value -> lockedPools.get(value.getPoolId())).forEach(pool -> pool.cancel(now));
+                .forEach(value -> {
+                    MatchPool pool = lockedPools.get(value.getPoolId());
+                    if (MatchAttemptMember.STATUS_EXCLUDED.equals(value.getStatus())) {
+                        pool.releaseAfterFailedAttempt(now);
+                    } else {
+                        pool.cancel(now);
+                    }
+                });
+    }
+
+    private void excludePending(MatchAttempt attempt, List<MatchAttemptMember> attemptMembers, OffsetDateTime now) {
+        Map<Long, MatchProposal> initialByMember = proposals.findAllByAttemptIdOrderByIdAsc(attempt.getId()).stream()
+                .filter(this::isInitial)
+                .collect(Collectors.toMap(MatchProposal::getMemberId, Function.identity()));
+        attemptMembers.stream()
+                .filter(value -> MatchAttemptMember.STATUS_PROPOSED.equals(value.getStatus()))
+                .forEach(value -> {
+                    value.exclude(now);
+                    MatchProposal pending = initialByMember.get(value.getMemberId());
+                    if (pending == null) throw failure("미응답 member의 최초 proposal이 없습니다.");
+                    pending.expire(now);
+                });
     }
 
     private Map<Long, MatchPool> lockAttemptPools(List<MatchAttemptMember> attemptMembers) {

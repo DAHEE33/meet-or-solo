@@ -6,11 +6,13 @@ import com.survey.meetorsolo.domain.matching.dto.MatchingRestrictionResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchAttempt;
 import com.survey.meetorsolo.domain.matching.entity.MatchCooldown;
 import com.survey.meetorsolo.domain.matching.entity.MatchProposal;
+import com.survey.meetorsolo.domain.matching.entity.MatchAttemptMember;
 import com.survey.meetorsolo.domain.matching.repository.MatchAttemptRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchProposalRepository;
+import com.survey.meetorsolo.domain.matching.repository.MatchAttemptMemberRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -32,6 +34,7 @@ public class MatchingQueryService {
     private final MatchGroupRepository groups;
     private final MatchCompletionLockPolicy completionLocks;
     private final MemberRepository members;
+    private final MatchAttemptMemberRepository attemptMembers;
 
     public MatchingQueryService(
             Clock clock,
@@ -41,7 +44,8 @@ public class MatchingQueryService {
             MatchCooldownRepository cooldowns,
             MatchGroupRepository groups,
             MatchCompletionLockPolicy completionLocks,
-            MemberRepository members
+            MemberRepository members,
+            MatchAttemptMemberRepository attemptMembers
     ) {
         this.clock = clock;
         this.pools = pools;
@@ -51,13 +55,29 @@ public class MatchingQueryService {
         this.groups = groups;
         this.completionLocks = completionLocks;
         this.members = members;
+        this.attemptMembers = attemptMembers;
     }
 
     public MatchPoolResponse currentPool(long memberId) {
         requireMember(memberId);
         return pools.findFirstByMemberIdOrderByIdDesc(memberId)
-                .map(MatchPoolResponse::from)
+                .map(pool -> MatchPoolResponse.from(pool, terminationReason(pool.getId())))
                 .orElse(null);
+    }
+
+    private String terminationReason(long poolId) {
+        MatchAttemptMember member = attemptMembers.findFirstByPoolIdOrderByIdDesc(poolId).orElse(null);
+        if (member == null) return null;
+        return switch (member.getStatus()) {
+            case MatchAttemptMember.STATUS_REJECTED -> "SELF_REJECTED";
+            case MatchAttemptMember.STATUS_TIMEOUT -> "SELF_TIMEOUT";
+            case MatchAttemptMember.STATUS_EXCLUDED -> "NON_FAULT_TERMINATED";
+            default -> attempts.findById(member.getAttemptId())
+                    .filter(attempt -> MatchAttempt.STATUS_FAILED.equals(attempt.getStatus()))
+                    .map(attempt -> MatchAttemptMember.STATUS_ACCEPTED.equals(member.getStatus())
+                            ? "NON_FAULT_TERMINATED" : "SYSTEM_TERMINATED")
+                    .orElse(null);
+        };
     }
 
     public ActiveMatchProposalResponse activeProposal(long memberId) {
