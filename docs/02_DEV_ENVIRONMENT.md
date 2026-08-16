@@ -207,8 +207,12 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 | `DB_PASSWORD` | PostgreSQL dev DB 비밀번호 |
 | `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. dev 서버 기준은 `http://<DEV_SERVER_HOST>:18080` |
 | `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
+| `ADMIN_REPORT_CURSOR_HMAC_SECRET` | 관리자 신고 목록 opaque cursor 전용 HMAC-SHA256 서명 키. UTF-8 기준 32바이트 이상 |
 
 예시 값에는 실제 IP, 실제 도메인, 실제 계정, 실제 비밀번호를 넣지 않습니다.
+`ADMIN_REPORT_CURSOR_HMAC_SECRET`은 JWT 서명 키와 다른 난수 Secret을 dev/prod에 각각
+주입하며 실제 값은 repository와 문서에 기록하지 않습니다. 이 키를 회전하면 기존에 발급한
+관리자 신고 목록 cursor는 무효화될 수 있습니다.
 
 ## 로컬 실행 순서
 
