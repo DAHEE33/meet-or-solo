@@ -64,3 +64,15 @@ app:
       retry-max-attempts: ${TOUR_PLACE_SYNC_RETRY_MAX_ATTEMPTS:3}
       retry-initial-delay: ${TOUR_PLACE_SYNC_RETRY_INITIAL_DELAY:1s}
       retry-max-delay: ${TOUR_PLACE_SYNC_RETRY_MAX_DELAY:10s}
+  admin:
+    report:
+      cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
+  matching:
+    scheduler:
+      enabled: ${MATCHING_SCHEDULER_ENABLED:false}
+      fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:5s}
+      stale-timeout: ${MATCHING_STALE_TIMEOUT:30s}
+      proposal-timeout: ${MATCHING_PROPOSAL_TIMEOUT:30s}
+      batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}
+    no-show-scheduler:
+      enabled: ${MATCHING_NO_SHOW_SCHEDULER_ENABLED:false}

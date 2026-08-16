@@ -35,26 +35,6 @@ export interface UserProfile {
   intro?: string;
 }
 
-export interface MatchCandidate {
-  id: number;
-  nickname: string;
-  ageBand: string; // 예: "20대"
-  travelStyles: TravelStyle[];
-  interests: string[];
-  distanceKm: number;
-  matchRate: number; // 0~100
-  intro: string;
-}
-
-export interface MeetingPoint {
-  id: number;
-  name: string;
-  category: string;
-  description: string;
-  distanceKm: number;
-  walkMinutes: number;
-}
-
 export interface CourseStop {
   order: number;
   spotName: string;

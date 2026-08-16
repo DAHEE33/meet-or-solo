@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -92,6 +93,16 @@ public class GlobalExceptionHandler {
     ) {
         ErrorCode errorCode = ErrorCode.PROFILE_IMAGE_TOO_LARGE;
         return ResponseEntity.status(errorCode.getStatus())
+                .body(ApiResponse.failure(ErrorResponse.of(errorCode)));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFoundException(
+            NoResourceFoundException exception
+    ) {
+        ErrorCode errorCode = ErrorCode.NOT_FOUND;
+        return ResponseEntity
+                .status(errorCode.getStatus())
                 .body(ApiResponse.failure(ErrorResponse.of(errorCode)));
     }
 

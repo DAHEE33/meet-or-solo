@@ -34,6 +34,7 @@
 - 인원 미달 팝업 조건
 - 최초 제안과 인원 미달 재확인 proposal 회차 판단
 - 패널티/쿨타임 계산
+- 귀책 proposal 기반 cooldown/penalty 멱등성
 - 차단 사용자 제외 판단
 - 이미 매칭 중인 사용자 제외 판단
 
@@ -104,6 +105,9 @@
 - 동일 proposal에 대해 두 번 수락 요청이 들어오면 unique constraint로 중복 응답을 막는다.
 - 동일 attempt와 회원에 대해 round가 같은 proposal은 중복 생성되지 않는다.
 - 동일 attempt와 회원이라도 다음 round의 인원 미달 재확인 proposal은 생성할 수 있다.
+- 동일 귀책 proposal의 응답 재전송과 Scheduler timeout 재실행에도 cooldown과 penalty event는 각각 한 건만 생성된다.
+- response, cooldown, penalty event, 회원 점수, pool, attempt 중 하나가 실패하면 같은 transaction이 전체 rollback된다.
+- 사용자 응답과 timeout race에서도 proposal별 cooldown과 penalty event가 중복되지 않는다.
 - 인원 미달 재확인은 같은 `attempt_id`와 새로운 `proposal_id`를 사용한다.
 - 기존 attempt 종료 후 새로운 상대를 탐색하는 재매칭은 새로운 `attempt_id`를 사용한다.
 - 동시에 여러 Scheduler worker가 후보를 조회해도 `FOR UPDATE SKIP LOCKED`로 같은 사용자를 중복 선점하지 않는다.
@@ -128,6 +132,34 @@
 - `MatchRoomPage` 시스템 이벤트 타임라인 표시
 - API error/loading 상태 표시
 - WebSocket 이벤트 수신 시 화면 상태 변경은 mock 기반으로 검증
+- WebSocket 연결 성공·재접속 시 REST 상태 복원과 polling fallback 유지 검증
+- 읽기 전용 `MatchRoomPage`의 최초 mount current group 복원, null redirect, festival/member 표시 검증
+- 상태방 WebSocket 알림 payload를 화면 상태로 사용하지 않고 REST refresh만 유도하는지 검증
+- 상태방 unmount 시 timer, WebSocket과 `AbortController` 정리 검증
+- 도착 예정 시간 허용값 validation, 상태 전이, 같은 값 멱등성과 다른 값 변경 event 검증
+- group row → group member row 잠금 순서와 동일 회원 동시 요청 직렬화 검증
+- member update/event insert 실패 rollback과 rollback 알림 부재 검증
+- frontend 선택 panel, 중복 제출 방지, 성공 snapshot 반영과 실패 snapshot 보존 검증
+- 신규 선택값 `5/10/20/25`, 과거 응답 `0/30`, 25분 절대 마감 경계를 검증
+- 정상 REST snapshot 전후 비교로만 상대 도착 시간 snackbar가 생성되고 최초
+  snapshot, 본인 변경, 동일값, 실패 refresh에는 생성되지 않는지 검증
+- WebSocket refresh와 polling fallback의 상대 변경 감지, 자동 제거와 timer
+  cleanup을 fake timer 또는 제어 가능한 scheduler로 검증
+- 도착 완료의 row lock, ARRIVED 멱등성, 최초 IN_PROGRESS 전환과 AFTER_COMMIT 알림 검증
+- 축제 좌표 기반 Kakao Local 후보 검색의 빈 결과, 중복, 거리 정렬과 fallback 검증
+- 축제별 복수 장소의 순환 배정과 후보 소진 후 재사용, 비활성 장소 제외 검증
+- 같은 축제 동시 확정의 festival row lock과 축제별 독립 순환을 PostgreSQL에서 검증
+- pool 진입 뒤 후보가 모두 비활성화되면 response/group/member/pool/attempt/event 전체 rollback 검증
+- 확정 만남 포인트 snapshot이 참여자, REST 복원과 재조회에서 동일한지 검증
+- Backend 거리 판정의 반경 내부·경계·외부, 잘못된 좌표, 낮은 정확도와 오래된 측정값 검증
+- 도착 API가 원본 좌표·정확도·측정 시각을 받고 계산 거리와 `verified`는 받지 않는지 검증
+- 원본 GPS 좌표가 DB, event payload, log와 WebSocket payload에 남지 않는지 검증
+- 허위 도착 신고 사유, 중복 신고 방지와 신고만으로 자동 제재되지 않는지 검증
+- 확정 후 취소의 3분 경계, KST 당일 CANCEL 횟수와 10/30/60분 cooldown 검증
+- 30분 deadline 경계의 NO_SHOW, KST 당일 30/60분 cooldown과 Scheduler 재실행 멱등성 검증
+- `allow_minimum_two` snapshot 기반 3명 이상/동의한 2명 유지와 비귀책 `LEFT` 검증
+- 도착·취소·NO_SHOW 경쟁에서 group row → group member ID 순 잠금과 단일 terminal 상태 검증
+- group/member/event/penalty/cooldown 실패 전체 rollback과 AFTER_COMMIT 이전 알림 부재 검증
 
 프론트엔드 테스트는 사용자에게 보이는 상태 전환을 검증합니다.
 
@@ -138,6 +170,11 @@
 - 인원 미달 이벤트를 받으면 `InsufficientMembersModal`이 표시된다.
 - `MEMBER_ARRIVED` 이벤트를 mock으로 전달하면 `MatchRoomPage` 타임라인에 도착 이벤트가 표시된다.
 - API error 상태에서는 재시도 또는 안내 UI가 표시된다.
+- 잘못된 WebSocket payload는 무시하고 정상 상태 알림만 REST refresh를 유도한다.
+
+Backend WebSocket 테스트는 handshake cookie 인증, 본인 user destination 구독,
+client `SEND` 거절과 transaction `AFTER_COMMIT` 이후 알림 전달을 우선 검증합니다.
+rollback된 transaction의 알림이 전달되지 않는지도 함께 확인합니다.
 
 ## 6. 기능 테스트 / 시나리오 테스트
 
@@ -151,8 +188,9 @@
 - 매칭 제안 수락
 - 인원 미달 팝업 처리
 - `MatchRoomPage` 진입
+- 만남 포인트 지도와 장소명 확인
 - 도착 시간 선택
-- 도착했어요
+- 단말 위치 권한 허용 후 도착했어요
 - 평가/신고
 
 MVP 초기에는 백엔드 통합 테스트와 프론트 mock 테스트로 대체합니다. 추후 Playwright 기반 E2E 테스트 도입을 검토합니다.
@@ -174,7 +212,8 @@ Playwright는 추후 도입 후보로 둡니다.
 - 체크인 성공 mock
 - 매칭 제안 수락 mock
 - `MatchRoomPage` 진입
-- 도착했어요 버튼 클릭
+- 만남 포인트 표시 mock
+- 위치 권한·단말 위치 확인 mock
 - 신고 화면 진입
 
 E2E는 유지보수 비용이 높으므로 전체 기능을 무리하게 자동화하지 않습니다.
@@ -240,3 +279,95 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
 - GitHub Actions 테스트 workflow 실제 작성
 
 위 항목은 개발환경 세팅 또는 비즈니스 기능 구현 단계에서 별도 승인 후 진행합니다.
+
+## 시스템 이벤트 타임라인 검증 기준
+
+- Controller/service에서 인증, current group 인가, DTO 변환과 raw payload 비노출을 검증합니다.
+- `pgvector/pgvector:pg16` Testcontainers에서 다른 group 비노출, actor 공개 경계, 시간/ID 정렬, 최신 50건과 malformed payload 제외를 검증합니다.
+- group 확정 transaction의 `MATCH_CONFIRMED` 저장과 event insert 실패 전체 rollback을 회귀 검증합니다.
+- arrival-time/arrival 멱등 및 rollback 뒤 event 조회 결과가 증가하지 않는지 검증합니다.
+- Frontend는 group/events 부분 실패, WebSocket 연결·재연결·알림, polling, 늦은 응답 차단과 자유 입력/전송 UI 부재를 검증합니다.
+- 취소 화면은 세 구조화 사유만 표시하고 자유 입력 부재, 중복 제출 방지, 성공 전 snapshot 불변과 유지/종료 결과 이동을 검증합니다.
+
+## 거절 상대 재추천 제외 검증 기준
+
+- 2인·3인 proposal의 명시적 round 1 `REJECTED` pair 생성 범위와 반복 요청 멱등성을 PostgreSQL 통합 테스트로 검증한다.
+- `TIMEOUT`, round 2 취소와 시스템 실패에서 exclusion이 생성되지 않는지 기존 proposal response 회귀와 함께 검증한다.
+- requester 정방향·역방향, Scheduler batch 조합과 proposal 생성 직전 최종 재검증을 각각 focused 테스트로 검증한다.
+- 동일 check-in에서 exclusion 유지, 새 active check-in에서 과거 exclusion 미적용을 실제 `festival_checkins` unique·FK 제약과 함께 검증한다.
+- advisory lock은 pair 정규화·결정적 정렬 단위 테스트와 exclusion commit/proposal 생성 PostgreSQL race 테스트로 검증한다.
+- 기존 `user_blocks`, cooldown, pool claim/release, response/timeout 동시성 테스트는 재작성하지 않고 전체 matching 회귀로 확인한다.
+
+## MatchRoom 구조화 신고 검증 기준
+
+- mock만으로 끝내지 않고 `pgvector/pgvector:pg16` Testcontainers와 Flyway V1~V18이
+  적용된 실제 PostgreSQL에서 Controller부터 transaction과 UNIQUE까지 검증한다.
+- JWT 회원 ID만 reporter로 저장되는지, 본인 신고와 양측 비참여 및 임의 group ID
+  IDOR이 거절되는지 확인한다.
+- DB CHECK와 같은 여섯 reason code만 허용하고 응답에서 reporter와
+  `detail_encrypted`가 제외되는지 확인한다.
+- 반복 및 동시 동일 요청에서 row가 한 건이고 기존 report status와 생성 시각이
+  초기화되지 않는지 검증한다.
+- 고정 `Clock`으로 종료 30일 직전, 정확한 경계와 초과를 검증하며 PostgreSQL 시간
+  정밀도를 고려해 경계 밖 비교는 안정적인 1초 차이를 사용한다.
+- insert 실패 rollback과 신고 전후 penalty event, cooldown, `penalty_score`,
+  `manner_temperature`, match event 불변을 확인한다.
+- focused 신고 테스트 뒤 matching 전체와 backend 전체 회귀를 순서대로 실행한다.
+- Frontend API 단위 테스트는 URL, POST method, cookie credentials, `groupId`,
+  `reportedMemberId`, `reasonCode`와 `reporterMemberId` 부재를 검증한다. 신규와 멱등
+  응답의 HTTP 201은 모두 같은 성공으로 처리한다.
+- MatchRoom UI 테스트는 본인 action 부재, 여러 상대별 정확한 action, 여섯 한국어
+  사유, 미선택 차단, 최종 확인, SAFETY 안내와 자유 입력·채팅 부재를 검증한다.
+- 신고 상태 테스트는 제출 중 비활성화, 빠른 이중 호출 1회, 실패 후 snapshot을
+  건드리지 않는 재시도, 취소 초기화와 늦은 응답의 새 대상 상태 비덮어쓰기를 검증한다.
+- 신고 성공 뒤 차단 API, current group 재조회와 WebSocket 발행이 없음을 구현 경계와
+  MatchRoom 기존 회귀 테스트로 확인한다.
+
+## MatchRoom 상대 회원 차단 Backend 검증
+
+- `MatchBlockIntegrationTest`는 실제 PostgreSQL에서 정상 차단, 본인 차단, 양쪽 참여
+  권한과 IDOR, 진행/종료 상태와 30일 경계, terminal timestamp 누락을 검증한다.
+- UNIQUE와 `ON CONFLICT DO NOTHING`의 반복·동시 요청 멱등성, 다른 group에서 같은 pair
+  반복, 기존 `created_at`/reason 불변과 실패 rollback을 검증한다.
+- 차단 API 생성 후 requester 양방향 후보 조회와 Scheduler batch pair 제외를 검증하고,
+  기존 `MatchProposalCreationServiceIntegrationTest`에서 proposal 직전 차단 재검증과
+  block commit race를 member-pair advisory lock으로 검증한다.
+- penalty/cooldown/회원 점수와 MatchRoom event 불변, 최소 응답 계약과 내부 정보 비노출을
+  함께 검증한다. 실행 순서는 focused 차단 → matching 전체 → backend 전체다.
+
+## MatchRoom 상대 회원 차단 Frontend 검증
+
+- API client는 current group ID가 포함된 URL, POST와 cookie credentials, body의
+  `blockedMemberId` 단일 필드 및 `blockerMemberId` 부재를 검증한다. 신규·멱등 201을
+  모두 정상 성공으로 처리한다.
+- 차단 session은 동기 이중 제출 1회, submitting 상태, 실패 후 대상 유지와 재시도,
+  취소·대상 변경·unmount abort 및 request identity가 다른 늦은 응답 무시를 검증한다.
+- MatchRoom UI는 본인 action 부재, 3~4인 상대별 정확한 ID, 신고와 독립된 action,
+  대상 nickname과 양방향 제외·비노출·해제 불가 안내, 제출 중 action 차단을 검증한다.
+- 성공·실패 모두 기존 MatchRoom snapshot을 임의 변경하지 않으며 성공 후 상대 카드 유지,
+  신고 API·current group 재조회·WebSocket SEND 부재를 기존 경계와 전체 회귀로 확인한다.
+- 접근 가능한 dialog title/description, `Escape`, focus 복원과 `Tab` 순환을 구현 경계로
+  확인하고 자유 입력·상대 추론·채팅 UI가 추가되지 않았는지 회귀한다.
+## 회원 본인 차단 목록 조회·해제 Backend 검증
+
+- Controller/API는 JWT cookie 미인증 거절, `200` 빈 배열, 공개 필드 제한과 `204` 빈 body를 검증한다.
+- Service는 repository snapshot의 DTO 매핑과 인증 회원/대상 ID 전달을 검증한다.
+- 실제 PostgreSQL Testcontainers에서 정방향 목록만 노출되는지, 역방향·타인 관계 비노출,
+  `blockedAt DESC, id DESC` 정렬과 두 ID 조건의 물리 삭제를 검증한다.
+- 정상·반복 해제를 같은 `204`로 처리하고 row count를 노출하지 않는지 확인한다.
+- 해제 전후 penalty/cooldown/event, 회원 점수와 group membership이 불변인지 확인한다.
+- focused 조회·해제 테스트와 기존 차단 생성·신고 회귀를 실행한다. matching 전체 회귀,
+  proposal 생성 race와 실제 후보 복귀 통합 테스트도 2단계에서 실행한다.
+
+## 차단 해제 동시성·Frontend 관리 검증
+
+- 실제 PostgreSQL Testcontainers의 서로 다른 thread/transaction과 latch를 사용해 동시 DELETE
+  전부 성공·최종 row 0건, 해제 선행 proposal race와 기존 차단 생성 race를 검증한다.
+- 해제 전 requester 양방향 제외, 해제 후 양방향 후보 복귀, Scheduler batch pair 복귀와
+  proposal 직전 최종 상태 반영을 검증한다. sleep, Mockito 대체와 테스트 전용 production
+  분기는 사용하지 않는다.
+- Frontend API는 정확한 path ID, body·`blockerMemberId` 부재와 HTTP 204를 검증한다. hook은
+  loading/빈 목록/오류 재시도, 이중 제출 1회, 실패 유지, 대상별 제거와 늦은 응답 무시를
+  검증한다.
+- 마이페이지 진입과 공개 필드, dialog 정책·접근성, 기존 MatchRoom 신고·차단, current group
+  재조회와 WebSocket SEND 부재를 focused 및 전체 Vitest로 회귀 검증한다.

@@ -1,5 +1,22 @@
 # 프론트엔드 가이드
 
+## Matching 서버 시각과 종료 사유
+
+- `GET /api/matching/me/restrictions`의 `serverNow`와 REST 왕복 중간 client 시각으로 offset을
+  계산하며 탐색, proposal, cooldown, 완료 제한 countdown 모두 `Date.now() + offset`을 쓴다.
+- offset은 REST refresh마다 갱신한다. 동일 attempt/round/deadline에서는 countdown 증가를
+  막고 round 또는 deadline 변경은 실제 연장으로 반영한다.
+- countdown 0초는 client timeout 상태를 만들지 않고 REST refresh만 요청한다. WebSocket,
+  재연결, polling fallback과 visible 복귀도 모두 REST snapshot 갱신만 유도한다.
+- 최신 pool의 `terminationReason` 네 값으로 직접 거절, 비귀책 종료, 본인 timeout, 시스템
+  종료 문구를 구분한다. 비귀책 종료에는 cooldown countdown을 표시하지 않는다.
+
+## Kakao Maps 만남 장소
+
+Kakao Maps JavaScript SDK App Key는 `VITE_KAKAO_MAPS_APP_KEY`로만 주입합니다.
+example에는 placeholder만 두고 실제 Key를 저장소에 기록하지 않습니다. SDK가 없거나
+로드에 실패해도 MatchRoom의 장소명과 주소는 계속 표시합니다.
+
 ## 소셜 로그인 버튼
 
 로그인 화면은 기존 카카오 버튼과 네이버 텍스트 버튼을 함께 제공한다. 두 버튼 모두 backend의 `/api/auth/{provider}/login`으로 이동하며 authorize URL을 frontend에서 조립하지 않는다. 이동 중에는 중복 클릭을 막고 OAuth 실패는 provider 공통 안내로 표시한다.
@@ -310,9 +327,97 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 
 ## MatchRoomPage
 
+도착 완료는 본인이 `JOINED` 또는 `ARRIVAL_TIME_SELECTED`일 때 확인 panel을
+거쳐 실행합니다. 성공 snapshot 전에는 ARRIVED로 표시하지 않고 실패 시 기존
+snapshot을 유지하며, `arrivedAt`은 KST formatter로 표시합니다.
+
 `MatchRoomPage`는 자유 채팅방이 아닙니다.
 
 시스템 이벤트 타임라인과 제한형 버튼 인터랙션을 제공하는 상태 동기화 화면입니다.
+
+현재 구현된 첫 단계는 `/match-room`의 읽기 전용 상태방입니다. URL에 `groupId`를
+포함하지 않고 `GET /api/matching/groups/me/current`로 로그인 회원의 active
+group을 복원합니다. 최초 mount, `/ws` 연결·재연결과 `/user/queue/matching`
+알림 수신 시 REST를 다시 조회하며, WebSocket 장애 중에는 5초 polling을
+fallback으로 사용합니다. current group이 없으면 `/matching`으로 replace
+이동합니다.
+
+현재 읽기 전용 표시 범위:
+
+- 확정 시각, 확정 인원과 `CONFIRMED`/`IN_PROGRESS` 안내
+- 축제명, 주소와 행사 기간
+- 멤버 nickname, 공개 가능한 profile image와 참여 상태
+- loading, API 오류 안내와 재시도
+
+도착 예정 시간 선택 단계에서는 기존 상태방에 다음 제한형 인터랙션만
+추가합니다.
+
+- 신규 선택 요청은 `5분`, `10분`, `20분`, `25분` panel만 제공
+- 과거 응답 `0`은 `곧 도착 예정`, 과거 `30`과 신규 `25`는 `N분 후 도착 예정`으로 표시
+- 상대 회원의 도착 분 또는 선택 시각이 정상 REST refresh 전후 실제 변경되면
+  하단 navigation 위에 3초 동안 nickname 포함 snackbar 표시
+- 최초 snapshot, 본인 변경, 동일 snapshot, 실패한 refresh와 잘못된 WebSocket
+  payload에는 상대 변경 snackbar를 표시하지 않음
+- 제출 중 중복 선택 방지
+- 성공 응답의 current group snapshot 즉시 반영
+- 실패 시 기존 snapshot 유지와 재선택 안내
+- 멤버별 `도착 시간 미정`, `곧 도착 예정`, `N분 후 도착 예정`, `도착 완료` 표시
+
+`도착했어요` 버튼, 확정 후 취소, NO_SHOW 종료 복원과 시스템 이벤트 타임라인은
+구현되어 있습니다. 현재 `도착했어요`는 서버 상태 전이만 수행하며 실제 단말
+GPS 반경 확인은 아직 연결하지 않았습니다. 만남 포인트 지도, 단말 위치 확인,
+신고와 안전 기능은 후속 범위입니다.
+
+정상 완료 후 `/matching` 화면은 취소·NO_SHOW terminal card를 재사용하지
+않습니다. 현재 수동 검증에서 완료 안내와 함께 `매칭이 취소됐어요`,
+`다시 신청하기`가 노출되는 문제가 확인되었으며 다음 Frontend 보완 범위에서
+완료 전용 card로 분리합니다.
+
+완료 전용 card의 계약은 다음과 같습니다.
+
+- 제목은 `만남이 완료됐어요`로 표시하고 취소 문구와 아이콘을 사용하지 않음
+- `confirmedAt + 1시간`인 매칭 유효 종료 시각과 남은 시간을 표시
+- 유효시간 중에는 새 매칭 신청 action을 비활성화
+- 제한 종료 뒤 체크인이 만료되었으면 `다시 체크인하기`, 유효하면
+  `다시 매칭하기` 제공
+- 완료 안내는 Router state에서 한 번만 소비하고 새로고침·새 매칭에서 반복하지 않음
+- 후기 작성 action과 최근 완료 이력 복원은 후속 범위로 유지
+
+이 화면 보완은 구현되었습니다. `useMatchingSession`은 active group/proposal/pool
+상태를 먼저 적용한 뒤 `completionLock.groupId`가 있으면 최신 `MATCHED` pool을
+취소로 해석하지 않고 `COMPLETED`로 복원합니다. 완료 card는 성공 아이콘, 종료
+시각과 countdown을 표시하고 `completionLock.active=true` 동안 action을
+비활성화합니다. 제한 종료 뒤 `다시 매칭하기`로 기존 retry form을 열며, 실제
+체크인이 만료됐다면 기존 신청 API 오류를 통해 `체크인하기` 동선으로 연결합니다.
+Router 완료 notice는 기존처럼 한 번만 소비하고 card 복원은 restriction 응답이
+담당합니다. 자동 테스트는 완료했으며 실제 브라우저 수동 재검증은 남아 있습니다.
+
+## 비동기 화면 전환 안정화 후속 범위
+
+matching 완료 기능과 별도로 Frontend 전체의 최초 상태 복원과 화면 전환을
+점검합니다. 서버 응답 전의 `unknown`을 실제 데이터가 없는 `IDLE`로 해석하면
+새로고침 직후 신청 form이 먼저 노출되고 완료 card로 바뀌는 잘못된 중간 화면이
+발생합니다. 이 보완은 별도 Frontend UX 브랜치에서 수행합니다.
+
+공통 원칙:
+
+- 최초 snapshot을 아직 받지 않은 `LOADING`, 조회 완료 후 실제 데이터가 없는
+  `IDLE`, 완료·취소 같은 terminal 상태를 구분
+- 최초 진입에서만 중립적인 skeleton을 사용하고 신청 form을 placeholder로 사용하지 않음
+- WebSocket, polling과 수동 refresh 중에는 마지막 정상 화면을 유지하고
+  백그라운드에서 새 snapshot을 반영
+- pool, proposal, group, restriction 조회를 하나의 논리 snapshot으로 판정하고
+  일부 응답 순서대로 중간 화면을 연속 렌더링하지 않음
+- active group, proposal, active pool, 완료 제한, cooldown, terminal pool,
+  `IDLE`의 우선순위를 한곳에서 일관되게 적용
+- card와 skeleton의 최소 높이를 맞춰 layout shift를 줄임
+- Router notice는 표시 직후 history state에서 소비하고 새로고침에서 반복하지 않음
+- API 지연, 일부 실패, WebSocket 재연결, polling, 뒤로 가기와 새로고침을
+  화면별 자동·수동 테스트에 포함
+
+우선 점검 대상은 `/matching`, `/match-room`, 체크인, 로그인/프로필 복원,
+축제 목록·상세입니다. 이 절은 후속 작업 계약이며 현재 completion 브랜치에서
+함께 구현하지 않습니다.
 
 필수 요소:
 
@@ -331,6 +436,12 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 - 긴급 도움 버튼
 
 자유 텍스트 입력창은 구현하지 않습니다.
+
+확정 후 취소는 deadline 전 `JOINED`, `ARRIVAL_TIME_SELECTED`인 본인에게만
+`못 갈 것 같아요` action을 표시합니다. 사유는 `갑자기 일정이 생겼어요`,
+`이동이 어려워졌어요`, `다른 이유가 있어요` 버튼만 제공하고 자유 입력은
+제공하지 않습니다. 성공 전 optimistic 상태 변경을 하지 않으며 종료 결과는
+안내와 함께 `/matching`으로 이동합니다.
 
 ## PWA 동작
 
@@ -357,6 +468,16 @@ Web Push 예정 용도:
 
 VAPID Key는 하드코딩하지 않습니다.
 
+## 매칭 WebSocket STOMP
+
+- matching 화면은 현재 origin의 `/ws`에 native WebSocket으로 연결합니다.
+- local Vite dev server는 `/ws`를 `http://localhost:8080`으로 `ws: true` proxy합니다.
+- 인증은 브라우저가 WebSocket handshake에 함께 보내는 `access_token` HttpOnly cookie를 사용합니다.
+- `/user/queue/matching`에서 상태 변경 알림을 받으면 기존 matching REST 조회를 다시 실행합니다.
+- 알림 payload를 최종 상태로 사용하지 않으며 PostgreSQL과 REST 응답을 기준으로 화면을 복원합니다.
+- 연결 실패와 재접속 중에는 기존 polling이 fallback으로 계속 동작합니다.
+- 재접속 성공 시 즉시 REST 상태를 다시 조회하고 unmount 시 STOMP 연결을 정리합니다.
+
 ## Kakao Maps
 
 Kakao Maps는 추후 다음 용도로 사용합니다.
@@ -367,3 +488,83 @@ Kakao Maps는 추후 다음 용도로 사용합니다.
 - 솔로 코스 맥락 제공
 
 Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하지 않습니다.
+
+만남 포인트 기능의 API 역할은 다음처럼 분리합니다.
+
+- 관광공사 축제 좌표: 주변 POI 검색의 중심점
+- Kakao Local API: 중심점 주변 카페·편의점·주차장·음식점 등 장소 후보 검색
+- Kakao Maps SDK: 확정된 만남 포인트 지도와 핀 표시
+- 브라우저 Geolocation API: `도착했어요` 실행 시 현재 위치 측정
+
+축제 좌표를 곧바로 만남 장소로 표시하지 않습니다. 선택된 실제 장소명, 주소와
+좌표를 current group 응답으로 받은 뒤 `도착했어요` action보다 위에 표시합니다.
+브라우저 위치 권한은 action 실행 시점에 사용 이유를 먼저 설명한 뒤 요청합니다.
+위치 권한 거부, 측정 실패, 정확도 부족, 반경 밖과 좌표 미준비 상태를 각각
+구분해 안내하며 성공 응답 전에는 `ARRIVED`를 낙관적으로 표시하지 않습니다.
+신고 완료와 위치정보 약관·동의 적용을 전제로 Frontend는 사용자가
+`도착했어요`를 누른 시점의 위도·경도, 정확도와 측정 시각을 도착 API로
+전송합니다. 거리 판정은 Backend가 group snapshot의 만남 포인트를 기준으로
+수행하며 성공 응답 전에는 위치정보를 재사용하지 않습니다. 화면 문구는 과도한
+보증을 피하고 `도착 확인이 완료됐어요`로 표시합니다. GPS 조작 가능성은 남기
+때문에 실제 장소에 없는 허위 도착은 신고 기능과 운영 검토로 보완합니다.
+
+## MatchRoomPage 시스템 이벤트 타임라인
+
+- `/match-room` 최초 진입과 새로고침에서 current group과 current group events REST를 함께 조회합니다.
+- `/user/queue/matching` 연결·재연결·상태 알림과 WebSocket 장애 polling은 두 REST를 다시 조회하는 trigger입니다.
+- event WebSocket payload를 직접 append하거나 optimistic event를 만들지 않고 PostgreSQL commit 뒤 REST 결과를 사용합니다.
+- current group 조회가 성공하고 events만 실패하면 기존 group 화면을 유지하고 상태 기록 영역에 별도 재시도를 제공합니다.
+- 타임라인은 `MATCH_CONFIRMED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`만 표시하며 KST formatter를 사용합니다.
+- 자유 text input, 메시지 작성, 전송 버튼과 client STOMP `SEND`는 제공하지 않습니다.
+
+## MatchRoomPage 구조화 신고
+
+- current group snapshot의 `groupId`, 상대 카드의 `memberId`만 신고 API에 사용하며
+  본인 카드에는 신고 action을 표시하지 않습니다.
+- 신고 dialog는 `무례한 행동`, `성희롱`, `나타나지 않음`, `사기 의심`,
+  `안전 문제`, `기타`의 구조화 사유만 제공하고 자유 입력을 제공하지 않습니다.
+- 사유 선택 뒤 대상과 한국어 사유를 다시 보여주는 최종 확인 단계를 거칩니다.
+- `POST /api/match-groups/{groupId}/reports`에는 `reportedMemberId`, `reasonCode`만
+  전송합니다. reporter는 HttpOnly JWT cookie를 해석하는 Backend 책임입니다.
+- 제출 중 동기 in-flight guard로 이중 클릭을 막고 dialog 취소·대상 변경 시
+  `AbortController`와 request identity를 함께 갱신해 늦은 응답을 무시합니다.
+- 실패하면 current group snapshot을 변경하지 않고 dialog에서 재시도하며, 성공하면
+  dialog를 닫고 접수 안내만 표시합니다. current group 재조회, WebSocket event 전송,
+  차단 또는 자동 제재는 실행하지 않습니다.
+- `SAFETY` 선택 시 긴급 상황은 신고 접수만 기다리지 말고 112 등 긴급 기관에
+  연락하라는 짧은 안내를 제공합니다.
+- dialog는 접근 가능한 title/label과 `Escape` 닫기, 최초 버튼 focus 및 닫은 뒤
+  기존 focus 복원을 제공합니다. 제출 중에는 닫기와 이전 이동을 비활성화합니다.
+
+## MatchRoomPage 상대 회원 차단
+
+- 본인을 제외한 각 상대 카드에 신고와 독립된 `차단하기` action을 표시합니다.
+- 최종 확인 dialog는 대상 nickname과 향후 양방향 매칭 제외, 상대에게 차단 사실·주체를
+  알리지 않음, 현재 화면에서 해제 불가를 안내합니다.
+- current group snapshot의 `groupId`와 선택한 상대 카드의 `memberId`만 사용해
+  `POST /api/match-groups/{groupId}/blocks`에 `blockedMemberId` 한 필드만 전송합니다.
+- 차단 session은 동기 in-flight guard, `AbortController`와 request identity로 빠른
+  이중 클릭, dialog 취소, 대상 변경, unmount 뒤 늦은 응답을 방어합니다.
+- 실패하면 대상과 dialog를 유지해 재시도합니다. 성공하면 접근 가능한 완료 안내만
+  표시하고 기존 group과 상대 카드를 유지하며 REST 재조회나 WebSocket event를 만들지 않습니다.
+- 차단 성공은 현재 MatchRoom의 퇴장·종료 명령이 아닙니다. 현재 상태방과 상대 카드는
+  그대로 유지하고, 완료 안내에서 차단 효과가 다음 매칭부터 적용됨을 설명합니다.
+- 신고도 접수만으로 현재 group이나 상대 카드를 제거하지 않습니다. 신고는 운영 검토로,
+  차단은 향후 양방향 후보 제외로 이어지며 현재 상태방의 도착·취소·완료 흐름과 분리합니다.
+- dialog title과 설명을 연결하고 최초 focus, `Escape`, 닫은 뒤 focus 복원과 `Tab`
+  순환을 제공합니다. 제출 중에는 닫기·취소·확인 action을 비활성화합니다.
+
+## 마이페이지 차단 회원 관리
+
+- 마이페이지의 `차단 회원 관리`는 `/mypage/blocks`로 이동하며 본인이 생성한 정방향
+  차단만 조회합니다. nickname, 공개 profile image와 차단 시각 외 내부 ID·reason·차단
+  주체는 표시하지 않습니다.
+- loading, `차단한 회원이 없어요`, 오류와 재시도 상태를 구분합니다. 최종 확인 dialog는
+  향후 재매칭 가능성, 현재 MatchRoom 불변과 상대 알림 부재를 안내합니다.
+- DELETE의 body 없는 `204`를 신규·반복 해제 모두 성공으로 처리합니다. 성공 전에는 목록을
+  낙관적으로 제거하지 않고, 성공한 `blockedMemberId` 항목만 제거합니다.
+- 동기 in-flight guard, `AbortController`와 request identity로 이중 클릭, 대상 변경,
+  화면 이탈·unmount 및 늦은 성공·실패를 방어합니다. 해제 성공 뒤 current MatchRoom을
+  재조회하거나 WebSocket `SEND`를 하지 않습니다.
+- dialog는 `role=dialog`, `aria-modal`, title/description 연결, 최초 focus, `Escape`, focus
+  복원과 `Tab` 순환을 제공하며 loading·성공·오류는 live region으로 알립니다.

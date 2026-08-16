@@ -52,3 +52,5 @@ pgdata/
 # Temporary
 tmp/
 temp/
+
+.pnpm-store/

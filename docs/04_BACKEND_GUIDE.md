@@ -1,5 +1,21 @@
 # 백엔드 가이드
 
+## Proposal 조기 종료와 matching 시각 계약
+
+- 최초 proposal 응답은 attempt를 먼저 잠그고 proposal, attempt member, 정렬된 pool 순서로
+  처리한다. 응답마다 목표 인원과 최소 2인 가능성을 다시 계산하며 조기 종료 미응답자는
+  비귀책 `EXCLUDED` 처리한다.
+- 최신 pool 응답의 `terminationReason`은 회원 본인의 proposal/member 상태에서만 파생하며
+  상대 identity·응답·제한 정보를 포함하지 않는다.
+- restriction의 `serverNow`는 cooldown 및 완료 제한 remainingSeconds를 계산한 같은 `Clock`
+  값이다. 같은 attempt와 round의 proposal deadline 불일치는 응답 transaction에서 거부한다.
+
+## 만남 장소 확정 transaction
+
+축제 만남 장소는 기존 proposal 응답 transaction 안에서 확정합니다. 잠금 순서는
+attempt, proposal, attempt member, 정렬된 pool, festival이며 festival row lock 뒤
+활성 후보 조회와 기존 snapshot group 수 계산을 수행합니다.
+
 ## 네이버 OAuth 로그인
 
 - 기존 Kakao OAuth와 같은 `domain/auth`의 회원 조회, JWT, Refresh Token 발급 흐름을 사용한다.
@@ -177,6 +193,77 @@ REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
 ```
 
 현재 공통 구조는 MVP 수준으로 유지합니다. trace id, error detail, debug field 같은 운영 확장 필드는 필요해질 때 별도 승인 후 추가합니다.
+
+## current match group 조회
+
+현재 `PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고
+인증 회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
+도착이면 group을 IN_PROGRESS로 전환하고 갱신된 전체 snapshot을 반환합니다.
+도착은 `now < confirmedAt + 30분`에서만 허용하고 deadline 정각부터는
+NO_SHOW Scheduler 판정 대상으로 넘깁니다.
+
+후속 단말 위치 확인에서는 신고 완료와 위치정보 약관·동의 적용을 전제로 이
+API가 브라우저에서 측정한 위도·경도, 정확도와 측정 시각을 받습니다. Backend는
+인증 회원의 group snapshot에 저장된 만남 포인트와의 거리를 직접 계산하고,
+정확도·측정값 유효시간·도착 허용 반경을 모두 만족할 때만 기존 상태 전이를
+수행합니다. 클라이언트가 계산한 거리나 `verified` 값은 받거나 신뢰하지
+않습니다. 원본 사용자 좌표는 DB, event와 log에 저장하지 않고 요청 처리 후
+폐기합니다. GPS 조작 가능성이 남으므로 허위 도착 분쟁은 신고와 운영 검토로
+보완합니다.
+
+`PUT /api/matching/groups/me/current/cancellation`은 회원/group 식별자를 받지
+않고 `SCHEDULE_CHANGED`, `TRANSPORTATION_ISSUE`, `OTHER` 중 하나만 받습니다.
+취소 상세 사유는 다른 회원에게 공개하지 않으며 성공 응답은 group 유지 여부와
+현재 유효 인원 수를 제공합니다.
+
+`GET /api/matching/groups/me/current`는 path, query, body의 회원/group 식별자를
+받지 않고 `access_token` HttpOnly cookie의 로그인 회원만 기준으로 조회합니다.
+응답은 기존 group 필드와 함께 `festivals`의 최소 summary 및 active member의
+공개 상태를 제공합니다.
+
+- group: `groupId`, `festivalId`, `status`, `confirmedMemberCount`, `confirmedAt`
+- festival: `festivalId`, `title`, `address`, `eventStartDate`, `eventEndDate`
+- meeting point(후속): 장소 ID, 장소명, 주소, 좌표와 단말 확인 반경 안내
+- member: `memberId`, `nickname`, `profileImageUrl`, `status`
+
+group/festival projection 1회와 member/profile projection 1회로 조회해 N+1을
+방지합니다. current group이 없으면 `200 OK`, `data:null`이고 정합성 충돌은
+`MATCHING_CONFLICT`입니다.
+
+### 정상 완료 후 재매칭 제한 계약
+
+MVP의 체크인과 확정 매칭 유효시간은 기존 기획서의 2시간에서 각각 1시간으로
+조정합니다. 정상 완료 group은 active current-group에서 계속 제외하되, 신규
+pool 신청과 restriction 조회에서는 로그인 회원의 최근 `COMPLETED` group을
+확인합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + 1시간
+```
+
+현재 시각이 이 값보다 이르면 신규 pool 신청을 거절하고 restriction 응답에
+종료 시각과 남은 초를 제공합니다. 이 제한은 귀책 penalty가 아니므로
+`match_cooldowns`에 정상 완료 row를 추가하지 않고 완료 group 이력에서
+파생하는 방향을 우선합니다. 새 active group이 있으면 기존 active group 제한을
+가장 먼저 적용합니다. 완료 횟수 최대 3회 같은 별도 횟수 제한은 MVP에 추가하지
+않습니다.
+
+구현은 최근 `COMPLETED` group과 로그인 회원의 `COMPLETED` member 관계만
+조회하고 `confirmed_at + 1시간`을 계산합니다. restriction 응답의
+`completionLock`은 `active`, `reason=MATCH_VALIDITY`, `groupId`, `startsAt`,
+`expiresAt`, `remainingSeconds`를 제공하며 귀책 cooldown과 별도입니다. 신규 pool
+신청은 active pool/group 검증을 먼저 적용한 뒤 cooldown과 완료 제한을 검증하고,
+완료 제한 중에는 `MATCHING_COMPLETION_LOCKED`를 반환합니다. 정확한 경계에서는
+제한이 종료됩니다.
+
+도착 예정 시간은
+`PUT /api/matching/groups/me/current/arrival-time`에서 변경합니다. request에는
+`arrivalMinutes`만 포함하며 신규 요청은 `5`, `10`, `20`, `25`만 허용합니다.
+DB CHECK와 조회 DTO/parser는 기존 row/event 호환을 위해 `0`, `30`도 계속
+허용하지만 신규 PUT API에서는 거절합니다. 서버는
+인증 회원의 active group과 member를 직접 찾고 group row, group member row
+순서로 잠급니다. 실제 변경은 member update와 `match_events` insert를 같은
+transaction에서 처리하고 알림은 `AFTER_COMMIT`에만 전송합니다.
 
 ## 공통 예외 처리
 
@@ -385,6 +472,16 @@ WebSocket STOMP는 상태 동기화 전용입니다.
 
 자유 채팅 기능으로 확장하지 않습니다.
 
+현재 matching WebSocket 계약:
+
+- handshake endpoint는 `/ws`입니다.
+- `access_token` HttpOnly cookie를 검증해 회원 ID 기반 `Principal`을 설정합니다.
+- client는 본인의 `/user/queue/matching`만 구독할 수 있습니다.
+- client `SEND` endpoint는 제공하지 않습니다.
+- DB transaction에서는 내부 application event만 발행하고 실제 STOMP 알림은 `AFTER_COMMIT`에 전송합니다.
+- payload는 상태 변경 이유와 발생 시각만 포함하며, client는 수신 후 REST로 최종 상태를 복원합니다.
+- 단일 instance의 Spring simple broker를 사용하며 Redis나 외부 message broker를 추가하지 않습니다.
+
 Scheduler 예정 작업:
 
 - 매칭 탐색 시간 만료
@@ -433,3 +530,12 @@ Redis는 MVP 1단계에 추가하지 않습니다.
 - 매칭 대기열 최적화
 
 Redis를 명시적으로 도입하기 전까지 backend는 Redis 전용 동작에 의존하지 않습니다.
+
+## Current group events 조회
+
+- `GET /api/matching/groups/me/current/events`는 HttpOnly `access_token`의 회원을 기준으로 current active group event만 조회합니다.
+- path/query/body에서 `memberId`, `groupId`를 받지 않으며 active group 부재는 `200 data:null`입니다.
+- 최신 50건을 선택해 `created_at ASC, id ASC` 순서로 반환하고 raw JSON payload는 DTO에 포함하지 않습니다.
+- actor는 event member가 같은 active group의 active member일 때만 `memberId`, `nickname`을 공개합니다.
+- `ARRIVAL_TIME_SELECTED`는 허용된 `arrivalMinutes`만 파싱하며 malformed event는 해당 항목만 제외합니다.
+- `MATCH_CONFIRMED` 저장은 group/member 확정과 같은 transaction이며 event insert 실패 시 확정도 rollback됩니다.

@@ -9,7 +9,7 @@ describe('validateNickname', () => {
 
   it('길이가 맞지 않으면 거절한다', () => {
     expect(validateNickname('가')).not.toBeNull();
-    expect(validateNickname('열두글자를넘는닉네임')).not.toBeNull();
+    expect(validateNickname('가나다라마바사아자차카타파')).not.toBeNull();
   });
 
   it('공백이나 특수문자가 있으면 거절한다', () => {

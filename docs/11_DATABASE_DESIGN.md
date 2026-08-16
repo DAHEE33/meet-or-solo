@@ -318,7 +318,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인/매칭 기준점으로 사용한다. |
+| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인 및 만남 장소 후보 검색 기준점으로 사용한다. |
 | 주요 컬럼 | `id`, `content_id`, `content_type_id`, `title`, `address`, `area_code`, `sigungu_code`, `event_start_date`, `event_end_date`, `map_x`, `map_y`, `checkin_radius_meters`, `meeting_radius_meters`, `status`, `last_synced_at`, `raw_data`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | 없음 |
@@ -328,6 +328,23 @@ DATA_CORRECTION
 | INDEX | `idx_festivals_period`, `idx_festivals_status`, `idx_festivals_area`, `idx_festivals_content_id` |
 | 개인정보/보안 | 공공데이터 캐시이며 개인정보 없음. 원천 데이터 임의 수정 여부를 구분할 수 있도록 `raw_data`를 둔다. |
 | MVP 필수 | 필수 |
+
+`GET /api/matching/groups/me/current`의 읽기 전용 상태방 summary는 이 테이블의
+`id`, `title`, `address`, `event_start_date`, `event_end_date`만 사용합니다.
+기존 `match_groups.festival_id` FK로 join할 수 있어 MatchRoomPage 작업에서는
+신규 migration을 추가하지 않았습니다.
+
+`map_x`, `map_y`는 축제 공식 좌표이며 실제 만남 장소를 뜻하지 않습니다.
+`meeting_radius_meters`는 주변 만남 장소 후보 검색 범위로 사용하고 단말 위치
+확인 반경과 분리합니다. 단말 확인 반경은 Backend 정책값으로 관리하고 current
+group 응답에는 사용자 안내에 필요한 값만 제공합니다.
+
+`V15`에서 `festival_meeting_points`를 추가했습니다. 축제 FK, Kakao 장소 ID,
+장소명, 주소, 좌표, `ACTIVE/INACTIVE`, 배정 순서와 생성·수정 시각을 관리합니다.
+좌표 범위와 음수 배정 순서를 CHECK로 거부하고 축제별 Kakao 장소 ID를 unique로
+보장합니다. 활성 후보는 partial index로 `assignment_order, id` 순서로 조회합니다.
+선택값은 기존 `match_groups.meeting_*`와 신규 nullable
+`meeting_place_address`에 snapshot으로 복사합니다.
 
 ### festival_images
 
@@ -423,7 +440,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | Scheduler 또는 신규 진입 트리거가 만든 후보 그룹 시도를 저장한다. |
+| 목적 | Scheduler 또는 향후 application-level `POOL_ENTRY` 실행 경로가 만든 후보 그룹 시도를 저장한다. `POOL_ENTRY`는 현재 미구현이며 PostgreSQL DB trigger가 아니다. |
 | 주요 컬럼 | `id`, `festival_id`, `target_group_size`, `status`, `score`, `created_by`, `started_at`, `expires_at`, `confirmed_at`, `failed_reason`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `festival_id -> festivals.id` |
@@ -493,7 +510,7 @@ DATA_CORRECTION
 | CHECK | `confirmed_member_count BETWEEN 2 AND 4`, `status IN (...)` |
 | UNIQUE | `attempt_id` |
 | INDEX | `idx_match_groups_festival_status`, `idx_match_groups_status_confirmed_at` |
-| 개인정보/보안 | 만남 포인트는 축제 공식 좌표 또는 공공 장소 기준으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
+| 개인정보/보안 | 축제 좌표 주변에서 확정한 실제 POI를 group snapshot으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
 | MVP 필수 | 필수 |
 
 ### match_group_members
@@ -501,15 +518,50 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 확정 그룹의 참여자 상태, 도착 예정 시간, 도착 인증 상태를 저장한다. |
-| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `created_at`, `updated_at` |
+| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `allow_minimum_two`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `no_show_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `member_id -> members.id` |
-| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
-| CHECK | `arrival_minutes IN (0,5,10,20,30)`, `status IN (...)` |
+| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `COMPLETED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
+| CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)`, `cancel_reason IN ('SCHEDULE_CHANGED','TRANSPORTATION_ISSUE','OTHER')` |
 | UNIQUE | `(group_id, member_id)`, active 상태의 `member_id` partial unique index 후보 |
 | INDEX | `idx_match_group_members_member_status`, `idx_match_group_members_group_status` |
 | 개인정보/보안 | 취소 사유는 구조화된 버튼 값만 저장한다. |
 | MVP 필수 | 필수 |
+
+도착 예정 시간 선택은 기존 컬럼만 사용합니다. `JOINED` 또는
+`ARRIVAL_TIME_SELECTED`인 로그인 member row를 잠근 뒤 `status`,
+`arrival_minutes`, `arrival_time_selected_at`, `updated_at`을 갱신합니다.
+같은 값 반복은 row와 event를 갱신하지 않습니다. `V13`은 기존 row/event의
+`0`, `30`을 유지하면서 신규 `25`를 저장할 수 있도록 CHECK만 교체합니다.
+신규 PUT API는 이 DB 호환 집합과 별도로 `5`, `10`, `20`, `25`만 허용합니다.
+
+도착 완료는 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED`를 사용하고,
+마지막 유효 회원 도착에서는 group `completed_at`, member `COMPLETED`,
+`MATCH_COMPLETED`를 같은 transaction에서 기록합니다. terminal member는 보존합니다.
+
+정상 완료 후 재매칭 제한은 신규 상태나 active member index 점유로 표현하지
+않습니다. `COMPLETED` member는 계속 active index에서 제외하고 다음 값을 완료
+group에서 파생합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + INTERVAL '1 hour'
+```
+
+정상 완료는 귀책 사유가 아니므로 `match_cooldowns`에 `COMPLETED` reason을
+추가하지 않는 방향을 우선합니다. restriction 조회와 pool 신청 검증에서 최근
+완료 group의 유효시간을 확인합니다. 별도 최대 3회 카운터나 체크인별 횟수
+컬럼은 MVP에 추가하지 않습니다. restriction 조회와 pool 신청 검증은 이 파생값을
+사용하도록 구현했으며 정상 완료에 대한 `match_cooldowns` row는 생성하지 않습니다.
+
+단말 위치 확인을 추가하더라도 원본 사용자 위도·경도, 계산 거리와 `verified`
+컬럼은 추가하지 않습니다. Backend가 요청의 좌표로 거리를 일회성 계산하고 원본
+위치정보를 폐기한 뒤 기존 도착 상태와 시각만 저장합니다.
+
+`V14`는 group 확정 당시 pool의 `allow_minimum_two`를 member snapshot으로
+저장합니다. 기존 row는 group attempt, attempt member와 pool 관계로
+결정적으로 backfill하며 매핑할 수 없는 row가 있으면 임의 값으로 채우지 않고
+migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancelled_at`,
+`no_show_at`과 구조화된 상태/event를 사용합니다.
 
 ### match_events
 
@@ -520,8 +572,8 @@ DATA_CORRECTION
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MATCH_CANCELLED','SAFETY_REMINDER')` |
-| UNIQUE | 없음 |
+| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MEMBER_NO_SHOW','MATCH_CANCELLED','MATCH_COMPLETED','SAFETY_REMINDER')` |
+| UNIQUE | group당 `MATCH_COMPLETED` 1건 partial unique index |
 | INDEX | `idx_match_events_group_created_at`, `idx_match_events_attempt_created_at`, `idx_match_events_member_created_at`, `idx_match_events_type_created_at` |
 | 개인정보/보안 | `payload JSONB`에는 token, GPS 원본 좌표, 민감정보를 저장하지 않는다. |
 | MVP 필수 | 필수 |
@@ -531,12 +583,12 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 거절/미응답/취소 후 재매칭 제한 시간을 관리한다. |
-| 주요 컬럼 | `id`, `member_id`, `reason`, `starts_at`, `expires_at`, `created_at` |
+| 주요 컬럼 | `id`, `member_id`, `reason`, `status`, `starts_at`, `expires_at`, `related_proposal_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id` |
-| 상태값 | `reason` |
+| FK | `member_id -> members.id`, `related_proposal_id -> match_proposals.id` |
+| 상태값 | `reason`, `status` |
 | CHECK | `expires_at > starts_at`, `reason IN ('REJECT','TIMEOUT','CANCEL','NO_SHOW','REPORT')` |
-| UNIQUE | active 상태의 `member_id` partial unique index 후보 |
+| UNIQUE | active 상태의 `member_id` partial unique index, nullable `related_proposal_id` partial unique index |
 | INDEX | `idx_match_cooldowns_member_expires`, `idx_match_cooldowns_expires_at` |
 | 개인정보/보안 | 사유는 구조화된 코드만 저장한다. |
 | MVP 필수 | 필수 |
@@ -546,12 +598,12 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. |
-| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `created_at` |
+| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `related_proposal_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id` |
+| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id`, `related_proposal_id -> match_proposals.id` |
 | 상태값 | `event_type` |
 | CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','DECAY','ADMIN_ADJUST')` |
-| UNIQUE | 없음 |
+| UNIQUE | nullable `related_proposal_id` partial unique index |
 | INDEX | `idx_match_penalty_events_member_created_at`, `idx_match_penalty_events_type_created_at` |
 | 개인정보/보안 | 운영 이력은 30일 후 삭제 또는 집계 전환 후보로 둔다. |
 | MVP 필수 | 필수 |
@@ -682,7 +734,7 @@ DATA_CORRECTION
 - `match_proposals.proposal_round > 0`
 - `match_proposals.expires_at > match_proposals.sent_at`
 - `match_groups.confirmed_member_count BETWEEN 2 AND 4`
-- `match_group_members.arrival_minutes IN (0,5,10,20,30)`
+- `match_group_members.arrival_minutes IN (0,5,10,20,25,30)`
 - `reports.reporter_member_id <> reports.reported_member_id`
 - `festival_checkins.distance_meters >= 0`
 
@@ -744,6 +796,24 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 
 ## 10. Flyway migration 이력
 
+### V18__add_match_opponent_exclusions.sql
+
+`match_opponent_exclusions`는 영구 안전 차단인 `user_blocks`와 분리된 check-in 범위의 재추천 제외 이력입니다.
+
+| 컬럼 | 역할 |
+| --- | --- |
+| `lower_member_id`, `higher_member_id` | member ID 오름차순으로 정규화한 양방향 pair |
+| `lower_checkin_id`, `higher_checkin_id` | 각 member 위치에 대응하는 proposal 당시 check-in |
+| `rejected_by_member_id` | 내부 감사용 명시적 거절 회원 |
+| `source_proposal_id` | round 1 명시적 REJECT 원본 |
+| `created_at` | 생성 시각 |
+
+- `lower_member_id < higher_member_id`, rejector pair 포함, 동일 check-in pair unique와 source proposal/member pair unique를 DB에서 강제한다.
+- member와 check-in에는 `ON DELETE RESTRICT` FK를 사용한다. 회원 또는 check-in을 실제 삭제하려면 관련 exclusion의 보존·익명화 정책을 먼저 적용해야 한다.
+- 기존 `festival_checkins`에 `(id, member_id)` 복합 unique를 추가하는 것은 PK와 중복되고 기존 schema 영향이 커서 복합 FK는 추가하지 않았다. Service가 attempt member → pool을 통해 check-in을 얻고 `festival_checkins.id/member_id/festival_id` 소유 관계를 저장 전에 검증한다.
+- 적용 여부는 현재 후보 두 pool의 member/check-in 정규화 조합과 row가 정확히 일치하는지로 판단한다. 과거 row는 새 check-in에 적용되지 않는다.
+- 즉시 삭제 Scheduler는 두지 않는다. 감사·문제 분석 보존 기간과 삭제 시점은 match event 및 개인정보 보존 정책과 함께 후속 확정한다.
+
 이미 적용된 migration은 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
@@ -757,8 +827,42 @@ backend/src/main/resources/db/migration/V8__add_member_intro.sql
 backend/src/main/resources/db/migration/V9__add_member_profile_image_object_key.sql
 backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
 backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
+backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
+backend/src/main/resources/db/migration/V13__allow_25_arrival_minutes.sql
+backend/src/main/resources/db/migration/V14__add_match_room_cancellation_no_show.sql
+backend/src/main/resources/db/migration/V15__add_festival_meeting_points.sql
+backend/src/main/resources/db/migration/V16__complete_match_rooms.sql
+backend/src/main/resources/db/migration/V17__enforce_one_hour_checkin_validity.sql
+backend/src/main/resources/db/migration/V18__add_match_opponent_exclusions.sql
 ```
 
-`V1`~`V9`는 수정하지 않는다. `V10`, `V11`은 코드와 문서 작성까지만 수행하며 실제 local/dev DB 적용은 별도 작업으로 남긴다.
+기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반
+멱등성은 `V12`에서 추가했고, `V13`은
+`chk_match_group_members_arrival_minutes`를 안전하게 교체해
+`NULL 또는 0,5,10,20,25,30`을 허용한다. 기존 `0`, `30` row를 변환하지 않는다.
+
+`V16`은 완료 member/event CHECK와 group별 완료 event unique index를 추가하고
+active member index를 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`로 유지한다.
+기존 `COMPLETED` group은 누락 `completed_at`, 비종료 member와 누락 완료 event를
+backfill하되 `CANCELLED`, `NO_SHOW`, `LEFT`는 보존한다.
+
+`V17`은 기존 `ACTIVE` check-in 중 `checked_in_at + 1시간`을 넘는 `expires_at`을
+1시간 경계로 줄이고, 보정 후 이미 만료된 row를 `EXPIRED`로 전환해 partial unique
+index 점유를 해제합니다. 신규 컬럼이나 constraint는 추가하지 않습니다. 운영
+matching SQL도 저장값과 정책 상한 중 이른 시각을 사용하므로 잘못된 장기 만료
+row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.
+## `user_blocks` 조회·해제 접근 규칙
+
+- 목록은 `user_blocks.blocker_member_id = :authenticated_member_id`로 제한하고
+  `members.id = blocked_member_id`를 조인해 nickname과 profile image만 조회한다.
+- 정렬은 `created_at DESC, id DESC`이며 `id`는 tie-breaker로만 사용하고 API에 노출하지 않는다.
+- 해제 SQL은 `DELETE FROM user_blocks WHERE blocker_member_id = ? AND blocked_member_id = ?`로
+  물리 삭제한다. 삭제 건수는 서비스/API 계약으로 전달하지 않는다.
+- 기존 unique/check/FK/index와 migration은 변경하지 않는다. soft delete와 감사 테이블은
+  이번 MVP 범위가 아니다.
+- 차단 해제는 정규화 member pair의 `pg_advisory_xact_lock`을 얻은 같은 transaction에서
+  위 DELETE를 수행한다. 이는 schema 변경이 아니며 기존 migration을 수정하지 않는다.
+- pair lock을 준수하는 차단 생성·해제와 proposal 생성 경로 사이만 직렬화한다. DB 직접
+  쓰기처럼 lock 규칙을 우회하는 미래 경로는 보장하지 않는다.

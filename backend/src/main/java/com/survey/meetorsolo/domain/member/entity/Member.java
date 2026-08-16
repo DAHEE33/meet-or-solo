@@ -25,6 +25,7 @@ public class Member {
     public static final String PROVIDER_KAKAO = "KAKAO";
     public static final String PROVIDER_NAVER = "NAVER";
     public static final String ROLE_USER = "USER";
+    public static final String ROLE_ADMIN = "ADMIN";
     public static final String STATUS_PROFILE_REQUIRED = "PROFILE_REQUIRED";
     public static final String STATUS_ACTIVE = "ACTIVE";
 
@@ -226,6 +227,10 @@ public class Member {
 
     public String getStatus() {
         return status;
+    }
+
+    public Integer getPenaltyScore() {
+        return penaltyScore;
     }
 
     public byte[] getGenderEncrypted() {

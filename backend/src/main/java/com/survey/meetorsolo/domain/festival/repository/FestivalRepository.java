@@ -100,4 +100,6 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
             @Param("status") FestivalStatus status,
             @Param("today") LocalDate today
     );
+    @Query(value = "SELECT * FROM festivals WHERE id = :festivalId FOR UPDATE", nativeQuery = true)
+    Optional<Festival> findByIdForUpdate(@Param("festivalId") long festivalId);
 }

@@ -59,7 +59,7 @@ meet-or-solo/
 - JWT 인증
 - GPS 체크인
 - 자동 매칭
-- WebSocket STOMP 이벤트 구현
+- WebSocket STOMP 기반 MatchRoom 상태 기능
 - 관리자 기능
 - Redis 구성
 - 운영 배포 자동화 완성
@@ -369,10 +369,11 @@ npm run dev
 
 Vite dev server가 안내하는 URL로 접속하면 개발용 HealthCheck 화면이 표시됩니다.
 
-local 개발에서 frontend dev server는 `/api` 요청을 backend로 전달합니다.
+local 개발에서 frontend dev server는 `/api` 요청과 `/ws` WebSocket Upgrade를 backend로 전달합니다.
 
 ```text
 Browser -> http://localhost:5173/api -> Vite proxy -> http://localhost:8080/api
+Browser -> ws://localhost:5173/ws -> Vite ws proxy -> ws://localhost:8080/ws
 ```
 
 `frontend/vite.config.ts`의 proxy 설정을 바꾸면 `npm run dev`를 재시작해야 합니다.
@@ -770,7 +771,7 @@ order by table_schema, table_name;
 - JWT 인증/인가
 - GPS 체크인
 - 자동 매칭
-- WebSocket STOMP 상태 동기화
+- MatchRoom WebSocket STOMP 상태 동기화
 - 관리자 기능
 - Redis 구성
 - 테스트 코드 추가
