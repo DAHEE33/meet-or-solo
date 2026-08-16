@@ -82,6 +82,7 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 JWT_SECRET
+ADMIN_REPORT_CURSOR_HMAC_SECRET
 KAKAO_CLIENT_ID
 KAKAO_CLIENT_SECRET
 NAVER_CLIENT_ID
@@ -92,6 +93,13 @@ VAPID_PRIVATE_KEY
 ```
 
 실제 값은 GitHub Secrets에만 저장하고 repository file에는 넣지 않습니다.
+
+관리자 신고 목록의 opaque cursor는 `ADMIN_REPORT_CURSOR_HMAC_SECRET`을 전용
+HMAC-SHA256 키로 사용합니다. JWT 서명 키와 목적을 분리하고 자동 재사용하지 않으며,
+UTF-8 기준 32바이트 이상의 서로 다른 난수 Secret을 dev/prod 환경에 별도로 주입합니다.
+기본값이나 예측 가능한 fallback은 두지 않고 누락·blank·짧은 값이면 Backend 시작을
+실패시킵니다. 실제 값은 source, example, 문서와 로그에 기록하지 않습니다. 키를 회전하면
+기존에 발급한 cursor가 무효화될 수 있으며 DB migration은 필요하지 않습니다.
 
 ## 개인정보
 

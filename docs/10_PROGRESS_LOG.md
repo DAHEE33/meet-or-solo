@@ -1,5 +1,49 @@
 # 진행 상태 기록
 
+## [10-관리자 안전 1차] 관리자 신고 검토
+
+상태: 구현·자동 검증 및 dev DB·브라우저 수동 검증 완료
+
+- JWT HttpOnly `access_token` cookie에서 member ID만 추출하고 `members.role`을 매 요청
+  재조회하는 `GET /api/admin/me`와 관리자 신고 목록·상세·상태 변경 API를 추가했다.
+- 목록은 `created_at DESC, id DESC` keyset 정렬, filter fingerprint를 HMAC 서명한 opaque
+  cursor, `size + 1` 조회를 사용한다. 상태·사유·기간 filter와 잘못된 cursor·날짜 범위를
+  공통 400 응답으로 처리하며 migration과 성능 index는 추가하지 않았다.
+- 상태 변경은 report row를 `SELECT FOR UPDATE`로 먼저 잠근 뒤 transaction 안에서 현재
+  상태와 피신고자를 재검증한다. 같은 목표 상태는 timestamp와 감사 로그를 변경하지 않고
+  기존 snapshot을 반환하며, terminal 경합은 최종 상태 하나와 감사 로그 하나만 남긴다.
+- `RESOLVED`와 `REJECTED`에만 각각 `REPORT_RESOLVE`, `REPORT_REJECT` 감사 로그를 같은
+  transaction으로 저장한다. `REVIEWING` 감사 로그, 제재·penalty·cooldown·회원 점수·상태,
+  매칭 상태와 WebSocket/application notification event는 생성하거나 변경하지 않는다.
+- `/admin`과 `/admin/reports`에 server-driven ADMIN route guard를 적용했다. 신고 관리 화면은
+  filter, cursor 이전·다음, loading·빈 목록·오류·재시도, 상세·확인 dialog, 동기 in-flight
+  guard, abort/request identity와 dialog keyboard/focus 접근성을 제공한다. 기존 관리자 관광·통계
+  mock은 신고 관리 진입 링크 외에 변경하지 않았다.
+- Backend 관리자 신고·인가 및 cursor 보안 focused 5 suites/30 tests, safety 전체
+  7 suites/58 tests, Backend 전체 64 suites/416 tests가 failures/errors/skipped 0건으로
+  통과했고 build가 성공했다.
+  전체 검증은 DrvFS 산출물을 삭제하지 않고 `/tmp` Linux filesystem과 PostgreSQL
+  Testcontainers에서 테스트 전용 profile 암호화 키를 환경변수로 제공해 실행했다.
+- Frontend focused 4 files/14 tests, 전체 Vitest 22 files/184 tests, `npx tsc --noEmit`,
+  production/PWA `generateSW` build가 성공했다.
+- dev 수동 검증 전 보안 점검에서 cursor HMAC이 JWT Secret을 재사용하는 문제를 발견해
+  `ADMIN_REPORT_CURSOR_HMAC_SECRET` 전용 키로 분리했다. UTF-8 기준 32바이트 이상을 요구하고
+  누락·blank·짧은 값은 시작 단계에서 거절하며 기본값과 JWT fallback은 두지 않는다.
+  실제 Secret은 repository에 저장하지 않고 dev/prod에서 별도 주입해야 하며, 키 회전 시 기존
+  cursor는 무효화될 수 있다. DB migration은 추가하지 않았다.
+- 2026-08-16 로컬 Backend/Frontend와 dev DB를 연결한 브라우저 수동 검증에서 ADMIN의
+  `/admin/reports` 접근과 목록·filter·상세·상태 변경, 일반 USER `403`, 미인증 로그인 이동을
+  확인했다. `REVIEWING`, `RESOLVED`, `REJECTED` 전이와 동일 처리 멱등 재요청, terminal 상태
+  충돌을 확인했고 dev DB의 `reports`와 `admin_actions` 상태·감사 로그 단일성이 일치했다.
+  penalty·cooldown·회원 상태와 매칭 관련 부수 상태는 변경되지 않았고, 피신고자 화면에는 신고
+  상태·처리 결과·신고자와 관리자 identity가 노출되지 않았다.
+- 관리자는 일반 회원 화면도 사용할 수 있으며 `/admin`을 직접 열어 관리자 기능에 진입한다.
+  일반 화면에서 ADMIN에게만 보이는 관리자 진입 버튼과 관리자 화면 상세 UX 보완은 이번 1차의
+  완료 조건에서 제외하고 후속 관리자 UX 작업으로 이관한다.
+- 다음 Fullstack B 작업은 `dev` 병합 후
+  `feature/wbs-10-b-admin-member-sanctions`에서 진행하는 관리자 회원 조회·제재 2차다.
+  구현 전 정책과 조사 범위는 `docs/20_ADMIN_MEMBER_SANCTIONS_HANDOFF.md`로 인계한다.
+
 ## [10-안전 6차] 차단 해제 동시성·마이페이지 관리 UI
 
 상태: 구현·자동 검증 및 두 브라우저·dev DB 수동 검증 완료

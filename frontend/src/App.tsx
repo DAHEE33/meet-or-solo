@@ -11,6 +11,8 @@ import MyPage from './pages/MyPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import MatchRoomPage from './pages/MatchRoomPage';
 import BlockedMembersPage from './pages/BlockedMembersPage';
+import AdminReportsPage from './pages/AdminReportsPage';
+import AdminRoute from './components/admin/AdminRoute';
 
 export default function App() {
   return (
@@ -27,7 +29,8 @@ export default function App() {
         <Route path="/check-in" element={<CheckInPage />} />
         <Route path="/mypage" element={<MyPage />} />
         <Route path="/mypage/blocks" element={<BlockedMembersPage />} />
-        <Route path="/admin" element={<AdminDashboardPage />} />
+        <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
+        <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
       </Routes>
     </BrowserRouter>
   );
