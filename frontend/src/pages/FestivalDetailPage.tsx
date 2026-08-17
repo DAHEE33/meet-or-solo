@@ -12,6 +12,7 @@ import {
 } from '../utils/festival';
 import { formatDistanceLabel } from '../utils/tourSpot';
 import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
+import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
@@ -25,6 +26,14 @@ export default function FestivalDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const { state: checkinState, checkIn } = useFestivalCheckin(festival?.id ?? null);
+  // 이 화면에서 방금 체크인한 결과(checkinState)뿐 아니라, 이전에 체크인해두고 다시
+  // 들어온 경우도 매칭 시작 버튼이 활성화돼야 하므로 실제 체크인 상태를 함께 조회한다.
+  const { state: currentCheckinState, refresh: refreshCurrentCheckin } = useCurrentCheckin();
+  useEffect(() => {
+    if (checkinState.status === 'success') void refreshCurrentCheckin();
+  }, [checkinState.status, refreshCurrentCheckin]);
+  const currentCheckin = currentCheckinState.status === 'loaded' ? currentCheckinState.checkin : null;
+  const isCheckedIntoThisFestival = currentCheckin !== null && currentCheckin.festivalId === festival?.id;
 
   useEffect(() => {
     const id = Number(festivalId);
@@ -132,7 +141,7 @@ export default function FestivalDetailPage() {
           </div>
         </section>
 
-        {/* GPS 체크인 — 매칭은 아직 준비 중이지만, 체크인 자체는 반경 확인을 위해 먼저 구현했다 */}
+        {/* GPS 체크인 — 완료하면 아래 하단 CTA로 매칭을 시작할 수 있다 */}
         <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sand text-ink/40">
@@ -140,19 +149,21 @@ export default function FestivalDetailPage() {
             </span>
             <div className="flex flex-col gap-0.5">
               <span className="text-sm font-semibold text-ink">
-                {checkinState.status === 'success' ? '체크인 완료' : '이 축제에 체크인하기'}
+                {isCheckedIntoThisFestival ? '체크인 완료' : '이 축제에 체크인하기'}
               </span>
               <span className="text-[13px] text-ink/55">
                 {checkinState.status === 'success'
-                  ? `현재 위치에서 ${formatDistanceLabel(checkinState.result.distanceMeters)} 떨어진 곳에서 체크인했어요. 매칭 기능은 아직 준비 중이에요.`
-                  : '축제 반경 안에 있으면 체크인할 수 있어요. 매칭 기능은 아직 준비 중이에요.'}
+                  ? `현재 위치에서 ${formatDistanceLabel(checkinState.result.distanceMeters)} 떨어진 곳에서 체크인했어요. 아래 버튼으로 매칭을 시작해보세요.`
+                  : isCheckedIntoThisFestival
+                    ? '이미 체크인되어 있어요. 아래 버튼으로 매칭을 시작해보세요.'
+                    : '축제 반경 안에 있으면 체크인할 수 있어요.'}
               </span>
             </div>
           </div>
           {checkinState.status === 'error' && (
             <p className="text-[13px] text-coral">{checkinState.message}</p>
           )}
-          {checkinState.status !== 'success' && (
+          {!isCheckedIntoThisFestival && (
             <button
               type="button"
               onClick={() => setShowPermissionModal(true)}
@@ -251,10 +262,17 @@ export default function FestivalDetailPage() {
         </div>
       </main>
 
-      {/* 하단 고정 CTA — 매칭 기능 구현 전까지 비활성 상태로 고정 */}
+      {/* 하단 고정 CTA — 이 축제에 체크인 완료해야 활성화된다 */}
       <div className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-line bg-white px-5 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3">
-        <button type="button" disabled className="w-full rounded-2xl bg-line py-3.5 text-[15px] font-bold text-ink/45">
-          매칭 기능은 준비 중이에요
+        <button
+          type="button"
+          disabled={!isCheckedIntoThisFestival}
+          onClick={() => navigate('/matching', { state: { festivalId: festival.id } })}
+          className={`w-full rounded-2xl py-3.5 text-[15px] font-bold ${
+            isCheckedIntoThisFestival ? 'bg-coral text-white' : 'bg-line text-ink/45'
+          }`}
+        >
+          {isCheckedIntoThisFestival ? '매칭 시작하기' : '체크인 후 매칭을 시작할 수 있어요'}
         </button>
       </div>
 
