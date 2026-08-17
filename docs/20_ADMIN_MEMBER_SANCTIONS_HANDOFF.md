@@ -2,7 +2,7 @@
 
 ## 1. 목적과 시작 조건
 
-- 상태: `READY`
+- 상태: 구현·자동 검증 완료, 브라우저·dev DB 수동 검증 일부 수행
 - 담당: 풀스택 B
 - 목표: 관리자가 회원 상태와 안전 이력을 조회하고 `WARNING`, `SUSPEND`, `BAN`,
   `UNBAN`을 감사 가능하고 멱등하게 처리하는 흐름을 구현합니다.
@@ -122,7 +122,27 @@ MatchRoom 상태를 임의로 변경하지 않습니다.
 
 실제로 수행하지 않은 수동 검증은 `PASS`로 기록하지 않습니다.
 
-## 7. 다음 Codex CLI 시작 프롬프트
+## 7. 구현·검증 결과와 후속 UX
+
+- 승인 정책에 따라 `V19`, 관리자 회원 API·UI, 제재 transaction, 인증·refresh·WebSocket과
+  matching 제한을 구현했고 Backend 전체 426 tests, 관리자 제재 PostgreSQL Testcontainers
+  7건, Frontend 전체 24 files/189 tests와 production build를 통과했다.
+- 사용자 브라우저 수동 검증은 2026-08-17 실제 확인한 항목까지만 인정한다. WebSocket session
+  종료, active pool/proposal/group 회원 제재의 409, dialog keyboard 접근성과 자동 테스트 대체
+  항목은 수동 미실행이며 `PASS`로 기록하지 않는다.
+- 동시 관리자 경합, 동일 `Idempotency-Key` 재전송·payload 충돌, rollback 강제 실패, 정지
+  Scheduler 경쟁과 같은 항목은 브라우저로 무리하게 재현하지 않고 통과한 자동 통합 테스트를
+  검증 근거로 사용한다.
+- 현재 관리자는 `SUSPENDED` 회원을 직접 조기 해제할 수 없다. `BAN -> UNBAN`은 테스트 계정
+  복구에는 사용할 수 있지만 감사 의미와 운영 UX가 달라 정식 해제 기능으로 간주하지 않는다.
+- 후속 작업은 `UNSUSPEND` 또는 동등한 action을 별도 정의하고, `SUSPENDED ->
+  status_before_sanction` 전이, 감사 유형, `Idempotency-Key`, member row lock, 자동 만료와 수동
+  해제 race, refresh·WebSocket 재허용 시점을 설계한 뒤 API와 확인 dialog를 추가한다.
+
+## 8. 기존 구현 시작 프롬프트 이력
+
+아래 프롬프트는 2차 구현 전 조사 단계에서 사용한 이력이며 현재 다음 작업 지시가 아닙니다.
+조기 정지 해제는 위 7절의 정책을 별도 승인한 뒤 새 작업으로 진행합니다.
 
 ```text
 AGENTS.md와 docs/*.md를 모두 확인하고,

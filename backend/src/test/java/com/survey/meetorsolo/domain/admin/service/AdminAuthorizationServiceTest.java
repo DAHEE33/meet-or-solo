@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.util.Optional;
@@ -15,7 +16,8 @@ import org.junit.jupiter.api.Test;
 class AdminAuthorizationServiceTest {
 
     private final MemberRepository members = mock(MemberRepository.class);
-    private final AdminAuthorizationService service = new AdminAuthorizationService(members);
+    private final MemberAccessPolicy accessPolicy = mock(MemberAccessPolicy.class);
+    private final AdminAuthorizationService service = new AdminAuthorizationService(members, accessPolicy);
 
     @Test
     void 존재하지_않는_인증_회원은_401이다() {

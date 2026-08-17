@@ -12,6 +12,7 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.naver.NaverOAuthClient;
 import com.survey.meetorsolo.external.naver.dto.NaverTokenResponse;
@@ -28,8 +29,9 @@ class AuthServiceTest {
     private final MemberRepository memberRepository = mock(MemberRepository.class);
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final JwtProvider jwtProvider = mock(JwtProvider.class);
+    private final MemberAccessPolicy accessPolicy = mock(MemberAccessPolicy.class);
     private final AuthService authService = new AuthService(
-            kakaoClient, naverClient, memberRepository, refreshTokenRepository, jwtProvider);
+            kakaoClient, naverClient, memberRepository, refreshTokenRepository, jwtProvider, accessPolicy);
 
     @BeforeEach
     void token정책() {

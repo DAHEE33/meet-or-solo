@@ -8,6 +8,7 @@ import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -16,17 +17,20 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketAuthenticationInterceptor authenticationInterceptor;
     private final WebSocketPrincipalHandshakeHandler handshakeHandler;
     private final WebSocketInboundChannelInterceptor inboundChannelInterceptor;
+    private final MemberWebSocketHandlerDecoratorFactory handlerDecoratorFactory;
     private final String[] allowedOrigins;
 
     public WebSocketConfig(
             WebSocketAuthenticationInterceptor authenticationInterceptor,
             WebSocketPrincipalHandshakeHandler handshakeHandler,
             WebSocketInboundChannelInterceptor inboundChannelInterceptor,
+            MemberWebSocketHandlerDecoratorFactory handlerDecoratorFactory,
             @Value("${app.cors.allowed-origins:}") String allowedOrigins
     ) {
         this.authenticationInterceptor = authenticationInterceptor;
         this.handshakeHandler = handshakeHandler;
         this.inboundChannelInterceptor = inboundChannelInterceptor;
+        this.handlerDecoratorFactory = handlerDecoratorFactory;
         this.allowedOrigins = Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(value -> !value.isEmpty())
@@ -52,5 +56,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.interceptors(inboundChannelInterceptor);
+    }
+
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(handlerDecoratorFactory);
     }
 }

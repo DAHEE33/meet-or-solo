@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Users, HeartHandshake, MapPinCheck, ShieldAlert } from 'lucide-react';
+import { Users, HeartHandshake, MapPinCheck, ShieldAlert, UserCog } from 'lucide-react';
 import { adminStats } from '../data/mock/adminStats';
 import { formatSeoulDateTime } from '../utils/dateTime';
 
@@ -25,6 +25,10 @@ export default function AdminDashboardPage() {
         <Link to="/admin/reports" className="flex items-center gap-3 rounded-2xl bg-white p-5 font-bold text-ink shadow-sm">
           <ShieldAlert className="text-coral" aria-hidden="true" />
           관리자 신고 검토
+        </Link>
+        <Link to="/admin/members" className="flex items-center gap-3 rounded-2xl bg-white p-5 font-bold text-ink shadow-sm">
+          <UserCog className="text-teal" aria-hidden="true" />
+          회원 조회·제재
         </Link>
         {/* 통계 카드 */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">

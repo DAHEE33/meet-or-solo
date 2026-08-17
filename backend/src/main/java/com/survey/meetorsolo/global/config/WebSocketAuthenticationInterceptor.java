@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.global.config;
 
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -18,9 +19,11 @@ public class WebSocketAuthenticationInterceptor implements HandshakeInterceptor 
     private static final String ACCESS_TOKEN_COOKIE = "access_token";
 
     private final JwtProvider jwtProvider;
+    private final MemberAccessPolicy accessPolicy;
 
-    public WebSocketAuthenticationInterceptor(JwtProvider jwtProvider) {
+    public WebSocketAuthenticationInterceptor(JwtProvider jwtProvider, MemberAccessPolicy accessPolicy) {
         this.jwtProvider = jwtProvider;
+        this.accessPolicy = accessPolicy;
     }
 
     @Override
@@ -37,7 +40,9 @@ public class WebSocketAuthenticationInterceptor implements HandshakeInterceptor 
         if (accessToken == null || accessToken.isBlank()) {
             return false;
         }
-        attributes.put(MEMBER_ID_ATTRIBUTE, jwtProvider.getMemberIdFromAccessToken(accessToken));
+        long memberId = jwtProvider.getMemberIdFromAccessToken(accessToken);
+        accessPolicy.requireAccessible(memberId);
+        attributes.put(MEMBER_ID_ATTRIBUTE, memberId);
         return true;
     }
 

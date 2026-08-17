@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX } from 'lucide-react';
+import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, UserCog } from 'lucide-react';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
+import { adminReportsApi } from '../api/adminReports';
 import { checkInRecords } from '../data/mock/checkIns';
 import { tourSpots } from '../data/mock/tourSpots';
 import MobileLayout from '../components/layout/MobileLayout';
@@ -13,6 +14,7 @@ export default function MyPage() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,6 +29,14 @@ export default function MyPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    adminReportsApi.getSession(controller.signal)
+      .then(() => { if (!controller.signal.aborted) setIsAdmin(true); })
+      .catch(() => { if (!controller.signal.aborted) setIsAdmin(false); });
+    return () => controller.abort();
   }, []);
 
   return (
@@ -126,6 +136,12 @@ export default function MyPage() {
           <span className="flex-1 text-[14px] font-semibold text-ink">차단 회원 관리</span>
           <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
         </Link>
+
+        {isAdmin && <Link to="/admin" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
+          <UserCog size={18} className="text-teal" aria-hidden="true" />
+          <span className="flex-1 text-[14px] font-semibold text-ink">관리자 기능</span>
+          <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
+        </Link>}
 
         <button
           type="button"

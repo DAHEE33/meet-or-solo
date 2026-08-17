@@ -2,7 +2,8 @@
 
 ## 1. 문서 목적과 상태
 
-- 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 다음 단계는 4.2 관리자 회원 조회·제재
+- 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 4.2 관리자 회원 조회·제재 구현·자동
+  검증 완료 및 사용자 수동 검증 일부 수행
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 인계합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -121,7 +122,7 @@ Frontend 범위:
 
 ### 4.2 관리자 회원 조회·제재 2차
 
-상태: `READY` — 상세 인수인계는
+상태: 구현·자동 검증 완료, 브라우저·dev DB 수동 검증 일부 수행 — 상세 인수인계와 후속 기록은
 [docs/20_ADMIN_MEMBER_SANCTIONS_HANDOFF.md](20_ADMIN_MEMBER_SANCTIONS_HANDOFF.md)를 기준으로 합니다.
 
 권장 브랜치:
@@ -155,6 +156,18 @@ Frontend 범위:
 - 관리자가 회원 개인정보를 임의 수정하는 기능
 - 사용자 본인 탈퇴를 관리자 `BAN`과 같은 상태로 처리하는 기능
 - 자유 사유에 Secret, token, GPS 원본 좌표 저장
+
+구현 및 검증 상태:
+
+- `V19` 신규 migration, 관리자 회원 목록·상세·이력, `WARNING`, `SUSPEND`, `BAN`,
+  `UNBAN`, 멱등성·row lock·신고 `ACTION_TAKEN` 원자 처리와 인증·매칭 제한을 구현했다.
+- Backend 전체 426 tests, 관리자 제재 Testcontainers 7건, Frontend 전체 24 files/189 tests와
+  production build가 성공했다.
+- 사용자 브라우저 수동 검증은 실제 확인한 범위만 인정한다. WebSocket session 종료, active
+  matching 409, dialog 접근성과 자동 검증 대상은 수동 `PASS`로 올리지 않는다.
+- `SUSPENDED` 조기 해제 action이 없어 `BAN -> UNBAN` 우회가 필요한 UX 누락을 확인했다.
+  후속 제재 UX에서 `UNSUSPEND` 또는 동등 action의 권한, 감사 로그, 멱등성, 정지 만료와의
+  race를 설계하며 기존 `UNBAN` 의미를 재사용하지 않는다.
 
 ### 4.3 신고 누적·안전 자동화 3차
 
