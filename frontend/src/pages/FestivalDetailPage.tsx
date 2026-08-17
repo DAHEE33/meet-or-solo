@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Calendar, MapPin, Share2, Navigation, ChevronRight } from 'lucide-react';
 import { festivalsApi, type FestivalDetail } from '../api/festivals';
-import { checkinApi, type CheckInResponse } from '../api/checkin';
 import {
   resolveDisplayStatus,
   resolveDdayLabel,
@@ -12,10 +11,11 @@ import {
   getFestivalStatusSoftClass,
 } from '../utils/festival';
 import { formatDistanceLabel } from '../utils/tourSpot';
-import { getCurrentPosition } from '../utils/geolocation';
+import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
+import GPSPermissionModal from '../components/common/GPSPermissionModal';
 
 export default function FestivalDetailPage() {
   const { festivalId } = useParams<{ festivalId: string }>();
@@ -23,9 +23,8 @@ export default function FestivalDetailPage() {
   const [festival, setFestival] = useState<FestivalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [checkinResult, setCheckinResult] = useState<CheckInResponse | null>(null);
-  const [checkinLoading, setCheckinLoading] = useState(false);
-  const [checkinError, setCheckinError] = useState<string | null>(null);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const { state: checkinState, checkIn } = useFestivalCheckin(festival?.id ?? null);
 
   useEffect(() => {
     const id = Number(festivalId);
@@ -76,25 +75,6 @@ export default function FestivalDetailPage() {
   const displayStatus = resolveDisplayStatus(festival);
   const statusView = { status: displayStatus, ddayLabel: resolveDdayLabel(festival) };
   const periodFull = formatFestivalPeriod(festival);
-
-  async function handleCheckIn() {
-    setCheckinLoading(true);
-    setCheckinError(null);
-    try {
-      const position = await getCurrentPosition();
-      const result = await checkinApi.checkIn(
-        festival!.id,
-        position.latitude,
-        position.longitude,
-        position.accuracyMeters,
-      );
-      setCheckinResult(result);
-    } catch (error) {
-      setCheckinError(error instanceof Error ? error.message : '체크인에 실패했어요.');
-    } finally {
-      setCheckinLoading(false);
-    }
-  }
 
   return (
     <MobileLayout showTabBar={false}>
@@ -160,24 +140,30 @@ export default function FestivalDetailPage() {
             </span>
             <div className="flex flex-col gap-0.5">
               <span className="text-sm font-semibold text-ink">
-                {checkinResult ? '체크인 완료' : '이 축제에 체크인하기'}
+                {checkinState.status === 'success' ? '체크인 완료' : '이 축제에 체크인하기'}
               </span>
               <span className="text-[13px] text-ink/55">
-                {checkinResult
-                  ? `현재 위치에서 ${formatDistanceLabel(checkinResult.distanceMeters)} 떨어진 곳에서 체크인했어요. 매칭 기능은 아직 준비 중이에요.`
+                {checkinState.status === 'success'
+                  ? `현재 위치에서 ${formatDistanceLabel(checkinState.result.distanceMeters)} 떨어진 곳에서 체크인했어요. 매칭 기능은 아직 준비 중이에요.`
                   : '축제 반경 안에 있으면 체크인할 수 있어요. 매칭 기능은 아직 준비 중이에요.'}
               </span>
             </div>
           </div>
-          {checkinError && <p className="text-[13px] text-coral">{checkinError}</p>}
-          {!checkinResult && (
+          {checkinState.status === 'error' && (
+            <p className="text-[13px] text-coral">{checkinState.message}</p>
+          )}
+          {checkinState.status !== 'success' && (
             <button
               type="button"
-              onClick={handleCheckIn}
-              disabled={checkinLoading}
+              onClick={() => setShowPermissionModal(true)}
+              disabled={checkinState.status === 'locating' || checkinState.status === 'submitting'}
               className="w-full rounded-xl bg-ink py-2.5 text-[14px] font-bold text-white disabled:opacity-50"
             >
-              {checkinLoading ? '위치 확인 중...' : '체크인하기'}
+              {checkinState.status === 'locating'
+                ? '위치 확인 중...'
+                : checkinState.status === 'submitting'
+                  ? '체크인 처리 중...'
+                  : '체크인하기'}
             </button>
           )}
         </div>
@@ -271,6 +257,16 @@ export default function FestivalDetailPage() {
           매칭 기능은 준비 중이에요
         </button>
       </div>
+
+      {showPermissionModal && (
+        <GPSPermissionModal
+          onConfirm={() => {
+            setShowPermissionModal(false);
+            void checkIn();
+          }}
+          onCancel={() => setShowPermissionModal(false)}
+        />
+      )}
     </MobileLayout>
   );
 }

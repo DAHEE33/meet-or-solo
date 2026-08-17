@@ -1,5 +1,39 @@
 # 진행 상태 기록
 
+## [10-A 후속] 체크인 유효시간 통일과 /matching 현재 체크인 노출·취소
+
+상태: 구현·Backend/Frontend 자동 검증 완료, dev DB·브라우저 수동 검증 전
+
+- `/matching` 화면이 실제 체크인 상태를 조회하지 않고 navigation state/개발 전용
+  fallback으로만 `festivalId`를 판단해, 새로고침이나 다른 경로로 들어오면 이미
+  체크인되어 있어도 "체크인하기" 버튼이 다시 뜨는 문제를 확인했다. 체크인 취소
+  API 자체도 없었다.
+- 체크인 row `expires_at`(과거 설정값 기본 6시간)과 매칭 자격 상한(체크인 후
+  1시간 하드코딩, `docs/05_MATCHING_POLICY.md`)이 서로 다른 기준이던 기존
+  불일치를 확인했다. 이번 작업에서 정책 변경 없이 **1시간으로 통일**했다 —
+  `FestivalCheckinService.checkIn()`이 `domain/checkin/CheckinValidityPolicy.VALIDITY`를
+  사용하도록 바꾸고 `FestivalCheckinProperties.validDuration`/
+  `FESTIVAL_CHECKIN_VALID_DURATION` 환경변수를 제거했다.
+- `GET /api/festivals/checkin/me`(현재 유효 체크인 조회, 없으면 `200 data:null`),
+  `DELETE /api/festivals/checkin/me`(취소, 활성 체크인 없으면 `404`)를 추가했다.
+  취소는 기존 `checkIn()`의 "기존 ACTIVE 취소 + `FestivalCheckinCancelledEvent`
+  발행" 로직을 재사용해 matching 도메인의 `WAITING` pool 정리로 이어진다.
+- Frontend `/matching` IDLE 화면은 이제 실제 조회 결과를 `festivalId` 판단에
+  우선 사용하고, 체크인이 있으면 축제명·만료 시각과 "체크인 취소" 버튼을
+  표시한다. 취소는 확인 dialog(Escape/Tab 순환 포함)를 거치며, `WAITING` 이상
+  진행 중인 매칭 상태에서는 취소 버튼을 노출하지 않는다(`LOCKED`/`PROPOSED`
+  취소 정책은 `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md` 7장 미해결
+  이슈로 유지).
+- Backend festival/checkin focused unit·controller·PostgreSQL 통합 테스트
+  35건, Backend 전체 320건 중 pgvector Testcontainers 이미지 fetch 실패로
+  인한 기존 환경 제약 21건을 제외하고 전부 통과했다(이번 변경과 무관 — 매칭
+  임베딩 등 다른 도메인의 기존 pgvector 통합 테스트가 이 환경에서 Docker
+  이미지를 받아오지 못했다). `./gradlew build -x test`가 성공했다.
+- Frontend 전체 Vitest 24 files/199 tests, `npx tsc --noEmit`, production/PWA
+  `generateSW` build가 성공했다.
+- `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md`, `docs/05_MATCHING_POLICY.md`를
+  갱신했다. dev DB·브라우저 수동 검증은 아직 실행하지 않았다.
+
 ## [10-관리자 안전 1차] 관리자 신고 검토
 
 상태: 구현·자동 검증 및 dev DB·브라우저 수동 검증 완료

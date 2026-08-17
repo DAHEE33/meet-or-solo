@@ -50,8 +50,10 @@ app:
     detail-info:
       cache-ttl: ${FESTIVAL_DETAIL_INFO_CACHE_TTL:1h}
     checkin:
-      valid-duration: ${FESTIVAL_CHECKIN_VALID_DURATION:6h}
+      # 체크인 유효 기간(1시간)은 매칭 자격 상한과 동일 값을 써야 하므로 설정으로 분리하지 않고
+      # domain/checkin/CheckinValidityPolicy에 고정한다.
       accuracy-threshold-meters: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:100}
+      bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:false}
   tour-place:
     sync:
       initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}

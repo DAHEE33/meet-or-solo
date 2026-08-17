@@ -80,7 +80,9 @@ export default function HomePage() {
         {hotFestival && <FestivalHeroCard festival={hotFestival} />}
 
         {/* 선택한 축제에서 매칭 시작 */}
-        {hotFestival && <FestivalMatchingBanner festivalName={hotFestival.name} />}
+        {hotFestival && (
+          <FestivalMatchingBanner festivalId={hotFestival.id} festivalName={hotFestival.name} />
+        )}
 
         {/* 곧 시작하는 축제 */}
         <section className="flex flex-col gap-3">

@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiClientError } from '../api/apiClient';
 import type { CurrentMatchGroup, MatchingRestriction } from '../api/matching';
 import {
+  checkInNavigationTarget,
   consumeMatchRoomNotice,
   countdownSeconds,
+  handleCancelCheckinDialogKeyDown,
   MatchBody,
   readMatchRoomNotice,
   resolveFestivalId,
@@ -46,6 +48,16 @@ describe('resolveFestivalId', () => {
   it('유효한 festivalId가 없으면 null을 반환하여 신청을 막는다', () => {
     expect(resolveFestivalId(undefined, null, true, '')).toBeNull();
     expect(resolveFestivalId({ festivalId: 0 }, null, false, undefined)).toBeNull();
+  });
+});
+
+describe('checkInNavigationTarget', () => {
+  it('festivalId를 알고 있으면 CheckInPage로 그 축제 id를 state에 실어 보낸다', () => {
+    expect(checkInNavigationTarget(144)).toEqual({ to: '/check-in', state: { festivalId: 144 } });
+  });
+
+  it('festivalId를 모르면 state 없이 이동해 CheckInPage가 축제 선택 안내를 보여주게 한다', () => {
+    expect(checkInNavigationTarget(null)).toEqual({ to: '/check-in' });
   });
 });
 
@@ -122,6 +134,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     groupSize: 3,
     allowMinimum: false,
     hasFestival: true,
+    currentCheckin: null,
     canApply: true,
     isSubmitting: false,
     searchRemaining: 0,
@@ -142,6 +155,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     onErrorRetry: vi.fn(),
     onGoCheckIn: vi.fn(),
     onEnterRoom: vi.fn(),
+    onRequestCancelCheckin: vi.fn(),
     ...overrides,
   };
 }
@@ -175,6 +189,79 @@ function text(node: ReactNode): string {
   if (!isValidElement(node)) return '';
   return text(node.props.children);
 }
+
+describe('IDLE 상태의 현재 체크인 노출·취소', () => {
+  it('체크인이 없으면 체크인하기 버튼만 표시하고 취소 버튼은 표시하지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE', hasFestival: false, currentCheckin: null })));
+    expect(text(tree)).toContain('체크인하기');
+    expect(text(tree)).not.toContain('체크인 취소');
+  });
+
+  it('체크인이 있으면 어느 축제인지·만료 시각과 취소 버튼을 표시하고 체크인하기는 표시하지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'IDLE',
+      hasFestival: true,
+      currentCheckin: {
+        checkinId: 1,
+        festivalId: 10,
+        festivalName: '춘천 마임축제',
+        checkedInAt: '2026-07-27T10:00:00+09:00',
+        expiresAt: '2026-07-27T11:00:00+09:00',
+      },
+    })));
+    expect(text(tree)).toContain('춘천 마임축제에 체크인됨');
+    expect(text(tree)).toContain('체크인 취소');
+    expect(text(tree)).not.toContain('먼저 체크인을 해주세요');
+  });
+
+  it('체크인 취소 버튼 클릭은 onRequestCancelCheckin을 호출한다', () => {
+    const onRequestCancelCheckin = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'IDLE',
+      hasFestival: true,
+      currentCheckin: {
+        checkinId: 1,
+        festivalId: 10,
+        festivalName: '춘천 마임축제',
+        checkedInAt: '2026-07-27T10:00:00+09:00',
+        expiresAt: '2026-07-27T11:00:00+09:00',
+      },
+      onRequestCancelCheckin,
+    })));
+    const cancelButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '체크인 취소',
+    );
+    expect(cancelButton).toBeDefined();
+    (cancelButton?.props.onClick as () => void)();
+    expect(onRequestCancelCheckin).toHaveBeenCalledOnce();
+  });
+});
+
+describe('handleCancelCheckinDialogKeyDown', () => {
+  it('Escape는 제출 중이 아닐 때만 닫는다', () => {
+    const preventDefault = vi.fn();
+    const close = vi.fn();
+    const first = { focus: vi.fn() } as unknown as HTMLElement;
+    const last = { focus: vi.fn() } as unknown as HTMLElement;
+
+    handleCancelCheckinDialogKeyDown({ key: 'Escape', shiftKey: false, preventDefault }, [first, last], first, false, close);
+    expect(close).toHaveBeenCalledOnce();
+    handleCancelCheckinDialogKeyDown({ key: 'Escape', shiftKey: false, preventDefault }, [first, last], first, true, close);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('Tab은 focusable 목록 안에서 순환한다', () => {
+    const preventDefault = vi.fn();
+    const close = vi.fn();
+    const first = { focus: vi.fn() } as unknown as HTMLElement;
+    const last = { focus: vi.fn() } as unknown as HTMLElement;
+
+    handleCancelCheckinDialogKeyDown({ key: 'Tab', shiftKey: false, preventDefault }, [first, last], last, false, close);
+    expect(first.focus).toHaveBeenCalledOnce();
+    handleCancelCheckinDialogKeyDown({ key: 'Tab', shiftKey: true, preventDefault }, [first, last], first, false, close);
+    expect(last.focus).toHaveBeenCalledOnce();
+  });
+});
 
 describe('terminal retry form', () => {
   it.each(['CANCELLED', 'EXPIRED'] as const)('%s retry 모드에서 신청 form을 표시한다', (status) => {

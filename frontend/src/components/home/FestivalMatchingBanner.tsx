@@ -2,14 +2,16 @@ import { Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 
 interface FestivalMatchingBannerProps {
+  festivalId: number;
   festivalName: string;
 }
 
 /** 홈 "선택한 축제에서 매칭 시작" coral 배너 — 대표(선택) 축제 선택 상태에 종속 */
-export default function FestivalMatchingBanner({ festivalName }: FestivalMatchingBannerProps) {
+export default function FestivalMatchingBanner({ festivalId, festivalName }: FestivalMatchingBannerProps) {
   return (
     <Link
       to="/matching"
+      state={{ festivalId }}
       className="flex items-center justify-between gap-3 rounded-2xl bg-coral px-5 py-4 text-white active:scale-[0.99] transition-transform"
     >
       <div className="flex min-w-0 flex-col gap-0.5">
