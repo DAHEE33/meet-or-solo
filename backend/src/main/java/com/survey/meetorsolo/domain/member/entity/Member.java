@@ -28,6 +28,10 @@ public class Member {
     public static final String ROLE_ADMIN = "ADMIN";
     public static final String STATUS_PROFILE_REQUIRED = "PROFILE_REQUIRED";
     public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_SUSPENDED = "SUSPENDED";
+    public static final String STATUS_BANNED = "BANNED";
+    public static final String STATUS_WITHDRAWN = "WITHDRAWN";
+    public static final String STATUS_DELETED = "DELETED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -77,6 +81,15 @@ public class Member {
 
     @Column(name = "withdrawn_at")
     private OffsetDateTime withdrawnAt;
+
+    @Column(name = "suspended_at")
+    private OffsetDateTime suspendedAt;
+
+    @Column(name = "suspended_until")
+    private OffsetDateTime suspendedUntil;
+
+    @Column(name = "status_before_sanction", length = 30)
+    private String statusBeforeSanction;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -173,6 +186,69 @@ public class Member {
         this.status = STATUS_ACTIVE;
     }
 
+    public void suspend(OffsetDateTime suspendedAt, OffsetDateTime suspendedUntil) {
+        requireSanctionableStatus();
+        if (suspendedAt == null || suspendedUntil == null || !suspendedUntil.isAfter(suspendedAt)) {
+            throw new IllegalArgumentException("정지 종료 시각은 시작 시각보다 이후여야 합니다.");
+        }
+        this.statusBeforeSanction = this.status;
+        this.status = STATUS_SUSPENDED;
+        this.suspendedAt = suspendedAt;
+        this.suspendedUntil = suspendedUntil;
+    }
+
+    public void ban() {
+        if (STATUS_ACTIVE.equals(status) || STATUS_PROFILE_REQUIRED.equals(status)) {
+            this.statusBeforeSanction = status;
+        } else if (!STATUS_SUSPENDED.equals(status)) {
+            throw new IllegalStateException("현재 회원 상태에서는 영구차단할 수 없습니다.");
+        }
+        this.status = STATUS_BANNED;
+        this.suspendedAt = null;
+        this.suspendedUntil = null;
+    }
+
+    public void unban() {
+        if (!STATUS_BANNED.equals(status) || !isRestorableStatus(statusBeforeSanction)) {
+            throw new IllegalStateException("현재 회원 상태에서는 영구차단을 해제할 수 없습니다.");
+        }
+        restorePreviousStatus();
+    }
+
+    public boolean restoreExpiredSuspension(OffsetDateTime now) {
+        if (!STATUS_SUSPENDED.equals(status) || suspendedUntil == null || suspendedUntil.isAfter(now)) {
+            return false;
+        }
+        restorePreviousStatus();
+        return true;
+    }
+
+    public boolean isAccessAllowed(OffsetDateTime now) {
+        restoreExpiredSuspension(now);
+        return STATUS_ACTIVE.equals(status) || STATUS_PROFILE_REQUIRED.equals(status);
+    }
+
+    private void requireSanctionableStatus() {
+        if (!STATUS_ACTIVE.equals(status) && !STATUS_PROFILE_REQUIRED.equals(status)) {
+            throw new IllegalStateException("현재 회원 상태에서는 정지할 수 없습니다.");
+        }
+    }
+
+    private void restorePreviousStatus() {
+        String restored = statusBeforeSanction;
+        if (!isRestorableStatus(restored)) {
+            throw new IllegalStateException("복구할 회원 상태가 올바르지 않습니다.");
+        }
+        this.status = restored;
+        this.statusBeforeSanction = null;
+        this.suspendedAt = null;
+        this.suspendedUntil = null;
+    }
+
+    private static boolean isRestorableStatus(String value) {
+        return STATUS_ACTIVE.equals(value) || STATUS_PROFILE_REQUIRED.equals(value);
+    }
+
     @PrePersist
     void prePersist() {
         OffsetDateTime now = SeoulDateTime.now();
@@ -233,6 +309,22 @@ public class Member {
         return penaltyScore;
     }
 
+    public BigDecimal getMannerTemperature() {
+        return mannerTemperature;
+    }
+
+    public OffsetDateTime getSuspendedAt() {
+        return suspendedAt;
+    }
+
+    public OffsetDateTime getSuspendedUntil() {
+        return suspendedUntil;
+    }
+
+    public String getStatusBeforeSanction() {
+        return statusBeforeSanction;
+    }
+
     public byte[] getGenderEncrypted() {
         return genderEncrypted;
     }
@@ -243,5 +335,9 @@ public class Member {
 
     public OffsetDateTime getLastLoginAt() {
         return lastLoginAt;
+    }
+
+    public OffsetDateTime getCreatedAt() {
+        return createdAt;
     }
 }

@@ -94,6 +94,14 @@ public class JwtProvider {
     }
 
     public Long getMemberIdFromAccessToken(String token) {
+        return getMemberId(token, "access");
+    }
+
+    public Long getMemberIdFromRefreshToken(String token) {
+        return getMemberId(token, "refresh");
+    }
+
+    private Long getMemberId(String token, String expectedType) {
         try {
             String[] parts = token.split("\\.");
             if (parts.length != 3) {
@@ -113,7 +121,7 @@ public class JwtProvider {
                     Base64.getUrlDecoder().decode(parts[1]),
                     Map.class
             );
-            if (!"access".equals(claims.get("typ"))) {
+            if (!expectedType.equals(claims.get("typ"))) {
                 throw new IllegalArgumentException("Invalid token type");
             }
             Object expiresAt = claims.get("exp");

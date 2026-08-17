@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import jakarta.servlet.http.Cookie;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,7 +22,7 @@ class WebSocketAuthenticationInterceptorTest {
         JwtProvider jwtProvider = mock(JwtProvider.class);
         when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(7L);
         WebSocketAuthenticationInterceptor interceptor =
-                new WebSocketAuthenticationInterceptor(jwtProvider);
+                new WebSocketAuthenticationInterceptor(jwtProvider, mock(MemberAccessPolicy.class));
         MockHttpServletRequest servletRequest = new MockHttpServletRequest();
         servletRequest.setCookies(new Cookie("access_token", "valid-token"));
         Map<String, Object> attributes = new HashMap<>();
@@ -41,7 +42,8 @@ class WebSocketAuthenticationInterceptorTest {
     @Test
     void accessTokenCookie가없으면Handshake를거절한다() {
         WebSocketAuthenticationInterceptor interceptor =
-                new WebSocketAuthenticationInterceptor(mock(JwtProvider.class));
+                new WebSocketAuthenticationInterceptor(
+                        mock(JwtProvider.class), mock(MemberAccessPolicy.class));
         MockHttpServletRequest servletRequest = new MockHttpServletRequest();
 
         boolean accepted = interceptor.beforeHandshake(
