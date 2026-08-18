@@ -74,7 +74,7 @@ public class AdminMemberRepository {
                 SELECT id, action_type, reason_code, reason, report_id, created_at
                 FROM admin_actions
                 WHERE target_member_id=:memberId
-                  AND action_type IN ('WARNING', 'SUSPEND', 'BAN', 'UNBAN')
+                  AND action_type IN ('WARNING', 'SUSPEND', 'BAN', 'UNBAN', 'UNSUSPEND')
                 ORDER BY created_at DESC, id DESC
                 LIMIT 100
                 """, Map.of("memberId", memberId), (rs, rowNum) -> new AdminMemberActionHistoryResponse(

@@ -4,5 +4,6 @@ public enum AdminMemberActionType {
     WARNING,
     SUSPEND,
     BAN,
-    UNBAN
+    UNBAN,
+    UNSUSPEND
 }

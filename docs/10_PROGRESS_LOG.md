@@ -1,5 +1,36 @@
 # 진행 상태 기록
 
+## [10-관리자 안전 3차] 관리자 정지 조기 해제(UNSUSPEND)
+
+상태: 구현·자동 검증 및 브라우저 수동 검증 완료
+
+- 관리자 회원 제재 2차(PR #35) 수동 검증에서 `SUSPENDED` 상태 회원을 즉시 해제하는 action이
+  없어, 테스트 계정도 `BAN → UNBAN`을 거쳐야 원래 상태로 복구되는 운영 UX 누락을 확인했다.
+- `AdminMemberActionType`에 `UNSUSPEND` 값을 추가하고 `Member.unsuspend()`를 구현했다.
+  `SUSPENDED` 상태에서만 호출 가능하며 기존 `restorePreviousStatus()`를 재사용해
+  `statusBeforeSanction`(ACTIVE 또는 PROFILE_REQUIRED)으로 복원한다.
+- `AdminMemberService.apply()` switch에 `UNSUSPEND` case를 추가했다. 기존 `validateRequest()`의
+  `!= SUSPEND` 조건이 `suspensionDuration` 조합을 자동 거절하고, `lockReport()`에서 UNBAN과 함께
+  해제 조치의 신고 연결을 거절한다. access revocation과 active matching 검증은 해제이므로 미적용.
+- V4의 `chk_admin_actions_type` CHECK 제약에 `UNSUSPEND`가 없어 INSERT 시 500 에러가 발생하는
+  문제를 확인했다. 기존 V1~V19를 수정하지 않고 `V20__allow_unsuspend_action_type.sql`로 CHECK를
+  재생성해 해결했다.
+- `AdminMemberRepository.findActions()` SQL IN 절에 `'UNSUSPEND'`를 추가해 제재 이력에 정지 해제
+  기록이 표시되도록 했다.
+- Frontend `AdminMemberActionType`에 `'UNSUSPEND'`를 추가하고 `actionLabel`에 `정지 해제`를
+  등록했다. 회원 상세 dialog에서 `SUSPENDED` 상태일 때 teal 색 "정지 해제" 버튼을 표시한다.
+- UNSUSPEND action dialog의 사유 select를 `ADMIN_CORRECTION`과 `OTHER` 두 가지로 필터링했다.
+  기본 사유는 `ADMIN_CORRECTION`이다. 기존 WARNING, SUSPEND, BAN, UNBAN의 사유 목록은
+  변경하지 않았다.
+- 기존 WARNING, SUSPEND, BAN, UNBAN 동작, Flyway migration V1~V19, 기존 테스트는
+  변경하지 않았다.
+- Backend 비-컨테이너 187건 전체 통과. Testcontainers 21건은 Docker 미설치로 초기화 실패
+  (기존 환경 제약, 이번 변경과 무관).
+- Frontend Vitest 24 files/189 tests, `npx tsc --noEmit`, production/PWA build 성공.
+- 2026-08-18 브라우저 수동 검증에서 SUSPENDED 회원 상세의 "정지 해제" 버튼 표시,
+  정지 해제 실행 후 ACTIVE 복원, 제재 이력의 `정지 해제` 기록, 비-SUSPENDED 회원에서
+  버튼 미표시를 확인했다.
+
 ## [10-관리자 안전 2차] 관리자 회원 조회·제재
 
 상태: 구현·자동 검증 완료, 브라우저·dev DB 수동 검증 일부 수행
