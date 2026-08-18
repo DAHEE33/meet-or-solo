@@ -1,5 +1,58 @@
 # 진행 상태 기록
 
+## [10-A 후속 3] /solo-course 체크인 기반 주변 관광지 추천
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `SoloCoursePage`가 강원도 축제·체크인과 무관한 하드코딩 mock("전주 한옥마을" 반나절/하루
+  코스)이었고, 진입 경로 2곳(`HomePage` 배너, `FestivalDetailPage` 버튼) 모두 `festivalId`를
+  넘기지 않아 애초에 어느 축제 기준으로 추천할지 알 방법이 없었다.
+- 사전 분석·설계는 `docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md`로 정리했다. 검토 결과
+  카테고리 필터(관광지/문화시설/액티비티/맛집)는 제외하고 나머지 설계대로 진행했다.
+- 원본 GPS 좌표를 저장하지 않는 프로젝트 원칙상 "내 위치 기반 추천"은 실시간 좌표가 아니라
+  "현재 체크인한 축제 좌표 기반" 반경 검색을 의미한다. 이미 구현되어 있던
+  `GET /api/festivals/{id}/nearby-spots`(`docs/13_FESTIVAL_TOURSPOT_API_DESIGN.md` 3.4절,
+  haversine 기반 축제 ↔ 관광지 거리 계산)를 그대로 재사용해 **백엔드는 변경하지 않았다**.
+- `SoloCoursePage`를 재작성해 `resolveSoloCourseFestival()`이 `location.state.festivalId` →
+  `useCurrentCheckin()`의 현재 체크인 축제 → 없음(안내 화면) 순서로 기준 축제를 정하도록 했다.
+  체크인 조회가 끝나기 전(`loading`)에는 축제가 없다고 오판하지 않도록 별도 로딩 화면을 둔다.
+- 실제 동선(시간대별 순서·체류시간)을 짜는 "코스" 기능은 이번 범위에서 제외하고, 기준 축제 주변
+  관광지를 거리순으로 보여주는 목록으로 단순화했다. 기존 "반나절/하루" 토글과 타임라인 UI,
+  `data/mock/soloCourses.ts`, `types/index.ts`의 `SoloCourse`/`CourseStop` 타입을 제거했다.
+- `HomePage`의 배너와 `FestivalDetailPage`의 버튼 문구를 "코스"에서 "주변 관광지 추천"으로 바꾸고
+  `festivalId`를 route state로 실어 보내도록 수정했다. 재사용 컴포넌트인 `CtaBanner`에 이동 대상
+  화면에 route state를 넘기는 `state` prop을 추가했다(다른 사용처는 영향 없음).
+- 목록 카드는 기존 `FestivalNearbyPlaceItem`을 그대로 재사용해 클릭 시 기존
+  `TourSpotDetailPage`(`/spots/:id`)로 이동한다. 반경(API 기본값 5,000m)·목록 개수(기본값 10)는
+  조절 UI 없이 API 기본값을 그대로 쓰고, 체크인이 전혀 없으면 대표 축제로 대체하지 않고 안내와
+  체크인하러 가기 버튼만 보여준다.
+- Frontend 전체 Vitest 25 files/210 tests(신규 `resolveSoloCourseFestival` 5건 포함),
+  `npx tsc --noEmit`, production/PWA build가 성공했다. 두 브라우저·dev DB 수동 검증은 아직
+  실행하지 않았다.
+
+## [10-A 후속 2] terminal pool 재mount 시 종료 화면 고착 수정
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `[10-매칭 14차]`에서 "backend가 반환한 `CANCELLED`/`EXPIRED` terminal 상태를 `IDLE`로
+  바꾸지 않고 서버 상태와 로컬 retry form 모드를 분리"하고 "새 mount에서는 로컬 retry
+  모드가 사라지고 terminal 서버 상태를 복원"하도록 의도적으로 설계했으나, `[10-매칭
+  13차]`에서 이미 "terminal pool 상태에서 `다시 시도`가 신규 신청 화면으로 돌아가지
+  않는 문제"로 별도 Frontend 후속 작업으로 남겨둔 채 완결되지 않은 상태였다.
+- 실제 증상: 매칭이 timeout 등으로 종료된 뒤 cooldown이 전혀 없는 상태에서도, `/matching`을
+  벗어났다가 다시 들어오면 매번 "매칭이 종료됐어요" 카드가 다시 뜨고 "다시 신청하기"를
+  눌러야만 신청 화면으로 돌아갈 수 있었다.
+- `useMatchingSession`에 `isInitialLoadRef`를 추가해, 새로 mount된 뒤 첫 REST 조회
+  결과에서만 `initialRetrySourcePoolId()`(기존 `canBeginRetry`와 동일한 조건 — terminal +
+  pool 존재 + cooldown/완료 제한 비활성)를 적용해 곧바로 retry form을 연다. 세션 도중
+  실시간으로 종료를 감지한 경우(폴링 등)는 기존 `retrySourceAfterRefresh`를 그대로 사용해
+  종료 사유를 최소 한 번은 보여준다.
+- cooldown 또는 완료 제한이 아직 활성 상태면 기존대로 terminal 카드와 남은 시간을 그대로
+  보여주며, 이 경우는 이번 수정과 무관하다.
+- Backend API 계약, DB schema는 변경하지 않았다.
+- Frontend 전체 Vitest 24 files/205 tests(신규 6건 포함), `npx tsc --noEmit`,
+  production/PWA build가 성공했다. 두 브라우저·dev DB 수동 검증은 아직 실행하지 않았다.
+
 ## [10-A 후속] 체크인 유효시간 통일과 /matching 현재 체크인 노출·취소
 
 상태: 구현·Backend/Frontend 자동 검증 완료, dev DB·브라우저 수동 검증 전

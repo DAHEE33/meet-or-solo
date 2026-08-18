@@ -154,6 +154,17 @@ export function canBeginRetry(state: MatchingSessionState, isSubmitting: boolean
     && !isSubmitting;
 }
 
+/**
+ * 새로 mount된 화면(다른 화면에 갔다가 /matching으로 돌아온 경우 포함)에서 최초 REST 조회
+ * 결과가 이미 종료된 pool이고 cooldown/완료 제한처럼 실제로 막는 게 없다면, "매칭이
+ * 종료됐어요" 안내를 다시 보여주지 않고 곧바로 신청 화면(retry form)으로 연다.
+ * 세션 도중 실시간으로 종료를 감지한 경우(폴링 등)에는 사용하지 않는다 — 그때는 종료 사유를
+ * 한 번은 보여줘야 하므로 기존 `retrySourceAfterRefresh`를 그대로 쓴다.
+ */
+export function initialRetrySourcePoolId(nextState: MatchingSessionState): number | null {
+  return canBeginRetry(nextState, false) ? nextState.pool?.poolId ?? null : null;
+}
+
 export function stateAfterPoolEntry(
   previous: MatchingSessionState,
   pool: MatchPool,
@@ -190,6 +201,7 @@ export function useMatchingSession() {
   const mutationAbortRef = useRef<AbortController | null>(null);
   const consecutiveErrorsRef = useRef(0);
   const retrySourcePoolIdRef = useRef<number | null>(null);
+  const isInitialLoadRef = useRef(true);
 
   const updateRetrySourcePoolId = useCallback((sourcePoolId: number | null) => {
     retrySourcePoolIdRef.current = sourcePoolId;
@@ -217,7 +229,10 @@ export function useMatchingSession() {
           requestStartedAt + (responseReceivedAt - requestStartedAt) / 2,
         ));
         const nextState = deriveMatchingState({ pool, proposal, group, restriction });
-        const nextRetrySourcePoolId = retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
+        const nextRetrySourcePoolId = isInitialLoadRef.current
+          ? initialRetrySourcePoolId(nextState)
+          : retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
+        isInitialLoadRef.current = false;
         if (nextRetrySourcePoolId !== retrySourcePoolIdRef.current) {
           updateRetrySourcePoolId(nextRetrySourcePoolId);
         }

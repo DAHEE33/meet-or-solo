@@ -245,18 +245,18 @@ export default function FestivalDetailPage() {
           </section>
         )}
 
-        {/* 혼자 즐기는 코스 */}
+        {/* 혼자 즐기는 주변 관광지 추천 */}
         <div className="flex flex-col gap-2.5 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-semibold text-ink">혼자 가도 괜찮아요</span>
-            <span className="text-[13px] text-ink/55">이 축제를 중심으로 하루 코스를 확인해 보세요</span>
+            <span className="text-[13px] text-ink/55">이 축제 주변의 가볼 만한 관광지를 확인해 보세요</span>
           </div>
           <button
             type="button"
-            onClick={() => navigate('/solo-course')}
+            onClick={() => navigate('/solo-course', { state: { festivalId: festival.id } })}
             className="flex w-fit items-center gap-1 rounded-full border border-teal bg-white px-3.5 py-2 text-[13px] font-semibold text-teal"
           >
-            솔로 코스 보기
+            주변 관광지 보기
             <ChevronRight size={14} />
           </button>
         </div>

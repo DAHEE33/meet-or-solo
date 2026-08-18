@@ -8,6 +8,7 @@ import type {
 import {
   canBeginRetry,
   deriveMatchingState,
+  initialRetrySourcePoolId,
   isAbortError,
   pollingDelay,
   retrySourceAfterRefresh,
@@ -230,5 +231,37 @@ describe('retry form reconciliation', () => {
     const terminalState = state({ pool: pool('EXPIRED') });
     expect(terminalState.status).toBe('EXPIRED');
     expect(retrySourceAfterRefresh(null, terminalState)).toBeNull();
+  });
+});
+
+describe('새 mount(다른 화면에서 돌아온 경우 포함)의 초기 화면', () => {
+  it.each(['CANCELLED', 'EXPIRED'] as const)(
+    'cooldown이 없는 terminal %s는 종료 안내 대신 곧바로 신청 화면을 연다',
+    (status) => {
+      expect(initialRetrySourcePoolId(state({ pool: pool(status) }))).toBe(1);
+    },
+  );
+
+  it('cooldown 중이면 종료 안내를 유지한다', () => {
+    expect(
+      initialRetrySourcePoolId(state({ pool: pool('CANCELLED'), restriction: restriction(true) })),
+    ).toBeNull();
+  });
+
+  it('완료 제한이 아직 활성 상태면 완료 카드를 유지한다', () => {
+    expect(
+      initialRetrySourcePoolId(state({ pool: pool('MATCHED'), restriction: completionRestriction() })),
+    ).toBeNull();
+  });
+
+  it('완료 제한이 끝났다면 완료 카드 대신 곧바로 신청 화면을 연다', () => {
+    expect(
+      initialRetrySourcePoolId(state({ pool: pool('MATCHED'), restriction: completionRestriction(false) })),
+    ).toBe(1);
+  });
+
+  it('진행 중인 서버 상태(WAITING 등)는 그대로 복원한다', () => {
+    expect(initialRetrySourcePoolId(state({ pool: pool('WAITING') }))).toBeNull();
+    expect(initialRetrySourcePoolId(state())).toBeNull();
   });
 });

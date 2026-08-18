@@ -35,24 +35,6 @@ export interface UserProfile {
   intro?: string;
 }
 
-export interface CourseStop {
-  order: number;
-  spotName: string;
-  stayMinutes: number;
-  note: string;
-}
-
-export interface SoloCourse {
-  id: number;
-  type: 'half' | 'full'; // 반나절 | 하루
-  title: string;
-  summary: string;
-  durationHours: number;
-  reason: string; // 추천 이유
-  tags: string[];
-  stops: CourseStop[];
-}
-
 export type FestivalCategory =
   | '문화관광'
   | '문화예술'

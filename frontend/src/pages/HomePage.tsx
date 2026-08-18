@@ -99,12 +99,13 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* 혼자 즐기는 추천 코스 */}
+        {/* 혼자 즐기는 주변 관광지 추천 */}
         <CtaBanner
           to="/solo-course"
           tone="teal"
-          title="혼자 즐기는 추천 코스"
-          description="선택한 축제에서 시작하는 반나절 솔로 코스"
+          title="혼자 즐기는 주변 관광지 추천"
+          description="선택한 축제 주변의 가볼 만한 곳을 찾아보세요"
+          state={hotFestival ? { festivalId: hotFestival.id } : undefined}
         />
 
         {/* 축제와 함께 둘러보기 */}
