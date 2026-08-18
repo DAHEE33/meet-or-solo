@@ -135,8 +135,9 @@ public class AdminMemberService {
     private AdminMemberRepository.LockedReport lockReport(
             long memberId, AdminMemberActionRequest request) {
         if (request.reportId() == null) return null;
-        if (request.action() == AdminMemberActionType.UNBAN) {
-            throw invalid("UNBAN에는 신고를 연결할 수 없습니다.");
+        if (request.action() == AdminMemberActionType.UNBAN
+                || request.action() == AdminMemberActionType.UNSUSPEND) {
+            throw invalid("해제 조치에는 신고를 연결할 수 없습니다.");
         }
         var report = adminMembers.findReportForUpdate(request.reportId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_REPORT_NOT_FOUND));
@@ -153,6 +154,7 @@ public class AdminMemberService {
                 case SUSPEND -> member.suspend(now, now.plus(request.suspensionDuration().duration()));
                 case BAN -> member.ban();
                 case UNBAN -> member.unban();
+                case UNSUSPEND -> member.unsuspend();
             }
         } catch (IllegalStateException | IllegalArgumentException exception) {
             throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT);

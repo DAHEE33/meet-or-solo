@@ -1,7 +1,7 @@
 import { apiClient } from './apiClient';
 
 export type AdminMemberStatus = 'ACTIVE' | 'PROFILE_REQUIRED' | 'SUSPENDED' | 'BANNED' | 'WITHDRAWN' | 'DELETED';
-export type AdminMemberActionType = 'WARNING' | 'SUSPEND' | 'BAN' | 'UNBAN';
+export type AdminMemberActionType = 'WARNING' | 'SUSPEND' | 'BAN' | 'UNBAN' | 'UNSUSPEND';
 export type AdminMemberActionReasonCode = 'COMMUNITY_GUIDELINE' | 'HARASSMENT' | 'NO_SHOW_ABUSE' | 'FRAUD_OR_SCAM' | 'SAFETY_RISK' | 'ADMIN_CORRECTION' | 'OTHER';
 export type AdminSuspensionDuration = 'ONE_DAY' | 'THREE_DAYS' | 'SEVEN_DAYS' | 'THIRTY_DAYS';
 

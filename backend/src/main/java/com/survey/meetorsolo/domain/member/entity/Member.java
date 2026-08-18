@@ -215,6 +215,13 @@ public class Member {
         restorePreviousStatus();
     }
 
+    public void unsuspend() {
+        if (!STATUS_SUSPENDED.equals(status) || !isRestorableStatus(statusBeforeSanction)) {
+            throw new IllegalStateException("현재 회원 상태에서는 정지를 해제할 수 없습니다.");
+        }
+        restorePreviousStatus();
+    }
+
     public boolean restoreExpiredSuspension(OffsetDateTime now) {
         if (!STATUS_SUSPENDED.equals(status) || suspendedUntil == null || suspendedUntil.isAfter(now)) {
             return false;
