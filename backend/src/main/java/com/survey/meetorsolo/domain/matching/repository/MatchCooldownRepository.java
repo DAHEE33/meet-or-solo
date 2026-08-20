@@ -58,4 +58,20 @@ public interface MatchCooldownRepository extends JpaRepository<MatchCooldown, Lo
             @Param("memberId") long memberId,
             @Param("now") OffsetDateTime now
     );
+
+    boolean existsByRelatedPoolId(long relatedPoolId);
+
+    @Query(value = """
+            SELECT count(*) FROM match_cooldowns
+            WHERE member_id = :memberId
+              AND reason = :reason
+              AND created_at >= :dayStart
+              AND created_at < :dayEnd
+            """, nativeQuery = true)
+    int countTodayByReason(
+            @Param("memberId") long memberId,
+            @Param("reason") String reason,
+            @Param("dayStart") OffsetDateTime dayStart,
+            @Param("dayEnd") OffsetDateTime dayEnd
+    );
 }

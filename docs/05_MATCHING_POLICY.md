@@ -238,6 +238,7 @@ CANCELLED
 
 penalty 또는 cooldown 적용 대상:
 
+- 매칭 탐색 자발적 취소
 - 반복 거절
 - timeout/미응답
 - 매칭 확정 후 취소
@@ -248,6 +249,40 @@ MVP는 단순 cooldown window로 시작합니다. `penalty_score`는 단기 재�
 운영 감사에 사용하고, `manner_temperature`는 후기·신고·관리자 정책이 함께
 구현되는 후속 단계에서 연결합니다. 현재 확정 후 취소·노쇼 구현에서는
 `manner_temperature`를 변경하지 않습니다.
+
+### 매칭 탐색 자발적 취소 (WAITING/LOCKED)
+
+사용자는 매칭 탐색 중(`WAITING` 또는 `LOCKED` 상태) proposal이 전송되기 전에
+탐색을 자발적으로 취소할 수 있습니다.
+
+```text
+PUT /api/matching/pools/me/current/cancellation
+```
+
+- `WAITING` 또는 `LOCKED` 상태의 pool만 취소할 수 있다.
+- `PROPOSED` 이후는 기존 proposal 응답(거절) 흐름을 사용하며 이 API로 취소할 수 없다.
+  `409`를 반환하고 Frontend는 proposal 응답 화면으로 전환한다.
+- `MATCHED`, `CANCELLED`, `EXPIRED`는 이미 종료된 상태이므로 종료 안내를 반환한다.
+- pool row를 `SELECT FOR UPDATE`로 잠근 뒤 상태를 재검증한다.
+- Scheduler가 같은 pool을 `LOCKED`로 선점한 직후에도, proposal 생성 전이면 취소 가능하다.
+  Scheduler의 proposal 생성 transaction이 먼저 commit되어 `PROPOSED`로 전이됐으면
+  취소 API는 `409`를 반환한다.
+
+당일 자발적 취소 횟수에 따른 cooldown escalation:
+
+| 당일 자발적 취소 횟수 | cooldown 시작 | 기간 | penalty score |
+| ---: | --- | ---: | ---: |
+| 1회 | 취소 처리 시각 | 20초 | 없음 |
+| 2회 | 취소 처리 시각 | 1분 | 없음 |
+| 3회 | 취소 처리 시각 | 5분 | `+1` |
+| 4회 이상 | 취소 처리 시각 | 10분 | `+1` |
+
+- 당일 횟수는 `Asia/Seoul` 날짜의 `POOL_CANCEL` reason cooldown 기록을 기준으로 계산한다.
+- cooldown과 penalty의 멱등성 원인 key는 취소된 `pool_id`를 사용한다.
+- pool `CANCELLED`, cooldown, penalty event, `members.penalty_score` 변경은 같은
+  transaction에서 처리한다.
+- 확인 dialog로 사용자 의사를 재확인한 뒤 API를 호출한다.
+- WebSocket 알림은 본인만 영향을 받으므로 전송하지 않는다.
 
 ### Proposal 단계 penalty/cooldown
 

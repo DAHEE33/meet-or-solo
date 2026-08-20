@@ -62,6 +62,22 @@ public class MatchCooldown {
         return cooldown;
     }
 
+    @Column(name = "related_pool_id")
+    private Long relatedPoolId;
+
+    public static MatchCooldown activeForPool(long memberId, String reason, long poolId,
+            OffsetDateTime startsAt, OffsetDateTime expiresAt) {
+        MatchCooldown cooldown = new MatchCooldown();
+        cooldown.memberId = memberId;
+        cooldown.reason = reason;
+        cooldown.status = STATUS_ACTIVE;
+        cooldown.startsAt = startsAt;
+        cooldown.expiresAt = expiresAt;
+        cooldown.relatedPoolId = poolId;
+        cooldown.createdAt = startsAt;
+        return cooldown;
+    }
+
     public static MatchCooldown activeForGroup(long memberId, String reason, long groupId,
             OffsetDateTime startsAt, OffsetDateTime expiresAt) {
         MatchCooldown cooldown = new MatchCooldown();
