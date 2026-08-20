@@ -62,6 +62,21 @@ public class MatchPenaltyEvent {
         return event;
     }
 
+    @Column(name = "related_pool_id")
+    private Long relatedPoolId;
+
+    public static MatchPenaltyEvent forPoolCancel(long memberId, int scoreDelta,
+            String reason, long poolId, OffsetDateTime now) {
+        MatchPenaltyEvent event = new MatchPenaltyEvent();
+        event.memberId = memberId;
+        event.eventType = "POOL_CANCEL";
+        event.scoreDelta = scoreDelta;
+        event.reason = reason;
+        event.relatedPoolId = poolId;
+        event.createdAt = now;
+        return event;
+    }
+
     public static MatchPenaltyEvent forGroup(long memberId, String eventType, int scoreDelta,
             String reason, long groupId, long attemptId, OffsetDateTime now) {
         MatchPenaltyEvent event = new MatchPenaltyEvent();

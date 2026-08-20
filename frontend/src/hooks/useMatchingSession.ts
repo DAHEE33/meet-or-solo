@@ -366,6 +366,37 @@ export function useMatchingSession() {
     [isSubmitting, refresh, state.proposal],
   );
 
+  const cancelSearch = useCallback(
+    async () => {
+      if (isSubmitting) return false;
+      if (state.status !== 'WAITING' && state.status !== 'LOCKED') return false;
+      setIsSubmitting(true);
+      const controller = new AbortController();
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = controller;
+      try {
+        await matchingApi.cancelPool(controller.signal);
+        if (mountedRef.current && !controller.signal.aborted) {
+          void refresh();
+        }
+        return true;
+      } catch (error) {
+        if (!isAbortError(error) && mountedRef.current) {
+          if (error instanceof ApiClientError && error.status === 409) {
+            void refresh();
+          } else {
+            setState((previous) => ({ ...previous, status: 'ERROR', error: normalizeError(error) }));
+          }
+        }
+        return false;
+      } finally {
+        if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+        if (mountedRef.current) setIsSubmitting(false);
+      }
+    },
+    [isSubmitting, refresh, state.status],
+  );
+
   return {
     state,
     isSubmitting,
@@ -375,6 +406,7 @@ export function useMatchingSession() {
     beginRetry,
     enterPool,
     respond,
+    cancelSearch,
     serverOffsetMs,
   };
 }

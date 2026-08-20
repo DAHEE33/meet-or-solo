@@ -189,6 +189,16 @@ public class MatchPool {
         this.updatedAt = now;
     }
 
+    public void cancelByUser(OffsetDateTime now) {
+        if (!STATUS_WAITING.equals(status) && !STATUS_LOCKED.equals(status)) {
+            throw new IllegalStateException("WAITING 또는 LOCKED 상태의 pool만 사용자가 취소할 수 있습니다.");
+        }
+        this.status = STATUS_CANCELLED;
+        this.lockedAt = null;
+        this.lockToken = null;
+        this.updatedAt = now;
+    }
+
     public void match(OffsetDateTime now) { transitionFromProposed(STATUS_MATCHED, now); }
     public void cancel(OffsetDateTime now) { transitionFromProposed(STATUS_CANCELLED, now); }
     public void releaseAfterFailedAttempt(OffsetDateTime now) {

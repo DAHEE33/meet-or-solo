@@ -303,4 +303,14 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             @Param("now") OffsetDateTime now,
             @Param("limit") int limit
     );
+
+    @Query(value = """
+            SELECT pool.* FROM match_pools pool
+            WHERE pool.member_id = :memberId
+              AND pool.status IN ('WAITING', 'LOCKED', 'PROPOSED')
+            ORDER BY pool.id DESC
+            LIMIT 1
+            FOR UPDATE
+            """, nativeQuery = true)
+    Optional<MatchPool> findActiveCancellablePoolForUpdate(@Param("memberId") long memberId);
 }
