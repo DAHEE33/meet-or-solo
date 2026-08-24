@@ -65,13 +65,11 @@ public interface MatchCooldownRepository extends JpaRepository<MatchCooldown, Lo
             SELECT count(*) FROM match_cooldowns
             WHERE member_id = :memberId
               AND reason = :reason
-              AND created_at >= :dayStart
-              AND created_at < :dayEnd
+              AND created_at >= :since
             """, nativeQuery = true)
-    int countTodayByReason(
+    int countByReasonSince(
             @Param("memberId") long memberId,
             @Param("reason") String reason,
-            @Param("dayStart") OffsetDateTime dayStart,
-            @Param("dayEnd") OffsetDateTime dayEnd
+            @Param("since") OffsetDateTime since
     );
 }

@@ -121,16 +121,24 @@ describe('deriveMatchingState', () => {
     );
   });
 
-  it.each(['WAITING', 'LOCKED', 'CANCELLED', 'EXPIRED'] as const)('pool %s를 복원한다', (status) => {
+  it.each(['WAITING', 'LOCKED'] as const)('active pool %s를 복원한다', (status) => {
     expect(state({ pool: pool(status) }).status).toBe(status);
+  });
+
+  it.each(['CANCELLED', 'EXPIRED'] as const)('cooldown 없는 과거 terminal pool %s는 IDLE로 복원한다', (status) => {
+    expect(state({ pool: pool(status) }).status).toBe('IDLE');
+  });
+
+  it.each(['CANCELLED', 'EXPIRED'] as const)('cooldown 중인 terminal pool %s는 해당 상태를 유지한다', (status) => {
+    expect(state({ pool: pool(status), restriction: restriction(true) }).status).toBe(status);
   });
 
   it('PROPOSED pool에서 active proposal이 없으면 응답 대기로 본다', () => {
     expect(state({ pool: pool('PROPOSED') }).status).toBe('RESPONSE_PENDING');
   });
 
-  it('MATCHED pool만 남고 active group이 없으면 종료 상태로 복원한다', () => {
-    expect(state({ pool: pool('MATCHED') }).status).toBe('CANCELLED');
+  it('MATCHED pool만 남고 active group이 없으면 cooldown에 따라 분기한다', () => {
+    expect(state({ pool: pool('MATCHED') }).status).toBe('IDLE');
     expect(state({ pool: pool('MATCHED'), restriction: restriction(true) }).status).toBe('CANCELLED');
   });
 
@@ -158,6 +166,10 @@ describe('polling policy', () => {
     expect(pollingDelay('COOLDOWN', 0)).toBe(5_000);
   });
 
+  it('LOADING 상태는 polling하지 않는다', () => {
+    expect(pollingDelay('LOADING', 0)).toBeNull();
+  });
+
   it('terminal 상태는 polling하지 않고 오류는 최대 30초까지 backoff한다', () => {
     expect(pollingDelay('MATCHED', 0)).toBeNull();
     expect(pollingDelay('CANCELLED', 0)).toBeNull();
@@ -174,8 +186,9 @@ describe('polling policy', () => {
 });
 
 describe('retry form reconciliation', () => {
-  it.each(['CANCELLED', 'EXPIRED'] as const)('같은 terminal pool %s에서는 retry form을 유지한다', (status) => {
-    expect(retrySourceAfterRefresh(1, state({ pool: pool(status) }))).toBe(1);
+  it('cooldown 없는 과거 terminal pool은 IDLE이므로 retry form을 해제한다', () => {
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('CANCELLED') }))).toBeNull();
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('EXPIRED') }))).toBeNull();
   });
 
   it('다른 최신 pool이나 활성 서버 상태가 확인되면 retry form을 해제한다', () => {
@@ -193,9 +206,12 @@ describe('retry form reconciliation', () => {
     ).toBeNull();
   });
 
-  it('cooldown과 제출 중에는 retry form 진입을 차단한다', () => {
-    expect(canBeginRetry(state({ pool: pool('CANCELLED') }), false)).toBe(true);
-    expect(canBeginRetry(state({ pool: pool('EXPIRED') }), false)).toBe(true);
+  it('cooldown 없는 과거 terminal pool은 IDLE이므로 retry 진입 불가', () => {
+    expect(canBeginRetry(state({ pool: pool('CANCELLED') }), false)).toBe(false);
+    expect(canBeginRetry(state({ pool: pool('EXPIRED') }), false)).toBe(false);
+  });
+
+  it('cooldown/제출 중에는 retry form 진입을 차단한다', () => {
     expect(canBeginRetry(state({ pool: pool('CANCELLED'), restriction: restriction(true) }), false)).toBe(false);
     expect(canBeginRetry(state({ pool: pool('CANCELLED') }), true)).toBe(false);
     expect(canBeginRetry(state({ pool: pool('WAITING') }), false)).toBe(false);
@@ -212,23 +228,22 @@ describe('retry form reconciliation', () => {
     expect(nextState.error).toBeNull();
   });
 
-  it('retry POST 실패 시 terminal 상태와 pool을 보존한다', () => {
+  it('retry POST 실패 시 이전 상태와 pool을 보존한다', () => {
     const previous = state({ pool: pool('CANCELLED') });
     const error = new Error('network');
     const nextState = stateAfterPoolEntryFailure(previous, error, 1);
-    expect(nextState.status).toBe('CANCELLED');
+    expect(nextState.status).toBe('IDLE');
     expect(nextState.pool?.poolId).toBe(1);
     expect(nextState.error).toBe(error);
-    expect(retrySourceAfterRefresh(1, nextState)).toBe(1);
   });
 
   it('일반 POST 실패는 기존 ERROR 처리로 전환한다', () => {
     expect(stateAfterPoolEntryFailure(state(), new Error('network'), null).status).toBe('ERROR');
   });
 
-  it('새 mount의 초기 retry source는 없으므로 terminal 서버 상태만 복원한다', () => {
+  it('새 mount의 초기 retry source는 없으므로 과거 terminal pool은 IDLE로 복원한다', () => {
     const terminalState = state({ pool: pool('EXPIRED') });
-    expect(terminalState.status).toBe('EXPIRED');
+    expect(terminalState.status).toBe('IDLE');
     expect(retrySourceAfterRefresh(null, terminalState)).toBeNull();
   });
 });

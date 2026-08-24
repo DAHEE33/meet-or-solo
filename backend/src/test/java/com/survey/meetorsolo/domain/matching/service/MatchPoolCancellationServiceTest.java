@@ -25,6 +25,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class MatchPoolCancellationServiceTest {
@@ -32,14 +33,16 @@ class MatchPoolCancellationServiceTest {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Instant FIXED = Instant.parse("2026-08-20T05:00:00Z"); // KST 14:00
     private static final Clock CLOCK = Clock.fixed(FIXED, SEOUL);
+    private static final OffsetDateTime CHECKIN_START = OffsetDateTime.parse("2026-08-20T13:00:00+09:00");
 
     private final MatchPoolRepository pools = mock(MatchPoolRepository.class);
     private final MatchCooldownRepository cooldowns = mock(MatchCooldownRepository.class);
     private final MatchPenaltyEventRepository penaltyEvents = mock(MatchPenaltyEventRepository.class);
     private final MemberRepository members = mock(MemberRepository.class);
+    private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
 
     private MatchPoolCancellationService service() {
-        return new MatchPoolCancellationService(CLOCK, pools, cooldowns, penaltyEvents, members);
+        return new MatchPoolCancellationService(CLOCK, pools, cooldowns, penaltyEvents, members, jdbc);
     }
 
     private MatchPool waitingPool(long memberId) {
@@ -49,12 +52,18 @@ class MatchPoolCancellationServiceTest {
         return pool;
     }
 
+    private void stubCheckinStart() {
+        when(jdbc.queryForObject(anyString(), eq(OffsetDateTime.class), any()))
+                .thenReturn(CHECKIN_START);
+    }
+
     @Test
     void WAITING_풀을_취소하면_CANCELLED_상태가_된다() {
         MatchPool pool = waitingPool(1L);
         when(pools.findActiveCancellablePoolForUpdate(1L)).thenReturn(Optional.of(pool));
         when(cooldowns.existsByRelatedPoolId(anyLong())).thenReturn(false);
-        when(cooldowns.countTodayByReason(eq(1L), eq("POOL_CANCEL"), any(), any())).thenReturn(0);
+        stubCheckinStart();
+        when(cooldowns.countByReasonSince(eq(1L), eq("POOL_CANCEL"), any())).thenReturn(0);
 
         MatchPoolCancellationResult result = service().cancel(1L);
 
@@ -68,7 +77,8 @@ class MatchPoolCancellationServiceTest {
         pool.lock(OffsetDateTime.now(CLOCK), "token");
         when(pools.findActiveCancellablePoolForUpdate(1L)).thenReturn(Optional.of(pool));
         when(cooldowns.existsByRelatedPoolId(anyLong())).thenReturn(false);
-        when(cooldowns.countTodayByReason(eq(1L), eq("POOL_CANCEL"), any(), any())).thenReturn(0);
+        stubCheckinStart();
+        when(cooldowns.countByReasonSince(eq(1L), eq("POOL_CANCEL"), any())).thenReturn(0);
 
         MatchPoolCancellationResult result = service().cancel(1L);
 
@@ -98,11 +108,12 @@ class MatchPoolCancellationServiceTest {
     }
 
     @Test
-    void 당일_1회째_취소는_penalty_없이_cooldown만_생성한다() {
+    void 체크인_내_1회째_취소는_penalty_없이_cooldown만_생성한다() {
         MatchPool pool = waitingPool(1L);
         when(pools.findActiveCancellablePoolForUpdate(1L)).thenReturn(Optional.of(pool));
         when(cooldowns.existsByRelatedPoolId(anyLong())).thenReturn(false);
-        when(cooldowns.countTodayByReason(eq(1L), eq("POOL_CANCEL"), any(), any())).thenReturn(0);
+        stubCheckinStart();
+        when(cooldowns.countByReasonSince(eq(1L), eq("POOL_CANCEL"), any())).thenReturn(0);
 
         service().cancel(1L);
 
@@ -112,11 +123,12 @@ class MatchPoolCancellationServiceTest {
     }
 
     @Test
-    void 당일_3회째_취소는_penalty_1점과_cooldown을_생성한다() {
+    void 체크인_내_3회째_취소는_penalty_1점과_cooldown을_생성한다() {
         MatchPool pool = waitingPool(1L);
         when(pools.findActiveCancellablePoolForUpdate(1L)).thenReturn(Optional.of(pool));
         when(cooldowns.existsByRelatedPoolId(anyLong())).thenReturn(false);
-        when(cooldowns.countTodayByReason(eq(1L), eq("POOL_CANCEL"), any(), any())).thenReturn(2);
+        stubCheckinStart();
+        when(cooldowns.countByReasonSince(eq(1L), eq("POOL_CANCEL"), any())).thenReturn(2);
         when(penaltyEvents.existsByRelatedPoolId(anyLong())).thenReturn(false);
         when(members.increasePenaltyScore(1L, 1)).thenReturn(1);
 
@@ -135,7 +147,7 @@ class MatchPoolCancellationServiceTest {
 
         service().cancel(1L);
 
-        verify(cooldowns, never()).countTodayByReason(anyLong(), anyString(), any(), any());
+        verify(cooldowns, never()).countByReasonSince(anyLong(), anyString(), any());
         verify(cooldowns, never()).save(any());
     }
 }

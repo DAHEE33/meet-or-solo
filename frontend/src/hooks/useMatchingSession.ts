@@ -16,6 +16,7 @@ const COOLDOWN_POLL_MS = 5_000;
 const MAX_BACKOFF_MS = 30_000;
 
 export type MatchingUiStatus =
+  | 'LOADING'
   | 'IDLE'
   | 'WAITING'
   | 'LOCKED'
@@ -50,7 +51,7 @@ export type RetryFormState = {
 };
 
 const INITIAL_STATE: MatchingSessionState = {
-  status: 'IDLE',
+  status: 'LOADING',
   pool: null,
   proposal: null,
   group: null,
@@ -97,14 +98,15 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
   if (restriction.completionLock.groupId !== null) {
     return { status: 'COMPLETED', pool, proposal, group, restriction, error: null };
   }
-  if (pool?.status === 'MATCHED') {
-    return { status: 'CANCELLED', pool, proposal, group, restriction, error: null };
-  }
-  if (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
-    return { status: pool.status, pool, proposal, group, restriction, error: null };
-  }
   if (restriction.cooldown.active) {
-    return { status: 'COOLDOWN', pool, proposal, group, restriction, error: null };
+    const terminalStatus = pool?.status === 'MATCHED' ? 'CANCELLED'
+      : (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') ? pool.status
+      : 'COOLDOWN';
+    return { status: terminalStatus, pool, proposal, group, restriction, error: null };
+  }
+  if (pool?.status === 'MATCHED' || pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
+    // cooldown이 없는 과거 terminal pool → 새로 신청 가능
+    return { status: 'IDLE', pool, proposal, group, restriction, error: null };
   }
   return { status: 'IDLE', pool, proposal, group, restriction, error: null };
 }
@@ -271,6 +273,7 @@ export function useMatchingSession() {
 
   useEffect(() => {
     if (!isVisible) return;
+    if (state.status === 'ERROR' && isUserActionableError(state.error)) return;
     const pollingStatus = state.restriction?.cooldown.active
       || state.restriction?.completionLock.active
       ? 'COOLDOWN'
@@ -281,13 +284,15 @@ export function useMatchingSession() {
     return () => window.clearTimeout(timer);
   }, [isVisible, refresh, state]);
 
-  const beginRetry = useCallback(() => {
+  const beginRetry = useCallback(async () => {
     if (!canBeginRetry(state, isSubmitting)) return false;
     const sourcePoolId = state.pool?.poolId;
     if (sourcePoolId === undefined) return false;
+    await refresh();
+    if (!mountedRef.current) return false;
     updateRetrySourcePoolId(sourcePoolId);
     return true;
-  }, [isSubmitting, state, updateRetrySourcePoolId]);
+  }, [isSubmitting, refresh, state, updateRetrySourcePoolId]);
 
   const enterPool = useCallback(
     async (
@@ -419,4 +424,10 @@ export function isAbortError(error: unknown): boolean {
 
 function normalizeError(error: unknown): ApiClientError | Error {
   return error instanceof Error ? error : new Error('네트워크 요청에 실패했습니다.');
+}
+
+export function isUserActionableError(error: ApiClientError | Error | null): boolean {
+  if (!(error instanceof ApiClientError)) return false;
+  return (error.code === 'MATCHING_INVALID_REQUEST' && error.message.includes('체크인'))
+    || error.code === 'MATCHING_MEETING_POINT_NOT_READY';
 }

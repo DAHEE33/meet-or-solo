@@ -16,7 +16,8 @@
       "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test)",
       "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test --tests \"com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationServiceTest\" --tests \"com.survey.meetorsolo.domain.matching.service.MatchCancellationServiceTest\" --tests \"com.survey.meetorsolo.domain.matching.service.MatchingPenaltyPolicyTest\")",
       "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test --exclude-task testContainers -Dtest.exclude.pattern=\"*IntegrationTest*\")",
-      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew compileJava compileTestJava)"
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew compileJava compileTestJava)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

@@ -277,7 +277,8 @@ PUT /api/matching/pools/me/current/cancellation
 | 3회 | 취소 처리 시각 | 5분 | `+1` |
 | 4회 이상 | 취소 처리 시각 | 10분 | `+1` |
 
-- 당일 횟수는 `Asia/Seoul` 날짜의 `POOL_CANCEL` reason cooldown 기록을 기준으로 계산한다.
+- 횟수는 현재 체크인의 `checked_in_at` 이후 생성된 `POOL_CANCEL` cooldown을 기준으로 계산한다.
+- 새 체크인을 생성하면 이전 체크인에서 쌓인 취소 횟수는 이어받지 않는다.
 - cooldown과 penalty의 멱등성 원인 key는 취소된 `pool_id`를 사용한다.
 - pool `CANCELLED`, cooldown, penalty event, `members.penalty_score` 변경은 같은
   transaction에서 처리한다.
