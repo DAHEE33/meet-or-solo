@@ -135,6 +135,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     allowMinimum: false,
     hasFestival: true,
     currentCheckin: null,
+    festivalId: null,
     canApply: true,
     isSubmitting: false,
     searchRemaining: 0,
@@ -357,6 +358,21 @@ describe('terminal retry form', () => {
     expect(enterButton).toBeDefined();
     (enterButton?.props.onClick as () => void)();
     expect(onEnterRoom).toHaveBeenCalledOnce();
+  });
+
+  it('종료 카드는 festivalId가 있으면 코스 보러가기 링크를 함께 보여준다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'EXPIRED', festivalId: 144 })));
+    const link = elements(tree).find(
+      (element) => text(element as never) === '솔로 코스 보러가기',
+    );
+    expect(link).toBeDefined();
+    expect(link?.props.to).toBe('/solo-course');
+    expect(link?.props.state).toEqual({ festivalId: 144 });
+  });
+
+  it('festivalId가 없으면 코스 보러가기 링크를 보여주지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'EXPIRED', festivalId: null })));
+    expect(text(tree)).not.toContain('솔로 코스 보러가기');
   });
 
   it('cooldown 카드에서는 retry button이 비활성화된다', () => {

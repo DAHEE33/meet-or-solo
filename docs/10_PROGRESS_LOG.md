@@ -1,5 +1,23 @@
 # 진행 상태 기록
 
+## [10-A 후속 5] 솔로 코스 도보시간 표시 수정과 매칭 실패 화면 연결
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `SoloCoursePage`의 스톱 카드가 백엔드가 계산해 응답에 넣어준 `stop.walkMinutesFromPrevious`를
+  쓰지 않고, `stop.distanceFromPreviousMeters`를 프론트 `formatWalkMinutesLabel`(반올림)로
+  다시 계산해 표시하고 있었다. 백엔드 `SoloCourseStayPolicy.walkMinutes()`는 올림(`ceil`)을
+  쓰기 때문에 같은 구간인데도 상단 "예상 소요 약 N시간(도보 M분 포함)" 합계와 카드별 개별
+  도보시간이 서로 다르게 보일 수 있었다. 카드가 `stop.walkMinutesFromPrevious`를 그대로 쓰도록
+  고쳐 두 값의 합이 항상 일치하게 했다. Backend 계산 로직 자체는 변경하지 않았다.
+- 매칭이 실패로 종료된 화면(`CANCELLED`/`EXPIRED`/`COOLDOWN` — 예: 60초 탐색 시간 안에 상대를
+  못 찾아 `EXPIRED`로 끝난 경우)에 "대신 주변 코스 보러가기" 링크를 추가했다. 현재 회원의
+  `festivalId`(체크인 우선, 없으면 navigation state 순서로 이미 계산돼 있던 값)를 `state`로
+  실어 `/solo-course`로 이동한다. `festivalId`가 없으면 링크 자체를 숨긴다.
+- Frontend 전체 Vitest 25 files/216 tests(신규 2건 포함), `npx tsc --noEmit`,
+  production/PWA build가 성공했다. Backend는 변경하지 않았다.
+- 두 브라우저·dev DB 수동 검증은 아직 실행하지 않았다.
+
 ## [10-A 후속 4] /solo-course 최근접 이웃 기반 코스(동선) 1차
 
 상태: 구현·Backend/Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
 import { ApiClientError } from '../api/apiClient';
 import type { CurrentCheckinResponse } from '../api/checkin';
@@ -222,6 +222,7 @@ export default function MatchingConditionPage() {
           allowMinimum={allowMinimum}
           hasFestival={hasFestival}
           currentCheckin={currentCheckin}
+          festivalId={festivalId}
           canApply={canApply}
           isSubmitting={isSubmitting}
           searchRemaining={searchRemaining}
@@ -270,6 +271,7 @@ interface MatchBodyProps {
   allowMinimum: boolean;
   hasFestival: boolean;
   currentCheckin: CurrentCheckinResponse | null;
+  festivalId: number | null;
   canApply: boolean;
   isSubmitting: boolean;
   searchRemaining: number;
@@ -356,6 +358,7 @@ export function MatchBody(props: MatchBodyProps) {
         reason={reason}
         cooldownActive={props.cooldownActive}
         cooldownRemaining={props.cooldownRemaining}
+        festivalId={props.festivalId}
         onRetry={props.onRetry}
       />
     );
@@ -660,11 +663,13 @@ function CancelledCard({
   reason,
   cooldownActive,
   cooldownRemaining,
+  festivalId,
   onRetry,
 }: {
   reason: string;
   cooldownActive: boolean;
   cooldownRemaining: number;
+  festivalId: number | null;
   onRetry: () => void;
 }) {
   return (
@@ -684,6 +689,15 @@ function CancelledCard({
       <PrimaryButton disabled={cooldownActive} onClick={onRetry} className="mt-1">
         다시 신청하기
       </PrimaryButton>
+      {festivalId !== null && (
+        <Link
+          to="/solo-course"
+          state={{ festivalId }}
+          className="text-[13px] font-semibold text-teal underline underline-offset-2"
+        >
+          솔로 코스 보러가기
+        </Link>
+      )}
     </section>
   );
 }
