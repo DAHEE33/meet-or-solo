@@ -1,5 +1,38 @@
 # 진행 상태 기록
 
+## [10-A 후속 4] /solo-course 최근접 이웃 기반 코스(동선) 1차
+
+상태: 구현·Backend/Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `[10-A 후속 3]`에서 만든 "거리순 목록"을 실제로 걸을 수 있는 순서가 있는 "코스"로 확장했다.
+  사전 분석·설계는 `docs/23_SOLO_COURSE_ITINERARY_DESIGN.md`로 정리했고, 초안 수치 그대로
+  진행하기로 결정했다.
+- 축제 좌표를 시작점으로 "현재 위치에서 가장 가까운 미방문 후보"를 순서대로 고르는 greedy
+  nearest-neighbor로 스톱 순서를 정한다. 도보시간은 기존 `formatWalkMinutesLabel`과 동일하게
+  도보 속도 약 4km/h(67m/분)로 추정하고, 체류시간은 실측 데이터가 없어 `contentTypeId`별 고정
+  추정치(관광지 60분/문화시설 45분/액티비티 90분/맛집 50분)를 쓴다.
+- `HALF`(240분)/`FULL`(480분) 예산을 넘기기 직전까지 후보를 채우고, 한 번의 이동이
+  `MAX_HOP_METERS`(1,500m)를 넘거나 최대 스톱 수(`MAX_STOPS`=6)에 도달하면 멈춘다.
+- 순수 거리순으로만 고르면 같은 카테고리(특히 맛집/카페)가 연속으로 뽑히는 문제가 있어, 가장
+  가까운 후보가 직전 스톱과 같은 카테고리면 `DIVERSITY_TOLERANCE`(1.5배) 이내에 다른 카테고리
+  대안이 있는지 찾아 대신 선택하는 경량 규칙을 1차에 포함했다. 대안이 없으면 원래 가장 가까운
+  후보를 그대로 선택해, 다양성 때문에 억지로 먼 곳까지 끌고 가지 않는다.
+- 신규 `GET /api/festivals/{id}/solo-course?type=HALF|FULL`을 추가했다. 기존 `nearby-spots`가
+  쓰는 후보 조회(`TourPlaceRepository.findAllVisibleWithCoordinates`)를 그대로 재사용해 새
+  repository 쿼리, Flyway migration, TourAPI 외부 호출을 추가하지 않았다.
+- 정책 상수(`MAX_HOP_METERS`/`MAX_STOPS`/체류시간표/`DIVERSITY_TOLERANCE`/예산)는
+  `SoloCourseStayPolicy`로 분리했다.
+- Frontend `SoloCoursePage`에 반나절/하루 토글과 순서·도보시간이 보이는 타임라인 UI를 다시
+  넣었다(예전 mock과 비슷한 모양이지만 전부 실제 계산값). 코스가 비어 있으면 안내 문구를 표시한다.
+- Backend 신규 `SoloCourseStayPolicyTest`, `SoloCourseServiceTest`(최근접 이웃 순서가 단순
+  거리순과 달라지는 경우, hop·예산·최대 스톱 경계, 카테고리 연속 방지 규칙의 대안 선택·폴백·
+  첫 스톱 예외)와 `FestivalControllerTest` 신규 케이스가 통과했다. Backend 전체 336건 중
+  이번 변경과 무관한 기존 pgvector Docker 이미지 fetch 실패 21건을 제외하고 전부 통과했고
+  `./gradlew build -x test`도 성공했다.
+- Frontend 전체 Vitest 25 files/214 tests, `npx tsc --noEmit`, production/PWA build가 성공했다.
+- 실제 영업시간/휴무일 반영, 본격적인 카테고리 비율 다양성 보정, 식사 시간대 슬롯 배치, 수동
+  편집, 코스 저장/공유는 2차 이후로 남겨뒀다(`docs/23` 7장).
+
 ## [10-A 후속 3] /solo-course 체크인 기반 주변 관광지 추천
 
 상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전

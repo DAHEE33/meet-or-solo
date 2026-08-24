@@ -42,3 +42,15 @@ export function formatWalkMinutesLabel(distanceMeters: number): string {
   const minutes = Math.max(1, Math.round(distanceMeters / 67));
   return `도보 ${minutes}분`;
 }
+
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  '12': '관광지',
+  '14': '문화시설',
+  '28': '액티비티',
+  '39': '맛집',
+};
+
+/** 관광공사 contentTypeId를 화면 표시용 한글 라벨로 변환한다. 동기화 대상 4종 외는 "기타". */
+export function contentTypeLabel(contentTypeId: string): string {
+  return CONTENT_TYPE_LABELS[contentTypeId] ?? '기타';
+}

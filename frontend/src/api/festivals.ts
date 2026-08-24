@@ -70,6 +70,28 @@ export type NearbyTourPlaceItem = {
   distanceMeters: number;
 };
 
+export type SoloCourseType = 'HALF' | 'FULL';
+
+export type SoloCourseStop = {
+  order: number;
+  id: number;
+  title: string;
+  address: string | null;
+  contentTypeId: string;
+  imageUrl: string | null;
+  distanceFromPreviousMeters: number;
+  walkMinutesFromPrevious: number;
+  estimatedStayMinutes: number;
+};
+
+export type SoloCourseResponse = {
+  type: SoloCourseType;
+  totalWalkMinutes: number;
+  totalStayMinutes: number;
+  totalDurationMinutes: number;
+  stops: SoloCourseStop[];
+};
+
 export const festivalsApi = {
   getList: (page = 0, size = 20, keyword?: string) => {
     const params = new URLSearchParams({ page: String(page), size: String(size) });
@@ -81,4 +103,6 @@ export const festivalsApi = {
     apiClient<NearbyTourPlaceItem[]>(
       `/api/festivals/${id}/nearby-spots?radiusMeters=${radiusMeters}&limit=${limit}`,
     ),
+  getSoloCourse: (id: number, type: SoloCourseType = 'HALF') =>
+    apiClient<SoloCourseResponse>(`/api/festivals/${id}/solo-course?type=${type}`),
 };

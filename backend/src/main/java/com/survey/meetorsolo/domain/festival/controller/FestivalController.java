@@ -2,7 +2,10 @@ package com.survey.meetorsolo.domain.festival.controller;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseType;
 import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
+import com.survey.meetorsolo.domain.festival.service.SoloCourseService;
 import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
 import com.survey.meetorsolo.global.response.ApiResponse;
 import jakarta.validation.constraints.Max;
@@ -21,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class FestivalController {
 
     private final FestivalQueryService festivalQueryService;
+    private final SoloCourseService soloCourseService;
 
-    public FestivalController(FestivalQueryService festivalQueryService) {
+    public FestivalController(FestivalQueryService festivalQueryService, SoloCourseService soloCourseService) {
         this.festivalQueryService = festivalQueryService;
+        this.soloCourseService = soloCourseService;
     }
 
     @GetMapping
@@ -56,5 +61,13 @@ public class FestivalController {
         return ApiResponse.success(
                 festivalQueryService.getNearbyTourPlaces(id, radiusMeters, limit)
         );
+    }
+
+    @GetMapping("/{id}/solo-course")
+    public ApiResponse<SoloCourseResponse> getSoloCourse(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "HALF") SoloCourseType type
+    ) {
+        return ApiResponse.success(soloCourseService.getSoloCourse(id, type));
     }
 }

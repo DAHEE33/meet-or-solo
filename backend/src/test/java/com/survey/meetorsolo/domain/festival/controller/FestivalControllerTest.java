@@ -11,8 +11,12 @@ import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalProgramItem;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseStopResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseType;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
+import com.survey.meetorsolo.domain.festival.service.SoloCourseService;
 import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
 import com.survey.meetorsolo.global.config.SecurityConfig;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -36,6 +40,9 @@ class FestivalControllerTest {
 
     @MockitoBean
     private FestivalQueryService festivalQueryService;
+
+    @MockitoBean
+    private SoloCourseService soloCourseService;
 
     private FestivalListResponse listResponse;
 
@@ -152,5 +159,41 @@ class FestivalControllerTest {
                 .andExpect(jsonPath("$.data[0].title").value("테스트 관광지"))
                 .andExpect(jsonPath("$.data[0].distanceMeters").value(300));
         verify(festivalQueryService).getNearbyTourPlaces(1L, 5000, 10);
+    }
+
+    @Test
+    void 솔로_코스를_기본_HALF_타입으로_조회한다() throws Exception {
+        SoloCourseResponse response = new SoloCourseResponse(
+                SoloCourseType.HALF, 7, 60, 67,
+                List.of(new SoloCourseStopResponse(1, 1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 420, 7, 60))
+        );
+        when(soloCourseService.getSoloCourse(1L, SoloCourseType.HALF)).thenReturn(response);
+
+        mockMvc.perform(get("/api/festivals/1/solo-course"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.type").value("HALF"))
+                .andExpect(jsonPath("$.data.stops[0].title").value("테스트 관광지"))
+                .andExpect(jsonPath("$.data.stops[0].walkMinutesFromPrevious").value(7));
+        verify(soloCourseService).getSoloCourse(1L, SoloCourseType.HALF);
+    }
+
+    @Test
+    void 솔로_코스_type_파라미터를_전달한다() throws Exception {
+        when(soloCourseService.getSoloCourse(1L, SoloCourseType.FULL))
+                .thenReturn(new SoloCourseResponse(SoloCourseType.FULL, 0, 0, 0, List.of()));
+
+        mockMvc.perform(get("/api/festivals/1/solo-course").param("type", "FULL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.type").value("FULL"));
+        verify(soloCourseService).getSoloCourse(1L, SoloCourseType.FULL);
+    }
+
+    @Test
+    void 솔로_코스_잘못된_type_파라미터는_400을_반환한다() throws Exception {
+        mockMvc.perform(get("/api/festivals/1/solo-course").param("type", "WEEK"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT_VALUE"));
     }
 }

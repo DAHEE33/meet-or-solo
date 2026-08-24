@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CurrentCheckinState } from '../hooks/useCurrentCheckin';
-import { resolveSoloCourseFestival } from './SoloCoursePage';
+import { formatDurationLabel, resolveSoloCourseFestival } from './SoloCoursePage';
 
 const loading: CurrentCheckinState = { status: 'loading' };
 const loadedWith = (festivalId: number | null): CurrentCheckinState =>
@@ -54,5 +54,23 @@ describe('resolveSoloCourseFestival', () => {
       status: 'ready',
       festivalId: 3,
     });
+  });
+});
+
+describe('formatDurationLabel', () => {
+  it('시간과 분이 모두 있으면 함께 표시한다', () => {
+    expect(formatDurationLabel(223)).toBe('3시간 43분');
+  });
+
+  it('정확히 시간 단위면 분은 생략한다', () => {
+    expect(formatDurationLabel(240)).toBe('4시간');
+  });
+
+  it('한 시간 미만이면 분만 표시한다', () => {
+    expect(formatDurationLabel(45)).toBe('45분');
+  });
+
+  it('0분은 0분으로 표시한다', () => {
+    expect(formatDurationLabel(0)).toBe('0분');
   });
 });
