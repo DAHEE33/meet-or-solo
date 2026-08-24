@@ -107,11 +107,9 @@ export default function MatchingConditionPage() {
     cancelSearch,
     serverOffsetMs,
   } = useMatchingSession();
-  const terminalPoolFestivalId =
-    isRetryFormOpen
-      && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED')
-      ? state.pool?.festivalId
-      : null;
+  const retryableTerminal = isRetryFormOpen
+    && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED');
+  const terminalPoolFestivalId = retryableTerminal ? state.pool?.festivalId : null;
   const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
 
   const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
@@ -185,8 +183,9 @@ export default function MatchingConditionPage() {
           isRetryFormOpen={isRetryFormOpen}
           group={state.group}
           groupSize={
-            isRetryFormOpen
-              ? groupSize
+            retryableTerminal
+              ? state.pool?.preferredGroupSize ?? groupSize
+              : state.status === 'IDLE' ? groupSize
               : state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize
           }
           allowMinimum={allowMinimum}
@@ -251,6 +250,9 @@ interface MatchBodyProps {
 
 export function MatchBody(props: MatchBodyProps) {
   const { status } = props;
+  if (status === 'LOADING') {
+    return <LoadingSkeleton />;
+  }
   const retryableTerminal =
     props.isRetryFormOpen
     && (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COMPLETED');
@@ -726,6 +728,20 @@ function ErrorCard({
           {requiresCheckIn ? '체크인하기' : '다시 시도'}
         </PrimaryButton>
       )}
+    </section>
+  );
+}
+
+// ── 10. 초기 로딩 skeleton ──────────────────────────────
+function LoadingSkeleton() {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="h-16 w-16 animate-pulse rounded-full bg-sand" />
+      <div className="flex w-full flex-col items-center gap-2">
+        <div className="h-5 w-40 animate-pulse rounded-lg bg-sand" />
+        <div className="h-4 w-56 animate-pulse rounded-lg bg-sand" />
+      </div>
+      <div className="h-10 w-full animate-pulse rounded-2xl bg-sand" />
     </section>
   );
 }

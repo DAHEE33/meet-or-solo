@@ -11,9 +11,8 @@ import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,26 +20,28 @@ import org.springframework.transaction.annotation.Transactional;
 public class MatchPoolCancellationService {
 
     private static final String COOLDOWN_REASON = "POOL_CANCEL";
-    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
 
     private final Clock clock;
     private final MatchPoolRepository pools;
     private final MatchCooldownRepository cooldowns;
     private final MatchPenaltyEventRepository penaltyEvents;
     private final MemberRepository members;
+    private final JdbcTemplate jdbc;
 
     public MatchPoolCancellationService(
             Clock clock,
             MatchPoolRepository pools,
             MatchCooldownRepository cooldowns,
             MatchPenaltyEventRepository penaltyEvents,
-            MemberRepository members
+            MemberRepository members,
+            JdbcTemplate jdbc
     ) {
         this.clock = clock;
         this.pools = pools;
         this.cooldowns = cooldowns;
         this.penaltyEvents = penaltyEvents;
         this.members = members;
+        this.jdbc = jdbc;
     }
 
     @Transactional
@@ -66,10 +67,9 @@ public class MatchPoolCancellationService {
             return new MatchPoolCancellationResult(pool.getId(), "CANCELLED");
         }
 
-        LocalDate today = now.atZoneSameInstant(SEOUL).toLocalDate();
-        OffsetDateTime dayStart = today.atStartOfDay(SEOUL).toOffsetDateTime();
-        OffsetDateTime dayEnd = today.plusDays(1).atStartOfDay(SEOUL).toOffsetDateTime();
-        int previousCount = cooldowns.countTodayByReason(memberId, COOLDOWN_REASON, dayStart, dayEnd);
+        // 현재 체크인의 checked_in_at 이후 취소 횟수로 escalation 판정
+        OffsetDateTime checkinStart = findCheckedInAt(pool.getCheckinId());
+        int previousCount = cooldowns.countByReasonSince(memberId, COOLDOWN_REASON, checkinStart);
         int currentCount = previousCount + 1;
 
         Duration cooldownDuration = decideCooldownDuration(currentCount);
@@ -83,12 +83,20 @@ public class MatchPoolCancellationService {
         if (scoreDelta > 0 && !penaltyEvents.existsByRelatedPoolId(pool.getId())) {
             penaltyEvents.save(MatchPenaltyEvent.forPoolCancel(
                     memberId, scoreDelta,
-                    "매칭 탐색 자발적 취소 (당일 " + currentCount + "회)",
+                    "매칭 탐색 자발적 취소 (체크인 내 " + currentCount + "회)",
                     pool.getId(), now));
             members.increasePenaltyScore(memberId, scoreDelta);
         }
 
         return new MatchPoolCancellationResult(pool.getId(), "CANCELLED");
+    }
+
+    private OffsetDateTime findCheckedInAt(long checkinId) {
+        return jdbc.queryForObject(
+                "SELECT checked_in_at FROM festival_checkins WHERE id = ?",
+                OffsetDateTime.class,
+                checkinId
+        );
     }
 
     private Duration decideCooldownDuration(int count) {
