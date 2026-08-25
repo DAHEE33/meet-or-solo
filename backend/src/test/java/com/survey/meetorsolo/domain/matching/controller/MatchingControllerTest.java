@@ -24,6 +24,7 @@ import com.survey.meetorsolo.domain.matching.service.MatchGroupEventQueryService
 import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
+import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
@@ -75,6 +76,9 @@ class MatchingControllerTest {
 
     @MockitoBean
     private MatchCancellationService cancellations;
+
+    @MockitoBean
+    private MatchPoolCancellationService poolCancellations;
 
     @Test
     void 인증_쿠키가_없으면_401을_반환한다() throws Exception {
