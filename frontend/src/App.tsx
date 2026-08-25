@@ -14,6 +14,7 @@ import BlockedMembersPage from './pages/BlockedMembersPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminRoute from './components/admin/AdminRoute';
 import AdminMembersPage from './pages/AdminMembersPage';
+import ProfileEditPage from './pages/ProfileEditPage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/solo-course" element={<SoloCoursePage />} />
         <Route path="/check-in" element={<CheckInPage />} />
         <Route path="/mypage" element={<MyPage />} />
+        <Route path="/profile/edit" element={<ProfileEditPage />} />
         <Route path="/mypage/blocks" element={<BlockedMembersPage />} />
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
