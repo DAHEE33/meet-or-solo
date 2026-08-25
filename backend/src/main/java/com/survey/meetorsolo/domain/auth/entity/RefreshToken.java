@@ -15,6 +15,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 @Entity
 @Table(
@@ -66,6 +67,15 @@ public class RefreshToken {
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
         this.revokedAt = null;
+    }
+
+    public boolean isUsable(String tokenHash, OffsetDateTime now) {
+        return this.revokedAt == null && this.expiresAt.isAfter(now)
+                && Objects.equals(this.tokenHash, tokenHash);
+    }
+
+    public Member getMember() {
+        return member;
     }
 
     @PrePersist

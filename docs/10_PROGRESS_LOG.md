@@ -138,6 +138,64 @@
 - `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md`, `docs/05_MATCHING_POLICY.md`를
   갱신했다. dev DB·브라우저 수동 검증은 아직 실행하지 않았다.
 
+## [10-관리자 안전 3차] 관리자 정지 조기 해제(UNSUSPEND)
+
+상태: 구현·자동 검증 및 브라우저 수동 검증 완료
+
+- 관리자 회원 제재 2차(PR #35) 수동 검증에서 `SUSPENDED` 상태 회원을 즉시 해제하는 action이
+  없어, 테스트 계정도 `BAN → UNBAN`을 거쳐야 원래 상태로 복구되는 운영 UX 누락을 확인했다.
+- `AdminMemberActionType`에 `UNSUSPEND` 값을 추가하고 `Member.unsuspend()`를 구현했다.
+  `SUSPENDED` 상태에서만 호출 가능하며 기존 `restorePreviousStatus()`를 재사용해
+  `statusBeforeSanction`(ACTIVE 또는 PROFILE_REQUIRED)으로 복원한다.
+- `AdminMemberService.apply()` switch에 `UNSUSPEND` case를 추가했다. 기존 `validateRequest()`의
+  `!= SUSPEND` 조건이 `suspensionDuration` 조합을 자동 거절하고, `lockReport()`에서 UNBAN과 함께
+  해제 조치의 신고 연결을 거절한다. access revocation과 active matching 검증은 해제이므로 미적용.
+- V4의 `chk_admin_actions_type` CHECK 제약에 `UNSUSPEND`가 없어 INSERT 시 500 에러가 발생하는
+  문제를 확인했다. 기존 V1~V19를 수정하지 않고 `V20__allow_unsuspend_action_type.sql`로 CHECK를
+  재생성해 해결했다.
+- `AdminMemberRepository.findActions()` SQL IN 절에 `'UNSUSPEND'`를 추가해 제재 이력에 정지 해제
+  기록이 표시되도록 했다.
+- Frontend `AdminMemberActionType`에 `'UNSUSPEND'`를 추가하고 `actionLabel`에 `정지 해제`를
+  등록했다. 회원 상세 dialog에서 `SUSPENDED` 상태일 때 teal 색 "정지 해제" 버튼을 표시한다.
+- UNSUSPEND action dialog의 사유 select를 `ADMIN_CORRECTION`과 `OTHER` 두 가지로 필터링했다.
+  기본 사유는 `ADMIN_CORRECTION`이다. 기존 WARNING, SUSPEND, BAN, UNBAN의 사유 목록은
+  변경하지 않았다.
+- 기존 WARNING, SUSPEND, BAN, UNBAN 동작, Flyway migration V1~V19, 기존 테스트는
+  변경하지 않았다.
+- Backend 비-컨테이너 187건 전체 통과. Testcontainers 21건은 Docker 미설치로 초기화 실패
+  (기존 환경 제약, 이번 변경과 무관).
+- Frontend Vitest 24 files/189 tests, `npx tsc --noEmit`, production/PWA build 성공.
+- 2026-08-18 브라우저 수동 검증에서 SUSPENDED 회원 상세의 "정지 해제" 버튼 표시,
+  정지 해제 실행 후 ACTIVE 복원, 제재 이력의 `정지 해제` 기록, 비-SUSPENDED 회원에서
+  버튼 미표시를 확인했다.
+
+## [10-관리자 안전 2차] 관리자 회원 조회·제재
+
+상태: 구현·자동 검증 완료, 브라우저·dev DB 수동 검증 일부 수행
+
+- `V19__add_admin_member_sanctions.sql`로 `BANNED`, 정지 시작·종료 시각, 제재 전 상태,
+  `admin_actions.reason_code`, `idempotency_key`와 관련 제약조건·인덱스를 추가했다. 기존
+  migration은 수정하지 않았다.
+- 관리자 회원 목록·닉네임 검색·상태/역할 filter·cursor pagination, 회원 상세와 신고·제재
+  이력, `WARNING`, `SUSPEND`, `BAN`, `UNBAN`을 구현했다.
+- 필수 `Idempotency-Key`, member → optional report 고정 row lock, 신고 `ACTION_TAKEN`과
+  감사 로그의 원자 저장, active pool/proposal/group 회원의 `SUSPEND`·`BAN` 409 거절을
+  적용했다.
+- 정지 만료 lazy 복구와 Scheduler, 로그인·refresh·기존 access token 요청 제한, refresh
+  token 폐기와 transaction commit 후 WebSocket session 종료를 구현했다.
+- `/admin/members`와 관리자 진입 버튼, 실패 전 snapshot 유지, 중복 제출 방지와 성공한
+  대상 회원만 갱신하는 UI를 추가했다.
+- Backend 전체 426 tests와 관리자 제재 PostgreSQL Testcontainers 통합 시나리오 7건,
+  Frontend 전체 24 files/189 tests 및 production build가 성공했다.
+- 2026-08-17 사용자 브라우저 수동 검증에서는 관리자 회원 화면의 기본 조회·검색·filter·상세,
+  제재와 복구 흐름 중 사용자가 실제 확인한 범위까지만 검증했다. WebSocket session 종료,
+  active matching 충돌, dialog 접근성과 자동 테스트 대체 항목은 수동 `PASS`로 판정하지 않는다.
+- 수동 검증 중 관리자 `SUSPENDED` 상태를 즉시 해제하는 action과 UI가 없어, 테스트 계정도
+  `BAN -> UNBAN`을 거쳐야 원래 `ACTIVE` 또는 `PROFILE_REQUIRED`로 복구되는 운영 UX 누락을
+  확인했다. 후속 작업에서 `UNSUSPEND` 또는 동등한 조기 해제 action, 감사 유형, API와 확인
+  dialog를 별도로 설계한다.
+- commit, push, PR과 전체 수동 검증 완료 판정은 아직 수행하지 않았다.
+
 ## [10-관리자 안전 1차] 관리자 신고 검토
 
 상태: 구현·자동 검증 및 dev DB·브라우저 수동 검증 완료
@@ -1779,6 +1837,19 @@ dev 서버 기준:
 - `/matching`만 임시 수정하지 않고 `/match-room`, 체크인, 인증/프로필,
   축제 화면의 새로고침·API 지연·일부 실패·WebSocket/polling 전환을 함께 점검한다.
 - Router notice 반복, layout shift와 짧은 spinner 깜빡임도 UX 검증 범위에 포함한다.
+- 자동 매칭 진입은 `1. 유효한 축제 체크인 확인 -> 2. 매칭 조건 설정·신청` 순서여야 하지만,
+  현재 화면에서 조건 단계가 먼저 보인 뒤 체크인 필요 card로 바뀌어 `2 -> 1`처럼 역순으로
+  인지되는 현상을 확인했다. 최초 snapshot에서 체크인 유효성을 먼저 판정하고 이후 단계만
+  노출하도록 단계 표시와 hydration 우선순위를 함께 수정한다.
+- terminal 화면의 `다시 신청하기`에서도 조건 form을 먼저 노출하지 않고 체크인 유효성을
+  선확인해, 만료 또는 누락이면 바로 `체크인하기` 동선으로 연결한다.
+- 매칭 탐색 중 사용자가 약 1분 만료를 기다리지 않고 나갈 수 있는 `매칭 취소` action과 확인
+  dialog가 필요하다. 구현 전 `WAITING`/`LOCKED`/proposal 생성 경합의 종료 transaction,
+  cooldown·penalty 적용 여부와 상대방 비귀책 처리를 정책으로 확정한다.
+- 전반적인 화면 전환 지연은 인터넷 문제로 단정하지 않고 Chrome Network의 request waiting,
+  중복·직렬 REST 호출, pool/proposal/group/restriction snapshot 조립, WebSocket/polling 재연결과
+  route rendering 시간을 분리 측정한다. API가 빠른데 화면이 늦으면 Frontend 상태 전환 문제로,
+  모든 API waiting이 길면 dev 서버·DB·네트워크 지연 후보로 기록한다.
 - 권장 별도 브랜치명은 `feature/wbs-10-frontend-async-ux-stabilization`이다.
 - 이 단계에서는 Backend 정책, DB schema, completion transaction을 변경하지 않는다.
 

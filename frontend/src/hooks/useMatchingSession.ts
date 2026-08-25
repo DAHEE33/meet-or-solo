@@ -16,6 +16,7 @@ const COOLDOWN_POLL_MS = 5_000;
 const MAX_BACKOFF_MS = 30_000;
 
 export type MatchingUiStatus =
+  | 'LOADING'
   | 'IDLE'
   | 'WAITING'
   | 'LOCKED'
@@ -50,7 +51,7 @@ export type RetryFormState = {
 };
 
 const INITIAL_STATE: MatchingSessionState = {
-  status: 'IDLE',
+  status: 'LOADING',
   pool: null,
   proposal: null,
   group: null,
@@ -97,14 +98,15 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
   if (restriction.completionLock.groupId !== null) {
     return { status: 'COMPLETED', pool, proposal, group, restriction, error: null };
   }
-  if (pool?.status === 'MATCHED') {
-    return { status: 'CANCELLED', pool, proposal, group, restriction, error: null };
-  }
-  if (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
-    return { status: pool.status, pool, proposal, group, restriction, error: null };
-  }
   if (restriction.cooldown.active) {
-    return { status: 'COOLDOWN', pool, proposal, group, restriction, error: null };
+    const terminalStatus = pool?.status === 'MATCHED' ? 'CANCELLED'
+      : (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') ? pool.status
+      : 'COOLDOWN';
+    return { status: terminalStatus, pool, proposal, group, restriction, error: null };
+  }
+  if (pool?.status === 'MATCHED' || pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
+    // cooldown이 없는 과거 terminal pool → 새로 신청 가능
+    return { status: 'IDLE', pool, proposal, group, restriction, error: null };
   }
   return { status: 'IDLE', pool, proposal, group, restriction, error: null };
 }
@@ -154,17 +156,6 @@ export function canBeginRetry(state: MatchingSessionState, isSubmitting: boolean
     && !isSubmitting;
 }
 
-/**
- * 새로 mount된 화면(다른 화면에 갔다가 /matching으로 돌아온 경우 포함)에서 최초 REST 조회
- * 결과가 이미 종료된 pool이고 cooldown/완료 제한처럼 실제로 막는 게 없다면, "매칭이
- * 종료됐어요" 안내를 다시 보여주지 않고 곧바로 신청 화면(retry form)으로 연다.
- * 세션 도중 실시간으로 종료를 감지한 경우(폴링 등)에는 사용하지 않는다 — 그때는 종료 사유를
- * 한 번은 보여줘야 하므로 기존 `retrySourceAfterRefresh`를 그대로 쓴다.
- */
-export function initialRetrySourcePoolId(nextState: MatchingSessionState): number | null {
-  return canBeginRetry(nextState, false) ? nextState.pool?.poolId ?? null : null;
-}
-
 export function stateAfterPoolEntry(
   previous: MatchingSessionState,
   pool: MatchPool,
@@ -201,7 +192,6 @@ export function useMatchingSession() {
   const mutationAbortRef = useRef<AbortController | null>(null);
   const consecutiveErrorsRef = useRef(0);
   const retrySourcePoolIdRef = useRef<number | null>(null);
-  const isInitialLoadRef = useRef(true);
 
   const updateRetrySourcePoolId = useCallback((sourcePoolId: number | null) => {
     retrySourcePoolIdRef.current = sourcePoolId;
@@ -229,10 +219,7 @@ export function useMatchingSession() {
           requestStartedAt + (responseReceivedAt - requestStartedAt) / 2,
         ));
         const nextState = deriveMatchingState({ pool, proposal, group, restriction });
-        const nextRetrySourcePoolId = isInitialLoadRef.current
-          ? initialRetrySourcePoolId(nextState)
-          : retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
-        isInitialLoadRef.current = false;
+        const nextRetrySourcePoolId = retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
         if (nextRetrySourcePoolId !== retrySourcePoolIdRef.current) {
           updateRetrySourcePoolId(nextRetrySourcePoolId);
         }
@@ -286,6 +273,7 @@ export function useMatchingSession() {
 
   useEffect(() => {
     if (!isVisible) return;
+    if (state.status === 'ERROR' && isUserActionableError(state.error)) return;
     const pollingStatus = state.restriction?.cooldown.active
       || state.restriction?.completionLock.active
       ? 'COOLDOWN'
@@ -296,13 +284,15 @@ export function useMatchingSession() {
     return () => window.clearTimeout(timer);
   }, [isVisible, refresh, state]);
 
-  const beginRetry = useCallback(() => {
+  const beginRetry = useCallback(async () => {
     if (!canBeginRetry(state, isSubmitting)) return false;
     const sourcePoolId = state.pool?.poolId;
     if (sourcePoolId === undefined) return false;
+    await refresh();
+    if (!mountedRef.current) return false;
     updateRetrySourcePoolId(sourcePoolId);
     return true;
-  }, [isSubmitting, state, updateRetrySourcePoolId]);
+  }, [isSubmitting, refresh, state, updateRetrySourcePoolId]);
 
   const enterPool = useCallback(
     async (
@@ -381,6 +371,37 @@ export function useMatchingSession() {
     [isSubmitting, refresh, state.proposal],
   );
 
+  const cancelSearch = useCallback(
+    async () => {
+      if (isSubmitting) return false;
+      if (state.status !== 'WAITING' && state.status !== 'LOCKED') return false;
+      setIsSubmitting(true);
+      const controller = new AbortController();
+      mutationAbortRef.current?.abort();
+      mutationAbortRef.current = controller;
+      try {
+        await matchingApi.cancelPool(controller.signal);
+        if (mountedRef.current && !controller.signal.aborted) {
+          void refresh();
+        }
+        return true;
+      } catch (error) {
+        if (!isAbortError(error) && mountedRef.current) {
+          if (error instanceof ApiClientError && error.status === 409) {
+            void refresh();
+          } else {
+            setState((previous) => ({ ...previous, status: 'ERROR', error: normalizeError(error) }));
+          }
+        }
+        return false;
+      } finally {
+        if (mutationAbortRef.current === controller) mutationAbortRef.current = null;
+        if (mountedRef.current) setIsSubmitting(false);
+      }
+    },
+    [isSubmitting, refresh, state.status],
+  );
+
   return {
     state,
     isSubmitting,
@@ -390,6 +411,7 @@ export function useMatchingSession() {
     beginRetry,
     enterPool,
     respond,
+    cancelSearch,
     serverOffsetMs,
   };
 }
@@ -402,4 +424,10 @@ export function isAbortError(error: unknown): boolean {
 
 function normalizeError(error: unknown): ApiClientError | Error {
   return error instanceof Error ? error : new Error('네트워크 요청에 실패했습니다.');
+}
+
+export function isUserActionableError(error: ApiClientError | Error | null): boolean {
+  if (!(error instanceof ApiClientError)) return false;
+  return (error.code === 'MATCHING_INVALID_REQUEST' && error.message.includes('체크인'))
+    || error.code === 'MATCHING_MEETING_POINT_NOT_READY';
 }

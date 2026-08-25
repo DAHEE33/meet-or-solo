@@ -152,6 +152,7 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     onDecline: vi.fn(),
     onStartWithCurrent: vi.fn(),
     onCancelProposal: vi.fn(),
+    onCancelSearch: vi.fn(),
     onRetry: vi.fn(),
     onErrorRetry: vi.fn(),
     onGoCheckIn: vi.fn(),
@@ -498,5 +499,23 @@ describe('정상 완료 card', () => {
     expect(button?.props.disabled).toBe(false);
     (button?.props.onClick as () => void)();
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+});
+
+describe('매칭 탐색 취소 버튼', () => {
+  it('WAITING 상태에서 SearchingCard를 렌더링한다', () => {
+    const node = MatchBody(bodyProps({ status: 'WAITING' }));
+    expect(isValidElement(node)).toBe(true);
+  });
+
+  it('LOCKED 상태에서도 SearchingCard를 렌더링한다', () => {
+    const node = MatchBody(bodyProps({ status: 'LOCKED' }));
+    expect(isValidElement(node)).toBe(true);
+  });
+
+  it('WAITING/LOCKED가 아닌 IDLE에서는 SearchingCard를 렌더링하지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE' })));
+    expect(text(tree)).toContain('희망 인원');
+    expect(text(tree)).not.toContain('주변 여행자를 찾고 있어요');
   });
 });

@@ -18,6 +18,8 @@ import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
+import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationResult;
+import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -50,6 +52,7 @@ public class MatchingController {
     private final MatchArrivalService arrivals;
     private final MatchProposalActionService proposalActions;
     private final MatchCancellationService cancellations;
+    private final MatchPoolCancellationService poolCancellations;
 
     public MatchingController(
             JwtProvider jwtProvider,
@@ -60,7 +63,8 @@ public class MatchingController {
             MatchArrivalTimeService arrivalTimes,
             MatchArrivalService arrivals,
             MatchProposalActionService proposalActions,
-            MatchCancellationService cancellations
+            MatchCancellationService cancellations,
+            MatchPoolCancellationService poolCancellations
     ) {
         this.jwtProvider = jwtProvider;
         this.poolEntries = poolEntries;
@@ -71,6 +75,7 @@ public class MatchingController {
         this.arrivals = arrivals;
         this.proposalActions = proposalActions;
         this.cancellations = cancellations;
+        this.poolCancellations = poolCancellations;
     }
 
     @PostMapping("/pools")
@@ -125,6 +130,13 @@ public class MatchingController {
         return ApiResponse.success(
                 arrivalTimes.select(memberId(accessToken), request.arrivalMinutes())
         );
+    }
+
+    @PutMapping("/pools/me/current/cancellation")
+    public ApiResponse<MatchPoolCancellationResult> cancelPool(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        return ApiResponse.success(poolCancellations.cancel(memberId(accessToken)));
     }
 
     @PutMapping("/groups/me/current/cancellation")

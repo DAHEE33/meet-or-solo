@@ -69,6 +69,9 @@ app:
   admin:
     report:
       cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
+    member:
+      suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
+      suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
   matching:
     scheduler:
       enabled: ${MATCHING_SCHEDULER_ENABLED:false}

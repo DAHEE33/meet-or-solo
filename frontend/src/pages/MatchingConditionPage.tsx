@@ -112,17 +112,16 @@ export default function MatchingConditionPage() {
     beginRetry,
     enterPool,
     respond,
+    cancelSearch,
     serverOffsetMs,
   } = useMatchingSession();
   const { state: checkinState, cancel: cancelCheckin, isCancelling: isCancellingCheckin } = useCurrentCheckin();
   const currentCheckin = checkinState.status === 'loaded' ? checkinState.checkin : null;
   const [isCancelCheckinDialogOpen, setIsCancelCheckinDialogOpen] = useState(false);
   const [cancelCheckinFailed, setCancelCheckinFailed] = useState(false);
-  const terminalPoolFestivalId =
-    isRetryFormOpen
-      && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED')
-      ? state.pool?.festivalId
-      : null;
+  const retryableTerminal = isRetryFormOpen
+    && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED');
+  const terminalPoolFestivalId = retryableTerminal ? state.pool?.festivalId : null;
   // 실제 GPS 체크인 조회 결과가 있으면 그것이 navigation state/개발 fallback보다 우선한다 —
   // 새로고침이나 다른 경로로 들어와도 실제 체크인 상태를 반영해야 한다.
   const navigationFestivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
@@ -215,8 +214,9 @@ export default function MatchingConditionPage() {
           isRetryFormOpen={isRetryFormOpen}
           group={state.group}
           groupSize={
-            isRetryFormOpen
-              ? groupSize
+            retryableTerminal
+              ? state.pool?.preferredGroupSize ?? groupSize
+              : state.status === 'IDLE' ? groupSize
               : state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize
           }
           allowMinimum={allowMinimum}
@@ -239,6 +239,7 @@ export default function MatchingConditionPage() {
           onDecline={() => void respond('REJECT')}
           onStartWithCurrent={() => void respond('ACCEPT')}
           onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
+          onCancelSearch={() => void cancelSearch()}
           onRetry={onRetry}
           onErrorRetry={() => void refresh()}
           onGoCheckIn={() => {
@@ -288,6 +289,7 @@ interface MatchBodyProps {
   onDecline: () => void;
   onStartWithCurrent: () => void;
   onCancelProposal: () => void;
+  onCancelSearch: () => void;
   onRetry: () => void;
   onErrorRetry: () => void;
   onGoCheckIn: () => void;
@@ -297,6 +299,9 @@ interface MatchBodyProps {
 
 export function MatchBody(props: MatchBodyProps) {
   const { status } = props;
+  if (status === 'LOADING') {
+    return <LoadingSkeleton />;
+  }
   const retryableTerminal =
     props.isRetryFormOpen
     && (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COMPLETED');
@@ -317,7 +322,15 @@ export function MatchBody(props: MatchBodyProps) {
     );
   }
   if (status === 'WAITING' || status === 'LOCKED') {
-    return <SearchingCard locked={status === 'LOCKED'} remaining={props.searchRemaining} groupSize={props.groupSize} />;
+    return (
+      <SearchingCard
+        locked={status === 'LOCKED'}
+        remaining={props.searchRemaining}
+        groupSize={props.groupSize}
+        disabled={props.isSubmitting}
+        onCancel={props.onCancelSearch}
+      />
+    );
   }
   if (status === 'INITIAL_PROPOSAL' || status === 'INSUFFICIENT_MEMBERS_PROPOSAL') {
     const partial = status === 'INSUFFICIENT_MEMBERS_PROPOSAL';
@@ -531,26 +544,90 @@ function IdleForm({
 }
 
 // ── 2·3. WAITING / LOCKED ─────────────────────────────
-function SearchingCard({ locked, remaining, groupSize }: { locked: boolean; remaining: number; groupSize: number }) {
+function SearchingCard({
+  locked,
+  remaining,
+  groupSize,
+  disabled,
+  onCancel,
+}: {
+  locked: boolean;
+  remaining: number;
+  groupSize: number;
+  disabled: boolean;
+  onCancel: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   return (
-    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
-      <div className={`flex h-16 w-16 items-center justify-center rounded-full ${locked ? 'bg-ink/10' : 'bg-coral/10'}`}>
-        <Loader2 size={28} className={`animate-spin ${locked ? 'text-ink/50' : 'text-coral'}`} />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <h2 className="text-[17px] font-bold text-ink">
-          {locked ? '함께할 분을 확정하고 있어요' : '주변 여행자를 찾고 있어요'}
-        </h2>
-        <p className="text-[13px] text-ink/55">
-          {locked ? '거의 다 됐어요, 잠시만 기다려주세요' : `목표 인원 ${groupSize}명 기준으로 탐색 중`}
-        </p>
-      </div>
-      {!locked && (
-        <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/60 tabular-nums">
-          남은 탐색 시간 {fmt(remaining)}
-        </span>
+    <>
+      <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+        <div className={`flex h-16 w-16 items-center justify-center rounded-full ${locked ? 'bg-ink/10' : 'bg-coral/10'}`}>
+          <Loader2 size={28} className={`animate-spin ${locked ? 'text-ink/50' : 'text-coral'}`} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-[17px] font-bold text-ink">
+            {locked ? '함께할 분을 확정하고 있어요' : '주변 여행자를 찾고 있어요'}
+          </h2>
+          <p className="text-[13px] text-ink/55">
+            {locked ? '거의 다 됐어요, 잠시만 기다려주세요' : `목표 인원 ${groupSize}명 기준으로 탐색 중`}
+          </p>
+        </div>
+        {!locked && (
+          <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/60 tabular-nums">
+            남은 탐색 시간 {fmt(remaining)}
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setConfirmOpen(true)}
+          className="mt-1 text-[13px] font-semibold text-ink/40 underline underline-offset-2 disabled:opacity-40"
+        >
+          매칭 취소
+        </button>
+      </section>
+      {confirmOpen && (
+        <CancelConfirmDialog
+          onConfirm={() => { setConfirmOpen(false); onCancel(); }}
+          onDismiss={() => setConfirmOpen(false)}
+        />
       )}
-    </section>
+    </>
+  );
+}
+
+function CancelConfirmDialog({ onConfirm, onDismiss }: { onConfirm: () => void; onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={onDismiss}>
+      <div
+        className="flex w-full max-w-sm flex-col gap-4 rounded-3xl bg-white p-6"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="매칭 취소 확인"
+      >
+        <h3 className="text-center text-[16px] font-bold text-ink">매칭 탐색을 취소할까요?</h3>
+        <p className="text-center text-[13px] text-ink/55">
+          취소하면 잠시 후 다시 신청할 수 있어요.
+        </p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55"
+          >
+            돌아가기
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 rounded-2xl bg-coral py-3 text-[15px] font-bold text-white"
+          >
+            취소하기
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -833,5 +910,19 @@ function CancelCheckinDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+// ── 10. 초기 로딩 skeleton ──────────────────────────────
+function LoadingSkeleton() {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="h-16 w-16 animate-pulse rounded-full bg-sand" />
+      <div className="flex w-full flex-col items-center gap-2">
+        <div className="h-5 w-40 animate-pulse rounded-lg bg-sand" />
+        <div className="h-4 w-56 animate-pulse rounded-lg bg-sand" />
+      </div>
+      <div className="h-10 w-full animate-pulse rounded-2xl bg-sand" />
+    </section>
   );
 }

@@ -27,6 +27,9 @@ app:
   tour-place:
     sync:
       enabled: ${TOUR_PLACE_SYNC_ENABLED:true}
+  admin:
+    member:
+      suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:true}
   object-storage:
     endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT}
     region: ${OCI_OBJECT_STORAGE_REGION}

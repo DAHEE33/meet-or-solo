@@ -6,6 +6,7 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.kakao.dto.KakaoTokenResponse;
@@ -28,19 +29,22 @@ public class AuthService {
     private final MemberRepository memberRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProvider jwtProvider;
+    private final MemberAccessPolicy accessPolicy;
 
     public AuthService(
             KakaoOAuthClient kakaoOAuthClient,
             NaverOAuthClient naverOAuthClient,
             MemberRepository memberRepository,
             RefreshTokenRepository refreshTokenRepository,
-            JwtProvider jwtProvider
+            JwtProvider jwtProvider,
+            MemberAccessPolicy accessPolicy
     ) {
         this.kakaoOAuthClient = kakaoOAuthClient;
         this.naverOAuthClient = naverOAuthClient;
         this.memberRepository = memberRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtProvider = jwtProvider;
+        this.accessPolicy = accessPolicy;
     }
 
     public URI getKakaoAuthorizeUri(String state) {
@@ -73,6 +77,23 @@ public class AuthService {
         return issueTokens(upsertNaverMember(naverUser));
     }
 
+    @Transactional
+    public AuthTokenResponse refresh(String rawRefreshToken) {
+        if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        long memberId = jwtProvider.getMemberIdFromRefreshToken(rawRefreshToken);
+        Member member = memberRepository.findByIdForUpdate(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        accessPolicy.requireAccessible(member);
+        RefreshToken stored = refreshTokenRepository.findByMemberId(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        if (!stored.isUsable(jwtProvider.hashToken(rawRefreshToken), SeoulDateTime.now())) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        return issueTokens(member);
+    }
+
     private AuthTokenResponse issueTokens(Member member) {
 
         String accessToken = jwtProvider.createAccessToken(member);
@@ -103,6 +124,8 @@ public class AuthService {
     private Member upsertNaverMember(NaverUserResponse naverUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, naverUser.providerUserId())
                 .map(member -> {
+                    member.restoreExpiredSuspension(SeoulDateTime.now());
+                    accessPolicy.requireAccessible(member);
                     member.updateNaverProfile(naverUser.email(), naverUser.nickname(), naverUser.profileImageUrl());
                     return member;
                 })
@@ -117,6 +140,8 @@ public class AuthService {
     private Member upsertKakaoMember(KakaoUserResponse kakaoUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_KAKAO, kakaoUser.providerUserId())
                 .map(member -> {
+                    member.restoreExpiredSuspension(SeoulDateTime.now());
+                    accessPolicy.requireAccessible(member);
                     member.updateKakaoProfile(kakaoUser.email(), kakaoUser.nickname(), kakaoUser.profileImageUrl());
                     return member;
                 })

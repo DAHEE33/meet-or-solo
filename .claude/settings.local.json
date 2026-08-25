@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew compileJava)",
+      "Bash(where java:*)",
+      "Bash(java -version)",
+      "Read(//c/Program Files/java/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew compileJava)",
+      "Bash(npx tsc:*)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew compileTestJava)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test --tests \"com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationServiceTest\")",
+      "Bash(npx vitest:*)",
+      "Bash(npm run:*)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test -x testContainers --exclude-task testContainersTest)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test)",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test --tests \"com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationServiceTest\" --tests \"com.survey.meetorsolo.domain.matching.service.MatchCancellationServiceTest\" --tests \"com.survey.meetorsolo.domain.matching.service.MatchingPenaltyPolicyTest\")",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew test --exclude-task testContainers -Dtest.exclude.pattern=\"*IntegrationTest*\")",
+      "Bash(JAVA_HOME=\"C:/Users/today/.jdks/azul-17.0.15\" ./gradlew compileJava compileTestJava)",
+      "Bash(xargs grep:*)",
+      "Bash(git add *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(JAVA_HOME=C:/java/zulu17 PATH=C:/java/zulu17/bin:__TRACKED_VAR__ ./gradlew compileJava compileTestJava -q)",
+      "Bash(JAVA_HOME=C:/java/zulu17 PATH=C:/java/zulu17/bin:__TRACKED_VAR__ ./gradlew test -q)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -)"
+    ]
+  }
+}

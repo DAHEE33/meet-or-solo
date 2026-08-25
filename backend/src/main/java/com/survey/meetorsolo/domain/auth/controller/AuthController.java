@@ -17,6 +17,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -97,6 +98,23 @@ public class AuthController {
                 .header(HttpHeaders.LOCATION, authorizeUri.toString())
                 .header(HttpHeaders.SET_COOKIE, oauthStateCookie(
                         NAVER_STATE_COOKIE, state, "/api/auth/naver/callback").toString())
+                .build();
+    }
+
+    @PostMapping("/api/auth/refresh")
+    public ResponseEntity<Void> refresh(
+            @CookieValue(name = REFRESH_TOKEN_COOKIE, required = false) String refreshToken
+    ) {
+        AuthTokenResponse tokenResponse = authService.refresh(refreshToken);
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                        ACCESS_TOKEN_COOKIE,
+                        tokenResponse.accessToken(),
+                        Duration.ofSeconds(tokenResponse.accessTokenExpiresInSeconds())).toString())
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                        REFRESH_TOKEN_COOKIE,
+                        tokenResponse.refreshToken(),
+                        Duration.ofSeconds(tokenResponse.refreshTokenExpiresInSeconds())).toString())
                 .build();
     }
 

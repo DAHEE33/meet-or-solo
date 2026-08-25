@@ -89,6 +89,11 @@ export type MatchGroupMember = {
   arrivedAt?: string | null;
 };
 
+export type MatchPoolCancellationResult = {
+  poolId: number;
+  status: 'CANCELLED';
+};
+
 export type MatchCancellationReason =
   | 'SCHEDULE_CHANGED'
   | 'TRANSPORTATION_ISSUE'
@@ -234,6 +239,11 @@ export const matchingApi = {
       method: 'PUT',
       signal,
     }),
+  cancelPool: (signal?: AbortSignal) =>
+    apiClient<MatchPoolCancellationResult>(
+      '/api/matching/pools/me/current/cancellation',
+      { method: 'PUT', signal },
+    ),
   cancelParticipation: (reason: MatchCancellationReason, signal?: AbortSignal) =>
     apiClient<MatchCancellationResult>(
       '/api/matching/groups/me/current/cancellation',
