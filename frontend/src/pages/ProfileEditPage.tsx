@@ -11,7 +11,17 @@ import {
   isConsentRequired,
   type EmbeddingStatus,
 } from '../api/preferenceEmbedding';
+import {
+  hasAllAiConsents,
+  memberConsentApi,
+  type MemberConsent,
+} from '../api/memberConsents';
 import Chip from '../components/common/Chip';
+import AiConsentSection, {
+  EMPTY_AI_CONSENT_DRAFT,
+  isAiConsentComplete,
+  type AiConsentDraft,
+} from '../components/consent/AiConsentSection';
 import PreferenceInputSection from '../components/preference/PreferenceInputSection';
 import {
   EMPTY_PREFERENCE_DRAFT,
@@ -69,6 +79,9 @@ export default function ProfileEditPage() {
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefError, setPrefError] = useState<string | null>(null);
   const [prefSaved, setPrefSaved] = useState(false);
+  /** 서버에 기록된 동의 여부. null이면 아직 조회 전이다. */
+  const [hasAiConsent, setHasAiConsent] = useState<boolean | null>(null);
+  const [aiConsentDraft, setAiConsentDraft] = useState<AiConsentDraft>(EMPTY_AI_CONSENT_DRAFT);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,9 +106,14 @@ export default function ProfileEditPage() {
 
   useEffect(() => {
     let cancelled = false;
-    preferenceEmbeddingApi.get()
-      .then((emb) => {
-        if (cancelled || !emb) return;
+    Promise.all([
+      preferenceEmbeddingApi.get(),
+      memberConsentApi.getAiConsents(),
+    ])
+      .then(([emb, consents]: [Awaited<ReturnType<typeof preferenceEmbeddingApi.get>>, MemberConsent[]]) => {
+        if (cancelled) return;
+        setHasAiConsent(hasAllAiConsents(consents));
+        if (!emb) return;
         setPrefDraft(parsePreferenceText(emb.preferenceText));
         setPrefStatus(emb.embeddingStatus);
         setPrefHasData(true);
@@ -182,19 +200,34 @@ export default function ProfileEditPage() {
       setPrefError(`${PREFERENCE_TEXT_MAX_LENGTH}자 이하로 줄여 주세요.`);
       return;
     }
+    if (!hasAiConsent && !isAiConsentComplete(aiConsentDraft)) {
+      setPrefError('위 두 가지 항목에 모두 동의해 주세요.');
+      return;
+    }
     setPrefSaving(true);
     setPrefError(null);
     setPrefSaved(false);
     try {
+      // 아직 동의가 기록되지 않았으면 저장 직전에 함께 기록한다.
+      if (!hasAiConsent) {
+        await memberConsentApi.agree('AI_PROCESSING');
+        await memberConsentApi.agree('OVERSEAS_TRANSFER');
+        setHasAiConsent(true);
+      }
       const result = await preferenceEmbeddingApi.createOrUpdate(preferenceText);
       setPrefStatus(result.embeddingStatus);
       setPrefHasData(true);
       // 프로필 저장과 달리 화면을 떠나지 않는다. 위쪽 프로필 입력이 아직 저장되지 않았을 수 있다.
       setPrefSaved(true);
     } catch (err) {
-      setPrefError(isConsentRequired(err)
-        ? 'AI 데이터 처리 동의가 필요합니다.'
-        : err instanceof Error ? err.message : '저장에 실패했습니다.');
+      if (isConsentRequired(err)) {
+        // 다른 기기에서 철회했을 수 있다. 에러 문구 대신 동의 입력을 다시 보여준다.
+        setHasAiConsent(false);
+        setAiConsentDraft(EMPTY_AI_CONSENT_DRAFT);
+        setPrefError('취향 분석 동의가 필요해요. 아래 두 항목에 동의하면 저장할 수 있어요.');
+      } else {
+        setPrefError(err instanceof Error ? err.message : '저장에 실패했습니다.');
+      }
     } finally {
       setPrefSaving(false);
     }
@@ -211,6 +244,31 @@ export default function ProfileEditPage() {
       setPrefHasData(false);
     } catch (err) {
       setPrefError(err instanceof Error ? err.message : '삭제에 실패했습니다.');
+    } finally {
+      setPrefSaving(false);
+    }
+  };
+
+  /** 동의를 철회하면 서버가 저장된 취향 글과 분석 결과를 함께 삭제한다. */
+  const handleConsentRevoke = async () => {
+    const confirmed = window.confirm(
+      '동의를 철회하면 저장한 취향 글도 함께 삭제돼요. 계속할까요?',
+    );
+    if (!confirmed) return;
+
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      await memberConsentApi.revoke('AI_PROCESSING');
+      await memberConsentApi.revoke('OVERSEAS_TRANSFER');
+      setHasAiConsent(false);
+      setAiConsentDraft(EMPTY_AI_CONSENT_DRAFT);
+      setPrefDraft(EMPTY_PREFERENCE_DRAFT);
+      setPrefStatus(null);
+      setPrefHasData(false);
+    } catch (err) {
+      setPrefError(err instanceof Error ? err.message : '동의 철회에 실패했습니다.');
     } finally {
       setPrefSaving(false);
     }
@@ -294,10 +352,26 @@ export default function ProfileEditPage() {
               <p className="text-[13px] text-ink/40">불러오는 중...</p>
             ) : (
               <>
+                {!hasAiConsent && (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <h2 className="text-[17px] font-bold text-ink">취향 전격 분석</h2>
+                      <p className="text-[13px] text-ink/50">
+                        먼저 아래 두 가지에 동의하면 취향을 저장할 수 있어요.
+                      </p>
+                    </div>
+                    <AiConsentSection
+                      value={aiConsentDraft}
+                      onChange={(draft) => { setAiConsentDraft(draft); setPrefError(null); }}
+                      disabled={prefSaving}
+                    />
+                  </>
+                )}
                 <PreferenceInputSection
                   value={prefDraft}
                   onChange={(draft) => { setPrefDraft(draft); setPrefError(null); setPrefSaved(false); }}
-                  disabled={prefSaving}
+                  title={!hasAiConsent ? null : undefined}
+                  disabled={prefSaving || !(hasAiConsent || isAiConsentComplete(aiConsentDraft))}
                 />
                 <div className="flex items-center gap-2">
                   {prefStatus && (
@@ -318,9 +392,15 @@ export default function ProfileEditPage() {
                   )}
                   <button type="button" onClick={handlePrefSave} disabled={prefSaving}
                     className="rounded-xl bg-coral px-4 py-2 text-[13px] font-semibold text-white active:bg-coral/80 disabled:opacity-40">
-                    {prefSaving ? '저장 중...' : '저장'}
+                    {prefSaving ? '저장 중...' : hasAiConsent ? '저장' : '동의하고 저장'}
                   </button>
                 </div>
+                {hasAiConsent && (
+                  <button type="button" onClick={handleConsentRevoke} disabled={prefSaving}
+                    className="self-start text-[12px] text-ink/40 underline active:text-coral disabled:opacity-40">
+                    취향 분석 동의 철회하기
+                  </button>
+                )}
                 {prefError && (
                   <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
                 )}

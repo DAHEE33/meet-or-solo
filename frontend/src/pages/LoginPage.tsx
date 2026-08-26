@@ -60,7 +60,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-5 text-center text-xs leading-5 text-ink/45">
-          계속 진행하면 meet·or·solo의 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다.
+          로그인 후 프로필 설정 단계에서 meet·or·solo의 이용약관과 개인정보 수집·이용에 동의하게 됩니다.
         </p>
       </main>
     </MobileLayout>

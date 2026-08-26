@@ -137,6 +137,36 @@ OVERSEAS_TRANSFER
 
 AI 처리와 국외 이전은 법적 성격과 거부 선택이 다를 수 있으므로 하나의 동의로 합치지 않습니다. 실제 동의 요건과 고지 문구는 서비스 출시 전 법률 또는 개인정보 담당 검토를 거칩니다.
 
+임베딩 API 사업자인 OpenAI는 미국 소재이므로 `AI_PROCESSING`과 `OVERSEAS_TRANSFER` 두 동의를
+모두 보유한 회원의 `preference_text`만 외부로 전송합니다. 하나라도 없으면
+`AI_CONSENT_REQUIRED`로 거절하며 외부 호출 자체를 하지 않습니다.
+
+국외 이전 고지에는 다음 항목을 화면에 표시합니다. 문구는
+`frontend/src/components/consent/consentNotice.ts` 한 곳에서 관리합니다.
+
+- 이전받는 자
+- 이전되는 국가
+- 이전하는 항목
+- 이전 시점과 방법
+- 이전 목적
+- 보유·이용 기간
+- 동의를 거부할 권리와 거부 시 불이익
+
+동의 기록은 `member_consents`에 저장하며 `(member_id, consent_type, version)`이 UNIQUE입니다.
+철회는 `agreed`를 `FALSE`로 바꾸지 않고 `revoked_at`만 기록합니다. "동의한 적이 있다"는 사실
+자체가 감사 기록이고, `agreed = FALSE`는 "처음부터 거부"라는 다른 상태로 남겨둡니다. 철회 후
+재동의는 새 row가 아니라 같은 row의 갱신입니다.
+
+가입 시에는 `TERMS`와 `PRIVACY` 동의를 필수로 받고 기록합니다. 서버는 최초 가입 완료
+(`PROFILE_REQUIRED` -> `ACTIVE`) 시점에 두 동의를 확인하고 없으면 `SIGNUP_CONSENT_REQUIRED`로
+거절합니다. 기존 `ACTIVE` 회원의 프로필 수정에는 적용하지 않습니다. 동의 기록 구조가 생기기
+전에 가입한 회원까지 소급해 막으면 프로필 수정 자체가 불가능해지기 때문입니다. 소급 동의
+수집은 별도 작업으로 다룹니다.
+
+현재 동의 여부 조회는 `version`을 보지 않습니다. 따라서 고지 문구를 개정해 `currentVersion`을
+올려도 기존 동의자에게 재동의가 강제되지 않습니다. 재동의 강제가 필요해지면 조회 조건과
+마이그레이션 방식을 함께 설계합니다.
+
 처리 원칙:
 
 - 필요한 동의가 없는 회원의 `preference_text`를 외부 API로 전송하지 않는다.
@@ -147,6 +177,16 @@ AI 처리와 국외 이전은 법적 성격과 거부 선택이 다를 수 있�
 - 임베딩 실패가 전체 매칭 실패로 이어지지 않도록 정형 태그 기반 fallback을 유지한다.
 - 탈퇴 또는 취향 삭제 시 원문과 임베딩의 삭제·익명화 정책을 함께 적용한다.
 - 원문 계속 보관 여부와 보관 기간은 개인정보처리방침 반영 전에 확정한다.
+
+삭제 정책(확정):
+
+- `AI_PROCESSING` 또는 `OVERSEAS_TRANSFER` 중 하나라도 철회하면 저장된
+  `member_preference_embeddings` row를 같은 transaction에서 즉시 삭제한다. 두 동의가 모두
+  있어야 전송이 허용되므로 하나만 철회해도 보관 근거가 사라진다.
+- 원문 `preference_text`와 벡터는 같은 row에 있으므로 한 번의 삭제로 함께 지워진다. 원문만
+  남기거나 벡터만 남기지 않는다.
+- 사용자가 취향을 직접 삭제하는 경우에도 같은 row를 삭제한다. 동의 자체는 유지되므로 다시
+  입력하면 별도 재동의 없이 저장할 수 있다.
 
 ## GPS와 위치정보
 
@@ -195,10 +235,16 @@ CORS는 profile별로 분리합니다.
 - Access Token: 짧은 만료 시간의 JWT
 - Refresh Token: DB 저장
 - Refresh Token 만료와 폐기 지원
-- logout 시 Refresh Token 무효화
-- 회원 탈퇴 시 개인정보 삭제 또는 익명화
+- logout 시 Refresh Token 무효화 (미구현)
+- 회원 탈퇴 시 개인정보 삭제 또는 익명화 (미구현)
 
 cookie/header 전략은 인증 구현 단계에서 확정합니다.
+
+로그아웃과 회원 탈퇴는 아직 구현되지 않았습니다. 현재 화면의 "로그아웃" 버튼은 `/login`으로
+이동만 하며 `access_token` cookie, refresh token, WebSocket session을 그대로 둡니다. backend에
+로그아웃 endpoint도 없습니다. 구현 계획은
+[관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.6 로그아웃과 4.4 회원 본인
+탈퇴를 따릅니다.
 
 ## WebSocket 인증과 권한
 
