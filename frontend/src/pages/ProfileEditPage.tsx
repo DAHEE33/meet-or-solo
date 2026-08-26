@@ -8,7 +8,6 @@ import {
 } from '../api/memberProfile';
 import {
   preferenceEmbeddingApi,
-  isEmbeddingNotFound,
   isConsentRequired,
   type EmbeddingStatus,
 } from '../api/preferenceEmbedding';
@@ -69,6 +68,7 @@ export default function ProfileEditPage() {
   const [prefLoading, setPrefLoading] = useState(true);
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefError, setPrefError] = useState<string | null>(null);
+  const [prefSaved, setPrefSaved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,14 +95,13 @@ export default function ProfileEditPage() {
     let cancelled = false;
     preferenceEmbeddingApi.get()
       .then((emb) => {
-        if (cancelled) return;
+        if (cancelled || !emb) return;
         setPrefDraft(parsePreferenceText(emb.preferenceText));
         setPrefStatus(emb.embeddingStatus);
         setPrefHasData(true);
       })
-      .catch((err) => {
-        if (cancelled) return;
-        if (!isEmbeddingNotFound(err)) setPrefError('선호도 정보를 불러오지 못했습니다.');
+      .catch(() => {
+        if (!cancelled) setPrefError('취향 정보를 불러오지 못했습니다.');
       })
       .finally(() => { if (!cancelled) setPrefLoading(false); });
     return () => { cancelled = true; };
@@ -185,10 +184,13 @@ export default function ProfileEditPage() {
     }
     setPrefSaving(true);
     setPrefError(null);
+    setPrefSaved(false);
     try {
       const result = await preferenceEmbeddingApi.createOrUpdate(preferenceText);
       setPrefStatus(result.embeddingStatus);
       setPrefHasData(true);
+      // 프로필 저장과 달리 화면을 떠나지 않는다. 위쪽 프로필 입력이 아직 저장되지 않았을 수 있다.
+      setPrefSaved(true);
     } catch (err) {
       setPrefError(isConsentRequired(err)
         ? 'AI 데이터 처리 동의가 필요합니다.'
@@ -201,6 +203,7 @@ export default function ProfileEditPage() {
   const handlePrefDelete = async () => {
     setPrefSaving(true);
     setPrefError(null);
+    setPrefSaved(false);
     try {
       await preferenceEmbeddingApi.delete();
       setPrefDraft(EMPTY_PREFERENCE_DRAFT);
@@ -285,7 +288,7 @@ export default function ProfileEditPage() {
           {errorMessage && <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{errorMessage}</p>}
           <PrimaryButton onClick={handleSave} disabled={isSaving}>{isSaving ? '저장 중...' : '수정 내용 저장'}</PrimaryButton>
 
-          {/* AI 매칭 취향 */}
+          {/* 취향 전격 분석 */}
           <section className="flex flex-col gap-3 border-t border-line pt-6">
             {prefLoading ? (
               <p className="text-[13px] text-ink/40">불러오는 중...</p>
@@ -293,7 +296,7 @@ export default function ProfileEditPage() {
               <>
                 <PreferenceInputSection
                   value={prefDraft}
-                  onChange={(draft) => { setPrefDraft(draft); setPrefError(null); }}
+                  onChange={(draft) => { setPrefDraft(draft); setPrefError(null); setPrefSaved(false); }}
                   disabled={prefSaving}
                 />
                 <div className="flex items-center gap-2">
@@ -303,7 +306,7 @@ export default function ProfileEditPage() {
                       prefStatus === 'FAILED' ? 'bg-coral/10 text-coral' :
                       'bg-sand text-ink/50'
                     }`}>
-                      {prefStatus === 'COMPLETED' ? '임베딩 완료' : prefStatus === 'FAILED' ? '처리 오류' : '처리 중'}
+                      {prefStatus === 'COMPLETED' ? '분석 완료' : prefStatus === 'FAILED' ? '분석 실패' : '분석 중'}
                     </span>
                   )}
                   <span className="flex-1" />
@@ -320,6 +323,11 @@ export default function ProfileEditPage() {
                 </div>
                 {prefError && (
                   <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
+                )}
+                {prefSaved && !prefError && (
+                  <p role="status" className="rounded-2xl bg-teal/10 px-4 py-3 text-sm text-teal">
+                    저장했어요. 이 화면에서 계속 고칠 수 있어요.
+                  </p>
                 )}
               </>
             )}

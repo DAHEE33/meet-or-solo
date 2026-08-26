@@ -36,8 +36,8 @@ interface PreferenceInputSectionProps {
 export default function PreferenceInputSection({
   value,
   onChange,
-  title = 'AI 매칭 취향',
-  description = '두 문항만 답해도 충분해요. AI가 더 잘 맞는 상대를 찾는 데 씁니다.',
+  title = '취향 전격 분석',
+  description = '두 문항만 답하면 나와 잘 맞는 사람을 찾아드려요.',
   disabled = false,
 }: PreferenceInputSectionProps) {
   const totalLength = preferenceTextLength(value);
