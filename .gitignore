@@ -54,3 +54,6 @@ tmp/
 temp/
 
 .pnpm-store/
+
+# 로컬 확인용 캡처 화면 (저장소에 커밋하지 않는다)
+screen/
