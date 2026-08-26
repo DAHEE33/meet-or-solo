@@ -50,6 +50,7 @@ class MemberPreferenceEmbeddingServiceTest {
         Member member = Member.createKakaoMember("provider-id", "닉네임", null);
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(true);
+        when(consentRepository.hasAgreedConsent(1L, "OVERSEAS_TRANSFER")).thenReturn(true);
         when(embeddingRepository.findByMemberId(1L)).thenReturn(Optional.empty());
         when(embeddingRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(openAiEmbeddingClient.embed("축제에서 맛집 탐방")).thenReturn(new float[1536]);
@@ -67,6 +68,7 @@ class MemberPreferenceEmbeddingServiceTest {
         MemberPreferenceEmbedding existing = MemberPreferenceEmbedding.create(member, "이전 텍스트");
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(true);
+        when(consentRepository.hasAgreedConsent(1L, "OVERSEAS_TRANSFER")).thenReturn(true);
         when(embeddingRepository.findByMemberId(1L)).thenReturn(Optional.of(existing));
         when(embeddingRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(openAiEmbeddingClient.embed("새 텍스트")).thenReturn(new float[1536]);
@@ -79,7 +81,7 @@ class MemberPreferenceEmbeddingServiceTest {
     }
 
     @Test
-    void AI_동의가_없으면_AI_CONSENT_REQUIRED를_던진다() {
+    void AI_처리_동의가_없으면_AI_CONSENT_REQUIRED를_던진다() {
         Member member = Member.createKakaoMember("provider-id", "닉네임", null);
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(false);
@@ -93,10 +95,28 @@ class MemberPreferenceEmbeddingServiceTest {
     }
 
     @Test
+    void 국외_이전_동의만_없어도_외부로_전송하지_않는다() {
+        // AI 처리와 국외 이전은 법적 성격이 달라 하나로 합치지 않는다. 하나라도 없으면 전송 금지.
+        Member member = Member.createKakaoMember("provider-id", "닉네임", null);
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(true);
+        when(consentRepository.hasAgreedConsent(1L, "OVERSEAS_TRANSFER")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.createOrUpdate(1L, "텍스트"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getErrorCode())
+                .isEqualTo(ErrorCode.AI_CONSENT_REQUIRED);
+
+        verify(openAiEmbeddingClient, never()).embed(anyString());
+        verify(embeddingRepository, never()).save(any());
+    }
+
+    @Test
     void OpenAI_실패_시_FAILED_상태를_반환한다() {
         Member member = Member.createKakaoMember("provider-id", "닉네임", null);
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(true);
+        when(consentRepository.hasAgreedConsent(1L, "OVERSEAS_TRANSFER")).thenReturn(true);
         when(embeddingRepository.findByMemberId(1L)).thenReturn(Optional.empty());
         when(embeddingRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(openAiEmbeddingClient.embed("텍스트"))

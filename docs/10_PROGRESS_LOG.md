@@ -2,7 +2,7 @@
 
 ## [10-B AI 임베딩] 취향 임베딩 도입
 
-상태: 1~3단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-25 기준)
+상태: 1~4단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-26 기준)
 
 ### 1. 진행 순서 변경
 
@@ -60,9 +60,9 @@
 
 ### 4. 알려진 제약과 남은 작업
 
-- 동의를 기록하는 API와 화면은 4단계 범위입니다. 그 전까지 임베딩 API는 동의가 없는 회원에게
-  항상 `AI_CONSENT_REQUIRED`를 반환하므로, 1~3단계 수동 검증은 `member_consents`에 직접
-  INSERT한 계정으로 수행했습니다. 4단계 완료 전에는 실사용 경로가 열리지 않습니다.
+- (4단계에서 해소) 동의를 기록하는 API와 화면이 없어 1~3단계 수동 검증은 `member_consents`에
+  직접 INSERT한 계정으로 수행했습니다. 4단계에서 동의 API와 화면을 추가해 실사용 경로를
+  열었습니다.
 - 저장되는 점수는 총점 하나뿐이라 사후 분석이 어렵습니다. `jaccard`, `cosine`, 임베딩 사용
   여부를 함께 남기면 "임베딩이 실제로 매칭 품질을 높였는가"를 데이터로 판단할 수 있습니다.
   컬럼 추가가 필요하므로 후기·평점 연계 단계에서 함께 검토합니다.
@@ -71,13 +71,130 @@
   분리하거나 비동기화하는 방안을 후속으로 검토합니다.
 - `FAILED` 상태 재시도 경로가 없습니다. 현재는 사용자가 같은 취향 글을 다시 저장하는 것이
   유일한 복구 수단입니다.
-- 동의 철회 시 기존 임베딩을 삭제하는 연동과 개인정보 고지 문구가 아직 없습니다.
-  4단계에서 함께 처리합니다.
+- (4단계에서 해소) 동의 철회 시 임베딩 삭제 연동과 개인정보 고지 문구를 추가했습니다.
+
+### 4-1. 4단계 — 동의 API와 회원가입 취향 입력 연결
+
+브랜치 `feature/wbs-10-b-consent-ai-signup`에서 진행했습니다.
+
+**국외 이전 동의 판단**
+
+OpenAI는 미국 소재 사업자이고 `preference_text`는 자유 서술형 개인정보이므로 `AI_PROCESSING`과
+별개로 `OVERSEAS_TRANSFER` 동의를 받기로 확정했습니다. `docs/06_SECURITY_POLICY.md`가 이미 두
+동의를 합치지 않기로 정해 두었고, 국외 이전 고지에 필요한 항목(이전받는 자, 국가, 항목, 시점과
+방법, 목적, 보유 기간, 거부권)이 하나의 체크박스에 담기지 않기 때문입니다. 임베딩 저장은 두
+동의를 모두 보유한 경우에만 허용하고, 하나라도 없으면 기존 `AI_CONSENT_REQUIRED`로 거절합니다.
+실제 법적 요건과 최종 문구는 출시 전 별도 검토 대상으로 남깁니다.
+
+**동의 API**
+
+- `MemberConsentType` enum에 6개 유형과 고지 문구 버전(`currentVersion`)을 두었습니다. 현재
+  API로 다루는 유형은 `TERMS`, `PRIVACY`, `AI_PROCESSING`, `OVERSEAS_TRANSFER` 4개이고,
+  `LOCATION`·`MARKETING`은 화면이 없어 400으로 거절합니다.
+- `GET /api/members/me/consents`는 취향 분석에 필요한 2개 유형을 항상 채워서 반환합니다.
+  기록이 없어도 항목을 빼지 않고 `agreed = false`로 내려보냅니다. "아직 없으면 200 + null data"
+  규약은 단일 리소스 조회에 적용하는 규약인데, 동의 상태는 조회 대상 유형이 고정되어 있고
+  화면이 "어떤 동의가 비어 있는가"를 알아야 체크박스를 그릴 수 있어 다르게 판단했습니다.
+- `POST /api/members/me/consents`로 동의를 기록하고
+  `DELETE /api/members/me/consents/{consentType}`로 철회합니다. 고지 문구 버전은 클라이언트가
+  아니라 서버가 정합니다.
+- 쓰기는 `MemberConsentCommandRepository`의 `INSERT ... ON CONFLICT DO UPDATE` 한 문장으로
+  처리합니다. `uq_member_consents_member_type_version` 때문에 "철회 후 재동의"는 새 row가 아니라
+  기존 row 갱신이고, 조회 후 분기하면 중복 제출 시 UNIQUE 위반이 나기 때문입니다.
+- 철회는 `agreed`를 `FALSE`로 바꾸지 않고 `revoked_at`만 기록합니다. 기존
+  `MemberConsentQueryRepository.hasAgreedConsent()`가 이미 `agreed = TRUE AND revoked_at IS NULL`을
+  보고 있어 그대로 맞물립니다.
+- migration은 추가하지 않았습니다. V2와 V11로 충분합니다.
+
+**철회 시 삭제 정책 (진행 로그가 요구하던 항목)**
+
+`AI_PROCESSING` 또는 `OVERSEAS_TRANSFER` 중 하나라도 철회하면 같은 transaction에서
+`member_preference_embeddings` row를 삭제합니다. 두 동의가 모두 있어야 전송이 허용되므로 하나만
+철회해도 보관 근거가 사라지고, 원문과 벡터가 같은 row라 한 번의 삭제로 함께 지워집니다.
+확정된 정책은 `docs/06_SECURITY_POLICY.md`에 반영했습니다.
+
+**가입 시 약관 동의 (LoginPage "간주" 문구 처리)**
+
+`LoginPage`의 "계속 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다" 문구는
+묵시적 동의인 데다 DB에 아무 기록을 남기지 않아 사후 증명이 불가능했습니다. OAuth 리다이렉트
+전에 동의를 받으면 흐름이 복잡해지므로 동의 시점을 회원가입(프로필 설정 완료)으로 옮겼습니다.
+
+- `SignupPage`에 `TERMS`·`PRIVACY` 필수 체크박스를 추가하고, 프로필 저장 직전에 동의를
+  기록합니다.
+- 서버 `MemberProfileService.completeProfile()`은 최초 가입 완료(`PROFILE_REQUIRED`) 시점에만
+  두 동의를 확인하고 없으면 `SIGNUP_CONSENT_REQUIRED`(400)로 거절합니다. 기존 `ACTIVE` 회원의
+  프로필 수정에는 적용하지 않습니다. 동의 기록 구조가 생기기 전에 가입한 회원까지 소급해 막으면
+  프로필 수정 자체가 불가능해지기 때문입니다.
+- `LoginPage` 문구는 "로그인 후 프로필 설정 단계에서 ... 동의하게 됩니다"로 바꿨습니다.
+
+**Frontend**
+
+- `api/memberConsents.ts`와 고지 문구 상수 `components/consent/consentNotice.ts`, 공통 컴포넌트
+  `components/consent/AiConsentSection.tsx`를 추가했습니다. AI 처리와 국외 이전을 별도 체크박스로
+  받고, "자세히"를 펼치면 국외 이전 고지 항목을 표시합니다.
+- `SignupPage`에 기존 `PreferenceInputSection`을 그대로 재사용해 취향 입력을 붙였습니다. 취향은
+  선택 입력이며 동의 두 가지를 체크해야 입력란이 활성화됩니다. 취향 저장에 실패해도 가입은 이미
+  완료된 상태이므로 되돌리지 않고 "취향 없이 시작하기"로 진행할 수 있게 했습니다. 임베딩 실패가
+  가입을 막지 않는다는 1~3단계 원칙과 같습니다.
+- `ProfileEditPage`는 진입 시 동의 상태를 함께 조회합니다. 미동의면 동의 섹션을 먼저 보여주고
+  버튼을 "동의하고 저장"으로 바꿔 동의와 저장을 한 번에 처리합니다. 저장 중
+  `AI_CONSENT_REQUIRED`가 오면(다른 기기에서 철회한 경우) 에러 문구 대신 동의 입력을 다시
+  노출합니다. 동의 철회 버튼도 추가했고, 철회하면 저장한 취향도 삭제된다는 확인을 받습니다.
+- 화면 문구에는 "임베딩" 같은 개발 용어를 쓰지 않았습니다. 문구에 개발 용어가 섞이는 것을
+  테스트로 막습니다(`consentNotice.test.ts`).
+
+**2026-08-26 브라우저·dev DB 수동 검증**
+
+로컬 backend/frontend와 SSH tunnel로 연결한 dev DB(`meet_or_solo_dev`)에서 확인했습니다.
+
+확인한 항목:
+
+- 로그인 화면의 "동의하는 것으로 간주됩니다" 문구가 가입 단계 안내로 바뀐 것
+- 약관·개인정보 동의 없이 "프로필 설정 완료"를 누르면 진행되지 않는 것
+- AI 처리와 국외 이전 체크박스가 분리되어 있고, 하나만 체크하면 취향 입력이 잠긴 채로 남는 것
+- "자세히"를 펼치면 국외 이전 고지 항목이 표시되는 것
+- 가입 완료 후 `member_consents`에 4개 유형이 기록되고
+  `member_preference_embeddings`에 `embedding_status = COMPLETED`,
+  `embedding_model = text-embedding-3-small`, `vector_dims = 1536`이 저장되는 것
+- 동의 철회 시 `member_preference_embeddings` row가 삭제되고 `member_consents.revoked_at`이
+  기록되는 것 (진행 로그가 요구하던 삭제 정책)
+- 철회 상태에서 화면을 우회해 `POST /api/members/me/preference-embedding`을 직접 호출하면
+  `403 AI_CONSENT_REQUIRED`로 거절되는 것
+- 재동의 후 같은 endpoint 호출이 성공하고 `COMPLETED`로 저장되는 것
+
+수행하지 않은 항목: 취향을 비운 채 가입, 기존 `ACTIVE` 회원의 프로필 수정 회귀 확인,
+국외 이전 동의만 단독 철회. 자동 테스트로 각각 대응되는 케이스가 있으나 수동 `PASS`로
+판정하지 않습니다.
+
+검증 중 회원가입 완료가 느리게 느껴지는 현상을 확인했습니다. 동의 4건과 프로필, 임베딩까지
+HTTP 요청이 순차로 나가고 마지막 요청이 transaction 안에서 OpenAI를 호출하기 때문이며(read
+timeout 10초), dev DB가 SSH tunnel 너머에 있어 왕복 지연이 더해집니다. 기존 구조에서 비롯된
+현상이라 이번 범위에서 바꾸지 않고 로드맵 4.7로 이관했습니다.
+
+**남은 제약**
+
+- 동의 여부 조회가 `version`을 보지 않으므로 고지 문구를 개정해 `currentVersion`을 올려도 기존
+  동의자에게 재동의가 강제되지 않습니다. 지금 강제하면 기존 동의자가 전부 취향을 잃습니다.
+- 동의 기록 구조 이전에 가입한 `ACTIVE` 회원의 `TERMS`·`PRIVACY` 소급 동의 수집 경로가 없습니다.
+- `GET /api/members/me/consents`는 AI 관련 2개만 반환합니다. `TERMS`·`PRIVACY`는 기록만 하고
+  조회로 노출하지 않습니다.
+
+위 제약과 임베딩 재시도·외부 호출 분리·점수 분해 저장은
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md`의 `4.7 동의·개인정보 후속`으로 모았습니다. 수동 검증
+중 확인한 로그아웃 미구현(화면 버튼이 cookie와 refresh token, WebSocket session을 정리하지
+않음)은 같은 문서 `4.6 로그아웃`으로 추가했고 `docs/06_SECURITY_POLICY.md`에도 미구현임을
+명시했습니다. 두 항목 모두 이번 단계에서는 문서화만 하고 구현하지 않았습니다.
 
 ### 5. 검증 결과
 
-- Backend 비-컨테이너 테스트 221건 전체 통과 (`PairCompatibilityScorerTest` 9건 신규 포함).
+- (4단계) Backend 전체 493 tests가 failures/errors/skipped 0건으로 통과했습니다. Docker Desktop을
+  실행한 상태로 검증해 Testcontainers 통합 테스트와 전체 Spring context 기동 검증
+  (`MeetOrSoloApplicationTests`)이 실제로 수행됐습니다. 신규 `MemberConsentServiceTest` 10건,
+  `MemberConsentControllerTest` 9건, `MemberConsentRepositoryIntegrationTest` 6건을 포함합니다.
   JDK 17로 실행합니다. 기본 `JAVA_HOME`이 JDK 8이면 실패합니다.
+- (4단계) Frontend Vitest 28 files / 230 tests 통과, `npx tsc --noEmit` 통과,
+  production/PWA build 성공.
+- (1~3단계) Backend 비-컨테이너 테스트 221건 전체 통과 (`PairCompatibilityScorerTest` 9건 신규 포함).
 - Testcontainers 22건은 Docker 미실행으로 초기화 실패했습니다. 기존 환경 제약이며 이번 변경과
   무관하지만, `MemberPreferenceEmbeddingRepositoryIntegrationTest`와 전체 Spring context 기동
   검증(`MeetOrSoloApplicationTests`)이 미확인 상태로 남습니다. Docker 실행 후 재확인이 필요합니다.

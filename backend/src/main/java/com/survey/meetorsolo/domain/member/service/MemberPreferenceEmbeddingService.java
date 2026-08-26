@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.member.service;
 
 import com.survey.meetorsolo.domain.member.dto.MemberPreferenceEmbeddingResponse;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.entity.MemberConsentType;
 import com.survey.meetorsolo.domain.member.entity.MemberPreferenceEmbedding;
 import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberPreferenceEmbeddingRepository;
@@ -18,8 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class MemberPreferenceEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(MemberPreferenceEmbeddingService.class);
-    private static final String CONSENT_AI_PROCESSING = "AI_PROCESSING";
-
     private final MemberRepository memberRepository;
     private final MemberPreferenceEmbeddingRepository embeddingRepository;
     private final MemberConsentQueryRepository consentRepository;
@@ -42,9 +41,7 @@ public class MemberPreferenceEmbeddingService {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
 
-        if (!consentRepository.hasAgreedConsent(memberId, CONSENT_AI_PROCESSING)) {
-            throw new BusinessException(ErrorCode.AI_CONSENT_REQUIRED);
-        }
+        requireEmbeddingConsents(memberId);
 
         MemberPreferenceEmbedding embedding = embeddingRepository.findByMemberId(memberId)
                 .map(existing -> {
@@ -64,6 +61,20 @@ public class MemberPreferenceEmbeddingService {
         }
 
         return MemberPreferenceEmbeddingResponse.from(embedding);
+    }
+
+    /**
+     * 취향 글을 외부 임베딩 API로 보내는 데 필요한 동의를 모두 보유했는지 확인한다.
+     *
+     * <p>AI 처리 동의와 국외 이전 동의는 법적 성격과 거부 선택이 다르므로 하나로 합치지 않고
+     * 각각 확인한다. 하나라도 없으면 외부 전송을 하지 않는다.
+     */
+    private void requireEmbeddingConsents(Long memberId) {
+        for (MemberConsentType type : MemberConsentType.AI_EMBEDDING_REQUIRED) {
+            if (!consentRepository.hasAgreedConsent(memberId, type.name())) {
+                throw new BusinessException(ErrorCode.AI_CONSENT_REQUIRED);
+            }
+        }
     }
 
     /**

@@ -4,8 +4,10 @@ import com.survey.meetorsolo.domain.member.dto.MemberProfileResponse;
 import com.survey.meetorsolo.domain.member.dto.UpdateMemberProfileRequest;
 import com.survey.meetorsolo.domain.member.dto.TravelStyleResponse;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.entity.MemberConsentType;
 import com.survey.meetorsolo.domain.member.entity.MemberTravelStyle;
 import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
+import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberTravelStyleRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -19,15 +21,18 @@ public class MemberProfileService {
 
     private final MemberRepository memberRepository;
     private final MemberTravelStyleRepository memberTravelStyleRepository;
+    private final MemberConsentQueryRepository consentQueryRepository;
     private final ProfileFieldCrypto profileFieldCrypto;
 
     public MemberProfileService(
             MemberRepository memberRepository,
             MemberTravelStyleRepository memberTravelStyleRepository,
+            MemberConsentQueryRepository consentQueryRepository,
             ProfileFieldCrypto profileFieldCrypto
     ) {
         this.memberRepository = memberRepository;
         this.memberTravelStyleRepository = memberTravelStyleRepository;
+        this.consentQueryRepository = consentQueryRepository;
         this.profileFieldCrypto = profileFieldCrypto;
     }
 
@@ -44,6 +49,7 @@ public class MemberProfileService {
                 && !Member.STATUS_ACTIVE.equals(member.getStatus())) {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
+        requireSignupConsents(member);
 
         member.completeProfile(
                 request.nickname().trim(),
@@ -61,6 +67,24 @@ public class MemberProfileService {
         memberTravelStyleRepository.saveAll(travelStyles);
 
         return toResponse(member, travelStyles);
+    }
+
+    /**
+     * 최초 가입 완료 시점에 이용약관과 개인정보처리방침 동의를 요구한다.
+     *
+     * <p>기존 회원의 프로필 수정(`ACTIVE`)에는 적용하지 않는다. 동의 기록 구조가 생기기 전에
+     * 가입한 회원까지 소급해 막으면 프로필 수정 자체가 불가능해지기 때문이다. 소급 동의 수집은
+     * 별도 작업으로 다룬다.
+     */
+    private void requireSignupConsents(Member member) {
+        if (!Member.STATUS_PROFILE_REQUIRED.equals(member.getStatus())) {
+            return;
+        }
+        for (MemberConsentType type : List.of(MemberConsentType.TERMS, MemberConsentType.PRIVACY)) {
+            if (!consentQueryRepository.hasAgreedConsent(member.getId(), type.name())) {
+                throw new BusinessException(ErrorCode.SIGNUP_CONSENT_REQUIRED);
+            }
+        }
     }
 
     private Member findMember(Long memberId) {
