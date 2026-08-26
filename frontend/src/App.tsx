@@ -16,6 +16,7 @@ import BlockedMembersPage from './pages/BlockedMembersPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminRoute from './components/admin/AdminRoute';
 import AdminMembersPage from './pages/AdminMembersPage';
+import AdminMeetingPointsPage from './pages/AdminMeetingPointsPage';
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
         <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
         <Route path="/admin/members" element={<AdminRoute><AdminMembersPage /></AdminRoute>} />
+        <Route path="/admin/meeting-points" element={<AdminRoute><AdminMeetingPointsPage /></AdminRoute>} />
       </Routes>
     </BrowserRouter>
   );

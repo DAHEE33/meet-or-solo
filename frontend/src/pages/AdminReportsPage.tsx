@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import AdminHeader from '../components/admin/AdminHeader';
+import AdminNav from '../components/admin/AdminNav';
 import {
   type AdminReportDetail,
   type AdminReportFilters,
@@ -31,12 +33,8 @@ export default function AdminReportsPage() {
 
   return (
     <div className="min-h-screen bg-sand">
-      <header className="border-b border-line bg-white px-6 py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <h1 className="text-lg font-bold text-ink">관리자 신고 검토</h1>
-          <a href="/admin" className="text-sm font-semibold text-ink/60">대시보드로 돌아가기</a>
-        </div>
-      </header>
+      <AdminHeader title="관리자 신고 검토" />
+      <AdminNav />
       <main className="mx-auto flex max-w-6xl flex-col gap-5 p-6" aria-busy={state.status === 'LOADING'}>
         <form onSubmit={(event) => { event.preventDefault(); void actions.applyFilters(toApiFilters(draft)); }} className="grid gap-3 rounded-2xl bg-white p-4 shadow-sm md:grid-cols-5">
           <label className="text-sm font-semibold text-ink">상태<select aria-label="신고 상태" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as AdminReportStatus | '' })} className="mt-1 block w-full rounded-xl border border-line p-2 font-normal">{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>

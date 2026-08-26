@@ -33,7 +33,7 @@ public class FestivalSyncScheduler {
         try {
             FestivalSyncResult result = festivalSyncService.synchronizeFestivals();
             log.info(
-                    "Festival sync succeeded. initialLoad={}, fetched={}, synchronized={}, inserted={}, updated={}, images={}, ended={}, inactive={}, skipped={}",
+                    "Festival sync succeeded. initialLoad={}, fetched={}, synchronized={}, inserted={}, updated={}, images={}, ended={}, inactive={}, skipped={}, seededMeetingPoints={}",
                     result.initialLoad(),
                     result.fetchedCount(),
                     result.synchronizedCount(),
@@ -42,7 +42,8 @@ public class FestivalSyncScheduler {
                     result.synchronizedImageCount(),
                     result.endedCount(),
                     result.inactiveCount(),
-                    result.skippedCount()
+                    result.skippedCount(),
+                    result.seededMeetingPointCount()
             );
         } catch (TourApiClientException exception) {
             long storedCount = safeStoredCount();

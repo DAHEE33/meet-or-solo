@@ -32,7 +32,8 @@ class FestivalSyncSchedulerTest {
                 0,
                 0,
                 true,
-                OffsetDateTime.parse("2026-07-18T10:00:00+09:00")
+                OffsetDateTime.parse("2026-07-18T10:00:00+09:00"),
+                1
         ));
         FestivalSyncScheduler scheduler = new FestivalSyncScheduler(festivalSyncService);
 

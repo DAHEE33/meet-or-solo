@@ -102,4 +102,15 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
     );
     @Query(value = "SELECT * FROM festivals WHERE id = :festivalId FOR UPDATE", nativeQuery = true)
     Optional<Festival> findByIdForUpdate(@Param("festivalId") long festivalId);
+
+    @Query("""
+            select festival
+            from Festival festival
+            where festival.status = :status
+              and not exists (
+                  select 1 from FestivalMeetingPoint point
+                  where point.festivalId = festival.id
+              )
+            """)
+    List<Festival> findAllByStatusWithoutMeetingPoint(@Param("status") FestivalStatus status);
 }

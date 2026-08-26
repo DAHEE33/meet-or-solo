@@ -12,6 +12,7 @@ public record FestivalSyncResult(
         int inactiveCount,
         int skippedCount,
         boolean initialLoad,
-        OffsetDateTime syncedAt
+        OffsetDateTime syncedAt,
+        int seededMeetingPointCount
 ) {
 }

@@ -1,5 +1,6 @@
-import { Link } from 'react-router-dom';
-import { Users, HeartHandshake, MapPinCheck, ShieldAlert, UserCog } from 'lucide-react';
+import { Users, HeartHandshake, MapPinCheck } from 'lucide-react';
+import AdminHeader from '../components/admin/AdminHeader';
+import AdminNav from '../components/admin/AdminNav';
 import { adminStats } from '../data/mock/adminStats';
 import { formatSeoulDateTime } from '../utils/dateTime';
 
@@ -15,21 +16,10 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen bg-sand">
-      <header className="border-b border-line bg-white px-6 py-4">
-        <h1 className="text-lg font-bold text-ink">
-          meet·or·solo <span className="ml-2 text-sm font-medium text-ink/45">관리자 대시보드</span>
-        </h1>
-      </header>
+      <AdminHeader title="관리자 대시보드" />
+      <AdminNav />
 
       <main className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
-        <Link to="/admin/reports" className="flex items-center gap-3 rounded-2xl bg-white p-5 font-bold text-ink shadow-sm">
-          <ShieldAlert className="text-coral" aria-hidden="true" />
-          관리자 신고 검토
-        </Link>
-        <Link to="/admin/members" className="flex items-center gap-3 rounded-2xl bg-white p-5 font-bold text-ink shadow-sm">
-          <UserCog className="text-teal" aria-hidden="true" />
-          회원 조회·제재
-        </Link>
         {/* 통계 카드 */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {stats.map(({ label, value, icon: Icon, color }) => (

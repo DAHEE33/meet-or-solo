@@ -41,6 +41,9 @@ class FestivalSyncServiceTest {
     @Mock
     private FestivalSyncRetryWaiter retryWaiter;
 
+    @Mock
+    private FestivalMeetingPointBackfillService meetingPointBackfillService;
+
     private FestivalSyncService service;
 
     @BeforeEach
@@ -65,7 +68,8 @@ class FestivalSyncServiceTest {
                 properties,
                 new FestivalSyncMapper(new ObjectMapper()),
                 writer,
-                retryWaiter
+                retryWaiter,
+                meetingPointBackfillService
         );
     }
 
@@ -122,6 +126,35 @@ class FestivalSyncServiceTest {
         assertThat(scopeCaptor.getValue().observedContentIds())
                 .containsExactlyInAnyOrder("100", "200", "300");
         assertThat(scopeCaptor.getValue().regionCode()).isEqualTo("51");
+    }
+
+    @Test
+    void 축제_저장_후_만남_장소_백필을_호출하고_결과에_개수를_담는다() {
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenReturn(new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제"))));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, 0, true));
+        when(meetingPointBackfillService.seedMissingDefaultPoints()).thenReturn(2);
+
+        FestivalSyncResult result = service.synchronizeFestivals();
+
+        assertThat(result.seededMeetingPointCount()).isEqualTo(2);
+        verify(meetingPointBackfillService).seedMissingDefaultPoints();
+    }
+
+    @Test
+    void 만남_장소_백필이_실패해도_축제_동기화_결과는_정상적으로_반환한다() {
+        when(tourApiClient.searchFestivals(any(SearchFestivalRequest.class)))
+                .thenReturn(new TourApiPage<>(1, 1, 1, List.of(festivalItem("100", "축제"))));
+        when(writer.upsert(any(), any(FestivalSyncScope.class)))
+                .thenReturn(new FestivalSyncWriteResult(1, 0, 1, 0, 0, true));
+        when(meetingPointBackfillService.seedMissingDefaultPoints())
+                .thenThrow(new IllegalStateException("backfill 실패"));
+
+        FestivalSyncResult result = service.synchronizeFestivals();
+
+        assertThat(result.synchronizedCount()).isEqualTo(1);
+        assertThat(result.seededMeetingPointCount()).isEqualTo(0);
     }
 
     @Test

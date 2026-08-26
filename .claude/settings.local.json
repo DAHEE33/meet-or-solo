@@ -23,7 +23,13 @@
       "Bash(JAVA_HOME=C:/java/zulu17 PATH=C:/java/zulu17/bin:__TRACKED_VAR__ ./gradlew compileJava compileTestJava -q)",
       "Bash(JAVA_HOME=C:/java/zulu17 PATH=C:/java/zulu17/bin:__TRACKED_VAR__ ./gradlew test -q)",
       "Bash(python3 -c ' *)",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(git -C /c/meet-or-solo status --short)",
+      "Bash(git -C /c/meet-or-solo branch --show-current)",
+      "Bash(git -C /c/meet-or-solo log --oneline -5)",
+      "Bash(./gradlew compileJava compileTestJava --console=plain -q)",
+      "Bash(/c/Users/jyp48/AppData/Local/Programs/IntelliJ IDEA/jbr/bin/java.exe *)",
+      "Bash(npm -v)"
     ]
   }
 }

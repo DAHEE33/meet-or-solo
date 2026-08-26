@@ -1,5 +1,42 @@
 # 진행 상태 기록
 
+## [10-A 후속 6] 관리자 만남 장소 관리 화면과 0건 축제 자동 백필
+
+상태: 구현 완료. Frontend 자동 검증 완료, Backend는 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, 두 브라우저·dev DB 수동 검증 전
+
+- 사전 분석·설계는 `docs/24_ADMIN_MEETING_POINT_MANAGEMENT_DESIGN.md`로 정리했다. `[10-매칭 24차]`에서
+  구현된 만남 장소 관리 API(`AdminFestivalMeetingPointController`)는 그대로 재사용하고, 이번 범위는
+  Frontend 화면 추가와 백필 로직 추가로 한정했다.
+- Backend: 만남 장소가 0건인 `ACTIVE` 축제를 찾는 `FestivalRepository.findAllByStatusWithoutMeetingPoint()`와
+  신규 `FestivalMeetingPointBackfillService`를 추가했다. 기준은 "행이 0건"이며 "`ACTIVE` 행이 0건"이
+  아니다 — 관리자가 이미 등록해둔 장소가 전부 `INACTIVE`라도 다시 시딩하지 않는다(관리자 조정값을
+  스케줄러가 덮어쓰지 않는다는 원칙 유지). `FestivalSyncService.synchronizeFestivals()`가
+  `writer.upsert(...)` 다음 단계로 이 서비스를 호출하며, 백필이 실패해도 축제 동기화 자체는 성공으로
+  처리한다(다음 실행에서 재시도). `FestivalSyncResult`에 `seededMeetingPointCount`를 추가해
+  `FestivalSyncScheduler` 로그에 노출했다. 좌표가 없는 축제는 skip하고 `WARN` 로그만 남긴다.
+  Flyway migration은 추가하지 않았다(기존 `V15` 재사용).
+- Frontend: 관리자 화면 4곳(대시보드/신고 관리/회원 관리/만남 장소 관리)에 공통 상단 메뉴바
+  `AdminNav`를 추가하고, 각 페이지의 임시 되돌아가기 링크를 여기로 통합했다. `AdminDashboardPage`의
+  기존 바로가기 카드(신고 검토/회원 조회·제재)는 메뉴바와 중복돼 제거했다. 대시보드에만 있던
+  "meet·or·solo + 화면별 부제" 최상단 타이틀도 공통 `AdminHeader` 컴포넌트로 분리해 4개 화면 모두
+  같은 형태로 보이도록 통일했다(각 페이지는 `title`만 다르게 전달).
+- 신규 `/admin/meeting-points` 화면(`AdminMeetingPointsPage`)을 추가했다. 기존 공개
+  `GET /api/festivals` 검색으로 축제를 고르고, 선택한 축제의 만남 장소 목록·등록·수정·활성/비활성
+  전환을 기존 admin API 그대로 사용해 제공한다. 신규 API는 추가하지 않았다. 마지막 `ACTIVE` 장소를
+  비활성화하려는 경우 클라이언트 confirm 경고만 표시하며(서버 차단은 없음), 새 장소는 계약대로
+  `INACTIVE`로 등록되므로 등록 후 활성화가 필요함을 안내한다.
+- Backend는 이 Windows 환경에 JDK 17이 설치돼 있지 않아(JDK 8만 존재) Gradle 9.5.1 실행 자체가
+  막혀 `compileJava`/`compileTestJava`/테스트 실행을 확인하지 못했다. IntelliJ 번들 JBR 25로
+  Gradle 구동은 됐지만 컴파일 툴체인(JDK 17) auto-download 저장소가 설정돼 있지 않아 같은 문제로
+  막혔다. 작성한 `FestivalMeetingPointBackfillServiceTest`, 수정한 `FestivalSyncServiceTest`,
+  `FestivalSyncSchedulerTest`, 신규 `FestivalRepositoryIntegrationTest`는 코드 리뷰 수준으로만
+  작성했고 실제 컴파일·통과 여부는 별도 환경(JDK 17 설치)에서 확인이 필요하다.
+- Frontend는 전체 Vitest 32 files/242 tests(신규 `AdminNav.test.ts`, `AdminHeader.test.ts`,
+  `adminMeetingPoints.test.ts`, `useAdminMeetingPoints.test.ts`, `AdminMeetingPointsPage.test.ts`
+  포함), `npx tsc -b`, production/PWA build가 모두 성공했다.
+- 두 브라우저·dev DB 수동 검증, 카카오 로컬 API 연동 장소 검색 UI, 만남 장소 hard delete API는
+  이번 범위에서 제외했다(`docs/24` 7장).
+
 ## [10-A 후속 5] 솔로 코스 도보시간 표시 수정과 매칭 실패 화면 연결
 
 상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전

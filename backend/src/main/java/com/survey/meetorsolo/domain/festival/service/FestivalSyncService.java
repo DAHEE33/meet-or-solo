@@ -33,19 +33,22 @@ public class FestivalSyncService {
     private final FestivalSyncMapper mapper;
     private final FestivalSyncWriter writer;
     private final FestivalSyncRetryWaiter retryWaiter;
+    private final FestivalMeetingPointBackfillService meetingPointBackfillService;
 
     public FestivalSyncService(
             TourApiClient tourApiClient,
             FestivalSyncProperties properties,
             FestivalSyncMapper mapper,
             FestivalSyncWriter writer,
-            FestivalSyncRetryWaiter retryWaiter
+            FestivalSyncRetryWaiter retryWaiter,
+            FestivalMeetingPointBackfillService meetingPointBackfillService
     ) {
         this.tourApiClient = tourApiClient;
         this.properties = properties;
         this.mapper = mapper;
         this.writer = writer;
         this.retryWaiter = retryWaiter;
+        this.meetingPointBackfillService = meetingPointBackfillService;
     }
 
     public FestivalSyncResult synchronizeFestivals() {
@@ -82,6 +85,7 @@ public class FestivalSyncService {
                 observedContentIds
         );
         FestivalSyncWriteResult writeResult = writer.upsert(uniqueSyncData.values(), syncScope);
+        int seededMeetingPointCount = seedMissingMeetingPoints();
         return new FestivalSyncResult(
                 fetchedItems.size(),
                 uniqueSyncData.size(),
@@ -92,8 +96,24 @@ public class FestivalSyncService {
                 writeResult.inactiveCount(),
                 skippedCount,
                 writeResult.initialLoad(),
-                syncedAt
+                syncedAt,
+                seededMeetingPointCount
         );
+    }
+
+    /**
+     * 만남 장소가 0건인 ACTIVE 축제에 기본 장소를 채워 넣는다. 축제/이미지 upsert가 이미 commit된
+     * 뒤 별도 트랜잭션으로 실행되며, 실패해도 축제 동기화 자체는 성공으로 처리한다 — 다음 스케줄
+     * 실행에서 동일 축제가 여전히 0건이면 다시 시도된다.
+     */
+    private int seedMissingMeetingPoints() {
+        try {
+            return meetingPointBackfillService.seedMissingDefaultPoints();
+        } catch (RuntimeException exception) {
+            log.warn("만남 장소 자동 백필이 실패했습니다. 다음 실행에서 재시도합니다. cause={}",
+                    exception.getClass().getSimpleName());
+            return 0;
+        }
     }
 
     public long countStoredFestivals() {
