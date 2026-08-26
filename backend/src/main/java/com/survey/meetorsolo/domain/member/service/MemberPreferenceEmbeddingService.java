@@ -66,11 +66,17 @@ public class MemberPreferenceEmbeddingService {
         return MemberPreferenceEmbeddingResponse.from(embedding);
     }
 
+    /**
+     * 저장된 취향이 없으면 null을 반환한다.
+     *
+     * <p>"아직 입력하지 않음"은 오류가 아니라 정상 상태이므로 404가 아니라 200과 null data로
+     * 응답한다. 진행 중인 pool·proposal·cooldown 조회와 같은 규약이다.
+     */
     @Transactional(readOnly = true)
     public MemberPreferenceEmbeddingResponse getByMemberId(Long memberId) {
-        MemberPreferenceEmbedding embedding = embeddingRepository.findByMemberId(memberId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.EMBEDDING_NOT_FOUND));
-        return MemberPreferenceEmbeddingResponse.from(embedding);
+        return embeddingRepository.findByMemberId(memberId)
+                .map(MemberPreferenceEmbeddingResponse::from)
+                .orElse(null);
     }
 
     @Transactional

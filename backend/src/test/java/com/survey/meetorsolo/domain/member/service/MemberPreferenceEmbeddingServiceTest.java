@@ -118,13 +118,11 @@ class MemberPreferenceEmbeddingServiceTest {
     }
 
     @Test
-    void 임베딩_조회_시_없으면_EMBEDDING_NOT_FOUND를_던진다() {
+    void 임베딩_조회_시_없으면_예외_대신_null을_반환한다() {
+        // "아직 입력하지 않음"은 오류가 아니라 정상 상태이므로 200과 null data로 응답한다.
         when(embeddingRepository.findByMemberId(1L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getByMemberId(1L))
-                .isInstanceOf(BusinessException.class)
-                .extracting(ex -> ((BusinessException) ex).getErrorCode())
-                .isEqualTo(ErrorCode.EMBEDDING_NOT_FOUND);
+        assertThat(service.getByMemberId(1L)).isNull();
     }
 
     @Test

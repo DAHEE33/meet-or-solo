@@ -1,4 +1,4 @@
-import { apiClient, apiClientVoid, ApiClientError } from './apiClient';
+import { apiClient, apiClientNullable, apiClientVoid, ApiClientError } from './apiClient';
 
 export type EmbeddingStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
 
@@ -12,8 +12,9 @@ export interface PreferenceEmbedding {
 }
 
 export const preferenceEmbeddingApi = {
+  /** 저장된 취향이 없으면 null. "아직 입력하지 않음"은 오류가 아니다. */
   get: () =>
-    apiClient<PreferenceEmbedding>('/api/members/me/preference-embedding'),
+    apiClientNullable<PreferenceEmbedding>('/api/members/me/preference-embedding'),
 
   createOrUpdate: (preferenceText: string) =>
     apiClient<PreferenceEmbedding>('/api/members/me/preference-embedding', {
@@ -25,10 +26,6 @@ export const preferenceEmbeddingApi = {
   delete: () =>
     apiClientVoid('/api/members/me/preference-embedding', { method: 'DELETE' }),
 };
-
-export function isEmbeddingNotFound(error: unknown): boolean {
-  return error instanceof ApiClientError && error.code === 'EMBEDDING_NOT_FOUND';
-}
 
 export function isConsentRequired(error: unknown): boolean {
   return error instanceof ApiClientError && error.code === 'AI_CONSENT_REQUIRED';

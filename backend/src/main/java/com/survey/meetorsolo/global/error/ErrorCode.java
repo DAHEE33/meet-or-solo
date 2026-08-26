@@ -51,7 +51,6 @@ public enum ErrorCode {
     PROFILE_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "PROFILE_IMAGE_NOT_FOUND", "등록된 프로필 이미지가 없습니다."),
     EMBEDDING_API_FAILED(HttpStatus.BAD_GATEWAY, "EMBEDDING_API_FAILED", "임베딩 생성에 실패했습니다."),
     AI_CONSENT_REQUIRED(HttpStatus.FORBIDDEN, "AI_CONSENT_REQUIRED", "AI 데이터 처리 동의가 필요합니다."),
-    EMBEDDING_NOT_FOUND(HttpStatus.NOT_FOUND, "EMBEDDING_NOT_FOUND", "선호도 임베딩 정보를 찾을 수 없습니다."),
     OBJECT_STORAGE_ERROR(HttpStatus.BAD_GATEWAY, "OBJECT_STORAGE_ERROR", "이미지 저장소 처리에 실패했습니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다."),
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", "서버 내부 오류가 발생했습니다.");
