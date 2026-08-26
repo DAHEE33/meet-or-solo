@@ -1,5 +1,102 @@
 # 진행 상태 기록
 
+## [10-B AI 임베딩] 취향 임베딩 도입
+
+상태: 1~3단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-25 기준)
+
+### 1. 진행 순서 변경
+
+기존 계획의 `MATCH-09` 솔로 코스 연결보다 AI 임베딩을 먼저 진행합니다. 솔로 코스는
+관광공사 OpenAPI 연동이 선행되어야 하는데 해당 연동이 아직 착수되지 않았고, AI 임베딩은
+선행 의존성이 없기 때문입니다. 문서 하단 `4. 이후 순서`에도 반영했습니다.
+
+### 2. 단계 계획
+
+| 단계 | 범위 | 브랜치 |
+| --- | --- | --- |
+| 1 | Backend — OpenAI 연동, 임베딩 생성·갱신·삭제 서비스, fallback | `feature/wbs-10-b-embedding-api` |
+| 2 | Backend — `EmbeddingScorer` + Jaccard 결합, 매칭 scoring 반영 | `feature/wbs-10-b-embedding-scoring` |
+| 3 | Frontend — 취향 입력 공통 컴포넌트(가이드 2문항 + 자유 입력) | `feature/wbs-10-b-preference-input-ui` |
+| 4 | Frontend — 회원가입 AI 동의 + 가입 흐름에 취향 입력 연결 | `feature/wbs-10-b-consent-ai-signup` |
+| 5 | Frontend — 매칭 신청 전 미입력 체크 + 프로필 설정에서 수정 | `feature/wbs-10-b-preference-guard` |
+
+1·2·3단계는 브랜치를 분리하지 않고 `feature/wbs-10-b-embedding-backend-and-preference-ui`
+하나로 묶어 진행했습니다.
+4단계부터 다시 계획대로 분리합니다.
+
+### 3. 확정 사항
+
+- `member_preference_embeddings`는 회원당 1건이며 `preference_text`, 벡터,
+  `embedding_status`, 모델명을 보관합니다. pgvector 기반이므로 local compose와
+  Testcontainers 모두 `pgvector/pgvector:pg16` 이미지를 사용합니다.
+- 임베딩 모델 기본값은 `text-embedding-3-small`이며 `OPENAI_EMBEDDING_MODEL`로 교체할 수
+  있습니다. API Key가 비어 있으면 기동은 성공하지만 임베딩이 `FAILED`로 저장됩니다.
+- 외부 호출 실패는 예외를 전파하지 않고 `embedding_status = FAILED`로 저장한 뒤 매칭에서
+  임베딩 미보유로 간주합니다. 임베딩 실패가 프로필 저장이나 매칭 자체를 막지 않습니다.
+- pair 점수 계산은 `PairCompatibilityScorer` 한 곳으로 모았습니다. 그룹 선정
+  (`MatchGroupComposer`)과 proposal에 저장되는 회원 점수
+  (`MatchProposalCreationService.memberScore()`)가 같은 계산식을 사용하므로 "선정 근거와
+  저장 점수가 다른" 상태가 재발하지 않습니다.
+- 양쪽 모두 임베딩을 보유한 경우에만 `Jaccard 0.70 + cosine 0.30`으로 가중 합산합니다.
+  한쪽이라도 미보유·미완료면 Jaccard 점수만 사용합니다. 이 fallback은 `cosine = jaccard`로
+  간주하는 것과 수학적으로 같으므로, 임베딩 보유자와 미보유자가 같은 후보 pool에 섞여도
+  점수 스케일이 왜곡되지 않습니다.
+- 0.70 / 0.30 가중치 근거: 태그는 5종 중 1~3개만 고르므로 Jaccard가 취할 수 있는 값이
+  `0, 20, 25, 33.33, 50, 66.67, 100` 7가지뿐이고 동점이 자주 발생합니다. 반면 코사인 유사도는
+  촘촘하지만 무관한 텍스트도 값이 크게 내려가지 않습니다. 이 배분에서는 태그가 크게 갈리면
+  (0 vs 100, 가중 차이 70점) 임베딩 최대 기여 30점으로 순위를 뒤집을 수 없고, 태그가 같은
+  버킷이면 임베딩이 순위를 결정합니다. 즉 태그를 주 신호, 임베딩을 동점 판별자로 두는 배분입니다.
+- 위 가중치는 실사용 데이터로 조정할 값이므로 하드코딩하지 않고
+  `app.matching.scoring.jaccard-weight` / `embedding-weight`로 주입합니다. 환경변수는
+  `MATCHING_SCORING_JACCARD_WEIGHT` / `MATCHING_SCORING_EMBEDDING_WEIGHT`이며, 두 값의 합이
+  1이 아니면 기동 시점에 실패합니다.
+- 취향 입력은 `PreferenceInputSection` 공통 컴포넌트로 가이드 2문항(하고 싶은 것, 편한 사람)과
+  자유 입력을 함께 받습니다. 서버 `preference_text`는 단일 컬럼이므로 `buildPreferenceText()`가
+  라벨 접두어를 붙여 한 문자열로 직렬화하고 `parsePreferenceText()`가 되돌립니다. 라벨을 찾지
+  못하면 전체를 자유 입력으로 두어 기존 저장 값도 내용을 잃지 않습니다.
+- 외부 API 전송 동의는 `member_consents`의 `AI_PROCESSING`으로 관리합니다.
+  `V11__add_member_preference_embeddings.sql`에서 `chk_member_consents_type` 제약에
+  값을 추가했습니다.
+
+### 4. 알려진 제약과 남은 작업
+
+- 동의를 기록하는 API와 화면은 4단계 범위입니다. 그 전까지 임베딩 API는 동의가 없는 회원에게
+  항상 `AI_CONSENT_REQUIRED`를 반환하므로, 1~3단계 수동 검증은 `member_consents`에 직접
+  INSERT한 계정으로 수행했습니다. 4단계 완료 전에는 실사용 경로가 열리지 않습니다.
+- 저장되는 점수는 총점 하나뿐이라 사후 분석이 어렵습니다. `jaccard`, `cosine`, 임베딩 사용
+  여부를 함께 남기면 "임베딩이 실제로 매칭 품질을 높였는가"를 데이터로 판단할 수 있습니다.
+  컬럼 추가가 필요하므로 후기·평점 연계 단계에서 함께 검토합니다.
+- `MemberPreferenceEmbeddingService.createOrUpdate()`가 `@Transactional` 안에서 OpenAI를
+  호출합니다. read timeout 10초 동안 DB 커넥션을 점유하므로 외부 호출을 트랜잭션 밖으로
+  분리하거나 비동기화하는 방안을 후속으로 검토합니다.
+- `FAILED` 상태 재시도 경로가 없습니다. 현재는 사용자가 같은 취향 글을 다시 저장하는 것이
+  유일한 복구 수단입니다.
+- 동의 철회 시 기존 임베딩을 삭제하는 연동과 개인정보 고지 문구가 아직 없습니다.
+  4단계에서 함께 처리합니다.
+
+### 5. 검증 결과
+
+- Backend 비-컨테이너 테스트 221건 전체 통과 (`PairCompatibilityScorerTest` 9건 신규 포함).
+  JDK 17로 실행합니다. 기본 `JAVA_HOME`이 JDK 8이면 실패합니다.
+- Testcontainers 22건은 Docker 미실행으로 초기화 실패했습니다. 기존 환경 제약이며 이번 변경과
+  무관하지만, `MemberPreferenceEmbeddingRepositoryIntegrationTest`와 전체 Spring context 기동
+  검증(`MeetOrSoloApplicationTests`)이 미확인 상태로 남습니다. Docker 실행 후 재확인이 필요합니다.
+- Frontend Vitest 25 files / 207 tests 통과 (`preferenceText.test.ts` 18건 신규 포함),
+  `npx tsc --noEmit` 통과.
+- `MatchingControllerTest`가 `MatchPoolCancellationService` mock 누락으로 24건 실패하던 문제를
+  함께 고쳤습니다. 매칭 취소 기능(PR #37)에서 controller 의존성이 늘었는데 `@MockitoBean`이
+  추가되지 않아 발생한 기존 문제이며 이번 임베딩 작업과는 무관합니다.
+
+
+### 6. 부수 정리
+
+- 루트 `.env.example`을 실제 설정 기준으로 재정리했습니다. `OPENAI_*` 5개, 매칭 스케줄러,
+  관리자 제재 스케줄러 항목을 추가하고, 어디에서도 읽지 않던 `LOCAL_DB_URL`, `DEV_DB_*`,
+  `PROD_DB_*`와 Frontend 전용 `VITE_KAKAO_MAPS_APP_KEY`를 제거했습니다. dev·prod profile
+  전용 `DB_URL` 계열은 주석 블록으로 남겼습니다. 매칭 점수 가중치 환경변수 2개도 추가했습니다.
+- Spring Boot local profile은 `application-local.yml`의 optional config import로 루트
+  `.env`를 읽으므로 `bootRun` 시 별도 환경변수 주입이 필요하지 않습니다.
+
 ## [10-관리자 안전 3차] 관리자 정지 조기 해제(UNSUSPEND)
 
 상태: 구현·자동 검증 및 브라우저 수동 검증 완료
@@ -1696,14 +1793,20 @@ feature/wbs-10-b-rematch-opponent-exclusion
 
 ### 4. 이후 순서
 
-1. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
-2. AI 임베딩 생성·동의·fallback과 scoring 결합
+1. AI 임베딩 생성·동의·fallback과 scoring 결합 (**진행 중**)
+2. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
 3. 신고·안전·후기와 관리자 연계
 4. 주요 화면과 실제 API 연결 완료 후 ISSUE-MR-009를 포함한 Frontend 전체 UX 안정화
 
-AI 임베딩은 `member_preference_embeddings`와 pgvector 기반만 준비된 상태입니다.
-외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책이 필요하며, 매칭 상태
-정확성·중복 방지·재매칭 정책보다 먼저 구현하지 않습니다.
+2026-08-25에 1번과 2번의 순서를 교체했습니다. `MATCH-09` 솔로 코스는 관광공사 OpenAPI
+연동이 선행되어야 하는데 해당 연동이 아직 착수되지 않아 대기 상태이므로, 선행 의존성이
+없는 AI 임베딩을 먼저 진행합니다. 상세 계획과 진행 상황은 문서 상단
+`[10-B AI 임베딩] 취향 임베딩 도입`을 참고합니다.
+
+AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책 요구사항은
+그대로 유효하며, 매칭 상태 정확성·중복 방지·재매칭 정책 자체를 변경하지 않는 범위에서만
+진행합니다.
+
 ## [10-B 안전 후속] 차단 목록 조회·해제 Backend 1차
 
 상태: 기본 API·정책·자동 테스트 구현 완료

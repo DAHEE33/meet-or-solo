@@ -6,7 +6,21 @@ import {
   type Gender,
   type TravelStyleCode,
 } from '../api/memberProfile';
+import {
+  preferenceEmbeddingApi,
+  isConsentRequired,
+  type EmbeddingStatus,
+} from '../api/preferenceEmbedding';
 import Chip from '../components/common/Chip';
+import PreferenceInputSection from '../components/preference/PreferenceInputSection';
+import {
+  EMPTY_PREFERENCE_DRAFT,
+  PREFERENCE_TEXT_MAX_LENGTH,
+  buildPreferenceText,
+  isPreferenceDraftComplete,
+  parsePreferenceText,
+  type PreferenceDraft,
+} from '../components/preference/preferenceText';
 import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -48,6 +62,14 @@ export default function ProfileEditPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [prefDraft, setPrefDraft] = useState<PreferenceDraft>(EMPTY_PREFERENCE_DRAFT);
+  const [prefStatus, setPrefStatus] = useState<EmbeddingStatus | null>(null);
+  const [prefHasData, setPrefHasData] = useState(false);
+  const [prefLoading, setPrefLoading] = useState(true);
+  const [prefSaving, setPrefSaving] = useState(false);
+  const [prefError, setPrefError] = useState<string | null>(null);
+  const [prefSaved, setPrefSaved] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     memberProfileApi.getMine().then((profile) => {
@@ -66,6 +88,22 @@ export default function ProfileEditPage() {
         setIsLoading(false);
       }
     });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    preferenceEmbeddingApi.get()
+      .then((emb) => {
+        if (cancelled || !emb) return;
+        setPrefDraft(parsePreferenceText(emb.preferenceText));
+        setPrefStatus(emb.embeddingStatus);
+        setPrefHasData(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPrefError('취향 정보를 불러오지 못했습니다.');
+      })
+      .finally(() => { if (!cancelled) setPrefLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -131,6 +169,50 @@ export default function ProfileEditPage() {
       setErrorMessage(error instanceof Error ? error.message : '프로필 저장에 실패했습니다.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handlePrefSave = async () => {
+    const preferenceText = buildPreferenceText(prefDraft);
+    if (!isPreferenceDraftComplete(prefDraft)) {
+      setPrefError('가이드 두 문항을 모두 답해 주세요.');
+      return;
+    }
+    if (preferenceText.length > PREFERENCE_TEXT_MAX_LENGTH) {
+      setPrefError(`${PREFERENCE_TEXT_MAX_LENGTH}자 이하로 줄여 주세요.`);
+      return;
+    }
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      const result = await preferenceEmbeddingApi.createOrUpdate(preferenceText);
+      setPrefStatus(result.embeddingStatus);
+      setPrefHasData(true);
+      // 프로필 저장과 달리 화면을 떠나지 않는다. 위쪽 프로필 입력이 아직 저장되지 않았을 수 있다.
+      setPrefSaved(true);
+    } catch (err) {
+      setPrefError(isConsentRequired(err)
+        ? 'AI 데이터 처리 동의가 필요합니다.'
+        : err instanceof Error ? err.message : '저장에 실패했습니다.');
+    } finally {
+      setPrefSaving(false);
+    }
+  };
+
+  const handlePrefDelete = async () => {
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      await preferenceEmbeddingApi.delete();
+      setPrefDraft(EMPTY_PREFERENCE_DRAFT);
+      setPrefStatus(null);
+      setPrefHasData(false);
+    } catch (err) {
+      setPrefError(err instanceof Error ? err.message : '삭제에 실패했습니다.');
+    } finally {
+      setPrefSaving(false);
     }
   };
 
@@ -205,6 +287,51 @@ export default function ProfileEditPage() {
           </section>
           {errorMessage && <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{errorMessage}</p>}
           <PrimaryButton onClick={handleSave} disabled={isSaving}>{isSaving ? '저장 중...' : '수정 내용 저장'}</PrimaryButton>
+
+          {/* 취향 전격 분석 */}
+          <section className="flex flex-col gap-3 border-t border-line pt-6">
+            {prefLoading ? (
+              <p className="text-[13px] text-ink/40">불러오는 중...</p>
+            ) : (
+              <>
+                <PreferenceInputSection
+                  value={prefDraft}
+                  onChange={(draft) => { setPrefDraft(draft); setPrefError(null); setPrefSaved(false); }}
+                  disabled={prefSaving}
+                />
+                <div className="flex items-center gap-2">
+                  {prefStatus && (
+                    <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+                      prefStatus === 'COMPLETED' ? 'bg-teal/10 text-teal' :
+                      prefStatus === 'FAILED' ? 'bg-coral/10 text-coral' :
+                      'bg-sand text-ink/50'
+                    }`}>
+                      {prefStatus === 'COMPLETED' ? '분석 완료' : prefStatus === 'FAILED' ? '분석 실패' : '분석 중'}
+                    </span>
+                  )}
+                  <span className="flex-1" />
+                  {prefHasData && (
+                    <button type="button" onClick={handlePrefDelete} disabled={prefSaving}
+                      className="text-[13px] text-ink/40 underline active:text-coral disabled:opacity-40">
+                      삭제
+                    </button>
+                  )}
+                  <button type="button" onClick={handlePrefSave} disabled={prefSaving}
+                    className="rounded-xl bg-coral px-4 py-2 text-[13px] font-semibold text-white active:bg-coral/80 disabled:opacity-40">
+                    {prefSaving ? '저장 중...' : '저장'}
+                  </button>
+                </div>
+                {prefError && (
+                  <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
+                )}
+                {prefSaved && !prefError && (
+                  <p role="status" className="rounded-2xl bg-teal/10 px-4 py-3 text-sm text-teal">
+                    저장했어요. 이 화면에서 계속 고칠 수 있어요.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
         </>}
       </main>
     </MobileLayout>

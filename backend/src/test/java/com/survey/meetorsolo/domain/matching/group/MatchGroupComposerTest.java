@@ -5,8 +5,11 @@ import static com.survey.meetorsolo.domain.member.entity.TravelStyleCode.FOOD;
 import static com.survey.meetorsolo.domain.member.entity.TravelStyleCode.PHOTO;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.survey.meetorsolo.domain.matching.scoring.EmbeddingScorer;
+import com.survey.meetorsolo.domain.matching.scoring.PairCompatibilityScorer;
 import com.survey.meetorsolo.domain.matching.scoring.TravelStyleScorer;
 import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -18,7 +21,8 @@ class MatchGroupComposerTest {
 
     private static final OffsetDateTime BASE_TIME =
             OffsetDateTime.of(2026, 7, 20, 12, 0, 0, 0, ZoneOffset.ofHours(9));
-    private final MatchGroupComposer composer = new MatchGroupComposer(new TravelStyleScorer());
+    private final MatchGroupComposer composer = new MatchGroupComposer(new PairCompatibilityScorer(
+            new TravelStyleScorer(), new EmbeddingScorer(), new BigDecimal("0.70"), new BigDecimal("0.30")));
 
     @Test
     void 희망_인원에_맞는_2인_3인_4인_그룹을_구성한다() {
