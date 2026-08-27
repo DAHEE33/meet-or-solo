@@ -25,30 +25,34 @@ export default function HomePage() {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([memberProfileApi.getMine(), festivalsApi.getList(0, 20)]).then(
-      ([memberProfile, festivalList]) => {
-        if (!mounted) return;
-        const mapped = festivalList.items.map(mapFestivalListItemToFestival);
-        const ongoing = mapped.filter((festival) => festival.status === 'ongoing');
-        const upcoming = mapped.filter((festival) => festival.status === 'upcoming');
-        const hot = ongoing[0] ?? upcoming[0] ?? null;
-        setProfile(memberProfile);
-        setHotFestival(hot);
-        setUpcomingFestivals(upcoming);
 
-        if (hot) {
-          festivalsApi.getNearbyTourPlaces(hot.id).then((places) => {
-            if (!mounted) return;
-            setNearbyPlaces(
-              places.map((place) => ({
-                spot: mapNearbyTourPlaceToTourSpot(place),
-                distanceMeters: place.distanceMeters,
-              })),
-            );
-          });
-        }
-      },
-    );
+    memberProfileApi.getMine().then((memberProfile) => {
+      if (!mounted) return;
+      setProfile(memberProfile);
+    });
+
+    festivalsApi.getList(0, 20).then((festivalList) => {
+      if (!mounted) return;
+      const mapped = festivalList.items.map(mapFestivalListItemToFestival);
+      const ongoing = mapped.filter((festival) => festival.status === 'ongoing');
+      const upcoming = mapped.filter((festival) => festival.status === 'upcoming');
+      const hot = ongoing[0] ?? upcoming[0] ?? null;
+      setHotFestival(hot);
+      setUpcomingFestivals(upcoming);
+
+      if (hot) {
+        festivalsApi.getNearbyTourPlaces(hot.id).then((places) => {
+          if (!mounted) return;
+          setNearbyPlaces(
+            places.map((place) => ({
+              spot: mapNearbyTourPlaceToTourSpot(place),
+              distanceMeters: place.distanceMeters,
+            })),
+          );
+        });
+      }
+    });
+
     return () => {
       mounted = false;
     };
