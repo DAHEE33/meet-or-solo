@@ -119,7 +119,7 @@ class FestivalSyncWriterIntegrationTest {
         );
 
         assertThat(page.getContent())
-                .extracting(festival -> festival.getContentId())
+                .extracting(festival -> festival.contentId())
                 .contains(activeContentId)
                 .doesNotContain(endedContentId);
     }

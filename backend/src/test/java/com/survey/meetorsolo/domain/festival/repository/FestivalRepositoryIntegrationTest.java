@@ -3,7 +3,10 @@ package com.survey.meetorsolo.domain.festival.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -47,5 +50,34 @@ class FestivalRepositoryIntegrationTest {
         assertThat(result)
                 .extracting(festival -> festival.getContentId())
                 .containsExactly("repo-fixture-no-point");
+    }
+
+    @Test
+    void findVisibleFestivals는_ACTIVE만_요약_정보_프로젝션으로_반환한다() {
+        var page = festivals.findVisibleFestivals(
+                FestivalStatus.ACTIVE, LocalDate.now(), "", PageRequest.of(0, 10));
+
+        assertThat(page.getContent())
+                .extracting(summary -> summary.contentId())
+                .containsExactlyInAnyOrder("repo-fixture-has-point", "repo-fixture-no-point");
+        assertThat(page.getContent())
+                .filteredOn(summary -> summary.contentId().equals("repo-fixture-has-point"))
+                .singleElement()
+                .satisfies(summary -> {
+                    assertThat(summary.title()).isEqualTo("장소 있는 축제");
+                    assertThat(summary.status()).isEqualTo(FestivalStatus.ACTIVE);
+                });
+    }
+
+    @Test
+    void findAllVisibleWithinBoundingBox는_범위_밖_좌표를_제외한다() {
+        var result = festivals.findAllVisibleWithinBoundingBox(
+                FestivalStatus.ACTIVE, LocalDate.now(),
+                new BigDecimal("128.05"), new BigDecimal("128.15"),
+                new BigDecimal("37.05"), new BigDecimal("37.15"));
+
+        assertThat(result)
+                .extracting(festival -> festival.getContentId())
+                .containsExactly("repo-fixture-has-point");
     }
 }

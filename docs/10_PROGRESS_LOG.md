@@ -1,5 +1,44 @@
 # 진행 상태 기록
 
+## [10-A 후속 7] festivals/tour_places 목록·반경 조회 성능 개선 1차(Tier A)
+
+상태: 구현 완료. 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, dev DB EXPLAIN 비교와 두 브라우저 수동 검증 전
+
+- 배경: `festivals` 목록(`GET /api/festivals`, `HomePage`/`ExploreListPage`가 사용)이 느리다는
+  문제 제기로 코드 분석을 진행했다. 원인은 캐시 부재보다 먼저 (1) 목록 조회가 화면에 쓰지 않는
+  `raw_data` JSONB까지 매번 전체 엔티티로 읽어오고, (2) `HomePage` 진입 시 함께 호출되는
+  `nearby-spots`/`nearby-festivals`가 반경 필터 없이 `tour_places`/`festivals` 전체를 앱 메모리로
+  가져와 haversine 계산 후 필터링하며, (3) 키워드 검색이 앞뒤 `%` LIKE라 인덱스를 타지 못하는 데
+  있었다. 캐시(Tier B, Redis 미사용 인프로세스 캐시)는 이번 범위에서 다루지 않았다.
+- `FestivalRepository.findVisibleFestivals`/`TourPlaceRepository.findVisiblePlaces`를 JPQL
+  `select new ...(...)` 생성자 표현식으로 바꿔 `raw_data`·좌표 등 목록에 쓰이지 않는 컬럼을 읽지
+  않도록 했다. Festival 쪽은 이미지가 별도 테이블이라 신규 프로젝션 `FestivalSummary`(`festival`
+  패키지 dto, JPA 엔티티 아님)를 목록/이미지 매핑 전용으로만 쓰고, `FestivalListItemResponse` 등
+  공개 API 응답 계약은 변경하지 않았다. TourPlace 쪽은 이미지 URL이 자체 컬럼이라 기존
+  `TourPlaceListItemResponse`로 바로 프로젝션했다.
+- `FestivalQueryService.getNearbyTourPlaces`/`TourPlaceQueryService.getNearbyFestivals`가
+  전체 테이블을 가져오던 `findAllVisibleWithCoordinates` 대신, 중심점과 반경으로 계산한 위경도
+  bounding box로 후보를 먼저 좁히는 `findAllVisibleWithinBoundingBox`를 쓰도록 바꿨다. 실제
+  반경 판정·정렬은 그대로 haversine으로 다시 계산해 결과가 달라지지 않는다(순수 성능 최적화).
+  bounding box 계산은 `GeoDistanceCalculator.boundingBox()`로 분리했다. `SoloCourseService`가
+  쓰는 기존 `TourPlaceRepository.findAllVisibleWithCoordinates`(반경 제한이 없는 후보 조회)는
+  동작이 달라질 수 있어 이번 범위에서 건드리지 않았다.
+- `V22__add_festival_tourplace_query_indexes.sql`을 추가했다(기존 V1~V21은 수정하지 않음).
+  `pg_trgm` 확장, `festivals(status, event_end_date)`/`festivals(status, map_x, map_y)`/
+  `tour_places(status, map_x, map_y)` 복합 인덱스, `festivals`/`tour_places` 제목 GIN trigram
+  인덱스를 추가했다. 기존 단일 컬럼 인덱스(`idx_festivals_status` 등)는 다른 조회(만료 처리
+  batch)에서 계속 쓰이므로 삭제하지 않았다.
+- 기존 `FestivalQueryServiceTest`/`TourPlaceQueryServiceTest`/`FestivalSyncWriterIntegrationTest`를
+  새 반환 타입에 맞춰 수정했고, 신규 `GeoDistanceCalculatorTest`(bounding box 계산),
+  `TourPlaceRepositoryIntegrationTest`(신규 파일), 기존 `FestivalRepositoryIntegrationTest`에
+  projection·bounding box PostgreSQL 통합 테스트를 추가했다.
+- 이 Windows 환경에 JDK 17이 없어(이전 후속 6과 같은 제약) `compileJava`/`compileTestJava`/테스트
+  실행을 확인하지 못했다. repository 반환 타입을 바꾸는 범위가 넓은 편이라 모든 호출부·기존 테스트를
+  grep으로 전수 확인하고 수정했지만, 실제 컴파일·PostgreSQL 통합 테스트 통과는 JDK 17이 있는
+  환경에서 별도로 확인이 필요하다.
+- 캐시(Tier B), 전체 EXPLAIN ANALYZE 비교, dev DB·두 브라우저 체감 성능 확인은 이번 범위에서
+  제외했다.
+
 ## [10-A 후속 6] 관리자 만남 장소 관리 화면과 0건 축제 자동 백필
 
 상태: 구현 완료. Frontend 자동 검증 완료, Backend는 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, 두 브라우저·dev DB 수동 검증 전

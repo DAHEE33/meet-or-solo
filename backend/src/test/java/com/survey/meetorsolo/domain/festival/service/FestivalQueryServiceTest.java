@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
+import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
@@ -70,13 +71,17 @@ class FestivalQueryServiceTest {
                 "https://example.com/origin.jpg",
                 "https://example.com/thumbnail.jpg"
         );
+        FestivalSummary summary = new FestivalSummary(
+                10L, "100", "테스트 축제", "강원특별자치도 테스트시", "51", "110",
+                LocalDate.of(2026, 7, 20), LocalDate.of(2026, 7, 22), FestivalStatus.ACTIVE
+        );
         PageRequest pageRequest = PageRequest.of(0, 20);
         when(festivalRepository.findVisibleFestivals(
                 eq(FestivalStatus.ACTIVE),
                 any(LocalDate.class),
                 eq(""),
                 any(Pageable.class)
-        )).thenReturn(new PageImpl<>(List.of(festival), pageRequest, 21));
+        )).thenReturn(new PageImpl<>(List.of(summary), pageRequest, 21));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(10L)))
                 .thenReturn(List.of(image));
         var result = service().getActiveFestivals(0, 20, null);
@@ -192,8 +197,11 @@ class FestivalQueryServiceTest {
                 "300", "먼 관광지", new BigDecimal("128.5000000000"), new BigDecimal("37.5000000000")
         ));
         ReflectionTestUtils.setField(far, "id", 2L);
-        when(tourPlaceRepository.findAllVisibleWithCoordinates(TourPlaceStatus.ACTIVE))
-                .thenReturn(List.of(far, near));
+        when(tourPlaceRepository.findAllVisibleWithinBoundingBox(
+                eq(TourPlaceStatus.ACTIVE),
+                any(BigDecimal.class), any(BigDecimal.class),
+                any(BigDecimal.class), any(BigDecimal.class)
+        )).thenReturn(List.of(far, near));
 
         var result = service().getNearbyTourPlaces(10L, 5000, 10);
 

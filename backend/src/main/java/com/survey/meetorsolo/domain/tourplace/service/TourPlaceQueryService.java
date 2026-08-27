@@ -49,18 +49,15 @@ public class TourPlaceQueryService {
                 size,
                 Sort.by(Sort.Order.asc("title"), Sort.Order.asc("id"))
         );
-        Page<TourPlace> placePage = tourPlaceRepository.findVisiblePlaces(
+        Page<TourPlaceListItemResponse> placePage = tourPlaceRepository.findVisiblePlaces(
                 TourPlaceStatus.ACTIVE,
                 normalizeOrNull(contentTypeId),
                 normalizeKeyword(keyword),
                 pageRequest
         );
 
-        List<TourPlaceListItemResponse> items = placePage.getContent().stream()
-                .map(this::toListItemResponse)
-                .toList();
         return new TourPlaceListResponse(
-                items,
+                placePage.getContent(),
                 placePage.getNumber(),
                 placePage.getSize(),
                 placePage.getTotalElements(),
@@ -99,9 +96,14 @@ public class TourPlaceQueryService {
         }
 
         LocalDate today = LocalDate.now(SeoulDateTime.ZONE_ID);
-        List<Festival> candidates = festivalRepository.findAllVisibleWithCoordinates(
+        GeoDistanceCalculator.BoundingBox box = GeoDistanceCalculator.boundingBox(
+                place.getMapY(), place.getMapX(), radiusMeters
+        );
+        List<Festival> candidates = festivalRepository.findAllVisibleWithinBoundingBox(
                 FestivalStatus.ACTIVE,
-                today
+                today,
+                box.minLongitude(), box.maxLongitude(),
+                box.minLatitude(), box.maxLatitude()
         );
         List<Long> festivalIds = candidates.stream().map(Festival::getId).toList();
         var thumbnailsByFestivalId = festivalImageRepository.findAllByFestivalIdIn(festivalIds).stream()
@@ -135,18 +137,6 @@ public class TourPlaceQueryService {
                 festival.getStatus(),
                 thumbnailUrl,
                 distanceMeters
-        );
-    }
-
-    private TourPlaceListItemResponse toListItemResponse(TourPlace place) {
-        return new TourPlaceListItemResponse(
-                place.getId(),
-                place.getContentId(),
-                place.getContentTypeId(),
-                place.getTitle(),
-                place.getAddress(),
-                place.getStatus(),
-                place.getImageUrl()
         );
     }
 

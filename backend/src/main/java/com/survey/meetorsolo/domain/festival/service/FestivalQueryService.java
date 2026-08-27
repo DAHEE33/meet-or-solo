@@ -4,6 +4,7 @@ import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
@@ -56,20 +57,21 @@ public class FestivalQueryService {
                 Sort.by(Sort.Order.asc("eventStartDate"), Sort.Order.asc("id"))
         );
         LocalDate today = LocalDate.now(SeoulDateTime.ZONE_ID);
-        Page<Festival> festivalPage = festivalRepository.findVisibleFestivals(
+        Page<FestivalSummary> festivalPage = festivalRepository.findVisibleFestivals(
                 FestivalStatus.ACTIVE,
                 today,
                 normalize(keyword),
                 pageRequest
         );
 
-        Map<Long, FestivalImage> representativeImages = representativeImages(
-                festivalPage.getContent()
-        );
+        List<Long> festivalIds = festivalPage.getContent().stream()
+                .map(FestivalSummary::id)
+                .toList();
+        Map<Long, FestivalImage> representativeImages = representativeImages(festivalIds);
         List<FestivalListItemResponse> items = festivalPage.getContent().stream()
                 .map(festival -> toResponse(
                         festival,
-                        representativeImages.get(festival.getId())
+                        representativeImages.get(festival.id())
                 ))
                 .toList();
         return new FestivalListResponse(
@@ -131,7 +133,14 @@ public class FestivalQueryService {
             return List.of();
         }
 
-        return tourPlaceRepository.findAllVisibleWithCoordinates(TourPlaceStatus.ACTIVE).stream()
+        GeoDistanceCalculator.BoundingBox box = GeoDistanceCalculator.boundingBox(
+                festival.getMapY(), festival.getMapX(), radiusMeters
+        );
+        return tourPlaceRepository.findAllVisibleWithinBoundingBox(
+                        TourPlaceStatus.ACTIVE,
+                        box.minLongitude(), box.maxLongitude(),
+                        box.minLatitude(), box.maxLatitude()
+                ).stream()
                 .map(place -> toNearbyResponse(festival, place))
                 .filter(response -> response.distanceMeters() <= radiusMeters)
                 .sorted(Comparator.comparingLong(NearbyTourPlaceResponse::distanceMeters))
@@ -156,13 +165,10 @@ public class FestivalQueryService {
         );
     }
 
-    private Map<Long, FestivalImage> representativeImages(List<Festival> festivals) {
-        if (festivals.isEmpty()) {
+    private Map<Long, FestivalImage> representativeImages(List<Long> festivalIds) {
+        if (festivalIds.isEmpty()) {
             return Map.of();
         }
-        List<Long> festivalIds = festivals.stream()
-                .map(Festival::getId)
-                .toList();
         Map<Long, FestivalImage> imagesByFestivalId = new LinkedHashMap<>();
         for (FestivalImage image : festivalImageRepository.findAllByFestivalIdIn(festivalIds)) {
             imagesByFestivalId.putIfAbsent(image.getFestivalId(), image);
@@ -182,17 +188,17 @@ public class FestivalQueryService {
         return value.trim();
     }
 
-    private FestivalListItemResponse toResponse(Festival festival, FestivalImage image) {
+    private FestivalListItemResponse toResponse(FestivalSummary festival, FestivalImage image) {
         return new FestivalListItemResponse(
-                festival.getId(),
-                festival.getContentId(),
-                festival.getTitle(),
-                festival.getAddress(),
-                festival.getAreaCode(),
-                festival.getSigunguCode(),
-                festival.getEventStartDate(),
-                festival.getEventEndDate(),
-                festival.getStatus(),
+                festival.id(),
+                festival.contentId(),
+                festival.title(),
+                festival.address(),
+                festival.regionCode(),
+                festival.sigunguCode(),
+                festival.eventStartDate(),
+                festival.eventEndDate(),
+                festival.status(),
                 image == null ? null : image.getOriginImageUrl(),
                 image == null ? null : image.getThumbnailUrl()
         );

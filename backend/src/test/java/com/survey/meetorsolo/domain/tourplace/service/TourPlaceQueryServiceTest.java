@@ -14,6 +14,7 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
@@ -53,8 +54,9 @@ class TourPlaceQueryServiceTest {
 
     @Test
     void ACTIVE_관광지를_페이지_정보와_함께_조회한다() {
-        TourPlace place = TourPlace.create(placeSyncData("100", "테스트 관광지", null, null));
-        ReflectionTestUtils.setField(place, "id", 1L);
+        TourPlaceListItemResponse place = new TourPlaceListItemResponse(
+                1L, "100", "12", "테스트 관광지", "강원특별자치도 테스트시", TourPlaceStatus.ACTIVE, null
+        );
         PageRequest pageRequest = PageRequest.of(0, 20);
         when(tourPlaceRepository.findVisiblePlaces(
                 eq(TourPlaceStatus.ACTIVE),
@@ -156,8 +158,11 @@ class TourPlaceQueryServiceTest {
                 "300", "먼 축제", new BigDecimal("128.5000000000"), new BigDecimal("37.5000000000")
         ), LocalDate.of(2026, 7, 18));
         ReflectionTestUtils.setField(far, "id", 20L);
-        when(festivalRepository.findAllVisibleWithCoordinates(eq(FestivalStatus.ACTIVE), any(LocalDate.class)))
-                .thenReturn(List.of(far, near));
+        when(festivalRepository.findAllVisibleWithinBoundingBox(
+                eq(FestivalStatus.ACTIVE), any(LocalDate.class),
+                any(BigDecimal.class), any(BigDecimal.class),
+                any(BigDecimal.class), any(BigDecimal.class)
+        )).thenReturn(List.of(far, near));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(20L, 10L))).thenReturn(List.of());
 
         var result = service().getNearbyFestivals(1L, 5000, 10);
