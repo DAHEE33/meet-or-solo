@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MapPin, ChevronDown } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import type { Festival, TourSpot } from '../types';
 import type { MemberProfile } from '../api/memberProfile';
 import { memberProfileApi } from '../api/memberProfile';
 import { festivalsApi } from '../api/festivals';
 import { mapFestivalListItemToFestival } from '../utils/festival';
+import { pickFallbackFestival, pickNearestFestival } from '../utils/homeFestival';
+import { getCurrentPosition } from '../utils/geolocation';
 import { mapNearbyTourPlaceToTourSpot, formatDistanceLabel, formatWalkMinutesLabel } from '../utils/tourSpot';
 import MobileLayout from '../components/layout/MobileLayout';
 import AppHeader from '../components/layout/AppHeader';
@@ -20,6 +22,8 @@ type NearbyPlace = { spot: TourSpot; distanceMeters: number };
 export default function HomePage() {
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [hotFestival, setHotFestival] = useState<Festival | null>(null);
+  const [heroDistanceMeters, setHeroDistanceMeters] = useState<number | null>(null);
+  const [heroRegionName, setHeroRegionName] = useState<string | null>(null);
   const [upcomingFestivals, setUpcomingFestivals] = useState<Festival[]>([]);
   const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlace[]>([]);
 
@@ -34,23 +38,27 @@ export default function HomePage() {
     festivalsApi.getList(0, 20).then((festivalList) => {
       if (!mounted) return;
       const mapped = festivalList.items.map(mapFestivalListItemToFestival);
-      const ongoing = mapped.filter((festival) => festival.status === 'ongoing');
-      const upcoming = mapped.filter((festival) => festival.status === 'upcoming');
-      const hot = ongoing[0] ?? upcoming[0] ?? null;
-      setHotFestival(hot);
-      setUpcomingFestivals(upcoming);
+      setUpcomingFestivals(mapped.filter((festival) => festival.status === 'upcoming'));
 
-      if (hot) {
-        festivalsApi.getNearbyTourPlaces(hot.id).then((places) => {
+      // 목록이 도착하면 먼저 폴백 기준으로 히어로를 그린다. 위치 조회가 화면을 막지 않게 하고,
+      // 권한을 거부한 사용자는 위치 기능 도입 전과 완전히 같은 화면을 보게 된다.
+      const fallback = pickFallbackFestival(mapped);
+      setHotFestival(fallback);
+
+      // 내 위치에서 가장 가까운 축제로 히어로를 교체한다. 좌표는 이 브라우저 안에서만 쓰이고
+      // 서버로 전송되지 않는다(docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md 4.1).
+      getCurrentPosition()
+        .then((position) => {
           if (!mounted) return;
-          setNearbyPlaces(
-            places.map((place) => ({
-              spot: mapNearbyTourPlaceToTourSpot(place),
-              distanceMeters: place.distanceMeters,
-            })),
-          );
-        });
-      }
+          const nearest = pickNearestFestival(position, festivalList.items, mapFestivalListItemToFestival);
+          if (!nearest) return;
+          setHotFestival(nearest.festival);
+          setHeroDistanceMeters(nearest.distanceMeters);
+          setHeroRegionName(nearest.sigunguName);
+        })
+        // 권한 거부·타임아웃·미지원은 모두 폴백으로 조용히 처리한다. 홈 화면에 위치 오류
+        // 메시지를 띄우는 것은 과하다(체크인처럼 위치가 필수인 기능이 아니다).
+        .catch(() => undefined);
     });
 
     return () => {
@@ -58,21 +66,41 @@ export default function HomePage() {
     };
   }, []);
 
+  // 히어로가 바뀌면 그 축제 기준으로 주변 관광지를 다시 받는다. 이 API는 중심이 축제 좌표라
+  // 사용자 좌표가 서버로 가지 않는다.
+  useEffect(() => {
+    if (!hotFestival) return;
+    let mounted = true;
+    setNearbyPlaces([]);
+    festivalsApi.getNearbyTourPlaces(hotFestival.id).then((places) => {
+      if (!mounted) return;
+      setNearbyPlaces(
+        places.map((place) => ({
+          spot: mapNearbyTourPlaceToTourSpot(place),
+          distanceMeters: place.distanceMeters,
+        })),
+      );
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [hotFestival]);
+
   return (
     <MobileLayout>
       <AppHeader />
 
       <main className="flex flex-col gap-6 px-5 pt-2">
-        {/* 인사말 + 위치 선택 */}
+        {/* 인사말 + 현재 기준 지역 */}
         <section className="flex flex-col gap-1.5">
-          <button
-            type="button"
-            className="flex w-fit items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-medium text-ink/60 shadow-sm"
-          >
-            <MapPin size={13} className="text-coral" />
-            전북 전주시의 축제
-            <ChevronDown size={13} className="text-ink/45" />
-          </button>
+          {/* 위치 권한을 얻어 최근접 축제를 고른 경우에만 지역을 노출한다. 폴백 상태에서는
+              기준 지역이 없으므로 잘못된 지역명을 보여주지 않기 위해 숨긴다. */}
+          {heroRegionName && (
+            <span className="flex w-fit items-center gap-1 rounded-full bg-white px-3 py-1 text-xs font-medium text-ink/60 shadow-sm">
+              <MapPin size={13} className="text-coral" />
+              내 위치에서 가까운 {heroRegionName}의 축제
+            </span>
+          )}
           <h1 className="text-[22px] font-bold leading-snug text-ink">
             {profile?.nickname ? `${profile.nickname}님,` : '여행자님,'}
             <br />
@@ -81,7 +109,16 @@ export default function HomePage() {
         </section>
 
         {/* 지금 가장 핫한 축제 */}
-        {hotFestival && <FestivalHeroCard festival={hotFestival} />}
+        {hotFestival && (
+          <div className="flex flex-col gap-1.5">
+            <FestivalHeroCard festival={hotFestival} />
+            {heroDistanceMeters !== null && (
+              <span className="px-1 text-xs text-ink/55">
+                내 위치에서 {formatDistanceLabel(heroDistanceMeters)}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 선택한 축제에서 매칭 시작 */}
         {hotFestival && (

@@ -3,7 +3,9 @@ package com.survey.meetorsolo.domain.tourplace.controller;
 import com.survey.meetorsolo.domain.festival.dto.NearbyFestivalResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListSort;
 import com.survey.meetorsolo.domain.tourplace.service.TourPlaceQueryService;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.response.ApiResponse;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -26,6 +28,11 @@ public class TourPlaceController {
         this.tourPlaceQueryService = tourPlaceQueryService;
     }
 
+    /**
+     * 관광지 목록. 거리 필터·거리 정렬은 제공하지 않는다 — 사용자 좌표를 서버로 받지 않기
+     * 때문이다(docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md 3.1). "내 주변" 성격의 조회는
+     * 축제 좌표를 중심으로 하는 {@code GET /api/festivals/{id}/nearby-spots}가 담당한다.
+     */
     @GetMapping
     public ApiResponse<TourPlaceListResponse> getTourPlaces(
             @RequestParam(defaultValue = "0")
@@ -34,11 +41,21 @@ public class TourPlaceController {
             @Min(value = 1, message = "size는 1 이상이어야 합니다.")
             @Max(value = 100, message = "size는 100 이하여야 합니다.") int size,
             @RequestParam(required = false) String contentTypeId,
-            @RequestParam(required = false) String keyword
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String sigunguCode,
+            @RequestParam(defaultValue = "TITLE_ASC") TourPlaceListSort sort
     ) {
         return ApiResponse.success(
-                tourPlaceQueryService.getVisiblePlaces(page, size, contentTypeId, keyword)
+                tourPlaceQueryService.getVisiblePlaces(page, size, contentTypeId, keyword, sigunguCode, sort)
         );
+    }
+
+    /** 지역 선택 UI용 시군구 목록. 카테고리를 넘기면 그 카테고리에 장소가 있는 지역만 내려간다. */
+    @GetMapping("/regions")
+    public ApiResponse<List<RegionOptionResponse>> getTourPlaceRegions(
+            @RequestParam(required = false) String contentTypeId
+    ) {
+        return ApiResponse.success(tourPlaceQueryService.getTourPlaceRegions(contentTypeId));
     }
 
     @GetMapping("/{id}")

@@ -3,17 +3,22 @@ package com.survey.meetorsolo.domain.festival.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
@@ -21,6 +26,8 @@ import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceSyncData;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
 import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
+import com.survey.meetorsolo.global.region.RegionAggregate;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.math.BigDecimal;
@@ -30,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -73,18 +81,24 @@ class FestivalQueryServiceTest {
         );
         FestivalSummary summary = new FestivalSummary(
                 10L, "100", "테스트 축제", "강원특별자치도 테스트시", "51", "110",
-                LocalDate.of(2026, 7, 20), LocalDate.of(2026, 7, 22), FestivalStatus.ACTIVE
+                LocalDate.of(2026, 7, 20), LocalDate.of(2026, 7, 22), FestivalStatus.ACTIVE,
+                new BigDecimal("127.7300000000"), new BigDecimal("37.8813000000")
         );
         PageRequest pageRequest = PageRequest.of(0, 20);
         when(festivalRepository.findVisibleFestivals(
                 eq(FestivalStatus.ACTIVE),
                 any(LocalDate.class),
                 eq(""),
+                isNull(),
+                any(LocalDate.class),
+                any(LocalDate.class),
+                eq(0),
+                eq(FestivalMeetingPointStatus.ACTIVE),
                 any(Pageable.class)
-        )).thenReturn(new PageImpl<>(List.of(summary), pageRequest, 21));
+                )).thenReturn(new PageImpl<>(List.of(summary), pageRequest, 21));
         when(festivalImageRepository.findAllByFestivalIdIn(List.of(10L)))
                 .thenReturn(List.of(image));
-        var result = service().getActiveFestivals(0, 20, null);
+        var result = service().getActiveFestivals(0, 20, null, null, null, null, false);
 
         assertThat(result.items())
                 .singleElement()
@@ -110,21 +124,127 @@ class FestivalQueryServiceTest {
                 eq(FestivalStatus.ACTIVE),
                 any(LocalDate.class),
                 eq("축제"),
+                isNull(),
+                any(LocalDate.class),
+                any(LocalDate.class),
+                eq(0),
+                eq(FestivalMeetingPointStatus.ACTIVE),
                 any(Pageable.class)
-        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+                )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
         when(festivalRepository.findVisibleFestivals(
                 eq(FestivalStatus.ACTIVE),
                 any(LocalDate.class),
                 eq(""),
+                isNull(),
+                any(LocalDate.class),
+                any(LocalDate.class),
+                eq(0),
+                eq(FestivalMeetingPointStatus.ACTIVE),
                 any(Pageable.class)
-        )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+                )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
         FestivalQueryService service = service();
 
-        service.getActiveFestivals(0, 20, "  축제  ");
-        service.getActiveFestivals(0, 20, "   ");
+        service.getActiveFestivals(0, 20, "  축제  ", null, null, null, false);
+        service.getActiveFestivals(0, 20, "   ", null, null, null, false);
 
-        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq("축제"), any(Pageable.class));
-        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq(""), any(Pageable.class));
+        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq("축제"), isNull(), any(LocalDate.class), any(LocalDate.class), eq(0), eq(FestivalMeetingPointStatus.ACTIVE), any(Pageable.class));
+        verify(festivalRepository).findVisibleFestivals(eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq(""), isNull(), any(LocalDate.class), any(LocalDate.class), eq(0), eq(FestivalMeetingPointStatus.ACTIVE), any(Pageable.class));
+    }
+
+    @Test
+    void sort와_schedule이_null이면_기존_동작과_같은_기본값을_쓴다() {
+        // 신규 파라미터를 아무것도 안 넘긴 클라이언트가 이전과 같은 결과를 받아야 한다(회귀 방지).
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        stubEmptyPage();
+
+        service().getActiveFestivals(0, 20, null, null, null, null, false);
+
+        verify(festivalRepository).findVisibleFestivals(
+                eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq(""), isNull(),
+                any(LocalDate.class), eq(FestivalScheduleFilter.MAX_SCHEDULE_DATE), eq(0),
+                eq(FestivalMeetingPointStatus.ACTIVE), pageable.capture()
+        );
+        assertThat(pageable.getValue().getSort())
+                .isEqualTo(FestivalListSort.START_DATE_ASC.sort());
+    }
+
+    @Test
+    void sort가_주어지면_해당_정렬로_페이지를_요청한다() {
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        stubEmptyPage();
+
+        service().getActiveFestivals(
+                0, 20, null, null, FestivalListSort.RECENTLY_ADDED, null, false);
+
+        verify(festivalRepository).findVisibleFestivals(
+                any(), any(), any(), any(), any(), any(), anyInt(), any(), pageable.capture());
+        assertThat(pageable.getValue().getSort())
+                .isEqualTo(FestivalListSort.RECENTLY_ADDED.sort());
+    }
+
+    @Test
+    void matchableOnly가_true이면_만남장소_조건_플래그를_1로_넘긴다() {
+        // JPQL에서 boolean 파라미터 타입 추론이 흔들리는 것을 피하려 int 플래그를 쓴다.
+        stubEmptyPage();
+
+        service().getActiveFestivals(0, 20, null, null, null, null, true);
+
+        verify(festivalRepository).findVisibleFestivals(
+                eq(FestivalStatus.ACTIVE), any(LocalDate.class), eq(""), isNull(),
+                any(LocalDate.class), any(LocalDate.class), eq(1),
+                eq(FestivalMeetingPointStatus.ACTIVE), any(Pageable.class)
+        );
+    }
+
+    @Test
+    void sigunguCode는_트림_후_전달되고_공백뿐이면_null로_전달한다() {
+        stubEmptyPage();
+        FestivalQueryService service = service();
+
+        service.getActiveFestivals(0, 20, null, "  110  ", null, null, false);
+        service.getActiveFestivals(0, 20, null, "   ", null, null, false);
+
+        verify(festivalRepository).findVisibleFestivals(
+                any(), any(), any(), eq("110"), any(), any(), anyInt(), any(), any());
+        verify(festivalRepository).findVisibleFestivals(
+                any(), any(), any(), isNull(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    void schedule이_ONGOING이면_오늘_하루를_기간_조건으로_넘긴다() {
+        ArgumentCaptor<LocalDate> start = ArgumentCaptor.forClass(LocalDate.class);
+        ArgumentCaptor<LocalDate> end = ArgumentCaptor.forClass(LocalDate.class);
+        stubEmptyPage();
+
+        service().getActiveFestivals(
+                0, 20, null, null, null, FestivalScheduleFilter.ONGOING, false);
+
+        verify(festivalRepository).findVisibleFestivals(
+                any(), any(), any(), any(), start.capture(), end.capture(), anyInt(), any(), any());
+        assertThat(start.getValue()).isEqualTo(end.getValue());
+    }
+
+    @Test
+    void 지역_목록은_데이터에_있는_시군구만_이름과_함께_반환한다() {
+        when(festivalRepository.aggregateVisibleRegions(eq(FestivalStatus.ACTIVE), any(LocalDate.class)))
+                .thenReturn(List.of(
+                        new RegionAggregate("760", "강원특별자치도 평창군 대관령면 1", 4L),
+                        new RegionAggregate("150", "강원특별자치도 강릉시 창해로 514", 3L),
+                        new RegionAggregate("999", null, 1L)
+                ));
+
+        var regions = service().getFestivalRegions();
+
+        assertThat(regions).extracting(RegionOptionResponse::name)
+                .containsExactly("강릉시", "평창군");
+        assertThat(regions).extracting(RegionOptionResponse::sigunguCode)
+                .doesNotContain("999");
+    }
+
+    private void stubEmptyPage() {
+        when(festivalRepository.findVisibleFestivals(
+                any(), any(), any(), any(), any(), any(), anyInt(), any(), any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
     }
 
     @Test
@@ -216,6 +336,8 @@ class FestivalQueryServiceTest {
                 "12",
                 title,
                 "강원특별자치도 테스트시",
+                "51",
+                "110",
                 mapX,
                 mapY,
                 null,

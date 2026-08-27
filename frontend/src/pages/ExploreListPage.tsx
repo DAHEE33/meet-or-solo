@@ -1,14 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, SlidersHorizontal, RotateCw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, SlidersHorizontal, RotateCw } from 'lucide-react';
 import type { Festival } from '../types';
-import { festivalsApi } from '../api/festivals';
-import { spotsApi, type TourPlaceListItem } from '../api/spots';
+import {
+  festivalsApi,
+  type FestivalListItem,
+  type FestivalListSort,
+  type FestivalScheduleFilter,
+  type RegionOption,
+} from '../api/festivals';
+import { spotsApi, type TourPlaceListItem, type TourPlaceListSort } from '../api/spots';
 import { mapFestivalListItemToFestival } from '../utils/festival';
 import { mapTourPlaceListItemToTourSpot } from '../utils/tourSpot';
+import { useInfiniteList } from '../hooks/useInfiniteList';
+import { useInfiniteScrollSentinel } from '../hooks/useInfiniteScrollSentinel';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
-import FestivalListItem from '../components/festival/FestivalListItem';
+import FestivalListItemCard from '../components/festival/FestivalListItem';
 import ExploreSpotItem from '../components/explore/ExploreSpotItem';
+import FilterSelect from '../components/explore/FilterSelect';
 
 type Segment = 'festival' | 'spot';
 
@@ -22,80 +31,195 @@ const SPOT_CATEGORIES: { label: string; contentTypeId?: string }[] = [
   { label: '맛집', contentTypeId: '39' },
 ];
 
-const FESTIVAL_FILTERS = ['지역', '일정', '정렬'];
-const SPOT_FILTERS = ['현재 위치', '거리', '정렬'];
+const FESTIVAL_SORTS: { value: FestivalListSort; label: string }[] = [
+  { value: 'START_DATE_ASC', label: '시작일 빠른순' },
+  { value: 'END_DATE_ASC', label: '종료 임박순' },
+  { value: 'RECENTLY_ADDED', label: '최근 등록순' },
+];
+
+const FESTIVAL_SCHEDULES: { value: FestivalScheduleFilter; label: string }[] = [
+  { value: 'ALL', label: '전체 기간' },
+  { value: 'ONGOING', label: '진행 중' },
+  { value: 'THIS_WEEKEND', label: '이번 주말' },
+  { value: 'THIS_MONTH', label: '이번 달' },
+];
+
+// 관광지에는 거리 정렬(가까운순/먼순)이 없다. 사용자 좌표를 서버로 보내지 않아 서버에
+// 기준점이 없기 때문이다(docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md 3.1, 6.2).
+const SPOT_SORTS: { value: TourPlaceListSort; label: string }[] = [
+  { value: 'TITLE_ASC', label: '이름순' },
+  { value: 'RECENTLY_ADDED', label: '최근 등록순' },
+];
+
+const festivalListDependencies = {
+  fetchPage: async (
+    query: {
+      keyword: string;
+      sigunguCode: string;
+      sort: FestivalListSort;
+      schedule: FestivalScheduleFilter;
+      matchableOnly: boolean;
+    },
+    page: number,
+    size: number,
+  ) => {
+    const response = await festivalsApi.getList(page, size, query.keyword || undefined, {
+      sigunguCode: query.sigunguCode || undefined,
+      sort: query.sort,
+      schedule: query.schedule,
+      matchableOnly: query.matchableOnly,
+    });
+    return { items: response.items, page: response.page, hasNext: response.hasNext };
+  },
+};
+
+const spotListDependencies = {
+  fetchPage: async (
+    query: { keyword: string; contentTypeId: string; sigunguCode: string; sort: TourPlaceListSort },
+    page: number,
+    size: number,
+  ) => {
+    const response = await spotsApi.getList(
+      page,
+      size,
+      query.contentTypeId || undefined,
+      query.keyword || undefined,
+      { sigunguCode: query.sigunguCode || undefined, sort: query.sort },
+    );
+    return { items: response.items, page: response.page, hasNext: response.hasNext };
+  },
+};
 
 export default function ExploreListPage() {
   const [segment, setSegment] = useState<Segment>('festival');
   const [category, setCategory] = useState<string>('전체');
   const [keyword, setKeyword] = useState('');
-  const [festivals, setFestivals] = useState<Festival[]>([]);
-  const [festivalsLoading, setFestivalsLoading] = useState(true);
-  const [spots, setSpots] = useState<TourPlaceListItem[]>([]);
-  const [spotsLoading, setSpotsLoading] = useState(true);
-  const isFestivalsFirstFetch = useRef(true);
-  const isSpotsFirstFetch = useRef(true);
-
-  // keyword 변경 시마다 매 타이핑마다 요청을 보내지 않도록, 최초 진입 시에는 즉시 조회하고
-  // 이후 keyword 변경분만 디바운스한다.
-  useEffect(() => {
-    let mounted = true;
-    const delay = isFestivalsFirstFetch.current ? 0 : 300;
-    isFestivalsFirstFetch.current = false;
-    setFestivalsLoading(true);
-    const timer = setTimeout(() => {
-      festivalsApi.getList(0, 100, keyword.trim() || undefined).then((list) => {
-        if (!mounted) return;
-        setFestivals(list.items.map(mapFestivalListItemToFestival));
-        setFestivalsLoading(false);
-      });
-    }, delay);
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-    };
-  }, [keyword]);
-
-  useEffect(() => {
-    let mounted = true;
-    const delay = isSpotsFirstFetch.current ? 0 : 300;
-    isSpotsFirstFetch.current = false;
-    const contentTypeId = SPOT_CATEGORIES.find((c) => c.label === category)?.contentTypeId;
-    setSpotsLoading(true);
-    const timer = setTimeout(() => {
-      spotsApi.getList(0, 100, contentTypeId, keyword.trim() || undefined).then((list) => {
-        if (!mounted) return;
-        setSpots(list.items);
-        setSpotsLoading(false);
-      });
-    }, delay);
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-    };
-  }, [keyword, category]);
+  const [debouncedKeyword, setDebouncedKeyword] = useState('');
+  const [festivalSigunguCode, setFestivalSigunguCode] = useState('');
+  const [festivalSort, setFestivalSort] = useState<FestivalListSort>('START_DATE_ASC');
+  const [festivalSchedule, setFestivalSchedule] = useState<FestivalScheduleFilter>('ALL');
+  const [matchableOnly, setMatchableOnly] = useState(false);
+  const [spotSigunguCode, setSpotSigunguCode] = useState('');
+  const [spotSort, setSpotSort] = useState<TourPlaceListSort>('TITLE_ASC');
+  const [festivalRegions, setFestivalRegions] = useState<RegionOption[]>([]);
+  const [spotRegions, setSpotRegions] = useState<RegionOption[]>([]);
+  const isFirstKeyword = useRef(true);
 
   const isFestival = segment === 'festival';
-  // 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 축제 세그먼트는 카테고리 칩을 노출하지 않는다.
-  const categoryChips = isFestival ? [] : SPOT_CATEGORIES;
-  const filterLabels = isFestival ? FESTIVAL_FILTERS : SPOT_FILTERS;
+  const contentTypeId = SPOT_CATEGORIES.find((c) => c.label === category)?.contentTypeId ?? '';
 
-  const visibleSpots = spots.map(mapTourPlaceListItemToTourSpot);
+  // 최초 진입은 즉시 조회하고 이후 타이핑만 디바운스한다(기존 동작 유지).
+  useEffect(() => {
+    const delay = isFirstKeyword.current ? 0 : 300;
+    isFirstKeyword.current = false;
+    const timer = setTimeout(() => setDebouncedKeyword(keyword.trim()), delay);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
-  const isLoadingCurrentSegment = isFestival ? festivalsLoading : spotsLoading;
-  const resultCount = isFestival ? festivals.length : visibleSpots.length;
-  const isEmpty = !isLoadingCurrentSegment && resultCount === 0;
+  // 지역 목록은 서버가 "실제로 데이터가 있는 시군구"만 주므로, 선택했을 때 항상 빈 결과가
+  // 나오는 지역이 노출되지 않는다.
+  useEffect(() => {
+    let mounted = true;
+    festivalsApi
+      .getRegions()
+      .then((regions) => mounted && setFestivalRegions(regions))
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    spotsApi
+      .getRegions(contentTypeId || undefined)
+      .then((regions) => {
+        if (!mounted) return;
+        setSpotRegions(regions);
+        // 카테고리를 바꿔 선택 중인 지역이 사라졌다면 지역 선택을 풀어야 빈 화면에 갇히지 않는다.
+        setSpotSigunguCode((current) =>
+          current && !regions.some((region) => region.sigunguCode === current) ? '' : current,
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [contentTypeId]);
+
+  const festivalQuery = useMemo(
+    () => ({
+      keyword: debouncedKeyword,
+      sigunguCode: festivalSigunguCode,
+      sort: festivalSort,
+      schedule: festivalSchedule,
+      matchableOnly,
+    }),
+    [debouncedKeyword, festivalSigunguCode, festivalSort, festivalSchedule, matchableOnly],
+  );
+
+  const spotQuery = useMemo(
+    () => ({
+      keyword: debouncedKeyword,
+      contentTypeId,
+      sigunguCode: spotSigunguCode,
+      sort: spotSort,
+    }),
+    [debouncedKeyword, contentTypeId, spotSigunguCode, spotSort],
+  );
+
+  const festivals = useInfiniteList<FestivalListItem, typeof festivalQuery>(
+    festivalListDependencies,
+    festivalQuery,
+  );
+  const spots = useInfiniteList<TourPlaceListItem, typeof spotQuery>(
+    spotListDependencies,
+    spotQuery,
+  );
+
+  const active = isFestival ? festivals : spots;
+  const sentinelRef = useInfiniteScrollSentinel(
+    () => void active.loadMore(),
+    active.state.hasNext && active.state.status !== 'ERROR',
+  );
+
+  const festivalCards: Festival[] = festivals.state.items.map(mapFestivalListItemToFestival);
+  const visibleSpots = spots.state.items.map(mapTourPlaceListItemToTourSpot);
+
+  const isInitialLoading = active.state.status === 'LOADING';
+  const isError = active.state.status === 'ERROR';
+  const resultCount = isFestival ? festivalCards.length : visibleSpots.length;
+  const isEmpty = !isInitialLoading && !isError && resultCount === 0;
 
   function handleSegmentChange(next: Segment) {
     setSegment(next);
     setCategory('전체');
     setKeyword('');
+    setDebouncedKeyword('');
   }
 
   function resetFilters() {
     setCategory('전체');
     setKeyword('');
+    setDebouncedKeyword('');
+    if (isFestival) {
+      setFestivalSigunguCode('');
+      setFestivalSort('START_DATE_ASC');
+      setFestivalSchedule('ALL');
+      setMatchableOnly(false);
+    } else {
+      setSpotSigunguCode('');
+      setSpotSort('TITLE_ASC');
+    }
   }
+
+  const regionOptions = (regions: RegionOption[]) => [
+    { value: '', label: '전체 지역' },
+    ...regions.map((region) => ({
+      value: region.sigunguCode,
+      label: `${region.name} (${region.count})`,
+    })),
+  ];
 
   return (
     <MobileLayout>
@@ -128,10 +252,10 @@ export default function ExploreListPage() {
           ))}
         </div>
 
-        {/* 2Depth 카테고리 칩 (축제 세그먼트는 아직 카테고리 데이터가 없어 숨김) */}
-        {categoryChips.length > 0 && (
+        {/* 2Depth 카테고리 칩 (축제는 카테고리 데이터가 없어 숨김 — raw_data의 cat1~3이 전부 null) */}
+        {!isFestival && (
           <div className="hscroll -mx-5 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none]">
-            {categoryChips.map((c) => (
+            {SPOT_CATEGORIES.map((c) => (
               <button
                 key={c.label}
                 type="button"
@@ -146,51 +270,101 @@ export default function ExploreListPage() {
           </div>
         )}
 
-        {/* 조건 필터 행 (연동 예정 — 현재는 표시만) */}
-        <div className="-mt-1.5 flex items-center gap-1.5">
-          {filterLabels.map((label) => (
-            <button
-              key={label}
-              type="button"
-              className="flex shrink-0 items-center gap-[3px] rounded-lg border border-line bg-sand px-2.5 py-[5px] text-xs font-medium text-ink/70"
-            >
-              {label}
-              <ChevronDown size={12} className="text-ink/45" />
-            </button>
-          ))}
-          <button
-            type="button"
-            className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-sand px-2.5 py-[5px] text-xs font-medium text-ink/70"
-          >
-            <SlidersHorizontal size={12} />
-            필터
-          </button>
+        {/* 조건 필터 행 */}
+        <div className="-mt-1 flex flex-wrap items-center gap-1.5">
+          {isFestival ? (
+            <>
+              <FilterSelect
+                label="지역"
+                value={festivalSigunguCode}
+                options={regionOptions(festivalRegions)}
+                onChange={setFestivalSigunguCode}
+              />
+              <FilterSelect
+                label="일정"
+                value={festivalSchedule}
+                options={FESTIVAL_SCHEDULES.map((s) => ({ value: s.value, label: s.label }))}
+                onChange={(value) => setFestivalSchedule(value as FestivalScheduleFilter)}
+              />
+              <FilterSelect
+                label="정렬"
+                value={festivalSort}
+                options={FESTIVAL_SORTS.map((s) => ({ value: s.value, label: s.label }))}
+                onChange={(value) => setFestivalSort(value as FestivalListSort)}
+              />
+              <button
+                type="button"
+                onClick={() => setMatchableOnly((current) => !current)}
+                className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-[5px] text-xs font-medium ${
+                  matchableOnly
+                    ? 'border-coral bg-coral/10 text-coral'
+                    : 'border-line bg-sand text-ink/70'
+                }`}
+              >
+                <SlidersHorizontal size={12} />
+                매칭 가능
+              </button>
+            </>
+          ) : (
+            <>
+              <FilterSelect
+                label="지역"
+                value={spotSigunguCode}
+                options={regionOptions(spotRegions)}
+                onChange={setSpotSigunguCode}
+              />
+              <FilterSelect
+                label="정렬"
+                value={spotSort}
+                options={SPOT_SORTS.map((s) => ({ value: s.value, label: s.label }))}
+                onChange={(value) => setSpotSort(value as TourPlaceListSort)}
+              />
+            </>
+          )}
         </div>
 
-        {/* 로딩 */}
-        {isLoadingCurrentSegment && (
+        {/* 첫 페이지 로딩 */}
+        {isInitialLoading && (
           <p className="py-12 text-center text-[13px] text-ink/45">불러오는 중이에요...</p>
         )}
 
+        {/* 조회 실패 */}
+        {isError && (
+          <div className="flex flex-col items-center gap-3 py-12">
+            <p className="text-sm text-ink/45">목록을 불러오지 못했어요.</p>
+            <button
+              type="button"
+              onClick={() => void active.reload()}
+              className="flex items-center gap-1.5 rounded-full border border-line bg-white px-5 py-2.5 text-[13px] font-bold text-ink"
+            >
+              <RotateCw size={14} />
+              다시 시도
+            </button>
+          </div>
+        )}
+
         {/* 결과 요약 */}
-        {!isEmpty && !isLoadingCurrentSegment && (
+        {!isEmpty && !isInitialLoading && !isError && (
           <div className="-mt-1 flex items-center justify-between">
             <span className="text-[13px] text-ink/60">
-              {isFestival ? `현재 진행 중인 축제 ${resultCount}개` : `주변 장소 ${resultCount}개`}
-            </span>
-            <span className="flex items-center gap-0.5 text-xs text-ink/45">
-              가까운 순
-              <ChevronDown size={12} />
+              {isFestival ? `축제 ${resultCount}개` : `관광지 ${resultCount}개`}
             </span>
           </div>
         )}
 
         {/* 결과 목록 */}
-        {!isEmpty && !isLoadingCurrentSegment && (
+        {!isEmpty && !isInitialLoading && !isError && (
           <div className="flex flex-col gap-2.5">
             {isFestival
-              ? festivals.map((f) => <FestivalListItem key={f.id} festival={f} />)
+              ? festivalCards.map((f) => <FestivalListItemCard key={f.id} festival={f} />)
               : visibleSpots.map((s) => <ExploreSpotItem key={s.id} spot={s} />)}
+          </div>
+        )}
+
+        {/* 무한스크롤 sentinel — 화면에 들어오면 다음 20개를 요청한다 */}
+        {!isInitialLoading && !isError && active.state.hasNext && (
+          <div ref={sentinelRef} className="py-4 text-center text-xs text-ink/40">
+            {active.state.loadingMore ? '더 불러오는 중...' : ' '}
           </div>
         )}
 

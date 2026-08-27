@@ -50,6 +50,11 @@ export type FestivalListItem = {
   status: FestivalSyncStatus;
   originImageUrl: string | null;
   thumbnailUrl: string | null;
+  // 홈 화면이 브라우저에서 내 위치와의 거리를 계산하기 위한 좌표(mapX=경도, mapY=위도).
+  // 사용자 좌표는 서버로 보내지 않는다 —
+  // docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md 4.1 참고.
+  mapX: number | null;
+  mapY: number | null;
 };
 
 export type FestivalListResponse = {
@@ -92,12 +97,38 @@ export type SoloCourseResponse = {
   stops: SoloCourseStop[];
 };
 
+export type FestivalListSort = 'START_DATE_ASC' | 'END_DATE_ASC' | 'RECENTLY_ADDED';
+
+export type FestivalScheduleFilter = 'ALL' | 'ONGOING' | 'THIS_WEEKEND' | 'THIS_MONTH';
+
+export type FestivalListQuery = {
+  page?: number;
+  size?: number;
+  keyword?: string;
+  sigunguCode?: string;
+  sort?: FestivalListSort;
+  schedule?: FestivalScheduleFilter;
+  matchableOnly?: boolean;
+};
+
+/** 지역 선택 항목. 실제로 데이터가 있는 시군구만 서버가 내려준다. */
+export type RegionOption = {
+  sigunguCode: string;
+  name: string;
+  count: number;
+};
+
 export const festivalsApi = {
-  getList: (page = 0, size = 20, keyword?: string) => {
+  getList: (page = 0, size = 20, keyword?: string, query: FestivalListQuery = {}) => {
     const params = new URLSearchParams({ page: String(page), size: String(size) });
     if (keyword) params.set('keyword', keyword);
+    if (query.sigunguCode) params.set('sigunguCode', query.sigunguCode);
+    if (query.sort) params.set('sort', query.sort);
+    if (query.schedule) params.set('schedule', query.schedule);
+    if (query.matchableOnly) params.set('matchableOnly', 'true');
     return apiClient<FestivalListResponse>(`/api/festivals?${params.toString()}`);
   },
+  getRegions: () => apiClient<RegionOption[]>('/api/festivals/regions'),
   getDetail: (id: number) => apiClient<FestivalDetail>(`/api/festivals/${id}`),
   getNearbyTourPlaces: (id: number, radiusMeters = 5000, limit = 10) =>
     apiClient<NearbyTourPlaceItem[]>(

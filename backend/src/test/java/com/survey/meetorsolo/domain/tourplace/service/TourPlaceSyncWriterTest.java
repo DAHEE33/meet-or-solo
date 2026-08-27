@@ -104,6 +104,8 @@ class TourPlaceSyncWriterTest {
                 "12",
                 title,
                 "강원특별자치도 테스트시",
+                "51",
+                "110",
                 null,
                 null,
                 null,

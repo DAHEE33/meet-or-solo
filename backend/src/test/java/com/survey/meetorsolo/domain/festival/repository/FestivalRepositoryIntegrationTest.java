@@ -2,6 +2,8 @@ package com.survey.meetorsolo.domain.festival.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -55,7 +57,9 @@ class FestivalRepositoryIntegrationTest {
     @Test
     void findVisibleFestivals는_ACTIVE만_요약_정보_프로젝션으로_반환한다() {
         var page = festivals.findVisibleFestivals(
-                FestivalStatus.ACTIVE, LocalDate.now(), "", PageRequest.of(0, 10));
+                FestivalStatus.ACTIVE, LocalDate.now(), "", null,
+                LocalDate.now(), FestivalScheduleFilter.MAX_SCHEDULE_DATE, 0, FestivalMeetingPointStatus.ACTIVE,
+                PageRequest.of(0, 10));
 
         assertThat(page.getContent())
                 .extracting(summary -> summary.contentId())

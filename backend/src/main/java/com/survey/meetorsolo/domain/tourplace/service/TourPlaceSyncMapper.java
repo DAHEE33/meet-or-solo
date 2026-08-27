@@ -55,6 +55,8 @@ public class TourPlaceSyncMapper {
                 contentTypeId,
                 truncate(title, 255),
                 truncate(joinAddress(item.address1(), item.address2()), 500),
+                truncate(normalize(item.regionCode()), 20),
+                truncate(normalize(item.sigunguCode()), 20),
                 parseCoordinate(item.mapX(), new BigDecimal("-180"), new BigDecimal("180")),
                 parseCoordinate(item.mapY(), new BigDecimal("-90"), new BigDecimal("90")),
                 truncate(normalize(item.telephone()), 100),

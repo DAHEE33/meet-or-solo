@@ -227,6 +227,8 @@ class SoloCourseServiceTest {
                 contentTypeId,
                 "테스트 관광지 " + id,
                 "강원특별자치도 테스트시",
+                "51",
+                "110",
                 lon,
                 FESTIVAL_LAT,
                 null,

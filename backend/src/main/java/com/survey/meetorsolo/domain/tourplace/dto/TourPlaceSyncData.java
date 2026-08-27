@@ -12,6 +12,8 @@ public record TourPlaceSyncData(
         String contentTypeId,
         String title,
         String address,
+        String regionCode,
+        String sigunguCode,
         BigDecimal mapX,
         BigDecimal mapY,
         String tel,

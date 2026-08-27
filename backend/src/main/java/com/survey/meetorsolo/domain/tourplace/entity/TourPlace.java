@@ -46,6 +46,14 @@ public class TourPlace {
     @Column(length = 500)
     private String address;
 
+    /** TourAPI 법정동 시도 코드(lDongRegnCd). 지역 필터용이며 V23에서 추가됐다. */
+    @Column(name = "area_code", length = 20)
+    private String areaCode;
+
+    /** TourAPI 법정동 시군구 코드(lDongSignguCd). 지역 필터용이며 V23에서 추가됐다. */
+    @Column(name = "sigungu_code", length = 20)
+    private String sigunguCode;
+
     @Column(name = "map_x", precision = 13, scale = 10)
     private BigDecimal mapX;
 
@@ -96,6 +104,8 @@ public class TourPlace {
         this.contentTypeId = data.contentTypeId();
         this.title = data.title();
         this.address = data.address();
+        this.areaCode = data.regionCode();
+        this.sigunguCode = data.sigunguCode();
         this.mapX = data.mapX();
         this.mapY = data.mapY();
         this.tel = data.tel();
@@ -137,6 +147,14 @@ public class TourPlace {
 
     public String getAddress() {
         return address;
+    }
+
+    public String getAreaCode() {
+        return areaCode;
+    }
+
+    public String getSigunguCode() {
+        return sigunguCode;
     }
 
     public BigDecimal getMapX() {

@@ -10,6 +10,8 @@ import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.dto.FestivalProgramItem;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseStopResponse;
@@ -21,6 +23,7 @@ import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
 import com.survey.meetorsolo.global.config.SecurityConfig;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,7 +63,11 @@ class FestivalControllerTest {
                         LocalDate.of(2026, 7, 22),
                         FestivalStatus.ACTIVE,
                         "https://example.com/origin.jpg",
-                        "https://example.com/thumbnail.jpg"
+                        "https://example.com/thumbnail.jpg",
+
+                        new BigDecimal("127.7300000000"),
+
+                        new BigDecimal("37.8813000000")
                 )),
                 0,
                 20,
@@ -72,7 +79,7 @@ class FestivalControllerTest {
 
     @Test
     void 축제_목록을_공통_응답_형식으로_반환한다() throws Exception {
-        when(festivalQueryService.getActiveFestivals(0, 20, null)).thenReturn(listResponse);
+        when(festivalQueryService.getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
 
         mockMvc.perform(get("/api/festivals"))
                 .andExpect(status().isOk())
@@ -82,17 +89,17 @@ class FestivalControllerTest {
                         .value("https://example.com/thumbnail.jpg"))
                 .andExpect(jsonPath("$.data.page").value(0))
                 .andExpect(jsonPath("$.data.totalElements").value(1));
-        verify(festivalQueryService).getActiveFestivals(0, 20, null);
+        verify(festivalQueryService).getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
     }
 
     @Test
     void keyword_파라미터를_그대로_전달한다() throws Exception {
-        when(festivalQueryService.getActiveFestivals(0, 20, "봄")).thenReturn(listResponse);
+        when(festivalQueryService.getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
 
         mockMvc.perform(get("/api/festivals").param("keyword", "봄"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-        verify(festivalQueryService).getActiveFestivals(0, 20, "봄");
+        verify(festivalQueryService).getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
     }
 
     @Test

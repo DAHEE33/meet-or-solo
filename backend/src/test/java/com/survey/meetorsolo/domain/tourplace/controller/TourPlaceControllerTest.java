@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListSort;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
 import com.survey.meetorsolo.domain.tourplace.service.TourPlaceQueryService;
 import com.survey.meetorsolo.global.config.SecurityConfig;
@@ -53,25 +54,25 @@ class TourPlaceControllerTest {
                 1,
                 false
         );
-        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), isNull())).thenReturn(listResponse);
+        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), isNull(), isNull(), eq(TourPlaceListSort.TITLE_ASC))).thenReturn(listResponse);
 
         mockMvc.perform(get("/api/spots"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.items[0].title").value("테스트 관광지"));
-        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, null);
+        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, null, null, TourPlaceListSort.TITLE_ASC);
     }
 
     @Test
     void keyword_파라미터를_그대로_전달한다() throws Exception {
         TourPlaceListResponse listResponse = new TourPlaceListResponse(List.of(), 0, 20, 0, 0, false);
-        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), eq("맛집")))
+        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), eq("맛집"), isNull(), eq(TourPlaceListSort.TITLE_ASC)))
                 .thenReturn(listResponse);
 
         mockMvc.perform(get("/api/spots").param("keyword", "맛집"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, "맛집");
+        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, "맛집", null, TourPlaceListSort.TITLE_ASC);
     }
 
     @Test

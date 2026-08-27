@@ -2,11 +2,14 @@ package com.survey.meetorsolo.domain.festival.controller;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseType;
 import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
 import com.survey.meetorsolo.domain.festival.service.SoloCourseService;
 import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.response.ApiResponse;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -31,6 +34,10 @@ public class FestivalController {
         this.soloCourseService = soloCourseService;
     }
 
+    /**
+     * 축제 목록. 정렬·일정·지역 파라미터는 모두 선택이며, 아무것도 넘기지 않으면 기존과 동일한
+     * 결과(시작일 오름차순, 필터 없음)를 반환한다.
+     */
     @GetMapping
     public ApiResponse<FestivalListResponse> getFestivals(
             @RequestParam(defaultValue = "0")
@@ -38,9 +45,21 @@ public class FestivalController {
             @RequestParam(defaultValue = "20")
             @Min(value = 1, message = "size는 1 이상이어야 합니다.")
             @Max(value = 100, message = "size는 100 이하여야 합니다.") int size,
-            @RequestParam(required = false) String keyword
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String sigunguCode,
+            @RequestParam(defaultValue = "START_DATE_ASC") FestivalListSort sort,
+            @RequestParam(defaultValue = "ALL") FestivalScheduleFilter schedule,
+            @RequestParam(defaultValue = "false") boolean matchableOnly
     ) {
-        return ApiResponse.success(festivalQueryService.getActiveFestivals(page, size, keyword));
+        return ApiResponse.success(festivalQueryService.getActiveFestivals(
+                page, size, keyword, sigunguCode, sort, schedule, matchableOnly
+        ));
+    }
+
+    /** 지역 선택 UI용 시군구 목록. 실제로 축제가 있는 지역만 내려간다. */
+    @GetMapping("/regions")
+    public ApiResponse<List<RegionOptionResponse>> getFestivalRegions() {
+        return ApiResponse.success(festivalQueryService.getFestivalRegions());
     }
 
     @GetMapping("/{id}")

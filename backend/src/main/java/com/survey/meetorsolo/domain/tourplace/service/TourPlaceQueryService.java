@@ -9,19 +9,21 @@ import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListSort;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
 import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
+import com.survey.meetorsolo.global.region.RegionNameResolver;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,15 +45,20 @@ public class TourPlaceQueryService {
     }
 
     @Transactional(readOnly = true)
-    public TourPlaceListResponse getVisiblePlaces(int page, int size, String contentTypeId, String keyword) {
-        PageRequest pageRequest = PageRequest.of(
-                page,
-                size,
-                Sort.by(Sort.Order.asc("title"), Sort.Order.asc("id"))
-        );
+    public TourPlaceListResponse getVisiblePlaces(
+            int page,
+            int size,
+            String contentTypeId,
+            String keyword,
+            String sigunguCode,
+            TourPlaceListSort sort
+    ) {
+        TourPlaceListSort effectiveSort = sort == null ? TourPlaceListSort.TITLE_ASC : sort;
+        PageRequest pageRequest = PageRequest.of(page, size, effectiveSort.sort());
         Page<TourPlaceListItemResponse> placePage = tourPlaceRepository.findVisiblePlaces(
                 TourPlaceStatus.ACTIVE,
                 normalizeOrNull(contentTypeId),
+                normalizeOrNull(sigunguCode),
                 normalizeKeyword(keyword),
                 pageRequest
         );
@@ -145,6 +152,20 @@ public class TourPlaceQueryService {
             return null;
         }
         return value.trim();
+    }
+
+    /**
+     * 지역 선택 UI용 시군구 목록. 카테고리를 함께 넘기면 그 카테고리에 실제로 장소가 있는
+     * 지역만 반환하므로, 선택했을 때 빈 결과가 나오는 조합이 노출되지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public List<RegionOptionResponse> getTourPlaceRegions(String contentTypeId) {
+        return RegionNameResolver.toOptions(
+                tourPlaceRepository.aggregateVisibleRegions(
+                        TourPlaceStatus.ACTIVE,
+                        normalizeOrNull(contentTypeId)
+                )
+        );
     }
 
     /**

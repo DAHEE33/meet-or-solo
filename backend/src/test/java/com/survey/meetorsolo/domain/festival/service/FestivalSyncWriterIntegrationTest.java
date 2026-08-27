@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -115,6 +117,11 @@ class FestivalSyncWriterIntegrationTest {
                 FestivalStatus.ACTIVE,
                 today,
                 "",
+                null,
+                today,
+                FestivalScheduleFilter.MAX_SCHEDULE_DATE,
+                 0,
+                FestivalMeetingPointStatus.ACTIVE,
                 PageRequest.of(0, 10_000)
         );
 

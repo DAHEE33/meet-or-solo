@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.tourplace.repository;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
+import com.survey.meetorsolo.global.region.RegionAggregate;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -34,13 +35,34 @@ public interface TourPlaceRepository extends JpaRepository<TourPlace, Long> {
             from TourPlace place
             where place.status = :status
               and (:contentTypeId is null or place.contentTypeId = :contentTypeId)
+              and (:sigunguCode is null or place.sigunguCode = :sigunguCode)
               and lower(place.title) like lower(concat('%', :keyword, '%'))
             """)
     Page<TourPlaceListItemResponse> findVisiblePlaces(
             @Param("status") TourPlaceStatus status,
             @Param("contentTypeId") String contentTypeId,
+            @Param("sigunguCode") String sigunguCode,
             @Param("keyword") String keyword,
             Pageable pageable
+    );
+
+    /**
+     * 지역 선택 UI용 시군구 집계. 축제 쪽 {@code aggregateVisibleRegions}와 같은 방식으로
+     * 대표 주소를 함께 가져와 이름을 뽑는다(시군구 이름이 DB에 없다).
+     */
+    @Query("""
+            select new com.survey.meetorsolo.global.region.RegionAggregate(
+                place.sigunguCode, min(place.address), count(place.id))
+            from TourPlace place
+            where place.status = :status
+              and (:contentTypeId is null or place.contentTypeId = :contentTypeId)
+              and place.sigunguCode is not null
+              and place.address is not null
+            group by place.sigunguCode
+            """)
+    List<RegionAggregate> aggregateVisibleRegions(
+            @Param("status") TourPlaceStatus status,
+            @Param("contentTypeId") String contentTypeId
     );
 
     @Query("""

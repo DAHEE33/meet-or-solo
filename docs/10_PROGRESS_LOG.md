@@ -1,5 +1,104 @@
 # 진행 상태 기록
 
+## [10-A 후속 9] 축제·관광지 목록 지역·정렬·일정 필터와 무한스크롤, 홈 최근접 축제
+
+상태: 구현 완료. Docker 미설치로 Testcontainers 통합 테스트 미실행, dev 배포·두 브라우저 수동 검증 전
+
+- 사전 설계는 `docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md`로 정리했다. `docs/13` 3.5/7장에서
+  보류했던 `region`/`sort` 파라미터를 이번에 확정해 구현했다.
+- **확정된 정책 제약: GPS 좌표를 서버로 전송하지 않는다.** `docs/06_SECURITY_POLICY.md`는 갱신하지
+  않았다. 그 결과 관광지 목록의 "내 위치 기준 / 반경 10·50·100km / 가까운순·먼순"은 범위에서
+  제외했고(4,020건이라 서버 계산이 불가피 → 좌표 전송 필요), 관광지는 **지역 선택 단일 모드**가
+  됐다. 기존 체크인의 좌표 전송은 정책이 이미 허용한 용도라 그대로 유지했다.
+- 홈 화면 최근접 축제는 **클라이언트 계산**으로 구현했다. 서버는 목록 응답에 `mapX`/`mapY`만
+  추가하고, 브라우저가 `utils/geo.ts`의 haversine으로 최근접 축제를 고른다. 좌표가 기기를 벗어나지
+  않으므로 정책·신고 이슈가 없다. ACTIVE 축제가 15건이라 이 방식이 성립한다.
+  - 폴백 순서: GPS 허용 → 최근접 축제 / 권한거부·타임아웃·미지원·좌표없음 → 기존 로직(진행중
+    첫 번째 ?? 예정 첫 번째). **권한을 거부한 사용자의 화면은 이전과 완전히 동일하다.**
+  - 앱 자체 동의 모달은 두지 않았다 — 좌표 전송이 없어 법적 동의 대상이 아니고 브라우저
+    권한창이 이미 그 역할을 한다. `localStorage` 신규 사용도 피했다.
+  - `HomePage.tsx`에 하드코딩돼 있던 `전북 전주시의 축제`(데이터는 강원인데 전북으로 표기돼
+    있던 장식용 버튼)를 실제 시군구명으로 교체했다. 폴백 상태에서는 기준 지역이 없어 숨긴다.
+- **지역 단위는 도가 아니라 시군구다.** dev DB 실측 결과 `festivals.area_code`는 33/34건이 `51`,
+  `tour_places`의 `lDongRegnCd`는 4,020건 전부 `51`(강원)이라 도 단위 선택지가 1개뿐이다. 시군구는
+  18개로 나뉘어 실제로 의미가 있다. 전국 확장은 별도 과제로 남겼다(설계 문서 10장).
+- `V23__add_tour_place_region_codes.sql`: `tour_places`에 `area_code`/`sigungu_code` 추가 +
+  `raw_data`의 `lDongRegnCd`/`lDongSignguCd`로 백필 + `(status, sigungu_code)` 인덱스.
+  **TourAPI 재호출 없이 기존 4,020건을 그대로 채운다.** `TourPlaceSyncData`/`TourPlaceSyncMapper`도
+  앞으로 두 컬럼을 저장하도록 고쳤다(`SearchTourPlaceItem`은 이미 값을 노출하는데 버려지고 있었다).
+- API 변경(추가만, 기존 필드·기본값은 그대로):
+  - `GET /api/festivals`에 `sigunguCode`, `sort`(`START_DATE_ASC`/`END_DATE_ASC`/`RECENTLY_ADDED`),
+    `schedule`(`ALL`/`ONGOING`/`THIS_WEEKEND`/`THIS_MONTH`), `matchableOnly` 추가. 응답 `items[]`에
+    `mapX`/`mapY` 추가.
+  - `GET /api/spots`에 `sigunguCode`, `sort`(`TITLE_ASC`/`RECENTLY_ADDED`) 추가.
+  - `GET /api/festivals/regions`, `GET /api/spots/regions` 신규 — **실제 데이터에 존재하는 시군구만**
+    건수와 함께 반환한다. 시군구 이름이 DB에 없어(원본 raw_data에도 없다) 그룹별 대표 주소의 두
+    번째 토큰에서 뽑는다(`global/region/RegionNameResolver`). 시도 표기가 `강원특별자치도`/`강원`으로
+    섞여 있어 첫 토큰은 쓰지 않는다.
+  - 파라미터를 아무것도 안 보내면 기존과 동일한 응답이 나온다(정렬 기본값 유지).
+- 추가 필터는 **일정**과 **매칭 가능한 축제만** 2개를 채택했다. 축제 카테고리는
+  `raw_data`의 `cat1`/`cat2`/`cat3`가 33건 전부 `null`이라 불가, 무료/유료·실내외는 `detailIntro2`에만
+  있고 DB 미저장이라 불가로 판정했다.
+- 무한스크롤(20개 단위)은 **백엔드 변경 없이** 구현했다. 응답에 `hasNext`가 이미 있는데 화면에서
+  쓰지 않고 있었을 뿐이다. `hooks/useInfiniteList.ts`(누적·리셋·중복요청 차단) +
+  `hooks/useInfiniteScrollSentinel.ts`(IntersectionObserver)로 분리했다. 프론트에 무한스크롤 선례가
+  없어 신규 패턴이다.
+  - 필터·검색·정렬·세그먼트가 바뀌면 `page=0`으로 리셋하고 누적 배열을 비운다.
+  - offset 페이징의 중복/누락 위험은 동기화 주기가 6~12시간이라 감수하고 문서에 남겼다.
+- `ExploreListPage`에서 동작하지 않던 표시용 칩을 정리했다. 장식용 `<span>` "가까운 순"과
+  관광지의 "현재 위치"·"거리" 칩을 제거하고, 실제 동작하는 지역·일정·정렬·매칭가능 필터로
+  교체했다(`components/explore/FilterSelect.tsx` 신규). 기존 `getList(0, 100)` 고정 조회도 없앴다.
+- 정렬 키에는 항상 `id`를 tie-breaker로 붙였다. 무한스크롤에서 정렬이 불안정하면 페이지 경계에서
+  항목이 중복·누락된다.
+- `FestivalRepository.findVisibleFestivals`의 `matchableOnly`는 boolean이 아니라 `int`(0/1)로
+  넘긴다. JPQL에서 boolean 파라미터를 리터럴과 비교할 때 타입 추론이 흔들릴 수 있어, `keyword`에서
+  이미 겪은 것과 같은 종류의 문제를 피했다.
+- 테스트: `FestivalScheduleFilterTest`(주말·월말·윤년 경계), `RegionNameResolverTest`,
+  `geo.test.ts`(서버 haversine과 값 대조), `homeFestival.test.ts`(폴백 4분기),
+  `useInfiniteList.test.ts`(누적·리셋·중복차단·실패유지) 신규. 기존 서비스/컨트롤러 테스트는 새
+  시그니처에 맞춰 수정하고 기본값 회귀 테스트를 추가했다.
+  - Frontend는 `tsc -b` 통과, vitest 273개 전부 통과.
+  - Backend 단위 테스트는 통과. **Testcontainers 통합 테스트는 이 PC에 Docker Desktop이 설치돼
+    있지 않아 실행하지 못했다** — `V23` 백필과 신규 JPQL(지역 필터, `exists` 서브쿼리, 집계
+    constructor expression)은 실제 PostgreSQL 검증이 남아 있다.
+  - `FestivalControllerTest`/`TourPlaceControllerTest`는 **이번 작업 전부터 깨져 있다**(`@WebMvcTest`
+    컨텍스트가 `JwtProvider` 빈을 못 찾음). HEAD에서도 동일하게 실패하는 것을 worktree로 확인했다.
+    이번 변경과 무관하며 별도 수정 과제다.
+- **구현 중 발견·수정한 버그: `LocalDate.MAX`로 인한 `GET /api/festivals` 500.**
+  일정 필터 `ALL`의 상한을 `LocalDate.MAX`(+999999999-12-31)로 뒀더니 PostgreSQL이
+  `ERROR: date out of range: "169104628-12-09 BC +09"`(SQLState 22008)로 거부했다. 이 프로젝트는
+  `hibernate.jdbc.time_zone: Asia/Seoul`로 타임존을 변환하는데, 최대 연도에 +9시간이 더해지며
+  오버플로가 나 BC 날짜로 뒤집히기 때문이다. `FestivalScheduleFilter.MAX_SCHEDULE_DATE`
+  (`9999-12-31`) 상수로 교체했다.
+  - 처음에 순수 JDBC로 `LocalDate.MAX` 바인딩을 시험했을 때는 통과했는데, 그 시험이 Hibernate의
+    타임존 변환 경로를 우회해서 **잘못된 검증**이었다. 이후 앱을 별도 포트(8099)로 띄워 실제
+    스택트레이스로 원인을 확정했다.
+- 실제 서버(로컬 backend + 터널 dev DB) 수동 검증 완료: 파라미터 없는 기본 조회, `sort` 3종,
+  `schedule` 4종, `matchableOnly`, `sigunguCode`, 조합 조회, `keyword`, 관광지 `sort`/`sigunguCode`/
+  `contentTypeId` 조합, 두 `regions` 엔드포인트가 모두 200이다. 잘못된 enum 값은 400을 반환한다.
+  `GET /api/spots/regions?contentTypeId=39`가 `강릉시 542` 등을 정확히 반환해 **V23 백필과 지역명
+  추출이 실데이터에서 동작함**을 확인했다.
+- 이번 범위에서 제외: 전국 동기화 확장(설계 문서 10.1의 관광지 INACTIVE 스윕 지역 범위화가 선행
+  필요 — 현재 구조로는 다중 지역 동기화 시 다른 도의 데이터가 전부 INACTIVE로 뒤집힌다),
+  좌표 이상치 4건 sync 검증, 일정 필터의 직접 날짜 지정 UI.
+
+## [10-A 후속 8] 홈 화면 첫 렌더 차단 제거
+
+상태: 구현 완료
+
+- `HomePage`가 프로필과 축제 목록을 `Promise.all`로 묶어, 둘 중 느린 쪽이 끝날 때까지 화면에
+  아무것도 그려지지 않았다. 한쪽이 실패하면 다른 쪽 데이터까지 버려졌다.
+- 두 요청을 독립 체인으로 분리해 각 응답이 도착하는 대로 렌더한다. 인사말 닉네임은 '여행자님'
+  폴백이 있어 프로필이 늦어도 화면이 성립한다. 프로필 조회 실패 시 축제 목록이 통째로 안 보이던
+  문제도 함께 해결됐다.
+- 배경: dev DB 실측 결과 이 프로젝트의 로컬 개발 구성(backend 로컬 + SSH 터널로 dev DB)에서는
+  쿼리 1건당 왕복이 약 150ms다. 서버 실행 시간은 2ms 미만이라 관측 지연의 대부분이 네트워크
+  왕복이고, 따라서 **왕복 횟수와 직렬 구조**가 체감을 지배한다. Tier A(후속 7)의 bounding box
+  최적화로 주변 관광지 조회는 1,596ms → 177ms로 줄었으나(4,020건 전송 → 38건), 목록 조회는
+  261ms → 130ms 수준이라 체감이 작았다.
+- `nearby-spots`의 직렬 요청은 화면 최하단 섹션을 채우므로 첫 화면 체감에 영향이 작아 그대로 뒀다.
+  없애려면 신규 집계 API와 백엔드에 화면 status 로직 복제가 필요해 비용 대비 효과가 낮다.
+
 ## [10-A 후속 7] festivals/tour_places 목록·반경 조회 성능 개선 1차(Tier A)
 
 상태: 구현 완료. 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, dev DB EXPLAIN 비교와 두 브라우저 수동 검증 전

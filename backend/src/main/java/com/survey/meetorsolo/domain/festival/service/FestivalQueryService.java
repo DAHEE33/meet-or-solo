@@ -4,9 +4,12 @@ import com.survey.meetorsolo.domain.festival.dto.FestivalDetailInfo;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
+import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
@@ -17,6 +20,8 @@ import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
+import com.survey.meetorsolo.global.region.RegionNameResolver;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.time.LocalDate;
 import java.util.Comparator;
@@ -25,7 +30,6 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,17 +54,30 @@ public class FestivalQueryService {
     }
 
     @Transactional(readOnly = true)
-    public FestivalListResponse getActiveFestivals(int page, int size, String keyword) {
-        PageRequest pageRequest = PageRequest.of(
-                page,
-                size,
-                Sort.by(Sort.Order.asc("eventStartDate"), Sort.Order.asc("id"))
-        );
+    public FestivalListResponse getActiveFestivals(
+            int page,
+            int size,
+            String keyword,
+            String sigunguCode,
+            FestivalListSort sort,
+            FestivalScheduleFilter schedule,
+            boolean matchableOnly
+    ) {
+        FestivalListSort effectiveSort = sort == null ? FestivalListSort.START_DATE_ASC : sort;
+        FestivalScheduleFilter effectiveSchedule =
+                schedule == null ? FestivalScheduleFilter.ALL : schedule;
+        PageRequest pageRequest = PageRequest.of(page, size, effectiveSort.sort());
         LocalDate today = LocalDate.now(SeoulDateTime.ZONE_ID);
+        FestivalScheduleFilter.DateWindow window = effectiveSchedule.window(today);
         Page<FestivalSummary> festivalPage = festivalRepository.findVisibleFestivals(
                 FestivalStatus.ACTIVE,
                 today,
                 normalize(keyword),
+                normalizeOrNull(sigunguCode),
+                window.start(),
+                window.end(),
+                matchableOnly ? 1 : 0,
+                FestivalMeetingPointStatus.ACTIVE,
                 pageRequest
         );
 
@@ -188,6 +205,28 @@ public class FestivalQueryService {
         return value.trim();
     }
 
+    /**
+     * 단순 동등 비교({@code =})만 하는 파라미터는 위 keyword와 달리 null 바인딩에 문제가 없어
+     * {@code :param is null or ...} 패턴을 그대로 쓴다(관광지 contentTypeId와 같은 방식).
+     */
+    private String normalizeOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    /** 지역 선택 UI용 시군구 목록. 실제 데이터에 존재하는 지역만 반환한다. */
+    @Transactional(readOnly = true)
+    public List<RegionOptionResponse> getFestivalRegions() {
+        return RegionNameResolver.toOptions(
+                festivalRepository.aggregateVisibleRegions(
+                        FestivalStatus.ACTIVE,
+                        LocalDate.now(SeoulDateTime.ZONE_ID)
+                )
+        );
+    }
+
     private FestivalListItemResponse toResponse(FestivalSummary festival, FestivalImage image) {
         return new FestivalListItemResponse(
                 festival.id(),
@@ -200,7 +239,9 @@ public class FestivalQueryService {
                 festival.eventEndDate(),
                 festival.status(),
                 image == null ? null : image.getOriginImageUrl(),
-                image == null ? null : image.getThumbnailUrl()
+                image == null ? null : image.getThumbnailUrl(),
+                festival.mapX(),
+                festival.mapY()
         );
     }
 }

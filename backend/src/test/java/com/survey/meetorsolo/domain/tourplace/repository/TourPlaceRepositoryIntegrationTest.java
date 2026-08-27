@@ -42,7 +42,7 @@ class TourPlaceRepositoryIntegrationTest {
 
     @Test
     void findVisiblePlaces는_ACTIVE만_목록_응답_프로젝션으로_반환한다() {
-        var page = places.findVisiblePlaces(TourPlaceStatus.ACTIVE, null, "", PageRequest.of(0, 10));
+        var page = places.findVisiblePlaces(TourPlaceStatus.ACTIVE, null, null, "", PageRequest.of(0, 10));
 
         assertThat(page.getContent())
                 .extracting(item -> item.contentId())

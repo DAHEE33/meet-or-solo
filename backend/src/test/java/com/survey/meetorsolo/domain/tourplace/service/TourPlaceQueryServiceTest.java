@@ -16,9 +16,12 @@ import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
+import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListSort;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
 import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
+import com.survey.meetorsolo.global.region.RegionAggregate;
+import com.survey.meetorsolo.global.region.RegionOptionResponse;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.math.BigDecimal;
@@ -28,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -61,11 +65,12 @@ class TourPlaceQueryServiceTest {
         when(tourPlaceRepository.findVisiblePlaces(
                 eq(TourPlaceStatus.ACTIVE),
                 isNull(),
+                isNull(),
                 eq(""),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(place), pageRequest, 1));
 
-        TourPlaceListResponse result = service().getVisiblePlaces(0, 20, null, null);
+        TourPlaceListResponse result = service().getVisiblePlaces(0, 20, null, null, null, null);
 
         assertThat(result.items())
                 .singleElement()
@@ -82,13 +87,14 @@ class TourPlaceQueryServiceTest {
         when(tourPlaceRepository.findVisiblePlaces(
                 eq(TourPlaceStatus.ACTIVE),
                 eq("12"),
+                isNull(),
                 eq("관광지"),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
 
-        service().getVisiblePlaces(0, 20, "  12  ", "  관광지  ");
+        service().getVisiblePlaces(0, 20, "  12  ", "  관광지  ", null, null);
 
-        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), eq("12"), eq("관광지"), any(Pageable.class));
+        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), eq("12"), isNull(), eq("관광지"), any(Pageable.class));
     }
 
     @Test
@@ -99,13 +105,82 @@ class TourPlaceQueryServiceTest {
         when(tourPlaceRepository.findVisiblePlaces(
                 eq(TourPlaceStatus.ACTIVE),
                 isNull(),
+                isNull(),
                 eq(""),
                 any(Pageable.class)
         )).thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
 
-        service().getVisiblePlaces(0, 20, "   ", "   ");
+        service().getVisiblePlaces(0, 20, "   ", "   ", null, null);
 
-        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), isNull(), eq(""), any(Pageable.class));
+        verify(tourPlaceRepository).findVisiblePlaces(eq(TourPlaceStatus.ACTIVE), isNull(), isNull(), eq(""), any(Pageable.class));
+    }
+
+    @Test
+    void sort가_null이면_기존_동작과_같은_제목_오름차순을_쓴다() {
+        // 신규 파라미터를 안 넘긴 클라이언트가 이전과 같은 결과를 받아야 한다(회귀 방지).
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        stubEmptyPage();
+
+        service().getVisiblePlaces(0, 20, null, null, null, null);
+
+        verify(tourPlaceRepository).findVisiblePlaces(any(), any(), any(), any(), pageable.capture());
+        assertThat(pageable.getValue().getSort()).isEqualTo(TourPlaceListSort.TITLE_ASC.sort());
+    }
+
+    @Test
+    void sort가_주어지면_해당_정렬로_페이지를_요청한다() {
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        stubEmptyPage();
+
+        service().getVisiblePlaces(0, 20, null, null, null, TourPlaceListSort.RECENTLY_ADDED);
+
+        verify(tourPlaceRepository).findVisiblePlaces(any(), any(), any(), any(), pageable.capture());
+        assertThat(pageable.getValue().getSort())
+                .isEqualTo(TourPlaceListSort.RECENTLY_ADDED.sort());
+    }
+
+    @Test
+    void sigunguCode는_트림_후_전달되고_공백뿐이면_null로_전달한다() {
+        stubEmptyPage();
+        TourPlaceQueryService service = service();
+
+        service.getVisiblePlaces(0, 20, null, null, "  150  ", null);
+        service.getVisiblePlaces(0, 20, null, null, "   ", null);
+
+        verify(tourPlaceRepository).findVisiblePlaces(any(), any(), eq("150"), any(), any());
+        verify(tourPlaceRepository).findVisiblePlaces(any(), any(), isNull(), any(), any());
+    }
+
+    @Test
+    void 지역_목록은_데이터에_있는_시군구만_이름과_함께_반환한다() {
+        when(tourPlaceRepository.aggregateVisibleRegions(eq(TourPlaceStatus.ACTIVE), isNull()))
+                .thenReturn(List.of(
+                        new RegionAggregate("760", "강원특별자치도 평창군 대관령면 1", 523L),
+                        new RegionAggregate("150", "강원특별자치도 강릉시 창해로 514", 782L),
+                        new RegionAggregate("999", null, 1L)
+                ));
+
+        var regions = service().getTourPlaceRegions(null);
+
+        assertThat(regions).extracting(RegionOptionResponse::name)
+                .containsExactly("강릉시", "평창군");
+        assertThat(regions).extracting(RegionOptionResponse::sigunguCode)
+                .doesNotContain("999");
+    }
+
+    @Test
+    void 지역_목록_조회에_contentTypeId를_트림해서_전달한다() {
+        when(tourPlaceRepository.aggregateVisibleRegions(eq(TourPlaceStatus.ACTIVE), eq("39")))
+                .thenReturn(List.of());
+
+        service().getTourPlaceRegions("  39  ");
+
+        verify(tourPlaceRepository).aggregateVisibleRegions(TourPlaceStatus.ACTIVE, "39");
+    }
+
+    private void stubEmptyPage() {
+        when(tourPlaceRepository.findVisiblePlaces(any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
     }
 
     @Test
@@ -180,6 +255,8 @@ class TourPlaceQueryServiceTest {
                 "12",
                 title,
                 "강원특별자치도 테스트시",
+                "51",
+                "110",
                 mapX,
                 mapY,
                 null,
