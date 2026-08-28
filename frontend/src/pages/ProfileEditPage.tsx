@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   memberProfileApi,
   type AgeRange,
@@ -23,6 +23,12 @@ import AiConsentSection, {
   type AiConsentDraft,
 } from '../components/consent/AiConsentSection';
 import PreferenceInputSection from '../components/preference/PreferenceInputSection';
+import {
+  preferenceStateOf,
+  preferenceStatusLabel,
+  preferenceStatusTone,
+  readPreferenceReturnTo,
+} from '../components/preference/preferenceStatus';
 import {
   EMPTY_PREFERENCE_DRAFT,
   PREFERENCE_TEXT_MAX_LENGTH,
@@ -59,6 +65,9 @@ const AGE_RANGES: { value: AgeRange; label: string }[] = [
 
 export default function ProfileEditPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  /** 매칭 신청 화면의 안내에서 넘어왔으면 돌아갈 경로. 직접 들어왔으면 null이다. */
+  const returnTo = readPreferenceReturnTo(location.state);
   const [nickname, setNickname] = useState('');
   const [email, setEmail] = useState('');
   const [intro, setIntro] = useState('');
@@ -352,6 +361,11 @@ export default function ProfileEditPage() {
               <p className="text-[13px] text-ink/40">불러오는 중...</p>
             ) : (
               <>
+                {returnTo && !prefSaved && (
+                  <p className="rounded-2xl bg-sand px-4 py-3 text-[13px] leading-relaxed text-ink/60">
+                    취향을 저장하면 매칭 화면으로 돌아갈 수 있어요.
+                  </p>
+                )}
                 {!hasAiConsent && (
                   <>
                     <div className="flex flex-col gap-1">
@@ -376,11 +390,9 @@ export default function ProfileEditPage() {
                 <div className="flex items-center gap-2">
                   {prefStatus && (
                     <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
-                      prefStatus === 'COMPLETED' ? 'bg-teal/10 text-teal' :
-                      prefStatus === 'FAILED' ? 'bg-coral/10 text-coral' :
-                      'bg-sand text-ink/50'
+                      preferenceStatusTone(preferenceStateOf(prefStatus))
                     }`}>
-                      {prefStatus === 'COMPLETED' ? '분석 완료' : prefStatus === 'FAILED' ? '분석 실패' : '분석 중'}
+                      {preferenceStatusLabel(preferenceStateOf(prefStatus))}
                     </span>
                   )}
                   <span className="flex-1" />
@@ -405,9 +417,25 @@ export default function ProfileEditPage() {
                   <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
                 )}
                 {prefSaved && !prefError && (
-                  <p role="status" className="rounded-2xl bg-teal/10 px-4 py-3 text-sm text-teal">
-                    저장했어요. 이 화면에서 계속 고칠 수 있어요.
-                  </p>
+                  returnTo ? (
+                    // 매칭하려다 들어온 사람은 저장 후 원래 하려던 일로 돌아갈 수 있어야 한다.
+                    <div className="flex flex-col gap-2.5 rounded-2xl bg-teal/10 px-4 py-3.5">
+                      <p role="status" className="text-sm text-teal">
+                        저장했어요. 이제 더 잘 맞는 사람을 찾을 수 있어요.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => navigate(returnTo, { replace: true })}
+                        className="rounded-xl bg-coral py-2.5 text-[14px] font-bold text-white active:bg-coral/80"
+                      >
+                        매칭 신청하러 가기
+                      </button>
+                    </div>
+                  ) : (
+                    <p role="status" className="rounded-2xl bg-teal/10 px-4 py-3 text-sm text-teal">
+                      저장했어요. 이 화면에서 계속 고칠 수 있어요.
+                    </p>
+                  )
                 )}
               </>
             )}
