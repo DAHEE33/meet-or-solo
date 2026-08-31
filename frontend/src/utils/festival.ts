@@ -100,6 +100,33 @@ export function mapFestivalListItemToFestival(item: FestivalListItem): Festival 
   };
 }
 
+/**
+ * 축제 상세 응답(`FestivalDetail`)을 화면 canonical 타입 `Festival`로 변환한다.
+ * 홈 화면이 체크인한 축제를 히어로 카드로 그릴 때 쓴다 — 체크인 응답에는 축제 id/이름만 있어
+ * 카드에 필요한 기간·이미지를 상세에서 가져와야 한다.
+ * 목록 매퍼와 같은 규칙으로 status/ddayLabel/기간을 계산한다.
+ */
+export function mapFestivalDetailToFestival(detail: FestivalDetail): Festival {
+  return {
+    id: detail.id,
+    name: detail.title,
+    status: resolveDisplayStatus(detail),
+    ddayLabel: resolveDdayLabel(detail),
+    periodShort: formatFestivalPeriodShort(detail),
+    periodFull: formatFestivalPeriod(detail),
+    address: detail.address ?? '',
+    intro: detail.intro,
+    thumbnailUrl: detail.thumbnailUrl ?? detail.originImageUrl ?? null,
+    infoItems: detail.infoItems.map((item) => ({ label: item.label, value: item.value })),
+    programs: detail.programs.map((program) => ({
+      name: program.name,
+      desc: program.description,
+      time: program.time,
+    })),
+    nearbyPlaces: [],
+  };
+}
+
 /** 관광지 상세 "이 장소 주변에서 열리는 축제"용 — 관광지 좌표 기준 거리(km)를 함께 계산한다. */
 export function mapNearbyFestivalToFestival(item: NearbyFestivalItem): Festival {
   return {

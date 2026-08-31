@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, SlidersHorizontal, RotateCw } from 'lucide-react';
+import { Search, RotateCw } from 'lucide-react';
 import type { Festival } from '../types';
 import {
   festivalsApi,
@@ -18,6 +18,7 @@ import PageHeader from '../components/layout/PageHeader';
 import FestivalListItemCard from '../components/festival/FestivalListItem';
 import ExploreSpotItem from '../components/explore/ExploreSpotItem';
 import FilterSelect from '../components/explore/FilterSelect';
+import { LoadingMore, LoadingState } from '../components/common/Spinner';
 
 type Segment = 'festival' | 'spot';
 
@@ -58,7 +59,6 @@ const festivalListDependencies = {
       sigunguCode: string;
       sort: FestivalListSort;
       schedule: FestivalScheduleFilter;
-      matchableOnly: boolean;
     },
     page: number,
     size: number,
@@ -67,7 +67,6 @@ const festivalListDependencies = {
       sigunguCode: query.sigunguCode || undefined,
       sort: query.sort,
       schedule: query.schedule,
-      matchableOnly: query.matchableOnly,
     });
     return { items: response.items, page: response.page, hasNext: response.hasNext };
   },
@@ -98,7 +97,6 @@ export default function ExploreListPage() {
   const [festivalSigunguCode, setFestivalSigunguCode] = useState('');
   const [festivalSort, setFestivalSort] = useState<FestivalListSort>('START_DATE_ASC');
   const [festivalSchedule, setFestivalSchedule] = useState<FestivalScheduleFilter>('ALL');
-  const [matchableOnly, setMatchableOnly] = useState(false);
   const [spotSigunguCode, setSpotSigunguCode] = useState('');
   const [spotSort, setSpotSort] = useState<TourPlaceListSort>('TITLE_ASC');
   const [festivalRegions, setFestivalRegions] = useState<RegionOption[]>([]);
@@ -153,9 +151,8 @@ export default function ExploreListPage() {
       sigunguCode: festivalSigunguCode,
       sort: festivalSort,
       schedule: festivalSchedule,
-      matchableOnly,
     }),
-    [debouncedKeyword, festivalSigunguCode, festivalSort, festivalSchedule, matchableOnly],
+    [debouncedKeyword, festivalSigunguCode, festivalSort, festivalSchedule],
   );
 
   const spotQuery = useMemo(
@@ -206,7 +203,6 @@ export default function ExploreListPage() {
       setFestivalSigunguCode('');
       setFestivalSort('START_DATE_ASC');
       setFestivalSchedule('ALL');
-      setMatchableOnly(false);
     } else {
       setSpotSigunguCode('');
       setSpotSort('TITLE_ASC');
@@ -292,18 +288,6 @@ export default function ExploreListPage() {
                 options={FESTIVAL_SORTS.map((s) => ({ value: s.value, label: s.label }))}
                 onChange={(value) => setFestivalSort(value as FestivalListSort)}
               />
-              <button
-                type="button"
-                onClick={() => setMatchableOnly((current) => !current)}
-                className={`flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-[5px] text-xs font-medium ${
-                  matchableOnly
-                    ? 'border-coral bg-coral/10 text-coral'
-                    : 'border-line bg-sand text-ink/70'
-                }`}
-              >
-                <SlidersHorizontal size={12} />
-                매칭 가능
-              </button>
             </>
           ) : (
             <>
@@ -325,7 +309,7 @@ export default function ExploreListPage() {
 
         {/* 첫 페이지 로딩 */}
         {isInitialLoading && (
-          <p className="py-12 text-center text-[13px] text-ink/45">불러오는 중이에요...</p>
+          <LoadingState />
         )}
 
         {/* 조회 실패 */}
@@ -363,8 +347,8 @@ export default function ExploreListPage() {
 
         {/* 무한스크롤 sentinel — 화면에 들어오면 다음 20개를 요청한다 */}
         {!isInitialLoading && !isError && active.state.hasNext && (
-          <div ref={sentinelRef} className="py-4 text-center text-xs text-ink/40">
-            {active.state.loadingMore ? '더 불러오는 중...' : ' '}
+          <div ref={sentinelRef}>
+            {active.state.loadingMore ? <LoadingMore /> : <div className="py-4" />}
           </div>
         )}
 

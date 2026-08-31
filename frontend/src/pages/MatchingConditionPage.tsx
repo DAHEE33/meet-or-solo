@@ -57,13 +57,16 @@ export function resolveFestivalId(
 /**
  * "체크인하기" 이동 목적지를 계산한다. festivalId를 알고 있으면(=이미 이 축제로 매칭을 시도하다가
  * 체크인이 필요하다는 응답을 받은 경우) CheckInPage가 바로 그 축제로 체크인할 수 있게 state로
- * 함께 넘긴다. festivalId를 모르면(=애초에 어떤 축제인지 정해지지 않은 경우) state 없이 이동하고,
- * CheckInPage가 축제 선택 안내를 보여준다.
+ * 함께 넘긴다.
+ *
+ * festivalId를 모르면 CheckInPage가 할 수 있는 일이 없다 — 어느 축제로 체크인할지 알 수 없다.
+ * 예전에는 "먼저 체크인할 축제를 골라주세요" 안내를 한 단계 더 보여줬는데, 사용자가 결국
+ * 축제를 고르러 가야 하므로 곧바로 축제·관광 탐색으로 보낸다.
  */
 export function checkInNavigationTarget(
   festivalId: number | null,
 ): { to: string; state?: { festivalId: number } } {
-  return festivalId !== null ? { to: '/check-in', state: { festivalId } } : { to: '/check-in' };
+  return festivalId !== null ? { to: '/check-in', state: { festivalId } } : { to: '/spots' };
 }
 
 export function submitPoolEntry(

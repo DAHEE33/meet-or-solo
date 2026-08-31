@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { Festival } from '../types';
 import type { FestivalListItem } from '../api/festivals';
 import { mapFestivalListItemToFestival } from './festival';
-import { pickFallbackFestival, pickNearestFestival, sigunguName } from './homeFestival';
+import {
+  pickFallbackFestival,
+  pickNearestFestival,
+  shouldReplaceHero,
+  sigunguName,
+} from './homeFestival';
 
 function festival(id: number, status: Festival['status']): Festival {
   return {
@@ -124,5 +129,33 @@ describe('pickNearestFestival', () => {
 
     expect(result?.festival.id).toBe(1);
     expect(result?.sigunguName).toBeNull();
+  });
+});
+
+describe('shouldReplaceHero', () => {
+  // 체크인·GPS·목록 응답 도착 순서가 일정하지 않아, 늦게 온 결과가 더 확실한 근거를
+  // 덮어쓰지 않아야 한다.
+  it('아직 아무것도 못 정했으면 무엇이든 반영한다', () => {
+    expect(shouldReplaceHero(null, 'FALLBACK')).toBe(true);
+    expect(shouldReplaceHero(null, 'CHECKIN')).toBe(true);
+  });
+
+  it('체크인은 최근접·폴백을 덮어쓴다', () => {
+    expect(shouldReplaceHero('FALLBACK', 'CHECKIN')).toBe(true);
+    expect(shouldReplaceHero('NEAREST', 'CHECKIN')).toBe(true);
+  });
+
+  it('체크인이 이미 반영됐으면 늦게 온 GPS·폴백이 덮어쓰지 못한다', () => {
+    expect(shouldReplaceHero('CHECKIN', 'NEAREST')).toBe(false);
+    expect(shouldReplaceHero('CHECKIN', 'FALLBACK')).toBe(false);
+  });
+
+  it('최근접이 반영된 뒤 폴백이 늦게 와도 덮어쓰지 못한다', () => {
+    expect(shouldReplaceHero('NEAREST', 'FALLBACK')).toBe(false);
+  });
+
+  it('같은 근거는 최신값으로 갱신한다', () => {
+    expect(shouldReplaceHero('CHECKIN', 'CHECKIN')).toBe(true);
+    expect(shouldReplaceHero('NEAREST', 'NEAREST')).toBe(true);
   });
 });

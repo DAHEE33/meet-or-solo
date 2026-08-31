@@ -4,6 +4,7 @@ import AdminHeader from '../components/admin/AdminHeader';
 import AdminNav from '../components/admin/AdminNav';
 import type { AdminMeetingPoint, AdminMeetingPointUpsertRequest } from '../api/adminMeetingPoints';
 import { useAdminMeetingPoints } from '../hooks/useAdminMeetingPoints';
+import { LoadingState } from '../components/common/Spinner';
 
 /** 등록된 장소가 하나뿐인 ACTIVE 장소인지 — 비활성화하면 그 축제의 매칭이 막힐 수 있다는 경고에 사용. */
 export function isLastActivePoint(points: AdminMeetingPoint[], point: AdminMeetingPoint): boolean {
@@ -79,7 +80,7 @@ export default function AdminMeetingPointsPage() {
               {state.successMessage ?? (state.pointsStatus === 'LOADING' ? '만남 장소를 불러오는 중입니다.' : '')}
             </div>
 
-            {state.pointsStatus === 'LOADING' && <p role="status" className="mt-6 text-center text-ink/60">장소를 불러오는 중...</p>}
+            {state.pointsStatus === 'LOADING' && <LoadingState className="mt-6" message="장소를 불러오는 중이에요" />}
             {state.pointsStatus === 'ERROR' && (
               <div role="alert" className="mt-6 text-center">
                 <p className="text-coral">장소 목록을 불러오지 못했습니다.</p>

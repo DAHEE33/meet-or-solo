@@ -17,6 +17,7 @@ import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
+import Spinner, { LoadingState } from '../components/common/Spinner';
 
 export default function FestivalDetailPage() {
   const { festivalId } = useParams<{ festivalId: string }>();
@@ -65,7 +66,7 @@ export default function FestivalDetailPage() {
     return (
       <MobileLayout showTabBar={false}>
         <PageHeader title="축제 상세" />
-        <p className="py-16 text-center text-[14px] text-ink/45">불러오는 중이에요...</p>
+        <LoadingState className="py-16" />
       </MobileLayout>
     );
   }
@@ -168,8 +169,11 @@ export default function FestivalDetailPage() {
               type="button"
               onClick={() => setShowPermissionModal(true)}
               disabled={checkinState.status === 'locating' || checkinState.status === 'submitting'}
-              className="w-full rounded-xl bg-ink py-2.5 text-[14px] font-bold text-white disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-ink py-2.5 text-[14px] font-bold text-white disabled:opacity-50"
             >
+              {(checkinState.status === 'locating' || checkinState.status === 'submitting') && (
+                <Spinner size="sm" tone="white" />
+              )}
               {checkinState.status === 'locating'
                 ? '위치 확인 중...'
                 : checkinState.status === 'submitting'

@@ -56,8 +56,9 @@ describe('checkInNavigationTarget', () => {
     expect(checkInNavigationTarget(144)).toEqual({ to: '/check-in', state: { festivalId: 144 } });
   });
 
-  it('festivalId를 모르면 state 없이 이동해 CheckInPage가 축제 선택 안내를 보여주게 한다', () => {
-    expect(checkInNavigationTarget(null)).toEqual({ to: '/check-in' });
+  it('festivalId를 모르면 체크인 화면을 거치지 않고 축제·관광 탐색으로 바로 보낸다', () => {
+    // 어느 축제인지 모르면 CheckInPage가 할 수 있는 일이 없어 안내 화면이 한 단계 낭비였다.
+    expect(checkInNavigationTarget(null)).toEqual({ to: '/spots' });
   });
 });
 

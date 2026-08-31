@@ -12,6 +12,27 @@ export type HeroFestival = {
 };
 
 /**
+ * 히어로 축제를 무엇을 근거로 골랐는지. 체크인·GPS·목록 조회가 각각 비동기라 도착 순서가
+ * 일정하지 않으므로, 늦게 온 결과가 더 확실한 근거를 덮어쓰지 않도록 우선순위로 비교한다.
+ *
+ * CHECKIN이 가장 높은 이유: 사용자가 이미 "나 여기 있다"고 선언한 축제이므로 GPS로 계산한
+ * 최근접 축제보다 확실하다. 다른 축제에 체크인한 채로 홈에 오면 그 축제가 보여야 한다.
+ */
+export type HeroSource = 'FALLBACK' | 'NEAREST' | 'CHECKIN';
+
+const HERO_SOURCE_PRIORITY: Record<HeroSource, number> = {
+  FALLBACK: 1,
+  NEAREST: 2,
+  CHECKIN: 3,
+};
+
+/** 새 근거가 지금 화면에 반영된 근거보다 우선하거나 같으면(=최신값으로 갱신) true. */
+export function shouldReplaceHero(current: HeroSource | null, next: HeroSource): boolean {
+  if (current === null) return true;
+  return HERO_SOURCE_PRIORITY[next] >= HERO_SOURCE_PRIORITY[current];
+}
+
+/**
  * GPS를 쓸 수 없을 때의 폴백. 이 규칙은 위치 기능 도입 전 동작과 동일해야 한다 —
  * 권한을 거부한 사용자의 화면이 바뀌면 안 된다.
  */
