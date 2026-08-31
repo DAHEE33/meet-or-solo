@@ -3,7 +3,7 @@ import type { TourSpot } from '../../types';
 export const todaySpot: TourSpot = {
   id: 1,
   name: '전주 한옥마을',
-  category: '문화재',
+  category: '문화',
   address: '전북 전주시 완산구 기린대로 99',
   distanceKm: 0.4,
   rating: 4.7,
@@ -19,7 +19,7 @@ export const tourSpots: TourSpot[] = [
   {
     id: 2,
     name: '경기전',
-    category: '문화재',
+    category: '역사',
     address: '전북 전주시 완산구 태조로 44',
     distanceKm: 0.6,
     rating: 4.6,
@@ -43,7 +43,7 @@ export const tourSpots: TourSpot[] = [
   {
     id: 4,
     name: '전주향교',
-    category: '문화재',
+    category: '역사',
     address: '전북 전주시 완산구 향교길 139',
     distanceKm: 1.3,
     rating: 4.5,
@@ -79,7 +79,7 @@ export const tourSpots: TourSpot[] = [
   {
     id: 7,
     name: '전동성당',
-    category: '문화재',
+    category: '역사',
     address: '전북 전주시 완산구 태조로 51',
     distanceKm: 0.5,
     rating: 4.6,
@@ -91,7 +91,3 @@ export const tourSpots: TourSpot[] = [
 ];
 
 export const nearbySpots: TourSpot[] = tourSpots.filter((s) => s.id !== 1).slice(0, 4);
-
-export function getSpotById(id: number): TourSpot | undefined {
-  return tourSpots.find((s) => s.id === id);
-}

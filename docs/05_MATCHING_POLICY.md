@@ -72,6 +72,13 @@ confirmed match: confirmed_at + 1시간
 신청할 수 없습니다. 제한 종료 뒤에는 유효한 체크인이 있어야 하며 체크인이
 만료되었다면 현장에서 다시 체크인합니다.
 
+체크인 1시간은 매칭 자격 상한뿐 아니라 `festival_checkins.expires_at` row 자체의
+값이기도 합니다(`CheckinValidityPolicy.VALIDITY`, 설정으로 분리하지 않음). 과거에는
+체크인 row가 설정값(기본 6시간)으로 더 길게 살아있어 매칭 자격 1시간 상한과
+불일치가 있었으나 통일했습니다. 자세한 배경은
+[docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md](21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md)
+2.1절을 참고합니다.
+
 매칭 신청·검색 실패 횟수를 일괄 차감하는 최대 3회 제한은 MVP에 두지 않습니다.
 동시 active pool/group 단일성, 완료 후 1시간 제한과 기존 귀책 cooldown으로
 먼저 운영하고 실제 남용 데이터가 확인되면 체크인당 확정 group 횟수를 별도

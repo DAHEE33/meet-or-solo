@@ -10,7 +10,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { to: '/', label: '홈', icon: House },
-  { to: '/spots', label: '관광지', icon: Map },
+  { to: '/spots', label: '축제·관광', icon: Map },
   { to: '/matching', label: '매칭', icon: HeartHandshake },
   { to: '/solo-course', label: '코스', icon: Route },
   { to: '/mypage', label: '마이', icon: CircleUserRound },

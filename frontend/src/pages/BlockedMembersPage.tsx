@@ -5,6 +5,7 @@ import PageHeader from '../components/layout/PageHeader';
 import { type MemberBlock } from '../api/memberBlocks';
 import { useMemberBlocks, type MemberBlocksState } from '../hooks/useMemberBlocks';
 import { formatSeoulDateTime } from '../utils/dateTime';
+import { LoadingState } from '../components/common/Spinner';
 
 export default function BlockedMembersPage() {
   const { state, reload, open, close, clearSuccess, submit } = useMemberBlocks();
@@ -17,7 +18,7 @@ export default function BlockedMembersPage() {
         <div className="sr-only" role="status" aria-live="polite">
           {state.status === 'LOADING' ? '차단 회원 목록을 불러오는 중입니다.' : state.successMessage ?? ''}
         </div>
-        {state.status === 'LOADING' && <p className="rounded-2xl bg-white p-5 text-sm text-ink/60">불러오는 중...</p>}
+        {state.status === 'LOADING' && <div className="rounded-2xl bg-white p-5"><LoadingState className="py-2" message="차단 회원을 불러오는 중이에요" /></div>}
         {state.status === 'ERROR' && (
           <section role="alert" className="rounded-2xl bg-white p-5">
             <p className="text-sm text-coral">차단 회원 목록을 불러오지 못했어요.</p>

@@ -1,5 +1,360 @@
 # 진행 상태 기록
 
+## [10-A 후속 10] 홈 체크인 축제 우선, 로딩 표시 통일, 필터 UI 개선
+
+상태: 구현 완료(Frontend 전용). Backend 소스 변경 없음. 두 브라우저 수동 검증 전
+
+사용자 피드백 7건을 반영했다.
+
+1. **홈 히어로에 체크인한 축제 우선.** 체크인 > GPS 최근접 > 폴백(진행중 ?? 예정) 순으로 정한다.
+   세 근거가 각각 비동기로 도착해 순서가 일정하지 않으므로, 늦게 온 결과가 더 확실한 근거를
+   덮어쓰지 않도록 `shouldReplaceHero(current, next)` 우선순위 비교를 두고 컴포넌트 밖 순수
+   함수로 분리해 테스트했다. 체크인 응답에는 축제 id/이름만 있어 카드에 필요한 기간·이미지는
+   `GET /api/festivals/{id}`로 채우며(목록 20건 안에 없을 수 있어 목록에서 찾지 않는다),
+   이를 위해 `mapFestivalDetailToFestival`을 추가했다. 배지 문구도 근거에 따라
+   "체크인한 OO의 축제" / "내 위치에서 가까운 OO의 축제"로 나뉜다.
+2. **축제 목록의 "매칭 가능" 필터 칩 제거.** Backend의 `matchableOnly` 파라미터와 테스트는
+   그대로 두었다 — 동작이 검증돼 있어 다시 노출할 때 배선만 하면 되고, 지우는 편이 변경 폭이
+   더 크기 때문이다. 현재 이 파라미터를 보내는 화면은 없다.
+3. **다른 축제 체크인 시 기존 체크인 해제**는 이미 구현돼 있어 변경하지 않았다.
+   `FestivalCheckinService.checkIn()`이 같은 회원의 기존 ACTIVE 체크인(다른 축제 포함)을 전부
+   취소하고 축제별 `FestivalCheckinCancelledEvent`를 발행하며, 같은 축제 재체크인 시 부분 unique
+   index 위반을 피하려 취소 UPDATE를 명시적으로 flush한다.
+4. **체크인 화면의 막다른 안내 제거.** `checkInNavigationTarget(null)`이 `/check-in` 대신
+   `/spots`를 반환하도록 바꿨고, `CheckInPage`도 `festivalId` 없이 진입하면(직접 URL·새로고침)
+   `/spots`로 `replace` 이동한다. 어느 축제인지 모르면 그 화면이 할 수 있는 일이 없어 안내가
+   한 단계 낭비였다.
+5. **로딩 표시를 문구에서 애니메이션으로.** `components/common/Spinner.tsx`(신규)에 `Spinner`,
+   `LoadingState`(영역 전체), `LoadingMore`(무한스크롤 하단)를 두고, 탐색·축제 상세·차단 목록·
+   관리자 3개 화면의 텍스트 전용 로딩을 교체했다. `PrimaryButton`에 `pending` prop을 추가해
+   처리 중 버튼에도 스피너가 붙는다(체크인 화면·축제 상세 체크인 버튼 적용). 문구만 바뀌면
+   눌린 건지 멈춘 건지 구분이 안 되던 문제를 없앴다. 애니메이션은 `aria-hidden`이고 안내는
+   문구가 담당하며 `role="status"`로 감쌌다.
+6. **필터 셀렉트를 바텀시트로 교체.** 기존 `FilterSelect`는 네이티브 `<select>`를 투명하게
+   덮는 방식이라 열었을 때 목록이 OS 기본 스타일로 떠 앱 디자인과 따로 놀았다. 앱이 직접 그리는
+   바텀시트(손잡이·선택 체크·coral 강조)로 바꿔 팔레트와 둥근 모서리를 맞췄다. Escape·바깥
+   클릭으로 닫히고 열릴 때 포커스가 이동한다.
+7. 기존 정책과 충돌하는 항목은 없었다. 1번은 오히려 `docs/22` 3장의 "내 위치 기반 추천은
+   체크인한 축제 기준" 방향과 일치하며, 좌표를 서버로 보내지 않는다는 제약도 그대로 지켜진다.
+
+- 검증: `tsc -b` 통과, vitest **278개 전부 통과**(`shouldReplaceHero` 5개 추가),
+  `npm run build` 성공, backend `compileJava`/`compileTestJava` 통과.
+- 이번 작업 중 dev DB로 가던 SSH 터널이 끊겨 실서버 재검증은 하지 못했다. 다만 이 작업에서
+  backend 소스는 변경하지 않았고, API 파라미터 동작은 `[10-A 후속 9]`에서 실서버로 이미 확인했다.
+
+## [10-A 후속 9] 축제·관광지 목록 지역·정렬·일정 필터와 무한스크롤, 홈 최근접 축제
+
+상태: 구현 완료. Docker 미설치로 Testcontainers 통합 테스트 미실행, dev 배포·두 브라우저 수동 검증 전
+
+- 사전 설계는 `docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md`로 정리했다. `docs/13` 3.5/7장에서
+  보류했던 `region`/`sort` 파라미터를 이번에 확정해 구현했다.
+- **확정된 정책 제약: GPS 좌표를 서버로 전송하지 않는다.** `docs/06_SECURITY_POLICY.md`는 갱신하지
+  않았다. 그 결과 관광지 목록의 "내 위치 기준 / 반경 10·50·100km / 가까운순·먼순"은 범위에서
+  제외했고(4,020건이라 서버 계산이 불가피 → 좌표 전송 필요), 관광지는 **지역 선택 단일 모드**가
+  됐다. 기존 체크인의 좌표 전송은 정책이 이미 허용한 용도라 그대로 유지했다.
+- 홈 화면 최근접 축제는 **클라이언트 계산**으로 구현했다. 서버는 목록 응답에 `mapX`/`mapY`만
+  추가하고, 브라우저가 `utils/geo.ts`의 haversine으로 최근접 축제를 고른다. 좌표가 기기를 벗어나지
+  않으므로 정책·신고 이슈가 없다. ACTIVE 축제가 15건이라 이 방식이 성립한다.
+  - 폴백 순서: GPS 허용 → 최근접 축제 / 권한거부·타임아웃·미지원·좌표없음 → 기존 로직(진행중
+    첫 번째 ?? 예정 첫 번째). **권한을 거부한 사용자의 화면은 이전과 완전히 동일하다.**
+  - 앱 자체 동의 모달은 두지 않았다 — 좌표 전송이 없어 법적 동의 대상이 아니고 브라우저
+    권한창이 이미 그 역할을 한다. `localStorage` 신규 사용도 피했다.
+  - `HomePage.tsx`에 하드코딩돼 있던 `전북 전주시의 축제`(데이터는 강원인데 전북으로 표기돼
+    있던 장식용 버튼)를 실제 시군구명으로 교체했다. 폴백 상태에서는 기준 지역이 없어 숨긴다.
+- **지역 단위는 도가 아니라 시군구다.** dev DB 실측 결과 `festivals.area_code`는 33/34건이 `51`,
+  `tour_places`의 `lDongRegnCd`는 4,020건 전부 `51`(강원)이라 도 단위 선택지가 1개뿐이다. 시군구는
+  18개로 나뉘어 실제로 의미가 있다. 전국 확장은 별도 과제로 남겼다(설계 문서 10장).
+- `V23__add_tour_place_region_codes.sql`: `tour_places`에 `area_code`/`sigungu_code` 추가 +
+  `raw_data`의 `lDongRegnCd`/`lDongSignguCd`로 백필 + `(status, sigungu_code)` 인덱스.
+  **TourAPI 재호출 없이 기존 4,020건을 그대로 채운다.** `TourPlaceSyncData`/`TourPlaceSyncMapper`도
+  앞으로 두 컬럼을 저장하도록 고쳤다(`SearchTourPlaceItem`은 이미 값을 노출하는데 버려지고 있었다).
+- API 변경(추가만, 기존 필드·기본값은 그대로):
+  - `GET /api/festivals`에 `sigunguCode`, `sort`(`START_DATE_ASC`/`END_DATE_ASC`/`RECENTLY_ADDED`),
+    `schedule`(`ALL`/`ONGOING`/`THIS_WEEKEND`/`THIS_MONTH`), `matchableOnly` 추가. 응답 `items[]`에
+    `mapX`/`mapY` 추가.
+  - `GET /api/spots`에 `sigunguCode`, `sort`(`TITLE_ASC`/`RECENTLY_ADDED`) 추가.
+  - `GET /api/festivals/regions`, `GET /api/spots/regions` 신규 — **실제 데이터에 존재하는 시군구만**
+    건수와 함께 반환한다. 시군구 이름이 DB에 없어(원본 raw_data에도 없다) 그룹별 대표 주소의 두
+    번째 토큰에서 뽑는다(`global/region/RegionNameResolver`). 시도 표기가 `강원특별자치도`/`강원`으로
+    섞여 있어 첫 토큰은 쓰지 않는다.
+  - 파라미터를 아무것도 안 보내면 기존과 동일한 응답이 나온다(정렬 기본값 유지).
+- 추가 필터는 **일정**과 **매칭 가능한 축제만** 2개를 채택했다. 축제 카테고리는
+  `raw_data`의 `cat1`/`cat2`/`cat3`가 33건 전부 `null`이라 불가, 무료/유료·실내외는 `detailIntro2`에만
+  있고 DB 미저장이라 불가로 판정했다.
+- 무한스크롤(20개 단위)은 **백엔드 변경 없이** 구현했다. 응답에 `hasNext`가 이미 있는데 화면에서
+  쓰지 않고 있었을 뿐이다. `hooks/useInfiniteList.ts`(누적·리셋·중복요청 차단) +
+  `hooks/useInfiniteScrollSentinel.ts`(IntersectionObserver)로 분리했다. 프론트에 무한스크롤 선례가
+  없어 신규 패턴이다.
+  - 필터·검색·정렬·세그먼트가 바뀌면 `page=0`으로 리셋하고 누적 배열을 비운다.
+  - offset 페이징의 중복/누락 위험은 동기화 주기가 6~12시간이라 감수하고 문서에 남겼다.
+- `ExploreListPage`에서 동작하지 않던 표시용 칩을 정리했다. 장식용 `<span>` "가까운 순"과
+  관광지의 "현재 위치"·"거리" 칩을 제거하고, 실제 동작하는 지역·일정·정렬·매칭가능 필터로
+  교체했다(`components/explore/FilterSelect.tsx` 신규). 기존 `getList(0, 100)` 고정 조회도 없앴다.
+- 정렬 키에는 항상 `id`를 tie-breaker로 붙였다. 무한스크롤에서 정렬이 불안정하면 페이지 경계에서
+  항목이 중복·누락된다.
+- `FestivalRepository.findVisibleFestivals`의 `matchableOnly`는 boolean이 아니라 `int`(0/1)로
+  넘긴다. JPQL에서 boolean 파라미터를 리터럴과 비교할 때 타입 추론이 흔들릴 수 있어, `keyword`에서
+  이미 겪은 것과 같은 종류의 문제를 피했다.
+- 테스트: `FestivalScheduleFilterTest`(주말·월말·윤년 경계), `RegionNameResolverTest`,
+  `geo.test.ts`(서버 haversine과 값 대조), `homeFestival.test.ts`(폴백 4분기),
+  `useInfiniteList.test.ts`(누적·리셋·중복차단·실패유지) 신규. 기존 서비스/컨트롤러 테스트는 새
+  시그니처에 맞춰 수정하고 기본값 회귀 테스트를 추가했다.
+  - Frontend는 `tsc -b` 통과, vitest 273개 전부 통과.
+  - Backend 단위 테스트는 통과. **Testcontainers 통합 테스트는 이 PC에 Docker Desktop이 설치돼
+    있지 않아 실행하지 못했다** — `V23` 백필과 신규 JPQL(지역 필터, `exists` 서브쿼리, 집계
+    constructor expression)은 실제 PostgreSQL 검증이 남아 있다.
+  - `FestivalControllerTest`/`TourPlaceControllerTest`는 **이번 작업 전부터 깨져 있다**(`@WebMvcTest`
+    컨텍스트가 `JwtProvider` 빈을 못 찾음). HEAD에서도 동일하게 실패하는 것을 worktree로 확인했다.
+    이번 변경과 무관하며 별도 수정 과제다.
+- **구현 중 발견·수정한 버그: `LocalDate.MAX`로 인한 `GET /api/festivals` 500.**
+  일정 필터 `ALL`의 상한을 `LocalDate.MAX`(+999999999-12-31)로 뒀더니 PostgreSQL이
+  `ERROR: date out of range: "169104628-12-09 BC +09"`(SQLState 22008)로 거부했다. 이 프로젝트는
+  `hibernate.jdbc.time_zone: Asia/Seoul`로 타임존을 변환하는데, 최대 연도에 +9시간이 더해지며
+  오버플로가 나 BC 날짜로 뒤집히기 때문이다. `FestivalScheduleFilter.MAX_SCHEDULE_DATE`
+  (`9999-12-31`) 상수로 교체했다.
+  - 처음에 순수 JDBC로 `LocalDate.MAX` 바인딩을 시험했을 때는 통과했는데, 그 시험이 Hibernate의
+    타임존 변환 경로를 우회해서 **잘못된 검증**이었다. 이후 앱을 별도 포트(8099)로 띄워 실제
+    스택트레이스로 원인을 확정했다.
+- 실제 서버(로컬 backend + 터널 dev DB) 수동 검증 완료: 파라미터 없는 기본 조회, `sort` 3종,
+  `schedule` 4종, `matchableOnly`, `sigunguCode`, 조합 조회, `keyword`, 관광지 `sort`/`sigunguCode`/
+  `contentTypeId` 조합, 두 `regions` 엔드포인트가 모두 200이다. 잘못된 enum 값은 400을 반환한다.
+  `GET /api/spots/regions?contentTypeId=39`가 `강릉시 542` 등을 정확히 반환해 **V23 백필과 지역명
+  추출이 실데이터에서 동작함**을 확인했다.
+- 이번 범위에서 제외: 전국 동기화 확장(설계 문서 10.1의 관광지 INACTIVE 스윕 지역 범위화가 선행
+  필요 — 현재 구조로는 다중 지역 동기화 시 다른 도의 데이터가 전부 INACTIVE로 뒤집힌다),
+  좌표 이상치 4건 sync 검증, 일정 필터의 직접 날짜 지정 UI.
+
+## [10-A 후속 8] 홈 화면 첫 렌더 차단 제거
+
+상태: 구현 완료
+
+- `HomePage`가 프로필과 축제 목록을 `Promise.all`로 묶어, 둘 중 느린 쪽이 끝날 때까지 화면에
+  아무것도 그려지지 않았다. 한쪽이 실패하면 다른 쪽 데이터까지 버려졌다.
+- 두 요청을 독립 체인으로 분리해 각 응답이 도착하는 대로 렌더한다. 인사말 닉네임은 '여행자님'
+  폴백이 있어 프로필이 늦어도 화면이 성립한다. 프로필 조회 실패 시 축제 목록이 통째로 안 보이던
+  문제도 함께 해결됐다.
+- 배경: dev DB 실측 결과 이 프로젝트의 로컬 개발 구성(backend 로컬 + SSH 터널로 dev DB)에서는
+  쿼리 1건당 왕복이 약 150ms다. 서버 실행 시간은 2ms 미만이라 관측 지연의 대부분이 네트워크
+  왕복이고, 따라서 **왕복 횟수와 직렬 구조**가 체감을 지배한다. Tier A(후속 7)의 bounding box
+  최적화로 주변 관광지 조회는 1,596ms → 177ms로 줄었으나(4,020건 전송 → 38건), 목록 조회는
+  261ms → 130ms 수준이라 체감이 작았다.
+- `nearby-spots`의 직렬 요청은 화면 최하단 섹션을 채우므로 첫 화면 체감에 영향이 작아 그대로 뒀다.
+  없애려면 신규 집계 API와 백엔드에 화면 status 로직 복제가 필요해 비용 대비 효과가 낮다.
+
+## [10-A 후속 7] festivals/tour_places 목록·반경 조회 성능 개선 1차(Tier A)
+
+상태: 구현 완료. 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, dev DB EXPLAIN 비교와 두 브라우저 수동 검증 전
+
+- 배경: `festivals` 목록(`GET /api/festivals`, `HomePage`/`ExploreListPage`가 사용)이 느리다는
+  문제 제기로 코드 분석을 진행했다. 원인은 캐시 부재보다 먼저 (1) 목록 조회가 화면에 쓰지 않는
+  `raw_data` JSONB까지 매번 전체 엔티티로 읽어오고, (2) `HomePage` 진입 시 함께 호출되는
+  `nearby-spots`/`nearby-festivals`가 반경 필터 없이 `tour_places`/`festivals` 전체를 앱 메모리로
+  가져와 haversine 계산 후 필터링하며, (3) 키워드 검색이 앞뒤 `%` LIKE라 인덱스를 타지 못하는 데
+  있었다. 캐시(Tier B, Redis 미사용 인프로세스 캐시)는 이번 범위에서 다루지 않았다.
+- `FestivalRepository.findVisibleFestivals`/`TourPlaceRepository.findVisiblePlaces`를 JPQL
+  `select new ...(...)` 생성자 표현식으로 바꿔 `raw_data`·좌표 등 목록에 쓰이지 않는 컬럼을 읽지
+  않도록 했다. Festival 쪽은 이미지가 별도 테이블이라 신규 프로젝션 `FestivalSummary`(`festival`
+  패키지 dto, JPA 엔티티 아님)를 목록/이미지 매핑 전용으로만 쓰고, `FestivalListItemResponse` 등
+  공개 API 응답 계약은 변경하지 않았다. TourPlace 쪽은 이미지 URL이 자체 컬럼이라 기존
+  `TourPlaceListItemResponse`로 바로 프로젝션했다.
+- `FestivalQueryService.getNearbyTourPlaces`/`TourPlaceQueryService.getNearbyFestivals`가
+  전체 테이블을 가져오던 `findAllVisibleWithCoordinates` 대신, 중심점과 반경으로 계산한 위경도
+  bounding box로 후보를 먼저 좁히는 `findAllVisibleWithinBoundingBox`를 쓰도록 바꿨다. 실제
+  반경 판정·정렬은 그대로 haversine으로 다시 계산해 결과가 달라지지 않는다(순수 성능 최적화).
+  bounding box 계산은 `GeoDistanceCalculator.boundingBox()`로 분리했다. `SoloCourseService`가
+  쓰는 기존 `TourPlaceRepository.findAllVisibleWithCoordinates`(반경 제한이 없는 후보 조회)는
+  동작이 달라질 수 있어 이번 범위에서 건드리지 않았다.
+- `V22__add_festival_tourplace_query_indexes.sql`을 추가했다(기존 V1~V21은 수정하지 않음).
+  `pg_trgm` 확장, `festivals(status, event_end_date)`/`festivals(status, map_x, map_y)`/
+  `tour_places(status, map_x, map_y)` 복합 인덱스, `festivals`/`tour_places` 제목 GIN trigram
+  인덱스를 추가했다. 기존 단일 컬럼 인덱스(`idx_festivals_status` 등)는 다른 조회(만료 처리
+  batch)에서 계속 쓰이므로 삭제하지 않았다.
+- 기존 `FestivalQueryServiceTest`/`TourPlaceQueryServiceTest`/`FestivalSyncWriterIntegrationTest`를
+  새 반환 타입에 맞춰 수정했고, 신규 `GeoDistanceCalculatorTest`(bounding box 계산),
+  `TourPlaceRepositoryIntegrationTest`(신규 파일), 기존 `FestivalRepositoryIntegrationTest`에
+  projection·bounding box PostgreSQL 통합 테스트를 추가했다.
+- 이 Windows 환경에 JDK 17이 없어(이전 후속 6과 같은 제약) `compileJava`/`compileTestJava`/테스트
+  실행을 확인하지 못했다. repository 반환 타입을 바꾸는 범위가 넓은 편이라 모든 호출부·기존 테스트를
+  grep으로 전수 확인하고 수정했지만, 실제 컴파일·PostgreSQL 통합 테스트 통과는 JDK 17이 있는
+  환경에서 별도로 확인이 필요하다.
+- 캐시(Tier B), 전체 EXPLAIN ANALYZE 비교, dev DB·두 브라우저 체감 성능 확인은 이번 범위에서
+  제외했다.
+
+## [10-A 후속 6] 관리자 만남 장소 관리 화면과 0건 축제 자동 백필
+
+상태: 구현 완료. Frontend 자동 검증 완료, Backend는 로컬 JDK 17 부재로 컴파일·테스트 실행 미확인, 두 브라우저·dev DB 수동 검증 전
+
+- 사전 분석·설계는 `docs/24_ADMIN_MEETING_POINT_MANAGEMENT_DESIGN.md`로 정리했다. `[10-매칭 24차]`에서
+  구현된 만남 장소 관리 API(`AdminFestivalMeetingPointController`)는 그대로 재사용하고, 이번 범위는
+  Frontend 화면 추가와 백필 로직 추가로 한정했다.
+- Backend: 만남 장소가 0건인 `ACTIVE` 축제를 찾는 `FestivalRepository.findAllByStatusWithoutMeetingPoint()`와
+  신규 `FestivalMeetingPointBackfillService`를 추가했다. 기준은 "행이 0건"이며 "`ACTIVE` 행이 0건"이
+  아니다 — 관리자가 이미 등록해둔 장소가 전부 `INACTIVE`라도 다시 시딩하지 않는다(관리자 조정값을
+  스케줄러가 덮어쓰지 않는다는 원칙 유지). `FestivalSyncService.synchronizeFestivals()`가
+  `writer.upsert(...)` 다음 단계로 이 서비스를 호출하며, 백필이 실패해도 축제 동기화 자체는 성공으로
+  처리한다(다음 실행에서 재시도). `FestivalSyncResult`에 `seededMeetingPointCount`를 추가해
+  `FestivalSyncScheduler` 로그에 노출했다. 좌표가 없는 축제는 skip하고 `WARN` 로그만 남긴다.
+  Flyway migration은 추가하지 않았다(기존 `V15` 재사용).
+- Frontend: 관리자 화면 4곳(대시보드/신고 관리/회원 관리/만남 장소 관리)에 공통 상단 메뉴바
+  `AdminNav`를 추가하고, 각 페이지의 임시 되돌아가기 링크를 여기로 통합했다. `AdminDashboardPage`의
+  기존 바로가기 카드(신고 검토/회원 조회·제재)는 메뉴바와 중복돼 제거했다. 대시보드에만 있던
+  "meet·or·solo + 화면별 부제" 최상단 타이틀도 공통 `AdminHeader` 컴포넌트로 분리해 4개 화면 모두
+  같은 형태로 보이도록 통일했다(각 페이지는 `title`만 다르게 전달).
+- 신규 `/admin/meeting-points` 화면(`AdminMeetingPointsPage`)을 추가했다. 기존 공개
+  `GET /api/festivals` 검색으로 축제를 고르고, 선택한 축제의 만남 장소 목록·등록·수정·활성/비활성
+  전환을 기존 admin API 그대로 사용해 제공한다. 신규 API는 추가하지 않았다. 마지막 `ACTIVE` 장소를
+  비활성화하려는 경우 클라이언트 confirm 경고만 표시하며(서버 차단은 없음), 새 장소는 계약대로
+  `INACTIVE`로 등록되므로 등록 후 활성화가 필요함을 안내한다.
+- Backend는 이 Windows 환경에 JDK 17이 설치돼 있지 않아(JDK 8만 존재) Gradle 9.5.1 실행 자체가
+  막혀 `compileJava`/`compileTestJava`/테스트 실행을 확인하지 못했다. IntelliJ 번들 JBR 25로
+  Gradle 구동은 됐지만 컴파일 툴체인(JDK 17) auto-download 저장소가 설정돼 있지 않아 같은 문제로
+  막혔다. 작성한 `FestivalMeetingPointBackfillServiceTest`, 수정한 `FestivalSyncServiceTest`,
+  `FestivalSyncSchedulerTest`, 신규 `FestivalRepositoryIntegrationTest`는 코드 리뷰 수준으로만
+  작성했고 실제 컴파일·통과 여부는 별도 환경(JDK 17 설치)에서 확인이 필요하다.
+- Frontend는 전체 Vitest 32 files/242 tests(신규 `AdminNav.test.ts`, `AdminHeader.test.ts`,
+  `adminMeetingPoints.test.ts`, `useAdminMeetingPoints.test.ts`, `AdminMeetingPointsPage.test.ts`
+  포함), `npx tsc -b`, production/PWA build가 모두 성공했다.
+- 두 브라우저·dev DB 수동 검증, 카카오 로컬 API 연동 장소 검색 UI, 만남 장소 hard delete API는
+  이번 범위에서 제외했다(`docs/24` 7장).
+
+## [10-A 후속 5] 솔로 코스 도보시간 표시 수정과 매칭 실패 화면 연결
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `SoloCoursePage`의 스톱 카드가 백엔드가 계산해 응답에 넣어준 `stop.walkMinutesFromPrevious`를
+  쓰지 않고, `stop.distanceFromPreviousMeters`를 프론트 `formatWalkMinutesLabel`(반올림)로
+  다시 계산해 표시하고 있었다. 백엔드 `SoloCourseStayPolicy.walkMinutes()`는 올림(`ceil`)을
+  쓰기 때문에 같은 구간인데도 상단 "예상 소요 약 N시간(도보 M분 포함)" 합계와 카드별 개별
+  도보시간이 서로 다르게 보일 수 있었다. 카드가 `stop.walkMinutesFromPrevious`를 그대로 쓰도록
+  고쳐 두 값의 합이 항상 일치하게 했다. Backend 계산 로직 자체는 변경하지 않았다.
+- 매칭이 실패로 종료된 화면(`CANCELLED`/`EXPIRED`/`COOLDOWN` — 예: 60초 탐색 시간 안에 상대를
+  못 찾아 `EXPIRED`로 끝난 경우)에 "대신 주변 코스 보러가기" 링크를 추가했다. 현재 회원의
+  `festivalId`(체크인 우선, 없으면 navigation state 순서로 이미 계산돼 있던 값)를 `state`로
+  실어 `/solo-course`로 이동한다. `festivalId`가 없으면 링크 자체를 숨긴다.
+- Frontend 전체 Vitest 25 files/216 tests(신규 2건 포함), `npx tsc --noEmit`,
+  production/PWA build가 성공했다. Backend는 변경하지 않았다.
+- 두 브라우저·dev DB 수동 검증은 아직 실행하지 않았다.
+
+## [10-A 후속 4] /solo-course 최근접 이웃 기반 코스(동선) 1차
+
+상태: 구현·Backend/Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `[10-A 후속 3]`에서 만든 "거리순 목록"을 실제로 걸을 수 있는 순서가 있는 "코스"로 확장했다.
+  사전 분석·설계는 `docs/23_SOLO_COURSE_ITINERARY_DESIGN.md`로 정리했고, 초안 수치 그대로
+  진행하기로 결정했다.
+- 축제 좌표를 시작점으로 "현재 위치에서 가장 가까운 미방문 후보"를 순서대로 고르는 greedy
+  nearest-neighbor로 스톱 순서를 정한다. 도보시간은 기존 `formatWalkMinutesLabel`과 동일하게
+  도보 속도 약 4km/h(67m/분)로 추정하고, 체류시간은 실측 데이터가 없어 `contentTypeId`별 고정
+  추정치(관광지 60분/문화시설 45분/액티비티 90분/맛집 50분)를 쓴다.
+- `HALF`(240분)/`FULL`(480분) 예산을 넘기기 직전까지 후보를 채우고, 한 번의 이동이
+  `MAX_HOP_METERS`(1,500m)를 넘거나 최대 스톱 수(`MAX_STOPS`=6)에 도달하면 멈춘다.
+- 순수 거리순으로만 고르면 같은 카테고리(특히 맛집/카페)가 연속으로 뽑히는 문제가 있어, 가장
+  가까운 후보가 직전 스톱과 같은 카테고리면 `DIVERSITY_TOLERANCE`(1.5배) 이내에 다른 카테고리
+  대안이 있는지 찾아 대신 선택하는 경량 규칙을 1차에 포함했다. 대안이 없으면 원래 가장 가까운
+  후보를 그대로 선택해, 다양성 때문에 억지로 먼 곳까지 끌고 가지 않는다.
+- 신규 `GET /api/festivals/{id}/solo-course?type=HALF|FULL`을 추가했다. 기존 `nearby-spots`가
+  쓰는 후보 조회(`TourPlaceRepository.findAllVisibleWithCoordinates`)를 그대로 재사용해 새
+  repository 쿼리, Flyway migration, TourAPI 외부 호출을 추가하지 않았다.
+- 정책 상수(`MAX_HOP_METERS`/`MAX_STOPS`/체류시간표/`DIVERSITY_TOLERANCE`/예산)는
+  `SoloCourseStayPolicy`로 분리했다.
+- Frontend `SoloCoursePage`에 반나절/하루 토글과 순서·도보시간이 보이는 타임라인 UI를 다시
+  넣었다(예전 mock과 비슷한 모양이지만 전부 실제 계산값). 코스가 비어 있으면 안내 문구를 표시한다.
+- Backend 신규 `SoloCourseStayPolicyTest`, `SoloCourseServiceTest`(최근접 이웃 순서가 단순
+  거리순과 달라지는 경우, hop·예산·최대 스톱 경계, 카테고리 연속 방지 규칙의 대안 선택·폴백·
+  첫 스톱 예외)와 `FestivalControllerTest` 신규 케이스가 통과했다. Backend 전체 336건 중
+  이번 변경과 무관한 기존 pgvector Docker 이미지 fetch 실패 21건을 제외하고 전부 통과했고
+  `./gradlew build -x test`도 성공했다.
+- Frontend 전체 Vitest 25 files/214 tests, `npx tsc --noEmit`, production/PWA build가 성공했다.
+- 실제 영업시간/휴무일 반영, 본격적인 카테고리 비율 다양성 보정, 식사 시간대 슬롯 배치, 수동
+  편집, 코스 저장/공유는 2차 이후로 남겨뒀다(`docs/23` 7장).
+
+## [10-A 후속 3] /solo-course 체크인 기반 주변 관광지 추천
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `SoloCoursePage`가 강원도 축제·체크인과 무관한 하드코딩 mock("전주 한옥마을" 반나절/하루
+  코스)이었고, 진입 경로 2곳(`HomePage` 배너, `FestivalDetailPage` 버튼) 모두 `festivalId`를
+  넘기지 않아 애초에 어느 축제 기준으로 추천할지 알 방법이 없었다.
+- 사전 분석·설계는 `docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md`로 정리했다. 검토 결과
+  카테고리 필터(관광지/문화시설/액티비티/맛집)는 제외하고 나머지 설계대로 진행했다.
+- 원본 GPS 좌표를 저장하지 않는 프로젝트 원칙상 "내 위치 기반 추천"은 실시간 좌표가 아니라
+  "현재 체크인한 축제 좌표 기반" 반경 검색을 의미한다. 이미 구현되어 있던
+  `GET /api/festivals/{id}/nearby-spots`(`docs/13_FESTIVAL_TOURSPOT_API_DESIGN.md` 3.4절,
+  haversine 기반 축제 ↔ 관광지 거리 계산)를 그대로 재사용해 **백엔드는 변경하지 않았다**.
+- `SoloCoursePage`를 재작성해 `resolveSoloCourseFestival()`이 `location.state.festivalId` →
+  `useCurrentCheckin()`의 현재 체크인 축제 → 없음(안내 화면) 순서로 기준 축제를 정하도록 했다.
+  체크인 조회가 끝나기 전(`loading`)에는 축제가 없다고 오판하지 않도록 별도 로딩 화면을 둔다.
+- 실제 동선(시간대별 순서·체류시간)을 짜는 "코스" 기능은 이번 범위에서 제외하고, 기준 축제 주변
+  관광지를 거리순으로 보여주는 목록으로 단순화했다. 기존 "반나절/하루" 토글과 타임라인 UI,
+  `data/mock/soloCourses.ts`, `types/index.ts`의 `SoloCourse`/`CourseStop` 타입을 제거했다.
+- `HomePage`의 배너와 `FestivalDetailPage`의 버튼 문구를 "코스"에서 "주변 관광지 추천"으로 바꾸고
+  `festivalId`를 route state로 실어 보내도록 수정했다. 재사용 컴포넌트인 `CtaBanner`에 이동 대상
+  화면에 route state를 넘기는 `state` prop을 추가했다(다른 사용처는 영향 없음).
+- 목록 카드는 기존 `FestivalNearbyPlaceItem`을 그대로 재사용해 클릭 시 기존
+  `TourSpotDetailPage`(`/spots/:id`)로 이동한다. 반경(API 기본값 5,000m)·목록 개수(기본값 10)는
+  조절 UI 없이 API 기본값을 그대로 쓰고, 체크인이 전혀 없으면 대표 축제로 대체하지 않고 안내와
+  체크인하러 가기 버튼만 보여준다.
+- Frontend 전체 Vitest 25 files/210 tests(신규 `resolveSoloCourseFestival` 5건 포함),
+  `npx tsc --noEmit`, production/PWA build가 성공했다. 두 브라우저·dev DB 수동 검증은 아직
+  실행하지 않았다.
+
+## [10-A 후속 2] terminal pool 재mount 시 종료 화면 고착 수정
+
+상태: 구현·Frontend 자동 검증 완료, 두 브라우저 dev 수동 검증 전
+
+- `[10-매칭 14차]`에서 "backend가 반환한 `CANCELLED`/`EXPIRED` terminal 상태를 `IDLE`로
+  바꾸지 않고 서버 상태와 로컬 retry form 모드를 분리"하고 "새 mount에서는 로컬 retry
+  모드가 사라지고 terminal 서버 상태를 복원"하도록 의도적으로 설계했으나, `[10-매칭
+  13차]`에서 이미 "terminal pool 상태에서 `다시 시도`가 신규 신청 화면으로 돌아가지
+  않는 문제"로 별도 Frontend 후속 작업으로 남겨둔 채 완결되지 않은 상태였다.
+- 실제 증상: 매칭이 timeout 등으로 종료된 뒤 cooldown이 전혀 없는 상태에서도, `/matching`을
+  벗어났다가 다시 들어오면 매번 "매칭이 종료됐어요" 카드가 다시 뜨고 "다시 신청하기"를
+  눌러야만 신청 화면으로 돌아갈 수 있었다.
+- `useMatchingSession`에 `isInitialLoadRef`를 추가해, 새로 mount된 뒤 첫 REST 조회
+  결과에서만 `initialRetrySourcePoolId()`(기존 `canBeginRetry`와 동일한 조건 — terminal +
+  pool 존재 + cooldown/완료 제한 비활성)를 적용해 곧바로 retry form을 연다. 세션 도중
+  실시간으로 종료를 감지한 경우(폴링 등)는 기존 `retrySourceAfterRefresh`를 그대로 사용해
+  종료 사유를 최소 한 번은 보여준다.
+- cooldown 또는 완료 제한이 아직 활성 상태면 기존대로 terminal 카드와 남은 시간을 그대로
+  보여주며, 이 경우는 이번 수정과 무관하다.
+- Backend API 계약, DB schema는 변경하지 않았다.
+- Frontend 전체 Vitest 24 files/205 tests(신규 6건 포함), `npx tsc --noEmit`,
+  production/PWA build가 성공했다. 두 브라우저·dev DB 수동 검증은 아직 실행하지 않았다.
+
+## [10-A 후속] 체크인 유효시간 통일과 /matching 현재 체크인 노출·취소
+
+상태: 구현·Backend/Frontend 자동 검증 완료, dev DB·브라우저 수동 검증 전
+
+- `/matching` 화면이 실제 체크인 상태를 조회하지 않고 navigation state/개발 전용
+  fallback으로만 `festivalId`를 판단해, 새로고침이나 다른 경로로 들어오면 이미
+  체크인되어 있어도 "체크인하기" 버튼이 다시 뜨는 문제를 확인했다. 체크인 취소
+  API 자체도 없었다.
+- 체크인 row `expires_at`(과거 설정값 기본 6시간)과 매칭 자격 상한(체크인 후
+  1시간 하드코딩, `docs/05_MATCHING_POLICY.md`)이 서로 다른 기준이던 기존
+  불일치를 확인했다. 이번 작업에서 정책 변경 없이 **1시간으로 통일**했다 —
+  `FestivalCheckinService.checkIn()`이 `domain/checkin/CheckinValidityPolicy.VALIDITY`를
+  사용하도록 바꾸고 `FestivalCheckinProperties.validDuration`/
+  `FESTIVAL_CHECKIN_VALID_DURATION` 환경변수를 제거했다.
+- `GET /api/festivals/checkin/me`(현재 유효 체크인 조회, 없으면 `200 data:null`),
+  `DELETE /api/festivals/checkin/me`(취소, 활성 체크인 없으면 `404`)를 추가했다.
+  취소는 기존 `checkIn()`의 "기존 ACTIVE 취소 + `FestivalCheckinCancelledEvent`
+  발행" 로직을 재사용해 matching 도메인의 `WAITING` pool 정리로 이어진다.
+- Frontend `/matching` IDLE 화면은 이제 실제 조회 결과를 `festivalId` 판단에
+  우선 사용하고, 체크인이 있으면 축제명·만료 시각과 "체크인 취소" 버튼을
+  표시한다. 취소는 확인 dialog(Escape/Tab 순환 포함)를 거치며, `WAITING` 이상
+  진행 중인 매칭 상태에서는 취소 버튼을 노출하지 않는다(`LOCKED`/`PROPOSED`
+  취소 정책은 `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md` 7장 미해결
+  이슈로 유지).
+- Backend festival/checkin focused unit·controller·PostgreSQL 통합 테스트
+  35건, Backend 전체 320건 중 pgvector Testcontainers 이미지 fetch 실패로
+  인한 기존 환경 제약 21건을 제외하고 전부 통과했다(이번 변경과 무관 — 매칭
+  임베딩 등 다른 도메인의 기존 pgvector 통합 테스트가 이 환경에서 Docker
+  이미지를 받아오지 못했다). `./gradlew build -x test`가 성공했다.
+- Frontend 전체 Vitest 24 files/199 tests, `npx tsc --noEmit`, production/PWA
+  `generateSW` build가 성공했다.
+- `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md`, `docs/05_MATCHING_POLICY.md`를
+  갱신했다. dev DB·브라우저 수동 검증은 아직 실행하지 않았다.
+
 ## [10-B AI 임베딩] 취향 임베딩 도입
 
 상태: 1~5단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-28 기준)
@@ -1343,6 +1698,99 @@ Windows PowerShell + Docker Desktop 실제 테스트:
 - 임베딩 cosine similarity와 정형 점수 결합
 - active group/cooldown 및 proposal response의 나머지 unique constraint 통합 테스트
 - Redis, WebSocket 상태 동기화, frontend 연동
+
+## [10-A] GPS 체크인 API
+
+상태: 코드·테스트 작성 완료, 실제 dev 재배포 확인 제외
+
+- `GET /api/festivals/{id}/checkin` 대신 `POST /api/festivals/{id}/checkin` 추가 — 브라우저 Geolocation 좌표를 받아 서버가 축제 좌표와의 거리를 계산하고, 반경(`festivals.checkin_radius_meters`) 이내일 때만 `festival_checkins`에 저장한다.
+- 원본 위경도는 요청 처리 중에만 쓰고 DB/응답 어디에도 남기지 않는다. 저장되는 값은 계산된 `distanceMeters`뿐이다.
+- 위치 정확도(`accuracyMeters`)가 임계값(`app.festival.checkin.accuracy-threshold-meters`, 기본 100m)을 넘으면 거절한다.
+- 체크인 유효 기간은 `app.festival.checkin.valid-duration`(기본 6h)로 설정 가능.
+- 한 회원이 동시에 여러 곳에 있을 수 없다는 전제로, 새로 체크인하면 같은 회원의 기존 `ACTIVE` 체크인(다른 축제 포함)은 전부 `CANCELLED` 처리한다. 같은 축제로 재체크인해도 동일하게 취소 후 새로 생성된다.
+- 실제 PostgreSQL로 검증하는 과정에서, 기존 ACTIVE 체크인을 취소(UPDATE)하고 같은 트랜잭션에서 새 체크인을 INSERT할 때 Hibernate의 기본 flush 순서(INSERT 우선) 때문에 `uq_festival_checkins_member_festival_active` 부분 unique index를 위반하는 버그를 발견해, 취소 후 명시적으로 `flush()`하도록 수정했다.
+- 매칭 풀(`match_pools`) 정리는 이번 범위에 포함하지 않았다 — `domain/matching` 엔진 코드가 아직 없어서, 체크인 취소 시 매칭 풀도 함께 취소하는 로직은 매칭 엔진 구현 시점으로 미뤘다(코드에 TODO로 남겨둠).
+- Frontend: `FestivalDetailPage`에 "체크인하기" 버튼 추가. 버튼 클릭 시에만 위치를 1회 읽고(백그라운드 추적 없음), 성공/실패(권한 거부/시간 초과/범위 초과 등) 상태를 화면에 표시한다.
+- dev 서버가 아직 HTTPS를 지원하지 않아, `localhost`가 아닌 dev 서버 도메인에서는 브라우저가 Geolocation 권한 요청 자체를 차단할 수 있다. 로컬 개발(`localhost:5173`)에서는 문제없이 동작한다.
+
+## [10-A] 축제·탐색 화면 디자인 handoff 프론트엔드 구현 (mock 기반)
+
+상태: 코드 작성 및 frontend build 완료, 실제 backend 축제 API 연동 제외
+
+- `frontend/design_handoff_festival_matching/` 디자인 handoff 스펙 기준으로 홈/탐색/축제 상세/관광지 상세 4개 화면 재구성
+- 기존 관광지 추천 중심 홈 화면을 축제·매칭 중심 섹션 구성으로 교체 (`HomePage.tsx`)
+- 축제·관광지 탐색 화면을 유형 세그먼트 + 카테고리 + 검색 구조로 재구성하고 `TourSpotListPage.tsx`를 `ExploreListPage.tsx`로 이름 변경
+- 축제 상세 화면(`FestivalDetailPage.tsx`) 신규 추가: 매칭 현황 요약 카드, 이용 정보, 주요 프로그램, 하단 고정 매칭 CTA
+- 관광지 상세 화면(`TourSpotDetailPage.tsx`)을 방문 정보, 추천 포인트, 주변 축제, 포함 코스, 길찾기/주변 축제 보기 2버튼 액션으로 재구성
+- `Festival` 타입과 축제 mock 데이터(`data/mock/festivals.ts`), 관광지 상세 부가 mock 데이터(`data/mock/spotDetails.ts`) 추가
+- 데이터 접근은 기존 관례대로 각 페이지가 `data/mock/*`를 직접 참조하며, 홈 화면만 기존 `api/home.ts` wrapper를 경유
+- `tsc --noEmit`, `npm run build` 통과 확인
+
+주의:
+
+- 실제 backend 축제 목록/상세 API 연동은 이번 범위에서 하지 않았다 (mock 데이터만 사용).
+- 이 저장소에 아직 GPS 체크인/위치 권한 로직이 없어 위치 권한 없음 상태, 비동기 로딩/오류 상태 UI는 구현하지 않았다.
+- nginx, docker-compose, GitHub Actions, backend 코드는 수정하지 않았다.
+
+## [10-A] 축제 전체 페이지 DB 동기화와 Scheduler
+
+상태: 코드·설정·문서·테스트 작성 완료, 실제 dev 재배포 확인 제외
+
+- `Festival` Entity와 `FestivalRepository`를 기존 `festivals` schema에 매핑
+- `searchFestival2` 전체 페이지를 수신한 뒤에만 DB 저장 단계로 이동
+- 응답 페이지 누락, 중간 호출 실패, 최대 페이지 초과 시 writer를 호출하지 않고 기존 DB 데이터 유지
+- 전체 페이지 조회 성공 시 같은 조회 기간·지역 범위에서 응답에 없는 기존 `ACTIVE` 축제를 `INACTIVE`로 변경
+- 빈 정상 응답도 해당 조회 범위의 `ACTIVE` 축제를 `INACTIVE`로 변경하며 `HIDDEN`, `ENDED` 상태는 보존
+- 누락 비교에는 매핑 성공 건뿐 아니라 응답에서 확인한 유효한 `contentId` 전체를 사용해 일부 항목 매핑 실패에 따른 오판 방지
+- 외부 DTO의 날짜, 좌표, 주소, 법정동 코드를 `FestivalSyncData`로 변환하고 `content_id` 중복 제거
+- `FestivalSyncWriter`의 단일 transaction에서 `content_id` 기준 신규/기존 축제 upsert
+- `last_synced_at`과 API DTO 기반 `raw_data` JSONB 저장
+- Scheduler 소유권을 `local=false`, `dev=true`, `prod=false`로 고정하고 dev backend 한 인스턴스만 자동 동기화
+- 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함), 1초부터 지수 지연으로 제한 재시도
+- 실제 API 호출 시도마다 기존 `tour_api_call_logs`에 operation, 안전한 request key, status, 성공 여부, 응답 시간, 결과 건수, 오류 분류 저장
+- 호출 로그에는 API Key, 전체 URL, 응답 본문과 원본 예외 메시지를 저장하지 않으며 로그 저장 실패가 원래 API 결과를 변경하지 않음
+- dev 시작 후 최초 실행 및 `fixedDelay` 반복 실행
+- 최초 실패이며 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 안전하게 기록하고 다음 주기에 재시도
+- 기본 조회 범위 KST 오늘 기준 이전 30일~이후 365일, 강원 코드 `51`, 분류 `EV/EV01`
+- local/prod Scheduler 비활성화로 일반 test와 local backend 시작 시 의도하지 않은 외부 API 호출 방지
+- 축제 동기화, 재시도, 호출 로그 단위 테스트와 PostgreSQL rollback 통합 테스트 작성
+- 전체 backend test 75건 중 74건 통과, opt-in live test 1건 기본 skip
+- 기존 Flyway migration과 `GlobalExceptionHandler`는 수정하지 않음
+
+## [10-A] 축제 종료 상태·대표 이미지·목록 조회 API
+
+상태: 코드·문서·테스트 작성 완료, 실제 dev 재배포 확인 제외
+
+- 성공한 동기화에서 KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제를 `ENDED`로 일괄 변경
+- 종료 당일 축제와 운영자가 숨긴 `HIDDEN` 상태는 유지
+- `searchFestival2`의 `firstimage`, `firstimage2`를 기존 `festival_images` 테이블의 대표 이미지 1건으로 저장·갱신
+- API 응답에서 이미지가 누락되면 기존 대표 이미지를 삭제하지 않고 마지막 정상 이미지 유지
+- HTTP/HTTPS가 아닌 이미지 URL은 저장 대상에서 제외
+- `GET /api/festivals?page=0&size=20` 공개 목록 API 추가
+- `ACTIVE`이면서 KST 기준 종료되지 않은 축제만 `event_start_date`, `id` 순으로 페이지 조회
+- 대표 이미지를 일괄 조회하여 목록 N+1 query 방지
+- `page >= 0`, `1 <= size <= 100` validation과 공통 `ApiResponse` 적용
+- 기존 `festival_images` schema를 사용하여 Flyway migration 추가·수정 없음
+- 전체 backend test 74건 중 73건 통과, opt-in live test 1건 기본 skip
+- 축제 상세 API와 frontend 연동은 후속 작업으로 분리
+
+## [10-A] 한국관광공사 TourAPI 공통 Client와 searchFestival2 조회
+
+상태: 코드·문서·테스트 작성, 실제 API smoke test와 호출 로그 DB 저장 완료, 서비스 API 제외
+
+- Spring MVC의 `RestClient` 기반 한국관광공사 공통 HTTP client 추가
+- `external/tourapi`를 `client`, `config`, `dto`, `exception`, `log`, `support` 책임별 package로 분리
+- 국문 `KorService2/searchFestival2` 한 페이지 조회와 요청 계층 검증 구현
+- 루트 `.env`의 기존 `TOURISM-API-KEY`와 표준 `TOUR_API_KEY` 환경변수 지원
+- 디코딩 키와 인코딩 키를 모두 한 번만 query parameter 인코딩하도록 처리
+- 성공 JSON의 `resultCode=0000`, 빈 `items`, HTTP 200 XML 공공데이터포털 오류 응답 처리
+- API Key와 전체 요청 URL을 로그와 예외 메시지에 남기지 않음
+- `TourApiErrorType`에 기술 오류 기본 메시지를 모으고 원격 오류 코드와 HTTP status는 예외 필드로 분리
+- `GlobalExceptionHandler` 직접 연결 없이 축제 service가 fallback 또는 `BusinessException` 변환을 결정하도록 경계 유지
+- `MockRestServiceServer` 단위 테스트 5건 통과
+- Spring local profile이 실제 `.env` 키를 읽는 opt-in live smoke test로 강원도 `51`, 축제 분류 `EV/EV01` 조회 성공
+- 전체 backend test 통과
+- 축제 상세 Controller와 frontend는 후속 작업으로 분리
 
 ## [10-매칭 기반] backend 매칭 엔진 테스트 fixture foundation
 

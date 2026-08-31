@@ -17,6 +17,12 @@ logging:
     root: info
 
 app:
+  festival:
+    sync:
+      enabled: false
+  tour-place:
+    sync:
+      enabled: false
   admin:
     member:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:true}

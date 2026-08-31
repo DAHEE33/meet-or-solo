@@ -1,0 +1,206 @@
+package com.survey.meetorsolo.domain.festival.controller;
+
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
+import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
+import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
+import com.survey.meetorsolo.domain.festival.dto.FestivalProgramItem;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseStopResponse;
+import com.survey.meetorsolo.domain.festival.dto.SoloCourseType;
+import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
+import com.survey.meetorsolo.domain.festival.service.FestivalQueryService;
+import com.survey.meetorsolo.domain.festival.service.SoloCourseService;
+import com.survey.meetorsolo.domain.tourplace.dto.NearbyTourPlaceResponse;
+import com.survey.meetorsolo.global.config.SecurityConfig;
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.web.servlet.MockMvc;
+
+@WebMvcTest(FestivalController.class)
+@Import(SecurityConfig.class)
+class FestivalControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
+    private FestivalQueryService festivalQueryService;
+
+    @MockitoBean
+    private SoloCourseService soloCourseService;
+
+    private FestivalListResponse listResponse;
+
+    @BeforeEach
+    void setUp() {
+        listResponse = new FestivalListResponse(
+                List.of(new FestivalListItemResponse(
+                        1L,
+                        "100",
+                        "테스트 축제",
+                        "강원특별자치도 테스트시",
+                        "51",
+                        "110",
+                        LocalDate.of(2026, 7, 20),
+                        LocalDate.of(2026, 7, 22),
+                        FestivalStatus.ACTIVE,
+                        "https://example.com/origin.jpg",
+                        "https://example.com/thumbnail.jpg",
+
+                        new BigDecimal("127.7300000000"),
+
+                        new BigDecimal("37.8813000000")
+                )),
+                0,
+                20,
+                1,
+                1,
+                false
+        );
+    }
+
+    @Test
+    void 축제_목록을_공통_응답_형식으로_반환한다() throws Exception {
+        when(festivalQueryService.getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
+
+        mockMvc.perform(get("/api/festivals"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.items[0].contentId").value("100"))
+                .andExpect(jsonPath("$.data.items[0].thumbnailUrl")
+                        .value("https://example.com/thumbnail.jpg"))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+        verify(festivalQueryService).getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
+    }
+
+    @Test
+    void keyword_파라미터를_그대로_전달한다() throws Exception {
+        when(festivalQueryService.getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
+
+        mockMvc.perform(get("/api/festivals").param("keyword", "봄"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        verify(festivalQueryService).getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
+    }
+
+    @Test
+    void 페이지_크기가_100을_초과하면_validation_오류를_반환한다() throws Exception {
+        mockMvc.perform(get("/api/festivals").param("size", "101"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void 축제_상세를_공통_응답_형식으로_반환한다() throws Exception {
+        FestivalDetailResponse detail = new FestivalDetailResponse(
+                1L,
+                "100",
+                "테스트 축제",
+                "강원특별자치도 테스트시",
+                "51",
+                "110",
+                LocalDate.of(2026, 7, 20),
+                LocalDate.of(2026, 7, 22),
+                FestivalStatus.ACTIVE,
+                null,
+                null,
+                "https://example.com/origin.jpg",
+                "https://example.com/thumbnail.jpg",
+                "축제 소개글입니다.",
+                List.of(new FestivalInfoItem("주최", "테스트시청")),
+                List.of(new FestivalProgramItem("개막식", "개막 공연", ""))
+        );
+        when(festivalQueryService.getFestivalDetail(1L)).thenReturn(detail);
+
+        mockMvc.perform(get("/api/festivals/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.title").value("테스트 축제"))
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.intro").value("축제 소개글입니다."))
+                .andExpect(jsonPath("$.data.infoItems[0].label").value("주최"))
+                .andExpect(jsonPath("$.data.programs[0].name").value("개막식"));
+        verify(festivalQueryService).getFestivalDetail(1L);
+    }
+
+    @Test
+    void 존재하지_않는_축제_상세_조회는_404를_반환한다() throws Exception {
+        when(festivalQueryService.getFestivalDetail(99L))
+                .thenThrow(new BusinessException(ErrorCode.NOT_FOUND, "축제를 찾을 수 없습니다."));
+
+        mockMvc.perform(get("/api/festivals/99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void 축제_주변_관광지를_거리순으로_반환한다() throws Exception {
+        when(festivalQueryService.getNearbyTourPlaces(1L, 5000, 10)).thenReturn(List.of(
+                new NearbyTourPlaceResponse(1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 300)
+        ));
+
+        mockMvc.perform(get("/api/festivals/1/nearby-spots"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].title").value("테스트 관광지"))
+                .andExpect(jsonPath("$.data[0].distanceMeters").value(300));
+        verify(festivalQueryService).getNearbyTourPlaces(1L, 5000, 10);
+    }
+
+    @Test
+    void 솔로_코스를_기본_HALF_타입으로_조회한다() throws Exception {
+        SoloCourseResponse response = new SoloCourseResponse(
+                SoloCourseType.HALF, 7, 60, 67,
+                List.of(new SoloCourseStopResponse(1, 1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 420, 7, 60))
+        );
+        when(soloCourseService.getSoloCourse(1L, SoloCourseType.HALF)).thenReturn(response);
+
+        mockMvc.perform(get("/api/festivals/1/solo-course"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.type").value("HALF"))
+                .andExpect(jsonPath("$.data.stops[0].title").value("테스트 관광지"))
+                .andExpect(jsonPath("$.data.stops[0].walkMinutesFromPrevious").value(7));
+        verify(soloCourseService).getSoloCourse(1L, SoloCourseType.HALF);
+    }
+
+    @Test
+    void 솔로_코스_type_파라미터를_전달한다() throws Exception {
+        when(soloCourseService.getSoloCourse(1L, SoloCourseType.FULL))
+                .thenReturn(new SoloCourseResponse(SoloCourseType.FULL, 0, 0, 0, List.of()));
+
+        mockMvc.perform(get("/api/festivals/1/solo-course").param("type", "FULL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.type").value("FULL"));
+        verify(soloCourseService).getSoloCourse(1L, SoloCourseType.FULL);
+    }
+
+    @Test
+    void 솔로_코스_잘못된_type_파라미터는_400을_반환한다() throws Exception {
+        mockMvc.perform(get("/api/festivals/1/solo-course").param("type", "WEEK"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT_VALUE"));
+    }
+}
