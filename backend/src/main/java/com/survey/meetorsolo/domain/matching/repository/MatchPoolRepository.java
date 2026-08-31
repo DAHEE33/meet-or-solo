@@ -193,6 +193,23 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             @Param("staleBefore") OffsetDateTime staleBefore
     );
 
+    // 회원이 다른 축제로 재체크인해 기존 체크인이 취소됐을 때, 그 축제에 남은 이 회원의
+    // WAITING pool을 정리한다. LOCKED/PROPOSED는 이미 매칭 시도가 진행 중일 수 있어 건드리지
+    // 않는다(docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md 4.4절).
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET status = 'CANCELLED', updated_at = :now
+            WHERE member_id = :memberId
+              AND festival_id = :festivalId
+              AND status = 'WAITING'
+            """, nativeQuery = true)
+    int cancelWaitingPool(
+            @Param("memberId") long memberId,
+            @Param("festivalId") long festivalId,
+            @Param("now") OffsetDateTime now
+    );
+
     @Query(value = """
             SELECT pool.*
             FROM match_pools pool

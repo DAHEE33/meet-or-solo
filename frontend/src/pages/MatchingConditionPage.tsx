@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
 import { ApiClientError } from '../api/apiClient';
+import type { CurrentCheckinResponse } from '../api/checkin';
 import type { CurrentMatchGroup, MatchingRestriction, MatchTerminationReason } from '../api/matching';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
 import {
@@ -13,9 +14,11 @@ import {
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
+import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
 import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
 import { formatSeoulDateTime } from '../utils/dateTime';
 import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverClock';
+import { positiveInteger, readNumberFromLocationState } from '../utils/positiveInteger';
 
 function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
   const [remaining, setRemaining] = useState(0);
@@ -45,24 +48,32 @@ function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: nu
 
 const fmt = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
-function positiveInteger(value: unknown): number | null {
-  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
 export function resolveFestivalId(
   locationState: unknown,
   terminalPoolFestivalId?: number | null,
   isDevelopment = import.meta.env.DEV,
   developmentFestivalId = import.meta.env.VITE_DEV_FESTIVAL_ID,
 ): number | null {
-  if (locationState && typeof locationState === 'object' && 'festivalId' in locationState) {
-    const fromLocation = positiveInteger(locationState.festivalId);
-    if (fromLocation !== null) return fromLocation;
-  }
+  const fromLocation = readNumberFromLocationState(locationState, 'festivalId');
+  if (fromLocation !== null) return fromLocation;
   const fromTerminalPool = positiveInteger(terminalPoolFestivalId);
   if (fromTerminalPool !== null) return fromTerminalPool;
   return isDevelopment ? positiveInteger(developmentFestivalId) : null;
+}
+
+/**
+ * "체크인하기" 이동 목적지를 계산한다. festivalId를 알고 있으면(=이미 이 축제로 매칭을 시도하다가
+ * 체크인이 필요하다는 응답을 받은 경우) CheckInPage가 바로 그 축제로 체크인할 수 있게 state로
+ * 함께 넘긴다.
+ *
+ * festivalId를 모르면 CheckInPage가 할 수 있는 일이 없다 — 어느 축제로 체크인할지 알 수 없다.
+ * 예전에는 "먼저 체크인할 축제를 골라주세요" 안내를 한 단계 더 보여줬는데, 사용자가 결국
+ * 축제를 고르러 가야 하므로 곧바로 축제·관광 탐색으로 보낸다.
+ */
+export function checkInNavigationTarget(
+  festivalId: number | null,
+): { to: string; state?: { festivalId: number } } {
+  return festivalId !== null ? { to: '/check-in', state: { festivalId } } : { to: '/spots' };
 }
 
 export function submitPoolEntry(
@@ -118,10 +129,17 @@ export default function MatchingConditionPage() {
     cancelSearch,
     serverOffsetMs,
   } = useMatchingSession();
+  const { state: checkinState, cancel: cancelCheckin, isCancelling: isCancellingCheckin } = useCurrentCheckin();
+  const currentCheckin = checkinState.status === 'loaded' ? checkinState.checkin : null;
+  const [isCancelCheckinDialogOpen, setIsCancelCheckinDialogOpen] = useState(false);
+  const [cancelCheckinFailed, setCancelCheckinFailed] = useState(false);
   const retryableTerminal = isRetryFormOpen
     && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED');
   const terminalPoolFestivalId = retryableTerminal ? state.pool?.festivalId : null;
-  const festivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
+  // 실제 GPS 체크인 조회 결과가 있으면 그것이 navigation state/개발 fallback보다 우선한다 —
+  // 새로고침이나 다른 경로로 들어와도 실제 체크인 상태를 반영해야 한다.
+  const navigationFestivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
+  const festivalId = currentCheckin?.festivalId ?? navigationFestivalId;
 
   const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
   const proposalDeadline =
@@ -209,6 +227,22 @@ export default function MatchingConditionPage() {
     setMatchRoomNotice(null);
     beginRetry();
   };
+  const onRequestCancelCheckin = () => {
+    setCancelCheckinFailed(false);
+    setIsCancelCheckinDialogOpen(true);
+  };
+  const onCloseCancelCheckinDialog = () => {
+    if (isCancellingCheckin) return;
+    setIsCancelCheckinDialogOpen(false);
+  };
+  const onConfirmCancelCheckin = async () => {
+    const success = await cancelCheckin();
+    if (success) {
+      setIsCancelCheckinDialogOpen(false);
+    } else {
+      setCancelCheckinFailed(true);
+    }
+  };
 
   return (
     <MobileLayout>
@@ -232,6 +266,8 @@ export default function MatchingConditionPage() {
           }
           allowMinimum={allowMinimum}
           hasFestival={hasFestival}
+          currentCheckin={currentCheckin}
+          festivalId={festivalId}
           canApply={canApply}
           isSubmitting={isSubmitting}
           searchRemaining={searchRemaining}
@@ -251,10 +287,23 @@ export default function MatchingConditionPage() {
           onCancelSearch={() => void cancelSearch()}
           onRetry={onRetry}
           onErrorRetry={() => void refresh()}
-          onGoCheckIn={() => navigate('/check-in')}
+          onGoCheckIn={() => {
+            const target = checkInNavigationTarget(festivalId);
+            navigate(target.to, target.state ? { state: target.state } : undefined);
+          }}
           onEnterRoom={() => navigate('/match-room')}
+          onRequestCancelCheckin={onRequestCancelCheckin}
         />
       </main>
+      {isCancelCheckinDialogOpen && currentCheckin && (
+        <CancelCheckinDialog
+          festivalName={currentCheckin.festivalName}
+          submitting={isCancellingCheckin}
+          error={cancelCheckinFailed}
+          onClose={onCloseCancelCheckinDialog}
+          onConfirm={() => void onConfirmCancelCheckin()}
+        />
+      )}
       {preferencePromptOpen && (
         <PreferenceGuideDialog
           state={preferenceState}
@@ -326,6 +375,8 @@ interface MatchBodyProps {
   groupSize: number;
   allowMinimum: boolean;
   hasFestival: boolean;
+  currentCheckin: CurrentCheckinResponse | null;
+  festivalId: number | null;
   canApply: boolean;
   isSubmitting: boolean;
   searchRemaining: number;
@@ -347,6 +398,7 @@ interface MatchBodyProps {
   onErrorRetry: () => void;
   onGoCheckIn: () => void;
   onEnterRoom: () => void;
+  onRequestCancelCheckin: () => void;
 }
 
 export function MatchBody(props: MatchBodyProps) {
@@ -363,11 +415,13 @@ export function MatchBody(props: MatchBodyProps) {
         groupSize={props.groupSize}
         allowMinimum={props.allowMinimum}
         hasFestival={props.hasFestival}
+        currentCheckin={props.currentCheckin}
         canApply={props.canApply}
         setGroupSize={props.setGroupSize}
         setAllowMinimum={props.setAllowMinimum}
         onStart={props.onStart}
         onGoCheckIn={props.onGoCheckIn}
+        onRequestCancelCheckin={props.onRequestCancelCheckin}
       />
     );
   }
@@ -421,6 +475,7 @@ export function MatchBody(props: MatchBodyProps) {
         reason={reason}
         cooldownActive={props.cooldownActive}
         cooldownRemaining={props.cooldownRemaining}
+        festivalId={props.festivalId}
         onRetry={props.onRetry}
       />
     );
@@ -495,20 +550,24 @@ function IdleForm({
   groupSize,
   allowMinimum,
   hasFestival,
+  currentCheckin,
   canApply,
   setGroupSize,
   setAllowMinimum,
   onStart,
   onGoCheckIn,
+  onRequestCancelCheckin,
 }: {
   groupSize: number;
   allowMinimum: boolean;
   hasFestival: boolean;
+  currentCheckin: CurrentCheckinResponse | null;
   canApply: boolean;
   setGroupSize: (size: 2 | 3 | 4) => void;
   setAllowMinimum: (allow: boolean) => void;
   onStart: () => void;
   onGoCheckIn: () => void;
+  onRequestCancelCheckin: () => void;
 }) {
   return (
     <>
@@ -523,6 +582,25 @@ function IdleForm({
             className="shrink-0 rounded-xl bg-ink px-3 py-2 text-[13px] font-semibold text-white"
           >
             체크인하기
+          </button>
+        </div>
+      )}
+      {currentCheckin && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="truncate text-[13px] font-semibold text-ink">
+              {currentCheckin.festivalName ?? '체크인된 축제'}에 체크인됨
+            </span>
+            <span className="text-[12px] text-ink/50">
+              {formatSeoulDateTime(currentCheckin.expiresAt)} 만료
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onRequestCancelCheckin}
+            className="shrink-0 rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink/60"
+          >
+            체크인 취소
           </button>
         </div>
       )}
@@ -766,11 +844,13 @@ function CancelledCard({
   reason,
   cooldownActive,
   cooldownRemaining,
+  festivalId,
   onRetry,
 }: {
   reason: string;
   cooldownActive: boolean;
   cooldownRemaining: number;
+  festivalId: number | null;
   onRetry: () => void;
 }) {
   return (
@@ -790,6 +870,15 @@ function CancelledCard({
       <PrimaryButton disabled={cooldownActive} onClick={onRetry} className="mt-1">
         다시 신청하기
       </PrimaryButton>
+      {festivalId !== null && (
+        <Link
+          to="/solo-course"
+          state={{ festivalId }}
+          className="text-[13px] font-semibold text-teal underline underline-offset-2"
+        >
+          솔로 코스 보러가기
+        </Link>
+      )}
     </section>
   );
 }
@@ -830,6 +919,101 @@ function ErrorCard({
         </PrimaryButton>
       )}
     </section>
+  );
+}
+
+// ── 체크인 취소 확인 dialog ────────────────────────────
+export function handleCancelCheckinDialogKeyDown(
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
+  focusables: HTMLElement[],
+  activeElement: Element | null,
+  submitting: boolean,
+  onClose: () => void,
+) {
+  if (event.key === 'Escape' && !submitting) {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  if (event.key !== 'Tab' || focusables.length === 0) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function CancelCheckinDialog({
+  festivalName,
+  submitting,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  festivalName: string | null;
+  submitting: boolean;
+  error: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled)'));
+    focusables()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      handleCancelCheckinDialogKeyDown(event, focusables(), document.activeElement, submitting, onClose);
+    };
+    document.addEventListener('keydown', keydown);
+    return () => document.removeEventListener('keydown', keydown);
+  }, [onClose, submitting]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 sm:items-center sm:p-5">
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancel-checkin-title"
+        aria-describedby="cancel-checkin-description"
+        className="w-full max-w-[430px] rounded-t-3xl bg-white p-5 sm:rounded-3xl"
+      >
+        <h2 id="cancel-checkin-title" className="text-lg font-bold text-ink">
+          {festivalName ?? '체크인'} 체크인을 취소할까요?
+        </h2>
+        <p id="cancel-checkin-description" className="mt-1 text-sm text-ink/60">
+          취소하면 이 축제에서 매칭을 신청할 수 없고, 다시 참여하려면 현장에서 재체크인해야 해요.
+        </p>
+        {error && (
+          <p role="alert" aria-live="assertive" className="mt-3 rounded-2xl bg-coral/10 p-3 text-sm text-coral">
+            체크인을 취소하지 못했어요. 다시 시도해주세요.
+          </p>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onClose}
+            className="rounded-2xl border border-line py-3 disabled:opacity-50"
+          >
+            닫기
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onConfirm}
+            className="rounded-2xl bg-coral py-3 font-bold text-white disabled:opacity-50"
+          >
+            {submitting ? '취소 처리 중...' : '체크인 취소'}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

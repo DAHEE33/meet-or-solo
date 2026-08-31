@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import AdminHeader from '../components/admin/AdminHeader';
+import AdminNav from '../components/admin/AdminNav';
 import {
   type AdminReportDetail,
   type AdminReportFilters,
@@ -9,6 +11,7 @@ import {
 } from '../api/adminReports';
 import { EMPTY_ADMIN_REPORT_FILTERS, useAdminReports } from '../hooks/useAdminReports';
 import { formatSeoulDateTime } from '../utils/dateTime';
+import { LoadingState } from '../components/common/Spinner';
 
 const STATUS_OPTIONS: Array<{ value: AdminReportStatus | ''; label: string }> = [
   { value: '', label: '전체 상태' }, { value: 'SUBMITTED', label: '접수됨' },
@@ -31,12 +34,8 @@ export default function AdminReportsPage() {
 
   return (
     <div className="min-h-screen bg-sand">
-      <header className="border-b border-line bg-white px-6 py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <h1 className="text-lg font-bold text-ink">관리자 신고 검토</h1>
-          <a href="/admin" className="text-sm font-semibold text-ink/60">대시보드로 돌아가기</a>
-        </div>
-      </header>
+      <AdminHeader title="관리자 신고 검토" />
+      <AdminNav />
       <main className="mx-auto flex max-w-6xl flex-col gap-5 p-6" aria-busy={state.status === 'LOADING'}>
         <form onSubmit={(event) => { event.preventDefault(); void actions.applyFilters(toApiFilters(draft)); }} className="grid gap-3 rounded-2xl bg-white p-4 shadow-sm md:grid-cols-5">
           <label className="text-sm font-semibold text-ink">상태<select aria-label="신고 상태" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as AdminReportStatus | '' })} className="mt-1 block w-full rounded-xl border border-line p-2 font-normal">{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
@@ -47,7 +46,7 @@ export default function AdminReportsPage() {
         </form>
 
         <div className="sr-only" role="status" aria-live="polite">{state.successMessage ?? (state.status === 'LOADING' ? '신고 목록을 불러오는 중입니다.' : '')}</div>
-        {state.status === 'LOADING' && <p role="status" className="rounded-2xl bg-white p-8 text-center text-ink/60">신고 목록을 불러오는 중...</p>}
+        {state.status === 'LOADING' && <div className="rounded-2xl bg-white"><LoadingState message="신고 목록을 불러오는 중이에요" /></div>}
         {state.status === 'ERROR' && <section role="alert" className="rounded-2xl bg-white p-8 text-center"><p className="text-coral">신고 목록을 불러오지 못했습니다.</p><button type="button" onClick={() => void actions.reload()} className="mt-3 rounded-xl border border-line px-4 py-2 font-semibold">다시 시도</button></section>}
         {state.status === 'READY' && state.items.length === 0 && <p className="rounded-2xl bg-white p-8 text-center text-ink/60">조건에 맞는 신고가 없습니다.</p>}
         {state.status === 'READY' && state.items.length > 0 && (
@@ -78,7 +77,7 @@ export function AdminReportDetailDialog({ detail, loading, error, onRetry, onClo
 }
 
 export function AdminReportDetailDialogContent({ detail, loading, error, onRetry, onClose, onAction, dialogRef }: { detail: AdminReportDetail | null; loading: boolean; error: Error | null; onRetry: () => void; onClose: () => void; onAction: (target: AdminReportTargetStatus, opener: HTMLButtonElement) => void; dialogRef?: RefObject<HTMLElement> }) {
-  return <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/45 p-5"><section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="report-detail-title" aria-describedby="report-detail-description" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl"><div className="flex justify-between gap-3"><div><h2 id="report-detail-title" className="text-lg font-bold">신고 검토 상세</h2><p id="report-detail-description" className="mt-1 text-sm text-ink/55">구조화된 신고 사유와 검토에 필요한 최소 회원 정보입니다.</p></div><button type="button" onClick={onClose} aria-label="신고 상세 닫기"><X /></button></div>{loading && <p role="status" className="mt-6">상세 정보를 불러오는 중...</p>}{error && <div role="alert" className="mt-6 text-coral"><p>상세 정보를 불러오지 못했습니다.</p><button type="button" onClick={onRetry} className="mt-2 underline">다시 시도</button></div>}{detail && <><dl className="mt-6 grid grid-cols-[auto_1fr] gap-3 rounded-2xl bg-sand/50 p-4 text-sm"><dt>상태</dt><dd className="text-right font-bold">{statusLabel(detail.status)}</dd><dt>사유</dt><dd className="text-right font-bold">{reasonLabel(detail.reasonCode)}</dd><dt>신고자</dt><dd className="text-right">{detail.reporter.nickname}</dd><dt>피신고자</dt><dd className="text-right">{detail.reportedMember.nickname}</dd><dt>접수 시각</dt><dd className="text-right">{formatSeoulDateTime(detail.createdAt)}</dd><dt>최종 갱신</dt><dd className="text-right">{formatSeoulDateTime(detail.updatedAt)}</dd></dl><p className="mt-4 rounded-xl bg-coral/10 p-3 text-sm text-ink/70">유효 신고 확정은 제재를 적용하지 않습니다. 회원 제재는 후속 단계에서 별도로 처리합니다.</p><div className="mt-5 flex flex-wrap justify-end gap-2">{detail.status === 'SUBMITTED' && <button type="button" onClick={(event) => onAction('REVIEWING', event.currentTarget)} className="rounded-xl border border-line px-4 py-2 font-semibold">검토 시작</button>}{(detail.status === 'SUBMITTED' || detail.status === 'REVIEWING') && <><button type="button" onClick={(event) => onAction('REJECTED', event.currentTarget)} className="rounded-xl border border-coral px-4 py-2 font-semibold text-coral">신고 기각</button><button type="button" onClick={(event) => onAction('RESOLVED', event.currentTarget)} className="rounded-xl bg-coral px-4 py-2 font-bold text-white">유효 신고 확정</button></>}</div></>}</section></div>;
+  return <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/45 p-5"><section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="report-detail-title" aria-describedby="report-detail-description" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl"><div className="flex justify-between gap-3"><div><h2 id="report-detail-title" className="text-lg font-bold">신고 검토 상세</h2><p id="report-detail-description" className="mt-1 text-sm text-ink/55">구조화된 신고 사유와 검토에 필요한 최소 회원 정보입니다.</p></div><button type="button" onClick={onClose} aria-label="신고 상세 닫기"><X /></button></div>{loading && <LoadingState className="mt-6" message="상세 정보를 불러오는 중이에요" />}{error && <div role="alert" className="mt-6 text-coral"><p>상세 정보를 불러오지 못했습니다.</p><button type="button" onClick={onRetry} className="mt-2 underline">다시 시도</button></div>}{detail && <><dl className="mt-6 grid grid-cols-[auto_1fr] gap-3 rounded-2xl bg-sand/50 p-4 text-sm"><dt>상태</dt><dd className="text-right font-bold">{statusLabel(detail.status)}</dd><dt>사유</dt><dd className="text-right font-bold">{reasonLabel(detail.reasonCode)}</dd><dt>신고자</dt><dd className="text-right">{detail.reporter.nickname}</dd><dt>피신고자</dt><dd className="text-right">{detail.reportedMember.nickname}</dd><dt>접수 시각</dt><dd className="text-right">{formatSeoulDateTime(detail.createdAt)}</dd><dt>최종 갱신</dt><dd className="text-right">{formatSeoulDateTime(detail.updatedAt)}</dd></dl><p className="mt-4 rounded-xl bg-coral/10 p-3 text-sm text-ink/70">유효 신고 확정은 제재를 적용하지 않습니다. 회원 제재는 후속 단계에서 별도로 처리합니다.</p><div className="mt-5 flex flex-wrap justify-end gap-2">{detail.status === 'SUBMITTED' && <button type="button" onClick={(event) => onAction('REVIEWING', event.currentTarget)} className="rounded-xl border border-line px-4 py-2 font-semibold">검토 시작</button>}{(detail.status === 'SUBMITTED' || detail.status === 'REVIEWING') && <><button type="button" onClick={(event) => onAction('REJECTED', event.currentTarget)} className="rounded-xl border border-coral px-4 py-2 font-semibold text-coral">신고 기각</button><button type="button" onClick={(event) => onAction('RESOLVED', event.currentTarget)} className="rounded-xl bg-coral px-4 py-2 font-bold text-white">유효 신고 확정</button></>}</div></>}</section></div>;
 }
 
 export function AdminReportActionDialog({ detail, targetStatus, submitting, error, onClose, onSubmit }: { detail: AdminReportDetail; targetStatus: AdminReportTargetStatus; submitting: boolean; error: Error | null; onClose: () => void; onSubmit: () => void }) {

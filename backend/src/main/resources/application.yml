@@ -26,6 +26,46 @@ server:
   port: ${SERVER_PORT:8080}
 
 app:
+  tour-api:
+    base-url: ${TOUR_API_BASE_URL:https://apis.data.go.kr/B551011/KorService2}
+    service-key: ${TOUR_API_KEY:${TOURISM-API-KEY:}}
+    mobile-os: ${TOUR_API_MOBILE_OS:ETC}
+    mobile-app: ${TOUR_API_MOBILE_APP:SoloIn}
+    connect-timeout: ${TOUR_API_CONNECT_TIMEOUT:3s}
+    read-timeout: ${TOUR_API_READ_TIMEOUT:10s}
+  festival:
+    sync:
+      initial-delay: ${FESTIVAL_SYNC_INITIAL_DELAY:10s}
+      fixed-delay: ${FESTIVAL_SYNC_FIXED_DELAY:6h}
+      page-size: ${FESTIVAL_SYNC_PAGE_SIZE:100}
+      max-pages: ${FESTIVAL_SYNC_MAX_PAGES:100}
+      lookback-days: ${FESTIVAL_SYNC_LOOKBACK_DAYS:30}
+      lookahead-days: ${FESTIVAL_SYNC_LOOKAHEAD_DAYS:365}
+      region-code: ${FESTIVAL_SYNC_REGION_CODE:51}
+      classification-system-1: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1:EV}
+      classification-system-2: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2:EV01}
+      retry-max-attempts: ${FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS:3}
+      retry-initial-delay: ${FESTIVAL_SYNC_RETRY_INITIAL_DELAY:1s}
+      retry-max-delay: ${FESTIVAL_SYNC_RETRY_MAX_DELAY:10s}
+    detail-info:
+      cache-ttl: ${FESTIVAL_DETAIL_INFO_CACHE_TTL:1h}
+    checkin:
+      # 체크인 유효 기간(1시간)은 매칭 자격 상한과 동일 값을 써야 하므로 설정으로 분리하지 않고
+      # domain/checkin/CheckinValidityPolicy에 고정한다.
+      accuracy-threshold-meters: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:100}
+      bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:false}
+  tour-place:
+    sync:
+      initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}
+      fixed-delay: ${TOUR_PLACE_SYNC_FIXED_DELAY:12h}
+      page-size: ${TOUR_PLACE_SYNC_PAGE_SIZE:100}
+      max-pages: ${TOUR_PLACE_SYNC_MAX_PAGES:100}
+      region-code: ${TOUR_PLACE_SYNC_REGION_CODE:51}
+      content-type-ids: ${TOUR_PLACE_SYNC_CONTENT_TYPE_IDS:12,14,28,39}
+      batch-size: ${TOUR_PLACE_SYNC_BATCH_SIZE:500}
+      retry-max-attempts: ${TOUR_PLACE_SYNC_RETRY_MAX_ATTEMPTS:3}
+      retry-initial-delay: ${TOUR_PLACE_SYNC_RETRY_INITIAL_DELAY:1s}
+      retry-max-delay: ${TOUR_PLACE_SYNC_RETRY_MAX_DELAY:10s}
   openai:
     api-key: ${OPENAI_API_KEY:}
     base-url: ${OPENAI_BASE_URL:https://api.openai.com}

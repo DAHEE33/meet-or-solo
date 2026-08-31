@@ -17,6 +17,16 @@ logging:
     org.hibernate.SQL: debug
 
 app:
+  festival:
+    sync:
+      enabled: ${FESTIVAL_SYNC_ENABLED:true}
+    checkin:
+      # 개발계에서도 실제 축제 현장에 있지 않아도 체크인 흐름을 테스트할 수 있게 GPS 반경·정확도
+      # 검증을 기본적으로 건너뛴다. 운영에서는 base application.yml의 기본값(false)을 그대로 쓴다.
+      bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:true}
+  tour-place:
+    sync:
+      enabled: ${TOUR_PLACE_SYNC_ENABLED:true}
   admin:
     member:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:true}
