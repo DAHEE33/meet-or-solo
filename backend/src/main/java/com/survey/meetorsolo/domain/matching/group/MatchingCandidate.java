@@ -14,9 +14,11 @@ public record MatchingCandidate(
         int preferredGroupSize,
         boolean allowMinimumTwo,
         OffsetDateTime enteredAt,
-        List<TravelStyleCode> travelStyles
+        List<TravelStyleCode> travelStyles,
+        float[] preferenceEmbedding
 ) {
 
+    /** 임베딩 없이 생성하는 8인자 편의 생성자. */
     public MatchingCandidate(
             long poolId,
             long memberId,
@@ -27,6 +29,22 @@ public record MatchingCandidate(
             OffsetDateTime enteredAt,
             Collection<TravelStyleCode> travelStyles
     ) {
+        this(poolId, memberId, checkinId, festivalId, preferredGroupSize, allowMinimumTwo,
+                enteredAt, travelStyles, null);
+    }
+
+    /** 임베딩 포함 9인자 생성자. preferenceEmbedding은 null 허용(임베딩 미생성 회원). */
+    public MatchingCandidate(
+            long poolId,
+            long memberId,
+            long checkinId,
+            long festivalId,
+            int preferredGroupSize,
+            boolean allowMinimumTwo,
+            OffsetDateTime enteredAt,
+            Collection<TravelStyleCode> travelStyles,
+            float[] preferenceEmbedding
+    ) {
         this(
                 poolId,
                 memberId,
@@ -35,7 +53,8 @@ public record MatchingCandidate(
                 preferredGroupSize,
                 allowMinimumTwo,
                 Objects.requireNonNull(enteredAt, "enteredAt은 필수입니다."),
-                List.copyOf(Objects.requireNonNull(travelStyles, "travelStyles는 필수입니다."))
+                List.copyOf(Objects.requireNonNull(travelStyles, "travelStyles는 필수입니다.")),
+                preferenceEmbedding == null ? null : preferenceEmbedding.clone()
         );
         if (poolId <= 0) {
             throw new IllegalArgumentException("poolId는 양수여야 합니다.");

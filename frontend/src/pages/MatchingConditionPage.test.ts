@@ -8,6 +8,7 @@ import {
   countdownSeconds,
   handleCancelCheckinDialogKeyDown,
   MatchBody,
+  PreferenceGuideDialog,
   readMatchRoomNotice,
   resolveFestivalId,
   submitPoolEntry,
@@ -518,5 +519,68 @@ describe('매칭 탐색 취소 버튼', () => {
     const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE' })));
     expect(text(tree)).toContain('희망 인원');
     expect(text(tree)).not.toContain('주변 여행자를 찾고 있어요');
+  });
+});
+
+describe('매칭 신청 전 취향 안내', () => {
+  it('취향 미입력자에게 정확도 안내와 건너뛰기를 함께 제공한다', () => {
+    const tree = renderNode(PreferenceGuideDialog({
+      state: 'NONE',
+      onSkip: vi.fn(),
+      onGoInput: vi.fn(),
+      onDismiss: vi.fn(),
+    }));
+    expect(text(tree)).toContain('취향을 입력하면 매칭 정확도가 올라가요');
+    expect(text(tree)).toContain('건너뛰고 신청');
+    expect(text(tree)).toContain('지금 입력하기');
+  });
+
+  it('분석 실패는 재저장 경로를 안내한다', () => {
+    const tree = renderNode(PreferenceGuideDialog({
+      state: 'FAILED',
+      onSkip: vi.fn(),
+      onGoInput: vi.fn(),
+      onDismiss: vi.fn(),
+    }));
+    expect(text(tree)).toContain('취향 분석에 실패했어요');
+    expect(text(tree)).toContain('다시 저장하기');
+    expect(text(tree)).toContain('건너뛰고 신청');
+  });
+
+  it('건너뛰기와 입력하기 handler를 각각 호출한다', () => {
+    const onSkip = vi.fn();
+    const onGoInput = vi.fn();
+    const tree = renderNode(PreferenceGuideDialog({
+      state: 'NONE',
+      onSkip,
+      onGoInput,
+      onDismiss: vi.fn(),
+    }));
+    const all = elements(tree);
+    (all.find((element) => text(element as never) === '건너뛰고 신청')?.props.onClick as () => void)();
+    (all.find((element) => text(element as never) === '지금 입력하기')?.props.onClick as () => void)();
+    expect(onSkip).toHaveBeenCalledOnce();
+    expect(onGoInput).toHaveBeenCalledOnce();
+  });
+
+  it('안내 대상이 아닌 상태에서는 창을 그리지 않는다', () => {
+    for (const state of ['COMPLETED', 'ANALYZING', 'LOADING', 'UNAVAILABLE'] as const) {
+      expect(PreferenceGuideDialog({
+        state,
+        onSkip: vi.fn(),
+        onGoInput: vi.fn(),
+        onDismiss: vi.fn(),
+      })).toBeNull();
+    }
+  });
+
+  it('취향 상태와 무관하게 자동 매칭 신청 버튼을 비활성화하지 않는다', () => {
+    // 취향 미입력자의 매칭 신청을 막지 않는다는 결정을 회귀로 고정한다.
+    const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE', canApply: true })));
+    const applyButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '자동 매칭 신청',
+    );
+    expect(applyButton).toBeDefined();
+    expect(applyButton?.props.disabled).toBe(false);
   });
 });

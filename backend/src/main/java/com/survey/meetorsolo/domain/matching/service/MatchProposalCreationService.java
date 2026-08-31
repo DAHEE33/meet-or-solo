@@ -11,7 +11,7 @@ import com.survey.meetorsolo.domain.matching.repository.MatchAttemptMemberReposi
 import com.survey.meetorsolo.domain.matching.repository.MatchAttemptRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchProposalRepository;
-import com.survey.meetorsolo.domain.matching.scoring.TravelStyleScorer;
+import com.survey.meetorsolo.domain.matching.scoring.PairCompatibilityScorer;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
@@ -36,7 +36,7 @@ public class MatchProposalCreationService {
     private final MatchAttemptRepository attemptRepository;
     private final MatchAttemptMemberRepository memberRepository;
     private final MatchProposalRepository proposalRepository;
-    private final TravelStyleScorer scorer;
+    private final PairCompatibilityScorer pairScorer;
     private final JdbcTemplate jdbcTemplate;
     private final ApplicationEventPublisher eventPublisher;
     private final MatchOpponentExclusionService opponentExclusions;
@@ -44,12 +44,12 @@ public class MatchProposalCreationService {
 
     public MatchProposalCreationService(MatchPoolRepository poolRepository, MatchAttemptRepository attemptRepository,
             MatchAttemptMemberRepository memberRepository, MatchProposalRepository proposalRepository,
-            TravelStyleScorer scorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher,
+            PairCompatibilityScorer pairScorer, JdbcTemplate jdbcTemplate, ApplicationEventPublisher eventPublisher,
             MatchOpponentExclusionService opponentExclusions,
             MatchMemberPairLockService memberPairLocks) {
         this.poolRepository = poolRepository; this.attemptRepository = attemptRepository;
         this.memberRepository = memberRepository; this.proposalRepository = proposalRepository;
-        this.scorer = scorer; this.jdbcTemplate = jdbcTemplate; this.eventPublisher = eventPublisher;
+        this.pairScorer = pairScorer; this.jdbcTemplate = jdbcTemplate; this.eventPublisher = eventPublisher;
         this.opponentExclusions = opponentExclusions;
         this.memberPairLocks = memberPairLocks;
     }
@@ -171,9 +171,11 @@ public class MatchProposalCreationService {
         BigDecimal total = BigDecimal.ZERO;
         int pairs = 0;
         for (MatchingCandidate other : candidates) if (other.poolId() != target.poolId()) {
-            total = total.add(scorer.score(target.travelStyles(), other.travelStyles())); pairs++;
+            total = total.add(pairScorer.score(
+                    target.travelStyles(), other.travelStyles(),
+                    target.preferenceEmbedding(), other.preferenceEmbedding())); pairs++;
         }
-        return total.divide(BigDecimal.valueOf(pairs), TravelStyleScorer.SCORE_SCALE, RoundingMode.HALF_UP);
+        return total.divide(BigDecimal.valueOf(pairs), PairCompatibilityScorer.SCORE_SCALE, RoundingMode.HALF_UP);
     }
     private void fail(String message) { throw new MatchProposalCreationException(message); }
 }

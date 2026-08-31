@@ -66,6 +66,12 @@ app:
       retry-max-attempts: ${TOUR_PLACE_SYNC_RETRY_MAX_ATTEMPTS:3}
       retry-initial-delay: ${TOUR_PLACE_SYNC_RETRY_INITIAL_DELAY:1s}
       retry-max-delay: ${TOUR_PLACE_SYNC_RETRY_MAX_DELAY:10s}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    connect-timeout: ${OPENAI_CONNECT_TIMEOUT:5s}
+    read-timeout: ${OPENAI_READ_TIMEOUT:10s}
   admin:
     report:
       cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
@@ -73,6 +79,10 @@ app:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
       suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
   matching:
+    scoring:
+      # 태그 Jaccard 대 임베딩 코사인 유사도 가중치. 두 값의 합은 1이어야 한다.
+      jaccard-weight: ${MATCHING_SCORING_JACCARD_WEIGHT:0.70}
+      embedding-weight: ${MATCHING_SCORING_EMBEDDING_WEIGHT:0.30}
     scheduler:
       enabled: ${MATCHING_SCHEDULER_ENABLED:false}
       fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:5s}

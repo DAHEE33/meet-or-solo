@@ -2,16 +2,22 @@ package com.survey.meetorsolo.domain.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.domain.member.dto.MemberProfileResponse;
 import com.survey.meetorsolo.domain.member.dto.UpdateMemberProfileRequest;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.entity.MemberConsentType;
 import com.survey.meetorsolo.domain.member.entity.MemberTravelStyle;
 import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
+import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberTravelStyleRepository;
 import java.util.Base64;
@@ -33,6 +39,9 @@ class MemberProfileServiceTest {
     @Mock
     private MemberTravelStyleRepository memberTravelStyleRepository;
 
+    @Mock
+    private MemberConsentQueryRepository consentQueryRepository;
+
     @Test
     void 프로필을_저장하면_ACTIVE로_전환한다() {
         ProfileFieldCrypto crypto = new ProfileFieldCrypto(
@@ -40,9 +49,11 @@ class MemberProfileServiceTest {
         );
         Member member = Member.createKakaoMember("provider-user-id", "기존닉네임", null);
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        agreeSignupConsents();
         MemberProfileService service = new MemberProfileService(
                 memberRepository,
                 memberTravelStyleRepository,
+                consentQueryRepository,
                 crypto
         );
 
@@ -97,6 +108,7 @@ class MemberProfileServiceTest {
         when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
         when(memberTravelStyleRepository.saveAll(anyList()))
                 .thenThrow(new IllegalStateException("style persistence failed"));
+        agreeSignupConsents();
         MemberProfileService service = service(crypto);
 
         assertThatThrownBy(() -> service.completeProfile(
@@ -105,11 +117,76 @@ class MemberProfileServiceTest {
         )).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void 약관_동의가_없으면_최초_가입_완료를_거절한다() {
+        ProfileFieldCrypto crypto = crypto();
+        Member member = Member.createKakaoMember("provider-user-id", "기존닉네임", null);
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(consentQueryRepository.hasAgreedConsent(any(), eq(MemberConsentType.TERMS.name())))
+                .thenReturn(false);
+        MemberProfileService service = service(crypto);
+
+        assertThatThrownBy(() -> service.completeProfile(
+                1L,
+                new UpdateMemberProfileRequest("새닉네임", null, null, "FEMALE", "20S", List.of("FOOD"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.SIGNUP_CONSENT_REQUIRED);
+
+        assertThat(member.getStatus()).isEqualTo(Member.STATUS_PROFILE_REQUIRED);
+    }
+
+    @Test
+    void 개인정보처리방침_동의만_빠져도_최초_가입_완료를_거절한다() {
+        ProfileFieldCrypto crypto = crypto();
+        Member member = Member.createKakaoMember("provider-user-id", "기존닉네임", null);
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(consentQueryRepository.hasAgreedConsent(any(), eq(MemberConsentType.TERMS.name())))
+                .thenReturn(true);
+        when(consentQueryRepository.hasAgreedConsent(any(), eq(MemberConsentType.PRIVACY.name())))
+                .thenReturn(false);
+        MemberProfileService service = service(crypto);
+
+        assertThatThrownBy(() -> service.completeProfile(
+                1L,
+                new UpdateMemberProfileRequest("새닉네임", null, null, "FEMALE", "20S", List.of("FOOD"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.SIGNUP_CONSENT_REQUIRED);
+    }
+
+    @Test
+    void 기존_ACTIVE_회원의_프로필_수정에는_약관_동의를_요구하지_않는다() {
+        ProfileFieldCrypto crypto = crypto();
+        Member member = Member.createKakaoMember("provider-user-id", "기존닉네임", null);
+        member.completeProfile("기존닉네임", null, null, crypto.encrypt("MALE"), crypto.encrypt("30S"));
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        MemberProfileService service = service(crypto);
+
+        MemberProfileResponse response = service.completeProfile(
+                1L,
+                new UpdateMemberProfileRequest("새닉네임", null, null, "FEMALE", "20S", List.of("FOOD"))
+        );
+
+        assertThat(response.status()).isEqualTo(Member.STATUS_ACTIVE);
+    }
+
     private ProfileFieldCrypto crypto() {
         return new ProfileFieldCrypto(Base64.getEncoder().encodeToString(new byte[32]));
     }
 
     private MemberProfileService service(ProfileFieldCrypto crypto) {
-        return new MemberProfileService(memberRepository, memberTravelStyleRepository, crypto);
+        return new MemberProfileService(
+                memberRepository, memberTravelStyleRepository, consentQueryRepository, crypto);
+    }
+
+    /** 최초 가입 완료는 약관·개인정보 동의를 요구하므로 기본적으로 동의된 상태를 stub 한다. */
+    private void agreeSignupConsents() {
+        when(consentQueryRepository.hasAgreedConsent(any(), eq(MemberConsentType.TERMS.name())))
+                .thenReturn(true);
+        when(consentQueryRepository.hasAgreedConsent(any(), eq(MemberConsentType.PRIVACY.name())))
+                .thenReturn(true);
     }
 }

@@ -42,7 +42,8 @@ Claude Code는 제안, 파일 생성, 파일 수정 전에 아래 문서를 먼�
 - WebSocket STOMP는 자유 채팅이 아니라 상태 동기화 전용이다.
 - 운영 환경에서 PostgreSQL `5432`를 외부에 직접 노출하지 않는다.
 - 운영 환경에서 backend `8080`을 외부에 직접 노출하지 않는다.
-- GitHub 원격 저장소는 아직 미연결 상태이므로 Actions, 서버 IP, 도메인, SSH 키, Secrets는 placeholder로만 다룬다.
+- GitHub 원격 저장소는 연결되어 있고 통합 브랜치는 `dev`이다. 작업 브랜치는 `dev`에서 분기하고 PR로 `dev`에 병합한다. `main`으로 직접 PR을 올리지 않는다. 자세한 규칙은 [docs/12_GIT_BRANCH_RULES.md](docs/12_GIT_BRANCH_RULES.md)를 따른다.
+- 서버 IP, 도메인, SSH 키, Secrets는 저장소에 실제 값을 넣지 않고 placeholder로만 다룬다.
 - API Key, 비밀번호, SSH Key, 실제 도메인/IP를 하드코딩하지 않는다.
 - 저장소 구조를 바꾸려면 먼저 `README.md`와 `docs`를 함께 갱신해야 한다.
 

@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, UserCog } from 'lucide-react';
+import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import { adminReportsApi } from '../api/adminReports';
+import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
+import {
+  isPreferenceStateKnown,
+  preferenceActionLabel,
+  preferenceStatusDescription,
+  preferenceStatusLabel,
+  preferenceStatusTone,
+  resolvePreferenceState,
+  type PreferenceState,
+} from '../components/preference/preferenceStatus';
 import { checkInRecords } from '../data/mock/checkIns';
 import { tourSpots } from '../data/mock/tourSpots';
 import MobileLayout from '../components/layout/MobileLayout';
@@ -15,6 +25,20 @@ export default function MyPage() {
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
+
+  // 취향 상태는 부가 정보다. 조회에 실패하면 섹션을 조용히 숨기고 마이페이지는 그대로 보여준다.
+  useEffect(() => {
+    let cancelled = false;
+    preferenceEmbeddingApi.get()
+      .then((embedding) => {
+        if (!cancelled) setPreferenceState(resolvePreferenceState(embedding));
+      })
+      .catch(() => {
+        if (!cancelled) setPreferenceState('UNAVAILABLE');
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +114,33 @@ export default function MyPage() {
             )}
           </div>
         </section>
+
+        {/* 취향 전격 분석 상태 */}
+        {isPreferenceStateKnown(preferenceState) && (
+          <section className="flex flex-col gap-2">
+            <h2 className="text-[15px] font-bold text-ink">취향 전격 분석</h2>
+            <Link
+              to="/profile/edit"
+              className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3.5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
+            >
+              <Sparkles size={18} className="shrink-0 text-coral" aria-hidden="true" />
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span
+                  className={`w-fit rounded-full px-2.5 py-1 text-[12px] font-semibold ${preferenceStatusTone(preferenceState)}`}
+                >
+                  {preferenceStatusLabel(preferenceState)}
+                </span>
+                <span className="text-[13px] leading-5 text-ink/55">
+                  {preferenceStatusDescription(preferenceState)}
+                </span>
+              </span>
+              <span className="shrink-0 text-[13px] font-semibold text-coral">
+                {preferenceActionLabel(preferenceState)}
+              </span>
+              <ChevronRight size={16} className="shrink-0 text-ink/30" aria-hidden="true" />
+            </Link>
+          </section>
+        )}
 
         {errorMessage && <p role="alert" className="text-sm text-coral">{errorMessage}</p>}
 

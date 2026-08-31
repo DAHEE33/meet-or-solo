@@ -185,6 +185,73 @@ feature/wbs-10-b-inquiry-center
 관리자 답변, 공개 범위, 암호화, 첨부파일과 보관 정책을 먼저 확정하고 신규 migration으로
 별도 구현합니다. 신고·회원 관리 브랜치에 함께 넣지 않습니다.
 
+### 4.6 로그아웃 — 미착수
+
+권장 브랜치:
+
+```text
+feature/wbs-10-b-logout
+```
+
+현재 상태:
+
+- `frontend/src/pages/MyPage.tsx`의 "로그아웃" 버튼은 `navigate('/login')`만 호출합니다.
+  `access_token` cookie와 refresh token, WebSocket session이 모두 그대로 남습니다.
+- backend에 로그아웃 endpoint가 없습니다.
+- `docs/06_SECURITY_POLICY.md`의 "logout 시 Refresh Token 무효화"는 아직 계획이며 구현이
+  아닙니다.
+
+예상 계약:
+
+```http
+POST /api/auth/logout
+```
+
+필수 범위:
+
+- `access_token` HttpOnly cookie 만료 처리
+- refresh token 폐기. `RefreshTokenRepository.revokeByMemberId()`가 이미 있으므로 재사용한다.
+- transaction commit 이후 WebSocket session 종료. 관리자 제재(`AdminMemberService`)가 이미
+  같은 순서를 구현했으므로 그 패턴을 재사용한다.
+- 미인증 요청과 중복 로그아웃의 멱등 처리
+- 진행 중인 pool·proposal·group이 있는 회원의 로그아웃 허용 여부와 상태 정리 정책 확정
+- 로그아웃 후 기존 access token으로 보호 endpoint에 접근되지 않는지 검증
+
+회원 탈퇴(4.4)와 refresh token 폐기·session 종료 로직이 겹칩니다. 4.6을 먼저 구현해 공통
+경로를 만든 뒤 4.4에서 재사용하면 중복 구현을 피할 수 있습니다.
+
+### 4.7 동의·개인정보 후속 — 미착수
+
+권장 브랜치:
+
+```text
+feature/wbs-10-b-consent-followup
+```
+
+10-B 4단계(동의 API·회원가입 취향 입력)에서 확인된 남은 과제입니다. 4단계 구현 내용은
+`docs/10_PROGRESS_LOG.md`의 `[10-B AI 임베딩]` 4-1절을 참고합니다.
+
+- **동의 버전 무시**: `MemberConsentQueryRepository.hasAgreedConsent()`가 `version`을 보지
+  않으므로 고지 문구를 개정해 `MemberConsentType.currentVersion()`을 올려도 기존 동의자에게
+  재동의가 강제되지 않습니다. 강제하려면 조회 조건 변경과 기존 동의자 마이그레이션 방식을
+  함께 설계해야 합니다. 조회 조건만 바꾸면 기존 동의자가 일괄로 취향을 잃습니다.
+- **약관 소급 동의 수집**: 동의 기록 구조 이전에 가입한 `ACTIVE` 회원은 `TERMS`·`PRIVACY`
+  기록이 없습니다. 현재는 최초 가입(`PROFILE_REQUIRED`)에만 동의를 요구하므로 이들에게는
+  수집 경로가 없습니다.
+- **`PROFILE_REQUIRED` 상태의 프로필 수정**: 해당 상태에서 `/profile/edit` 저장을 시도하면
+  약관 동의 검사에 걸려 `SIGNUP_CONSENT_REQUIRED`로 거절됩니다. 정상 흐름에서는 해당 상태의
+  회원이 `/signup`으로 유도되므로 발생하지 않지만, 상태를 수동으로 되돌려 검증할 때 마주칩니다.
+- **동의 조회 범위**: `GET /api/members/me/consents`는 AI 관련 2종만 반환합니다.
+  `TERMS`·`PRIVACY`는 기록만 하고 조회로 노출하지 않습니다.
+- **임베딩 재시도 경로 부재**: `embedding_status = FAILED`를 회복하는 유일한 방법이 사용자가
+  같은 취향 글을 다시 저장하는 것입니다.
+- **외부 호출과 transaction 분리**: `MemberPreferenceEmbeddingService.createOrUpdate()`가
+  `@Transactional` 안에서 OpenAI를 호출합니다. read timeout이 10초이므로 그동안 DB
+  커넥션을 점유합니다. 회원가입 완료가 느리게 느껴지는 원인이기도 하므로 외부 호출을
+  transaction 밖으로 분리하거나 비동기화하는 방안을 검토합니다.
+- **점수 분해 저장**: 매칭 점수가 총점 하나만 저장되어 임베딩의 기여도를 사후 분석할 수
+  없습니다. `jaccard`, `cosine`, 임베딩 사용 여부를 함께 남기려면 컬럼 추가가 필요합니다.
+
 ## 5. 공통 보안·동시성 원칙
 
 - 관리자 endpoint는 JWT cookie의 회원 ID로 `members.role=ADMIN`을 매 요청 다시 확인합니다.
@@ -236,7 +303,12 @@ feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
 feature/wbs-10-b-report-safety-automation     — 미착수 (4.3)
 feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
 feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
+feature/wbs-10-b-logout                       — 미착수 (4.6)
+feature/wbs-10-b-consent-followup             — 미착수 (4.7)
 ```
+
+4.6 로그아웃은 4.4 회원 탈퇴와 refresh token 폐기·session 종료를 공유하므로 4.4보다 먼저
+진행하는 편이 유리합니다.
 
 각 브랜치는 `dev`에서 분기하고 작업 완료 후 PR로 `dev`에 병합합니다. 앞 단계 PR이
 병합되기 전에 다음 단계를 같은 작업 트리에 누적하지 않습니다.

@@ -3,8 +3,10 @@ package com.survey.meetorsolo.domain.matching.service;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import com.survey.meetorsolo.domain.matching.group.MatchingCandidate;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
+import com.survey.meetorsolo.domain.member.entity.MemberPreferenceEmbedding;
 import com.survey.meetorsolo.domain.member.entity.MemberTravelStyle;
 import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
+import com.survey.meetorsolo.domain.member.repository.MemberPreferenceEmbeddingRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberTravelStyleRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,10 +24,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class MatchingBatchReader {
     private final MatchPoolRepository poolRepository;
     private final MemberTravelStyleRepository styleRepository;
+    private final MemberPreferenceEmbeddingRepository embeddingRepository;
     private final JdbcTemplate jdbcTemplate;
     public MatchingBatchReader(MatchPoolRepository poolRepository, MemberTravelStyleRepository styleRepository,
+                               MemberPreferenceEmbeddingRepository embeddingRepository,
                                JdbcTemplate jdbcTemplate) {
-        this.poolRepository = poolRepository; this.styleRepository = styleRepository; this.jdbcTemplate = jdbcTemplate;
+        this.poolRepository = poolRepository;
+        this.styleRepository = styleRepository;
+        this.embeddingRepository = embeddingRepository;
+        this.jdbcTemplate = jdbcTemplate;
     }
     @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
     public MatchingBatch read(String lockToken) {
@@ -37,9 +44,17 @@ public class MatchingBatchReader {
                 styles.computeIfAbsent(style.getMemberId(), ignored -> new ArrayList<>()).add(style.getStyleCode());
             }
         }
+        Map<Long, float[]> embeddings = new HashMap<>();
+        if (!memberIds.isEmpty()) {
+            for (MemberPreferenceEmbedding emb : embeddingRepository.findAllByMemberIdInAndEmbeddingStatus(
+                    memberIds, MemberPreferenceEmbedding.STATUS_COMPLETED)) {
+                embeddings.put(emb.getMember().getId(), emb.getEmbedding());
+            }
+        }
         List<MatchingCandidate> candidates = pools.stream().map(pool -> new MatchingCandidate(
                 pool.getId(), pool.getMemberId(), pool.getCheckinId(), pool.getFestivalId(), pool.getPreferredGroupSize(),
-                pool.getAllowMinimumTwo(), pool.getEnteredAt(), styles.getOrDefault(pool.getMemberId(), List.of())
+                pool.getAllowMinimumTwo(), pool.getEnteredAt(), styles.getOrDefault(pool.getMemberId(), List.of()),
+                embeddings.get(pool.getMemberId())
         )).toList();
         return new MatchingBatch(candidates, readBlockedPairs(memberIds), readExcludedPairs(candidates));
     }

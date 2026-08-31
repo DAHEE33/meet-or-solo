@@ -4,6 +4,13 @@ import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
 import { ApiClientError } from '../api/apiClient';
 import type { CurrentCheckinResponse } from '../api/checkin';
 import type { CurrentMatchGroup, MatchingRestriction, MatchTerminationReason } from '../api/matching';
+import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
+import {
+  preferencePromptCopy,
+  resolvePreferenceState,
+  shouldPromptBeforeApply,
+  type PreferenceState,
+} from '../components/preference/preferenceStatus';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import PrimaryButton from '../components/common/PrimaryButton';
@@ -107,6 +114,10 @@ export default function MatchingConditionPage() {
   const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
   const [allowMinimum, setAllowMinimum] = useState(false);
   const [matchRoomNotice, setMatchRoomNotice] = useState(() => readMatchRoomNotice(location.state));
+  const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
+  /** 이 화면에 머무는 동안 안내를 이미 띄웠는지. 재신청마다 반복해서 띄우지 않는다. */
+  const [preferencePrompted, setPreferencePrompted] = useState(false);
+  const [preferencePromptOpen, setPreferencePromptOpen] = useState(false);
   const {
     state,
     isSubmitting,
@@ -146,6 +157,19 @@ export default function MatchingConditionPage() {
   const cooldownRemaining = useCountdown(cooldownDeadline, serverOffsetMs, `cooldown:${cooldownDeadline ?? ''}`);
   const completionRemaining = useCountdown(completionDeadline, serverOffsetMs, `completion:${completionDeadline ?? ''}`);
 
+  // 취향 상태는 안내에만 쓰는 부가 정보다. 실패해도 매칭 흐름을 막지 않는다.
+  useEffect(() => {
+    let cancelled = false;
+    preferenceEmbeddingApi.get()
+      .then((embedding) => {
+        if (!cancelled) setPreferenceState(resolvePreferenceState(embedding));
+      })
+      .catch(() => {
+        if (!cancelled) setPreferenceState('UNAVAILABLE');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     if (readMatchRoomNotice(location.state) === null) return;
     navigate(`${location.pathname}${location.search}${location.hash}`, {
@@ -177,9 +201,27 @@ export default function MatchingConditionPage() {
   const cooldownActive = state.restriction?.cooldown.active === true;
   const completionLockActive = state.restriction?.completionLock.active === true;
   const canApply = hasFestival && !isSubmitting && !cooldownActive && !completionLockActive;
+  const startPool = () => {
+    void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
+  };
   const onStart = () => {
     setMatchRoomNotice(null);
-    void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
+    // 취향이 없거나 분석에 실패했으면 한 번만 안내한다. 신청 자체를 막지는 않는다.
+    if (shouldPromptBeforeApply(preferenceState, preferencePrompted)) {
+      setPreferencePrompted(true);
+      setPreferencePromptOpen(true);
+      return;
+    }
+    startPool();
+  };
+  const onPreferenceSkip = () => {
+    setPreferencePromptOpen(false);
+    startPool();
+  };
+  const onPreferenceInput = () => {
+    setPreferencePromptOpen(false);
+    // 취향을 저장하면 매칭 화면으로 돌아올 수 있도록 출발지를 함께 넘긴다.
+    navigate('/profile/edit', { state: { returnTo: '/matching' } });
   };
   const onRetry = () => {
     setMatchRoomNotice(null);
@@ -262,7 +304,66 @@ export default function MatchingConditionPage() {
           onConfirm={() => void onConfirmCancelCheckin()}
         />
       )}
+      {preferencePromptOpen && (
+        <PreferenceGuideDialog
+          state={preferenceState}
+          onSkip={onPreferenceSkip}
+          onGoInput={onPreferenceInput}
+          onDismiss={() => setPreferencePromptOpen(false)}
+        />
+      )}
     </MobileLayout>
+  );
+}
+
+/**
+ * 매칭 신청 전 취향 입력 안내.
+ *
+ * 신청을 막는 창이 아니라 한 번 물어보는 창이다. 취향 없이도 여행 스타일 태그로 매칭이
+ * 정상 동작하므로 `건너뛰고 신청`은 항상 제공한다.
+ */
+export function PreferenceGuideDialog({
+  state,
+  onSkip,
+  onGoInput,
+  onDismiss,
+}: {
+  state: PreferenceState;
+  onSkip: () => void;
+  onGoInput: () => void;
+  onDismiss: () => void;
+}) {
+  const copy = preferencePromptCopy(state);
+  if (!copy) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={onDismiss}>
+      <div
+        className="flex w-full max-w-sm flex-col gap-4 rounded-3xl bg-white p-6"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="취향 입력 안내"
+      >
+        <h3 className="text-center text-[16px] font-bold text-ink">{copy.title}</h3>
+        <p className="text-center text-[13px] leading-relaxed text-ink/55">{copy.body}</p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onSkip}
+            className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55"
+          >
+            {copy.skipLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onGoInput}
+            className="flex-1 rounded-2xl bg-coral py-3 text-[15px] font-bold text-white"
+          >
+            {copy.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

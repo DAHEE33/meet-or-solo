@@ -1,6 +1,6 @@
 package com.survey.meetorsolo.domain.matching.group;
 
-import com.survey.meetorsolo.domain.matching.scoring.TravelStyleScorer;
+import com.survey.meetorsolo.domain.matching.scoring.PairCompatibilityScorer;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.OffsetDateTime;
@@ -21,10 +21,10 @@ public class MatchGroupComposer {
             Comparator.comparing(MatchingCandidate::enteredAt)
                     .thenComparingLong(MatchingCandidate::poolId);
 
-    private final TravelStyleScorer travelStyleScorer;
+    private final PairCompatibilityScorer pairScorer;
 
-    public MatchGroupComposer(TravelStyleScorer travelStyleScorer) {
-        this.travelStyleScorer = Objects.requireNonNull(travelStyleScorer, "travelStyleScorer는 필수입니다.");
+    public MatchGroupComposer(PairCompatibilityScorer pairScorer) {
+        this.pairScorer = Objects.requireNonNull(pairScorer, "pairScorer는 필수입니다.");
     }
 
     public List<MatchGroupCombination> compose(Collection<MatchingCandidate> inputCandidates) {
@@ -103,16 +103,17 @@ public class MatchGroupComposer {
         int pairCount = 0;
         for (int left = 0; left < candidates.size() - 1; left++) {
             for (int right = left + 1; right < candidates.size(); right++) {
-                total = total.add(travelStyleScorer.score(
-                        candidates.get(left).travelStyles(),
-                        candidates.get(right).travelStyles()
-                ));
+                MatchingCandidate l = candidates.get(left);
+                MatchingCandidate r = candidates.get(right);
+                total = total.add(pairScorer.score(
+                        l.travelStyles(), r.travelStyles(),
+                        l.preferenceEmbedding(), r.preferenceEmbedding()));
                 pairCount++;
             }
         }
         return total.divide(
                 BigDecimal.valueOf(pairCount),
-                TravelStyleScorer.SCORE_SCALE,
+                PairCompatibilityScorer.SCORE_SCALE,
                 RoundingMode.HALF_UP
         );
     }

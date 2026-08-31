@@ -355,6 +355,419 @@
 - `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md`, `docs/05_MATCHING_POLICY.md`를
   갱신했다. dev DB·브라우저 수동 검증은 아직 실행하지 않았다.
 
+## [10-B AI 임베딩] 취향 임베딩 도입
+
+상태: 1~5단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-28 기준)
+
+### 1. 진행 순서 변경
+
+기존 계획의 `MATCH-09` 솔로 코스 연결보다 AI 임베딩을 먼저 진행합니다. 솔로 코스는
+관광공사 OpenAPI 연동이 선행되어야 하는데 해당 연동이 아직 착수되지 않았고, AI 임베딩은
+선행 의존성이 없기 때문입니다. 문서 하단 `4. 이후 순서`에도 반영했습니다.
+
+### 2. 단계 계획
+
+| 단계 | 범위 | 브랜치 |
+| --- | --- | --- |
+| 1 | Backend — OpenAI 연동, 임베딩 생성·갱신·삭제 서비스, fallback | `feature/wbs-10-b-embedding-api` |
+| 2 | Backend — `EmbeddingScorer` + Jaccard 결합, 매칭 scoring 반영 | `feature/wbs-10-b-embedding-scoring` |
+| 3 | Frontend — 취향 입력 공통 컴포넌트(가이드 2문항 + 자유 입력) | `feature/wbs-10-b-preference-input-ui` |
+| 4 | Frontend — 회원가입 AI 동의 + 가입 흐름에 취향 입력 연결 | `feature/wbs-10-b-consent-ai-signup` |
+| 5 | Frontend — 매칭 신청 전 미입력 체크 + 프로필 설정에서 수정 | `feature/wbs-10-b-preference-guard` |
+
+1·2·3단계는 브랜치를 분리하지 않고 `feature/wbs-10-b-embedding-backend-and-preference-ui`
+하나로 묶어 진행했습니다.
+4단계부터 다시 계획대로 분리합니다.
+
+### 3. 확정 사항
+
+- `member_preference_embeddings`는 회원당 1건이며 `preference_text`, 벡터,
+  `embedding_status`, 모델명을 보관합니다. pgvector 기반이므로 local compose와
+  Testcontainers 모두 `pgvector/pgvector:pg16` 이미지를 사용합니다.
+- 임베딩 모델 기본값은 `text-embedding-3-small`이며 `OPENAI_EMBEDDING_MODEL`로 교체할 수
+  있습니다. API Key가 비어 있으면 기동은 성공하지만 임베딩이 `FAILED`로 저장됩니다.
+- 외부 호출 실패는 예외를 전파하지 않고 `embedding_status = FAILED`로 저장한 뒤 매칭에서
+  임베딩 미보유로 간주합니다. 임베딩 실패가 프로필 저장이나 매칭 자체를 막지 않습니다.
+- pair 점수 계산은 `PairCompatibilityScorer` 한 곳으로 모았습니다. 그룹 선정
+  (`MatchGroupComposer`)과 proposal에 저장되는 회원 점수
+  (`MatchProposalCreationService.memberScore()`)가 같은 계산식을 사용하므로 "선정 근거와
+  저장 점수가 다른" 상태가 재발하지 않습니다.
+- 양쪽 모두 임베딩을 보유한 경우에만 `Jaccard 0.70 + cosine 0.30`으로 가중 합산합니다.
+  한쪽이라도 미보유·미완료면 Jaccard 점수만 사용합니다. 이 fallback은 `cosine = jaccard`로
+  간주하는 것과 수학적으로 같으므로, 임베딩 보유자와 미보유자가 같은 후보 pool에 섞여도
+  점수 스케일이 왜곡되지 않습니다.
+- 0.70 / 0.30 가중치 근거: 태그는 5종 중 1~3개만 고르므로 Jaccard가 취할 수 있는 값이
+  `0, 20, 25, 33.33, 50, 66.67, 100` 7가지뿐이고 동점이 자주 발생합니다. 반면 코사인 유사도는
+  촘촘하지만 무관한 텍스트도 값이 크게 내려가지 않습니다. 이 배분에서는 태그가 크게 갈리면
+  (0 vs 100, 가중 차이 70점) 임베딩 최대 기여 30점으로 순위를 뒤집을 수 없고, 태그가 같은
+  버킷이면 임베딩이 순위를 결정합니다. 즉 태그를 주 신호, 임베딩을 동점 판별자로 두는 배분입니다.
+- 위 가중치는 실사용 데이터로 조정할 값이므로 하드코딩하지 않고
+  `app.matching.scoring.jaccard-weight` / `embedding-weight`로 주입합니다. 환경변수는
+  `MATCHING_SCORING_JACCARD_WEIGHT` / `MATCHING_SCORING_EMBEDDING_WEIGHT`이며, 두 값의 합이
+  1이 아니면 기동 시점에 실패합니다.
+- 취향 입력은 `PreferenceInputSection` 공통 컴포넌트로 가이드 2문항(하고 싶은 것, 편한 사람)과
+  자유 입력을 함께 받습니다. 서버 `preference_text`는 단일 컬럼이므로 `buildPreferenceText()`가
+  라벨 접두어를 붙여 한 문자열로 직렬화하고 `parsePreferenceText()`가 되돌립니다. 라벨을 찾지
+  못하면 전체를 자유 입력으로 두어 기존 저장 값도 내용을 잃지 않습니다.
+- 외부 API 전송 동의는 `member_consents`의 `AI_PROCESSING`으로 관리합니다.
+  `V11__add_member_preference_embeddings.sql`에서 `chk_member_consents_type` 제약에
+  값을 추가했습니다.
+
+### 4. 알려진 제약과 남은 작업
+
+- (4단계에서 해소) 동의를 기록하는 API와 화면이 없어 1~3단계 수동 검증은 `member_consents`에
+  직접 INSERT한 계정으로 수행했습니다. 4단계에서 동의 API와 화면을 추가해 실사용 경로를
+  열었습니다.
+- 저장되는 점수는 총점 하나뿐이라 사후 분석이 어렵습니다. `jaccard`, `cosine`, 임베딩 사용
+  여부를 함께 남기면 "임베딩이 실제로 매칭 품질을 높였는가"를 데이터로 판단할 수 있습니다.
+  컬럼 추가가 필요하므로 후기·평점 연계 단계에서 함께 검토합니다. 4-3절 실측 검증에서 이 제약이
+  실제로 어떤 비용을 만드는지 확인했고 구체적인 컬럼안을 같은 절에 적었습니다.
+- `MemberPreferenceEmbeddingService.createOrUpdate()`가 `@Transactional` 안에서 OpenAI를
+  호출합니다. read timeout 10초 동안 DB 커넥션을 점유하므로 외부 호출을 트랜잭션 밖으로
+  분리하거나 비동기화하는 방안을 후속으로 검토합니다.
+- `FAILED` 상태 재시도 경로가 없습니다. 현재는 사용자가 같은 취향 글을 다시 저장하는 것이
+  유일한 복구 수단입니다.
+- (4단계에서 해소) 동의 철회 시 임베딩 삭제 연동과 개인정보 고지 문구를 추가했습니다.
+
+### 4-1. 4단계 — 동의 API와 회원가입 취향 입력 연결
+
+브랜치 `feature/wbs-10-b-consent-ai-signup`에서 진행했습니다.
+
+**국외 이전 동의 판단**
+
+OpenAI는 미국 소재 사업자이고 `preference_text`는 자유 서술형 개인정보이므로 `AI_PROCESSING`과
+별개로 `OVERSEAS_TRANSFER` 동의를 받기로 확정했습니다. `docs/06_SECURITY_POLICY.md`가 이미 두
+동의를 합치지 않기로 정해 두었고, 국외 이전 고지에 필요한 항목(이전받는 자, 국가, 항목, 시점과
+방법, 목적, 보유 기간, 거부권)이 하나의 체크박스에 담기지 않기 때문입니다. 임베딩 저장은 두
+동의를 모두 보유한 경우에만 허용하고, 하나라도 없으면 기존 `AI_CONSENT_REQUIRED`로 거절합니다.
+실제 법적 요건과 최종 문구는 출시 전 별도 검토 대상으로 남깁니다.
+
+**동의 API**
+
+- `MemberConsentType` enum에 6개 유형과 고지 문구 버전(`currentVersion`)을 두었습니다. 현재
+  API로 다루는 유형은 `TERMS`, `PRIVACY`, `AI_PROCESSING`, `OVERSEAS_TRANSFER` 4개이고,
+  `LOCATION`·`MARKETING`은 화면이 없어 400으로 거절합니다.
+- `GET /api/members/me/consents`는 취향 분석에 필요한 2개 유형을 항상 채워서 반환합니다.
+  기록이 없어도 항목을 빼지 않고 `agreed = false`로 내려보냅니다. "아직 없으면 200 + null data"
+  규약은 단일 리소스 조회에 적용하는 규약인데, 동의 상태는 조회 대상 유형이 고정되어 있고
+  화면이 "어떤 동의가 비어 있는가"를 알아야 체크박스를 그릴 수 있어 다르게 판단했습니다.
+- `POST /api/members/me/consents`로 동의를 기록하고
+  `DELETE /api/members/me/consents/{consentType}`로 철회합니다. 고지 문구 버전은 클라이언트가
+  아니라 서버가 정합니다.
+- 쓰기는 `MemberConsentCommandRepository`의 `INSERT ... ON CONFLICT DO UPDATE` 한 문장으로
+  처리합니다. `uq_member_consents_member_type_version` 때문에 "철회 후 재동의"는 새 row가 아니라
+  기존 row 갱신이고, 조회 후 분기하면 중복 제출 시 UNIQUE 위반이 나기 때문입니다.
+- 철회는 `agreed`를 `FALSE`로 바꾸지 않고 `revoked_at`만 기록합니다. 기존
+  `MemberConsentQueryRepository.hasAgreedConsent()`가 이미 `agreed = TRUE AND revoked_at IS NULL`을
+  보고 있어 그대로 맞물립니다.
+- migration은 추가하지 않았습니다. V2와 V11로 충분합니다.
+
+**철회 시 삭제 정책 (진행 로그가 요구하던 항목)**
+
+`AI_PROCESSING` 또는 `OVERSEAS_TRANSFER` 중 하나라도 철회하면 같은 transaction에서
+`member_preference_embeddings` row를 삭제합니다. 두 동의가 모두 있어야 전송이 허용되므로 하나만
+철회해도 보관 근거가 사라지고, 원문과 벡터가 같은 row라 한 번의 삭제로 함께 지워집니다.
+확정된 정책은 `docs/06_SECURITY_POLICY.md`에 반영했습니다.
+
+**가입 시 약관 동의 (LoginPage "간주" 문구 처리)**
+
+`LoginPage`의 "계속 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다" 문구는
+묵시적 동의인 데다 DB에 아무 기록을 남기지 않아 사후 증명이 불가능했습니다. OAuth 리다이렉트
+전에 동의를 받으면 흐름이 복잡해지므로 동의 시점을 회원가입(프로필 설정 완료)으로 옮겼습니다.
+
+- `SignupPage`에 `TERMS`·`PRIVACY` 필수 체크박스를 추가하고, 프로필 저장 직전에 동의를
+  기록합니다.
+- 서버 `MemberProfileService.completeProfile()`은 최초 가입 완료(`PROFILE_REQUIRED`) 시점에만
+  두 동의를 확인하고 없으면 `SIGNUP_CONSENT_REQUIRED`(400)로 거절합니다. 기존 `ACTIVE` 회원의
+  프로필 수정에는 적용하지 않습니다. 동의 기록 구조가 생기기 전에 가입한 회원까지 소급해 막으면
+  프로필 수정 자체가 불가능해지기 때문입니다.
+- `LoginPage` 문구는 "로그인 후 프로필 설정 단계에서 ... 동의하게 됩니다"로 바꿨습니다.
+
+**Frontend**
+
+- `api/memberConsents.ts`와 고지 문구 상수 `components/consent/consentNotice.ts`, 공통 컴포넌트
+  `components/consent/AiConsentSection.tsx`를 추가했습니다. AI 처리와 국외 이전을 별도 체크박스로
+  받고, "자세히"를 펼치면 국외 이전 고지 항목을 표시합니다.
+- `SignupPage`에 기존 `PreferenceInputSection`을 그대로 재사용해 취향 입력을 붙였습니다. 취향은
+  선택 입력이며 동의 두 가지를 체크해야 입력란이 활성화됩니다. 취향 저장에 실패해도 가입은 이미
+  완료된 상태이므로 되돌리지 않고 "취향 없이 시작하기"로 진행할 수 있게 했습니다. 임베딩 실패가
+  가입을 막지 않는다는 1~3단계 원칙과 같습니다.
+- `ProfileEditPage`는 진입 시 동의 상태를 함께 조회합니다. 미동의면 동의 섹션을 먼저 보여주고
+  버튼을 "동의하고 저장"으로 바꿔 동의와 저장을 한 번에 처리합니다. 저장 중
+  `AI_CONSENT_REQUIRED`가 오면(다른 기기에서 철회한 경우) 에러 문구 대신 동의 입력을 다시
+  노출합니다. 동의 철회 버튼도 추가했고, 철회하면 저장한 취향도 삭제된다는 확인을 받습니다.
+- 화면 문구에는 "임베딩" 같은 개발 용어를 쓰지 않았습니다. 문구에 개발 용어가 섞이는 것을
+  테스트로 막습니다(`consentNotice.test.ts`).
+
+**2026-08-26 브라우저·dev DB 수동 검증**
+
+로컬 backend/frontend와 SSH tunnel로 연결한 dev DB(`meet_or_solo_dev`)에서 확인했습니다.
+
+확인한 항목:
+
+- 로그인 화면의 "동의하는 것으로 간주됩니다" 문구가 가입 단계 안내로 바뀐 것
+- 약관·개인정보 동의 없이 "프로필 설정 완료"를 누르면 진행되지 않는 것
+- AI 처리와 국외 이전 체크박스가 분리되어 있고, 하나만 체크하면 취향 입력이 잠긴 채로 남는 것
+- "자세히"를 펼치면 국외 이전 고지 항목이 표시되는 것
+- 가입 완료 후 `member_consents`에 4개 유형이 기록되고
+  `member_preference_embeddings`에 `embedding_status = COMPLETED`,
+  `embedding_model = text-embedding-3-small`, `vector_dims = 1536`이 저장되는 것
+- 동의 철회 시 `member_preference_embeddings` row가 삭제되고 `member_consents.revoked_at`이
+  기록되는 것 (진행 로그가 요구하던 삭제 정책)
+- 철회 상태에서 화면을 우회해 `POST /api/members/me/preference-embedding`을 직접 호출하면
+  `403 AI_CONSENT_REQUIRED`로 거절되는 것
+- 재동의 후 같은 endpoint 호출이 성공하고 `COMPLETED`로 저장되는 것
+
+수행하지 않은 항목: 취향을 비운 채 가입, 기존 `ACTIVE` 회원의 프로필 수정 회귀 확인,
+국외 이전 동의만 단독 철회. 자동 테스트로 각각 대응되는 케이스가 있으나 수동 `PASS`로
+판정하지 않습니다.
+
+검증 중 회원가입 완료가 느리게 느껴지는 현상을 확인했습니다. 동의 4건과 프로필, 임베딩까지
+HTTP 요청이 순차로 나가고 마지막 요청이 transaction 안에서 OpenAI를 호출하기 때문이며(read
+timeout 10초), dev DB가 SSH tunnel 너머에 있어 왕복 지연이 더해집니다. 기존 구조에서 비롯된
+현상이라 이번 범위에서 바꾸지 않고 로드맵 4.7로 이관했습니다.
+
+**남은 제약**
+
+- 동의 여부 조회가 `version`을 보지 않으므로 고지 문구를 개정해 `currentVersion`을 올려도 기존
+  동의자에게 재동의가 강제되지 않습니다. 지금 강제하면 기존 동의자가 전부 취향을 잃습니다.
+- 동의 기록 구조 이전에 가입한 `ACTIVE` 회원의 `TERMS`·`PRIVACY` 소급 동의 수집 경로가 없습니다.
+- `GET /api/members/me/consents`는 AI 관련 2개만 반환합니다. `TERMS`·`PRIVACY`는 기록만 하고
+  조회로 노출하지 않습니다.
+
+위 제약과 임베딩 재시도·외부 호출 분리·점수 분해 저장은
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md`의 `4.7 동의·개인정보 후속`으로 모았습니다. 수동 검증
+중 확인한 로그아웃 미구현(화면 버튼이 cookie와 refresh token, WebSocket session을 정리하지
+않음)은 같은 문서 `4.6 로그아웃`으로 추가했고 `docs/06_SECURITY_POLICY.md`에도 미구현임을
+명시했습니다. 두 항목 모두 이번 단계에서는 문서화만 하고 구현하지 않았습니다.
+
+### 4-2. 5단계 — 매칭 신청 전 취향 안내와 마이페이지 상태 노출
+
+브랜치 `feature/wbs-10-b-preference-guard`에서 진행했습니다.
+
+**취향 미입력자의 매칭 신청을 막지 않기로 확정**
+
+막을지 안내만 할지가 이 단계의 유일한 설계 결정이었고, **막지 않는 쪽으로 확정**했습니다. 근거는
+네 가지입니다.
+
+- 매칭 설계가 이미 취향 미보유를 정상 케이스로 전제합니다. `PairCompatibilityScorer.score()`는
+  한쪽이라도 임베딩이 없으면 Jaccard 점수만 쓰고, 이 fallback이 `cosine = jaccard`와 수학적으로
+  같아 점수 스케일이 왜곡되지 않습니다. 미보유자를 pool에서 뺄 기술적 이유가 없습니다.
+- 막으면 선택 동의가 사실상 강제 동의가 됩니다. 취향 저장은 `AI_PROCESSING`과
+  `OVERSEAS_TRANSFER`를 모두 요구하는데, 두 동의를 거부했다고 핵심 기능인 자동 매칭을 못 쓰게
+  하면 "동의하지 않으면 서비스 거부"가 됩니다. 태그만으로 매칭이 정상 동작한다는 사실 자체가
+  이 처리가 서비스 제공에 필수적이지 않다는 근거이므로 필수 동의로 재분류할 수도 없습니다.
+  4-1절에서 국외 이전 고지에 거부권을 명시한 것과도 충돌합니다.
+- 1~4단계 내내 유지한 "임베딩 실패가 서비스를 막지 않는다" 원칙과 충돌합니다. 동의를 받아도
+  OpenAI 호출이 실패하면 `FAILED`로 남고 임베딩은 없습니다. 막는 구조라면 API Key 미설정이나
+  OpenAI 장애 시 동의한 회원까지 전원 매칭 불가가 됩니다.
+- 기존 회원이 잠깁니다. 동의 기록 구조 이전 가입자와 4단계 이후 AI 동의 없이 가입한 `ACTIVE`
+  회원이 매칭에서 제외됩니다. 4-1절에서 `TERMS`·`PRIVACY` 소급 적용을 뺀 것과 같은 문제입니다.
+
+전제 확인도 함께 했습니다. 회원가입 시 필수 동의는 `TERMS`·`PRIVACY` 2개뿐이고 AI 관련 2개는
+선택입니다. `SignupPage.handleComplete()`가 `agreedTerms`·`agreedPrivacy`만 검사하고,
+`savePreference()`는 취향 입력이 없으면 그대로 통과합니다. 즉 AI 동의를 한 번도 하지 않고 가입을
+끝낸 회원이 정상 경로로 존재하므로 "이미 가입 때 받았으니 강제해도 된다"는 전제는 성립하지
+않습니다.
+
+**대신 신청 직전에 한 번 물어봅니다**
+
+상시 배너 대신 확인 창을 택했습니다. 배너는 지나치기 쉬워 참여율이 오르지 않고, 배너와 창을 같이
+두면 같은 말을 두 번 하기 때문입니다. 참여율은 실제로 중요한데, `score()`가 짝 단위 계산이라
+**양쪽 모두 임베딩을 가져야** 코사인 항이 작동합니다. 혼자 입력해도 상대가 없으면 태그 계산과
+같습니다.
+
+- `자동 매칭 신청`을 누를 때 가로채 확인 창을 띄우고, `건너뛰고 신청`은 기존과 동일하게
+  `enterPool()`을 호출합니다. `canApply` 조건은 바꾸지 않았습니다.
+- 취향 미입력은 "취향을 입력하면 매칭 정확도가 올라가요", 분석 실패는 "취향 분석에 실패했어요"로
+  문구를 나눕니다. 지금까지 `FAILED`는 사용자가 어디서도 알 수 없는 상태였는데, 이 창과
+  마이페이지 섹션이 유일한 복구 수단인 재저장 경로를 열어 줍니다.
+- 아래 경우에는 창을 띄우지 않고 곧바로 신청합니다: 분석 완료·분석 중(이미 입력한 사람),
+  조회 로딩 중(신청을 지연시키지 않음), 조회 실패(부가 정보 조회 실패로 매칭을 막지 않음),
+  이 화면에서 이미 안내함(탐색 만료·거절·취소 후 재신청이 잦아 매번 띄우면 방해가 됨).
+- 마이페이지에는 상태 배지와 안내, 프로필 수정 링크를 두었습니다. 조회에 실패하면 섹션을 조용히
+  숨깁니다.
+- `지금 입력하기`로 넘어갈 때 route state에 `returnTo: '/matching'`을 실어 보냅니다. 프로필 수정
+  화면은 이 값이 있을 때만 저장 성공 후 `매칭 신청하러 가기` 버튼을 보여 줍니다. 매칭하려다 들어온
+  사용자가 프로필 수정 화면에 갇히던 문제를 수동 검증에서 확인해 보완한 것입니다. 마이페이지에서
+  스스로 들어온 경우에는 `저장했어요. 이 화면에서 계속 고칠 수 있어요.` 문구로 그 화면에 머무는
+  기존 4단계 동작을 그대로 유지합니다. 복귀 경로는 `readPreferenceReturnTo()`가 앱 내부 경로만
+  허용하고 외부 URL과 프로토콜 상대 경로는 무시합니다.
+
+**공통 모듈**
+
+`components/preference/preferenceStatus.ts`에 상태 매핑과 판단·문구를 모았습니다. 마이페이지,
+프로필 수정, 매칭 신청 세 화면이 같은 배지 문구를 쓰게 하려는 목적이고, jsdom이 없어 클릭 흐름을
+테스트할 수 없으므로 판단 로직을 순수 함수로 빼는 것이 곧 테스트 수단이기도 합니다.
+`ProfileEditPage`에 인라인으로 있던 배지 삼항식을 이 함수로 교체했습니다(동작·문구 변화 없음).
+
+**남은 제약**
+
+- 안내 여부를 화면 진입 기준으로만 기억하므로, 프로필 수정에 갔다가 입력하지 않고 돌아오면 다음
+  신청에서 한 번 더 뜹니다. 기기·세션 단위 영구 저장은 한 번 건너뛴 회원에게 영영 안 뜨는 문제가
+  있어 도입하지 않았습니다.
+- 취향 참여율이 낮으면 임베딩이 대부분의 짝에서 작동하지 않습니다. 참여율과 실제 매칭 품질 변화는
+  4절의 점수 분해 저장(`jaccard`, `cosine`, 임베딩 사용 여부)이 생겨야 데이터로 확인할 수 있습니다.
+- 취향 상태를 화면 진입 시 한 번만 조회하므로(`MatchingConditionPage`의 조회 `useEffect` 의존성
+  배열이 비어 있음) 화면 밖에서 상태가 바뀌면 재진입 전까지 안내에 반영되지 않습니다. 다른 기기에서
+  동의를 철회한 경우가 여기 해당합니다. 4-3절 실측 검증 중 확인했습니다. 신청 시점에 다시 조회하면
+  매 신청마다 요청이 늘고 조회 지연이 신청을 늦추므로, 현재의 "부가 정보 조회가 매칭을 막지 않는다"
+  원칙과 함께 검토해야 합니다.
+
+### 4-3. 임베딩 점수 실측 검증 (2026-08-28)
+
+브랜치 `test/wbs-10-b-embedding-score-verification`에서 진행했습니다. 1~5단계 구현과 자동 테스트는
+끝났지만 "임베딩이 실제 매칭 점수에 반영되는가"를 실제 2인 매칭으로 확인한 적이 없어 이번에
+실측했습니다.
+
+**지금까지 근거가 없던 이유**
+
+dev DB에 남아 있던 가장 최근 2인 매칭은 `attempt 33`(2026-08-28 14:27)이고 `member_score`가
+33.33이었습니다. 이 값은 Jaccard 단독 점수와 같아 얼핏 임베딩 미반영으로 보이지만, 두 회원의
+`member_preference_embeddings` row는 14:58과 14:59에 생성됐습니다. 매칭 시점에 임베딩이 아예
+없었던 것이고 fallback이 정상 동작한 결과입니다. 즉 구현 이후 "양쪽이 임베딩을 보유한 상태로
+매칭한 사례"가 한 번도 없었던 것이 근거 부재의 원인이었습니다.
+
+**검증 설계 — 단일 변수**
+
+`PairCompatibilityScorer.score()`는 양쪽 모두 `COMPLETED` 임베딩을 가진 경우에만 가중 합산하고
+한쪽이라도 없으면 Jaccard만 씁니다. 그래서 취향 태그를 고정한 채 임베딩 가용 여부만 바꾸면 점수
+차이가 곧 임베딩 반영 여부가 됩니다. 회원 2·27, 축제 144로 두 라운드를 돌렸습니다.
+
+- 라운드 A: 두 회원 모두 `COMPLETED`
+- 라운드 B: 회원 27만 `embedding_status = 'FAILED'`로 전환
+
+`MatchingBatchReader`가 `COMPLETED`만 읽으므로 벡터와 원문을 지우지 않고 상태만 뒤집어도 "한쪽만
+보유" 상황이 재현됩니다. 되돌릴 수 있고 취향 원문이 유실되지 않아 이 방식을 택했습니다.
+`member_travel_styles`와 `.env` 가중치는 건드리지 않았습니다.
+
+**측정 지점을 제안 생성 시점으로 잡은 근거**
+
+`member_score`는 `MatchProposalCreationService.createInitial()`이 proposal을 만들 때 확정 저장되고
+이후 수락·거절·타임아웃으로 바뀌지 않습니다. 따라서 제안이 뜨는 것까지만 가면 측정이 끝나고
+응답할 필요가 없습니다. 이 덕분에 명시적 거절을 피할 수 있었고, 거절이 없으니
+`match_opponent_exclusions`도 생기지 않아 두 라운드가 같은 check-in을 재사용할 수 있었습니다.
+
+**기대값 산출**
+
+기대값을 먼저 계산해 두고 실측과 대조했습니다. 회원 2의 태그는 `{ACTIVE}`, 회원 27은
+`{ACTIVE, FOOD, PHOTO}`이므로 Jaccard는 1/3 = 33.33입니다. 코사인 유사도는 pgvector의
+`1 - (a.embedding <=> b.embedding)`으로 0.717581, 즉 71.76입니다. 로컬 `.env` 가중치는 실험값
+0.50/0.50입니다.
+
+- 라운드 A 기대: `0.50 × 33.33 + 0.50 × 71.76 = 52.545` → 52.55
+- 라운드 B 기대: Jaccard 단독 → 33.33
+
+**실측 결과**
+
+브라우저 2계정(회원 2·27)으로 실제 `자동 매칭 신청`을 눌러 매칭을 성사시켰습니다. check-in API가
+아직 없어 `festival_checkins`만 SQL로 시딩했고, 나머지는 실사용 경로 그대로입니다.
+
+| 항목 | 라운드 A | 라운드 B |
+| --- | --- | --- |
+| attempt_id | 34 (`POOL_ENTRY`, 16:22:01) | 35 (`SCHEDULER`, 16:25:02) |
+| 회원 2 / 27 check-in | 194 / 195 | 194 / 195 (동일) |
+| 회원 27 `embedding_status` | `COMPLETED` | `FAILED` |
+| Jaccard | 33.33 | 33.33 |
+| cosine × 100 | 71.76 | 해당 없음 |
+| 계산 방식 | Jaccard + 임베딩 | Jaccard 단독 |
+| `member_score` (회원 2) | **52.55** | **33.33** |
+| `member_score` (회원 27) | **52.55** | **33.33** |
+| `match_attempts.score` | 52.55 | 33.33 |
+| 기대값 대비 오차 | 0.00 | 0.00 |
+
+**19.22점 차이로 임베딩이 매칭 점수에 실제로 반영되는 것을 확인했습니다.** 두 라운드가 같은
+check-in(194/195)과 같은 태그 조합을 썼으므로 다른 변수의 개입 여지가 없습니다. 또한 저장 값이
+기대값과 소수점 둘째 자리까지 일치해 "반영된다"에 더해 "설계한 계산식 그대로 계산된다"까지
+확인됐습니다. `match_attempts.score`(그룹 점수)와 `member_score`가 일치하는 것도 3절의 "선정 근거와
+저장 점수가 갈라지지 않는다"를 실측으로 재확인한 것입니다.
+
+**부수로 확인된 사항**
+
+- 실측값 52.55는 현재 backend가 `.env`의 0.50/0.50을 로드했다는 증거이기도 합니다. 가중치는
+  어디에도 로그로 남지 않지만, 같은 조건에서 0.70/0.30이면 44.86, 임베딩 미반영이면 33.33이 나오므로
+  저장 점수 하나로 세 경우가 구분됩니다. 가중치 적용 여부를 확인하는 실용적인 수단입니다.
+- 응답하지 않아 타임아웃된 라운드에서 `match_opponent_exclusions`가 생기지 않는 것을 실측으로
+  확인했습니다. 제외 기록은 `MatchProposalResponseService`가 1회차 명시적 `REJECTED`일 때만
+  생성합니다. 타임아웃은 자동 거절이지만 제외 대상이 아닙니다.
+- 두 라운드 모두 `INITIAL_MATCH_INSUFFICIENT`로 종료했고, 타임아웃 처리된 회원에게만 2분 쿨타임이
+  붙었습니다. 상대 회원은 `EXCLUDED`로 pool이 반환됩니다.
+- 라운드 B에서 회원 27에게 "취향 분석에 실패했어요" 안내 창이 뜨지 않았습니다. 결함이 아니라 검증
+  방법 때문입니다. `MatchingConditionPage`는 취향 상태를 화면 진입 시 한 번만 조회하고(조회
+  `useEffect`의 의존성 배열이 비어 있음) 이후 갱신하지 않는데, 상태를 `FAILED`로 바꾼 시점이 화면
+  마운트 이후였습니다.
+- 위 추론을 그대로 두지 않고 별도로 확인했습니다. `embedding_status`를 `FAILED`로 되돌린 뒤 매칭
+  화면을 새로고침하고 `자동 매칭 신청`을 누르니 `취향 분석에 실패했어요` 안내 창이 정상적으로
+  떴습니다(`건너뛰고 신청` / `다시 저장하기`). 5단계에서 구현한 `FAILED` 안내 경로가 실사용에서
+  동작하는 것을 처음으로 확인한 것이고, 지금까지 사용자가 알 수 없던 `FAILED` 상태의 유일한 복구
+  경로가 실제로 열려 있음을 뜻합니다. 확인 후 `COMPLETED`로 원복했습니다.
+- 다만 "다른 기기에서 동의를 철회하는 등 화면 밖에서 상태가 바뀌면 재진입 전까지 반영되지 않는다"는
+  제약이 실물로 드러난 것이므로 아래 제약 목록에 추가합니다.
+
+**검증 절차 스크립트**
+
+`scripts/verify-embedding-score.sql`에 사전 점검, check-in 시딩, 측정, 임베딩 상태 전환, 원복을
+단계별로 담았습니다. 측정 쿼리는 저장된 `member_score`와 DB에서 다시 계산한 기대값을 한 행에 나란히
+출력하고 차이를 `diff_a` / `diff_b`로 보여 줍니다. 상단 파라미터 5개(회원 2명, 축제, 가중치 2개)만
+바꾸면 다른 조합으로 재현할 수 있습니다.
+
+주의할 점은 세 가지입니다. 전체를 한 번에 실행하지 않고 라운드 사이에 브라우저 조작과 쿨타임 대기가
+필요합니다. `uq_festival_checkins_member_festival_active` 때문에 새 check-in을 넣기 전에 기존
+`ACTIVE`를 먼저 내려야 합니다. 그리고 6단계 원복을 건너뛰면 대상 회원의 취향이 매칭에서 계속
+무시됩니다.
+
+**점수 분해 저장 제안 (이번 범위 밖, 구현하지 않음)**
+
+이번 검증은 태그와 가중치를 알고 있어서 역산이 가능했지만, 그래서 오히려 4절이 지적한 제약이
+분명해졌습니다. 저장된 값이 총점 하나뿐이라 `52.55`를 보고 임베딩이 쓰였는지 알려면 그 시점의
+태그 구성, 벡터, 가중치를 모두 다시 모아 재계산해야 합니다. 임베딩은 회원이 취향을 수정하면 덮어
+써지고 가중치는 환경변수라 나중에 바뀔 수 있으므로, 시간이 지나면 이 역산이 불가능해집니다. 실제로
+이번에도 `attempt 33`의 33.33이 "임베딩 미반영"인지 "임베딩은 쓰였는데 점수가 낮은 것"인지
+`member_preference_embeddings.created_at`을 따로 확인하고 나서야 판별할 수 있었습니다.
+
+`match_attempt_members`에 아래 3개를 추가하면 사후 분석이 가능해집니다.
+
+- `jaccard_score NUMERIC(10,2)` — 태그 점수
+- `cosine_score NUMERIC(10,2)` — 임베딩 점수, 미사용 시 NULL
+- `embedding_applied BOOLEAN` — 가중 합산이 적용됐는지 여부
+
+`cosine_score`를 NULL 허용으로 두면 fallback 여부가 값 자체로 드러나므로 `embedding_applied`는
+중복일 수 있으나, 조회 편의와 인덱싱을 위해 함께 두는 편이 낫다고 봅니다. 가중치까지 남길지는
+별도 판단이 필요합니다. 컬럼 추가와 migration이 필요하므로 4절에 적힌 대로 후기·평점 연계 단계에서
+함께 검토합니다.
+
+### 5. 검증 결과
+
+- (4-3단계) 실측 검증은 실행 코드를 바꾸지 않았습니다. 변경 대상이 `docs/10_PROGRESS_LOG.md`와
+  신규 `scripts/verify-embedding-score.sql` 둘뿐이라 backend/frontend 자동 테스트를 다시 실행하지
+  않았습니다. 검증 근거는 4-3절의 dev DB 실측값(`attempt 34` / `attempt 35`)입니다.
+- (4단계) Backend 전체 493 tests가 failures/errors/skipped 0건으로 통과했습니다. Docker Desktop을
+  실행한 상태로 검증해 Testcontainers 통합 테스트와 전체 Spring context 기동 검증
+  (`MeetOrSoloApplicationTests`)이 실제로 수행됐습니다. 신규 `MemberConsentServiceTest` 10건,
+  `MemberConsentControllerTest` 9건, `MemberConsentRepositoryIntegrationTest` 6건을 포함합니다.
+  JDK 17로 실행합니다. 기본 `JAVA_HOME`이 JDK 8이면 실패합니다.
+- (4단계) Frontend Vitest 28 files / 230 tests 통과, `npx tsc --noEmit` 통과,
+  production/PWA build 성공.
+- (1~3단계) Backend 비-컨테이너 테스트 221건 전체 통과 (`PairCompatibilityScorerTest` 9건 신규 포함).
+- Testcontainers 22건은 Docker 미실행으로 초기화 실패했습니다. 기존 환경 제약이며 이번 변경과
+  무관하지만, `MemberPreferenceEmbeddingRepositoryIntegrationTest`와 전체 Spring context 기동
+  검증(`MeetOrSoloApplicationTests`)이 미확인 상태로 남습니다. Docker 실행 후 재확인이 필요합니다.
+- Frontend Vitest 25 files / 207 tests 통과 (`preferenceText.test.ts` 18건 신규 포함),
+  `npx tsc --noEmit` 통과.
+- `MatchingControllerTest`가 `MatchPoolCancellationService` mock 누락으로 24건 실패하던 문제를
+  함께 고쳤습니다. 매칭 취소 기능(PR #37)에서 controller 의존성이 늘었는데 `@MockitoBean`이
+  추가되지 않아 발생한 기존 문제이며 이번 임베딩 작업과는 무관합니다.
+
+
+### 6. 부수 정리
+
+- 루트 `.env.example`을 실제 설정 기준으로 재정리했습니다. `OPENAI_*` 5개, 매칭 스케줄러,
+  관리자 제재 스케줄러 항목을 추가하고, 어디에서도 읽지 않던 `LOCAL_DB_URL`, `DEV_DB_*`,
+  `PROD_DB_*`와 Frontend 전용 `VITE_KAKAO_MAPS_APP_KEY`를 제거했습니다. dev·prod profile
+  전용 `DB_URL` 계열은 주석 블록으로 남겼습니다. 매칭 점수 가중치 환경변수 2개도 추가했습니다.
+- Spring Boot local profile은 `application-local.yml`의 optional config import로 루트
+  `.env`를 읽으므로 `bootRun` 시 별도 환경변수 주입이 필요하지 않습니다.
+
 ## [10-관리자 안전 3차] 관리자 정지 조기 해제(UNSUSPEND)
 
 상태: 구현·자동 검증 및 브라우저 수동 검증 완료
@@ -1906,7 +2319,7 @@ dev 서버 기준:
 - 실제 서비스 React 화면 구현
 - Kakao OAuth 로그인
 - JWT 인증/인가
-- 축제 상세 기능
+- 축제 목록/상세 기능
 - 체크인 기능
 - 매칭 알고리즘
 - WebSocket STOMP
@@ -2144,14 +2557,20 @@ feature/wbs-10-b-rematch-opponent-exclusion
 
 ### 4. 이후 순서
 
-1. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
-2. AI 임베딩 생성·동의·fallback과 scoring 결합
+1. AI 임베딩 생성·동의·fallback과 scoring 결합 (**진행 중**)
+2. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
 3. 신고·안전·후기와 관리자 연계
 4. 주요 화면과 실제 API 연결 완료 후 ISSUE-MR-009를 포함한 Frontend 전체 UX 안정화
 
-AI 임베딩은 `member_preference_embeddings`와 pgvector 기반만 준비된 상태입니다.
-외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책이 필요하며, 매칭 상태
-정확성·중복 방지·재매칭 정책보다 먼저 구현하지 않습니다.
+2026-08-25에 1번과 2번의 순서를 교체했습니다. `MATCH-09` 솔로 코스는 관광공사 OpenAPI
+연동이 선행되어야 하는데 해당 연동이 아직 착수되지 않아 대기 상태이므로, 선행 의존성이
+없는 AI 임베딩을 먼저 진행합니다. 상세 계획과 진행 상황은 문서 상단
+`[10-B AI 임베딩] 취향 임베딩 도입`을 참고합니다.
+
+AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback과 삭제 정책 요구사항은
+그대로 유효하며, 매칭 상태 정확성·중복 방지·재매칭 정책 자체를 변경하지 않는 범위에서만
+진행합니다.
+
 ## [10-B 안전 후속] 차단 목록 조회·해제 Backend 1차
 
 상태: 기본 API·정책·자동 테스트 구현 완료
