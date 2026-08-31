@@ -11,9 +11,9 @@ import com.survey.meetorsolo.domain.matching.repository.MatchAttemptMemberReposi
 import com.survey.meetorsolo.domain.matching.repository.MatchAttemptRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchProposalRepository;
+import com.survey.meetorsolo.domain.matching.scoring.MemberScoreBreakdown;
 import com.survey.meetorsolo.domain.matching.scoring.PairCompatibilityScorer;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import com.survey.meetorsolo.domain.matching.scoring.PairScore;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -90,9 +90,9 @@ public class MatchProposalCreationService {
                 createdBy
         ));
         for (MatchingCandidate candidate : candidates) {
-            BigDecimal memberScore = memberScore(candidate, candidates);
+            MemberScoreBreakdown breakdown = memberBreakdown(candidate, candidates);
             memberRepository.save(MatchAttemptMember.proposed(
-                    attempt.getId(), candidate.memberId(), candidate.poolId(), memberScore, now));
+                    attempt.getId(), candidate.memberId(), candidate.poolId(), breakdown, now));
             proposalRepository.save(MatchProposal.initial(attempt.getId(), candidate.memberId(), now, expiresAt));
         }
         pools.forEach(pool -> pool.propose(now));
@@ -167,15 +167,20 @@ public class MatchProposalCreationService {
         return count == null ? 0 : count;
     }
     private String placeholders(int size) { return String.join(",", java.util.Collections.nCopies(size, "?")); }
-    private BigDecimal memberScore(MatchingCandidate target, List<MatchingCandidate> candidates) {
-        BigDecimal total = BigDecimal.ZERO;
-        int pairs = 0;
+    /**
+     * 대상 회원이 낀 모든 pair를 집계해 회원 점수와 분해값을 만든다.
+     *
+     * <p>{@code total}은 분해 저장 도입 전과 같은 "pair 총점 평균"이므로 저장되는 {@code member_score}
+     * 값은 달라지지 않는다. 분해값 정의는 {@link MemberScoreBreakdown} 참고.
+     */
+    private MemberScoreBreakdown memberBreakdown(MatchingCandidate target, List<MatchingCandidate> candidates) {
+        List<PairScore> pairScores = new ArrayList<>();
         for (MatchingCandidate other : candidates) if (other.poolId() != target.poolId()) {
-            total = total.add(pairScorer.score(
+            pairScores.add(pairScorer.scoreDetailed(
                     target.travelStyles(), other.travelStyles(),
-                    target.preferenceEmbedding(), other.preferenceEmbedding())); pairs++;
+                    target.preferenceEmbedding(), other.preferenceEmbedding()));
         }
-        return total.divide(BigDecimal.valueOf(pairs), PairCompatibilityScorer.SCORE_SCALE, RoundingMode.HALF_UP);
+        return MemberScoreBreakdown.of(pairScores);
     }
     private void fail(String message) { throw new MatchProposalCreationException(message); }
 }

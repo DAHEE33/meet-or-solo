@@ -357,7 +357,7 @@
 
 ## [10-B AI 임베딩] 취향 임베딩 도입
 
-상태: 1~5단계 Backend·Frontend 구현 완료, 자동 테스트 통과 (2026-08-28 기준)
+상태: 1~5단계 Backend·Frontend 구현 완료, 점수 분해 저장까지 반영, 자동 테스트 통과 (2026-08-28 기준)
 
 ### 1. 진행 순서 변경
 
@@ -418,10 +418,9 @@
 - (4단계에서 해소) 동의를 기록하는 API와 화면이 없어 1~3단계 수동 검증은 `member_consents`에
   직접 INSERT한 계정으로 수행했습니다. 4단계에서 동의 API와 화면을 추가해 실사용 경로를
   열었습니다.
-- 저장되는 점수는 총점 하나뿐이라 사후 분석이 어렵습니다. `jaccard`, `cosine`, 임베딩 사용
-  여부를 함께 남기면 "임베딩이 실제로 매칭 품질을 높였는가"를 데이터로 판단할 수 있습니다.
-  컬럼 추가가 필요하므로 후기·평점 연계 단계에서 함께 검토합니다. 4-3절 실측 검증에서 이 제약이
-  실제로 어떤 비용을 만드는지 확인했고 구체적인 컬럼안을 같은 절에 적었습니다.
+- (4-4절에서 해소) 저장되는 점수가 총점 하나뿐이라 사후 분석이 어려웠습니다. `V24`로
+  `match_attempt_members`에 `jaccard_score`, `cosine_score`, `embedding_applied`,
+  `embedding_pair_count`를 추가해 제안 생성 시점에 함께 저장합니다.
 - `MemberPreferenceEmbeddingService.createOrUpdate()`가 `@Transactional` 안에서 OpenAI를
   호출합니다. read timeout 10초 동안 DB 커넥션을 점유하므로 외부 호출을 트랜잭션 밖으로
   분리하거나 비동기화하는 방안을 후속으로 검토합니다.
@@ -606,8 +605,9 @@ timeout 10초), dev DB가 SSH tunnel 너머에 있어 왕복 지연이 더해집
 - 안내 여부를 화면 진입 기준으로만 기억하므로, 프로필 수정에 갔다가 입력하지 않고 돌아오면 다음
   신청에서 한 번 더 뜹니다. 기기·세션 단위 영구 저장은 한 번 건너뛴 회원에게 영영 안 뜨는 문제가
   있어 도입하지 않았습니다.
-- 취향 참여율이 낮으면 임베딩이 대부분의 짝에서 작동하지 않습니다. 참여율과 실제 매칭 품질 변화는
-  4절의 점수 분해 저장(`jaccard`, `cosine`, 임베딩 사용 여부)이 생겨야 데이터로 확인할 수 있습니다.
+- 취향 참여율이 낮으면 임베딩이 대부분의 짝에서 작동하지 않습니다. 참여율과 실제 매칭 품질 변화를
+  볼 수 있는 점수 분해 저장은 4-4절에서 추가했고, 실제 판단은 V24 이후 매칭 데이터가 쌓여야
+  가능합니다.
 - 취향 상태를 화면 진입 시 한 번만 조회하므로(`MatchingConditionPage`의 조회 `useEffect` 의존성
   배열이 비어 있음) 화면 밖에서 상태가 바뀌면 재진입 전까지 안내에 반영되지 않습니다. 다른 기기에서
   동의를 철회한 경우가 여기 해당합니다. 4-3절 실측 검증 중 확인했습니다. 신청 시점에 다시 조회하면
@@ -733,11 +733,227 @@ check-in(194/195)과 같은 태그 조합을 썼으므로 다른 변수의 개�
 
 `cosine_score`를 NULL 허용으로 두면 fallback 여부가 값 자체로 드러나므로 `embedding_applied`는
 중복일 수 있으나, 조회 편의와 인덱싱을 위해 함께 두는 편이 낫다고 봅니다. 가중치까지 남길지는
-별도 판단이 필요합니다. 컬럼 추가와 migration이 필요하므로 4절에 적힌 대로 후기·평점 연계 단계에서
-함께 검토합니다.
+별도 판단이 필요합니다.
+
+이 제안은 4-4절에서 구현했습니다. 다만 3인 이상 혼합 상황을 검토하면서 세 컬럼만으로는 정의가
+성립하지 않는 것이 드러나 컬럼 하나를 더 추가했고, 그 판단 과정을 4-4절에 적었습니다.
+
+### 4-4. 점수 분해 저장 (2026-08-28)
+
+브랜치 `feature/wbs-10-b-score-breakdown`에서 진행했습니다. 4-3절이 제안한
+`match_attempt_members` 컬럼 추가를 실제로 구현한 단계입니다.
+
+**설계 결정 — 3인 이상 혼합 pair에서 무엇을 저장할 것인가**
+
+이 작업의 어려운 부분은 컬럼 추가가 아니라 정의였습니다. `memberScore()`는 대상 회원이 낀
+pair들의 총점 평균인데, `PairCompatibilityScorer.score()`는 pair마다 독립적으로 임베딩 사용
+여부를 판단합니다. 그래서 3인 A·B·C에서 A·B만 임베딩을 가지면 A 한 명 안에서 pair(A,B)는 가중
+합산, pair(A,C)는 Jaccard 단독이 됩니다. 2인은 pair가 1개라 이 분기가 회원 단위로 그대로 올라와
+문제가 드러나지 않습니다.
+
+즉 **회원 단위 집계 자체가 손실 압축**이고, 어떤 손실을 감수할지가 결정 사항입니다. 판단 기준을
+두 가지로 두었습니다.
+
+- (가) 복원 가능성 — 저장된 분해값과 가중치로 `member_score`를 재구성할 수 있는가. 4-3절이 지적한
+  "총점 하나로는 역산이 불가능해진다"가 이 작업의 동기이므로 1순위입니다.
+- (나) 지표 순수성 — `cosine_score`가 실제 임베딩 신호만 담는가.
+
+검토한 후보와 탈락 근거는 아래와 같습니다.
+
+| 후보 | 정의 | 판정 |
+| --- | --- | --- |
+| AND | 모든 pair가 임베딩일 때만 기록, 아니면 `cosine_score` NULL | 탈락 |
+| OR + 실제 코사인만 평균 | 임베딩 pair가 하나라도 있으면 true, 코사인은 그 pair들만 평균 | 탈락 |
+| pair 단위 별도 테이블 | pair별 jaccard/cosine을 그대로 적재 | 보류 |
+| **fallback을 `cosine = jaccard`로 간주** | 전체 pair를 분모로 두고 fallback pair는 Jaccard를 임베딩 항 투입값으로 봄 | **채택** |
+
+- AND는 혼합 회원 A의 `cosine_score`가 NULL인데 `member_score`(26.50)는 Jaccard 평균(25.00)과
+  다릅니다. "NULL이면 Jaccard 단독"이라는 읽는 쪽의 유일한 해석 규칙이 깨지고, 4-3절이 겪은 "이
+  값이 임베딩 반영인지 아닌지 모르겠다"가 3인 이상에서 그대로 재발합니다.
+- OR + 실제 코사인만 평균은 `jaccard`와 `cosine`의 분모가 서로 달라집니다(전체 pair vs 임베딩
+  pair). A의 경우 `0.70 × 25.00 + 0.30 × 60.00 = 35.50`으로 실제 저장값 26.50과 어긋나고, 이는
+  반올림 오차가 아니라 구조적 불일치라 복원이 원리적으로 불가능합니다.
+- pair 단위 테이블은 (가)(나)를 모두 만족하지만 attempt당 최대 6행이 늘고 4-3절의 제안 범위를
+  넘습니다. 지금 필요한 질문은 회원 단위 집계로 답할 수 있으므로 과도하다고 보고, 회원 단위
+  분해로 부족해지는 시점에 재검토 대상으로 남깁니다.
+
+채택안은 이미 문서에 두 번(3절, 4-2절) 확정해 둔 "이 fallback은 `cosine = jaccard`로 간주하는
+것과 수학적으로 같다"는 등가성을 **점수 계산뿐 아니라 저장 정의에도 그대로 적용**한 것입니다.
+
+```text
+jaccard_score        전체 pair의 Jaccard 평균
+cosine_score         전체 pair의 "임베딩 항 투입값" 평균
+                     (임베딩 pair는 실제 코사인, fallback pair는 그 pair의 Jaccard)
+                     임베딩 pair가 하나도 없으면 NULL
+embedding_applied    임베딩 pair가 1개 이상인가 (OR). cosine_score IS NOT NULL과 동치
+embedding_pair_count 실제 임베딩이 적용된 pair 수
+```
+
+이 정의에서 모든 인원수와 모든 혼합 조합에 대해 아래가 성립합니다.
+
+```text
+cosine_score IS NULL     -> member_score = jaccard_score
+cosine_score IS NOT NULL -> member_score = jaccard_weight * jaccard_score
+                                         + embedding_weight * cosine_score
+```
+
+3인 혼합 예시입니다. A는 `{PHOTO}`와 벡터, B는 `{PHOTO, FOOD}`와 벡터, C는 `{FOOD, ACTIVE}`이고
+벡터가 없으며, `cos(A,B) = 0.60`, 가중치는 0.70/0.30입니다.
+
+| 회원 | pair 점수 | `member_score` | `jaccard_score` | `cosine_score` | `embedding_applied` | `embedding_pair_count` | 검산 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | AB 53.00 / AC 0.00 | 26.50 | 25.00 | 30.00 | true | 1 | 0.7×25.00 + 0.3×30.00 = 26.50 |
+| B | AB 53.00 / BC 33.33 | 43.17 | 41.67 | 46.67 | true | 1 | 0.7×41.67 + 0.3×46.67 = 43.17 |
+| C | AC 0.00 / BC 33.33 | 16.67 | 16.67 | NULL | false | 0 | Jaccard 단독 = 16.67 |
+
+**컬럼을 하나 더 둔 이유**
+
+채택안의 대가는 `cosine_score`가 혼합 회원에서 합성값이 된다는 점입니다. A의 30.00은 절반이
+Jaccard에서 온 값이라 "실제 임베딩 신호"로 읽으면 오독입니다. (나)를 일부 포기한 것이므로 혼합
+비율을 남기지 않으면 분석자가 이 사실을 알 수 없습니다. 그래서 4-3절의 3개 안에
+`embedding_pair_count`를 더했습니다. 회원당 전체 pair 수는 `match_attempts.target_group_size - 1`로
+복원되므로 분모 컬럼은 필요하지 않고, 이 컬럼 하나로 세 질의가 모두 열립니다.
+
+```sql
+embedding_pair_count = 0                          -- 완전 fallback
+embedding_pair_count = target_group_size - 1      -- 완전 임베딩 (순수 비교군)
+0 < embedding_pair_count < target_group_size - 1  -- 혼합 (cosine_score 오독 주의)
+```
+
+**가중치는 컬럼으로 남기지 않습니다.** 세 점수가 있으면
+`embedding_weight = (member_score - jaccard_score) / (cosine_score - jaccard_score)`로 행마다
+역산됩니다. 소수 둘째 자리 반올림 탓에 근사값이지만, 4-3절이 확인한 "0.50/0.50이면 52.55,
+0.70/0.30이면 44.86" 수준의 구분에는 충분합니다. `cosine_score = jaccard_score`인 퇴화 케이스에서만
+역산이 안 되는데, 그때는 가중치와 무관하게 점수가 같으므로 알 필요가 없습니다.
+
+**알려진 오차** — pair 점수가 pair마다 반올림된 뒤 평균되므로 3~4인에서는 위 항등식이 0.01까지
+어긋날 수 있습니다. 실제로 4인 검증 케이스에서 재구성값 39.16과 저장값 39.15가 갈리는 사례가
+나왔습니다. 기존 `member_score` 계산 순서를 바꾸지 않는 한 제거할 수 없는 오차이므로 그대로 두고,
+테스트는 2인 정확 일치 / 3~4인 0.01 허용으로 나눴습니다.
+
+**구현**
+
+- `V24__add_match_attempt_member_score_breakdown.sql`로 컬럼 4개를 추가했습니다. V1~V21은 손대지
+  않았습니다. 처음에는 V22로 만들었다가 아래 "migration 번호 충돌"에서 V24로 옮겼습니다.
+- **기존 row는 백필하지 않았습니다.** 그 시점의 벡터와 가중치를 복원할 수 없고, 추정값을 넣으면
+  "임베딩이 실제로 쓰였는가"를 판정하려고 만든 컬럼이 오히려 거짓 근거가 됩니다. NULL이 "분해 저장
+  도입 이전 데이터"를 뜻합니다.
+- CHECK 제약으로 네 컬럼이 서로 어긋나지 않게 강제합니다. 전부 NULL(과거 row)이거나 전부 채워진
+  상태만 허용하고, 후자에서 `(cosine_score IS NOT NULL) = embedding_applied`와
+  `(embedding_pair_count > 0) = embedding_applied`, 점수 0~100 범위를 검사합니다.
+- 인덱스는 추가하지 않았습니다. `embedding_applied`는 2값이라 선택도가 낮고 분석 질의는
+  `attempt_id` 기준이라 기존 `idx_match_attempt_members_attempt_status`로 충분합니다.
+- `PairCompatibilityScorer.scoreDetailed()`가 `PairScore`(jaccard, cosine, embeddingApplied, total)를
+  반환하고, **기존 `score()`는 `scoreDetailed().total()`만 반환**하도록 바꿨습니다. 계산 경로가
+  하나뿐이라 `MatchGroupComposer`의 그룹 점수와 저장 점수가 갈라질 수 없습니다(3절 원칙).
+  `MatchGroupComposer`는 코드도 동작도 바뀌지 않았습니다.
+- 회원 단위 집계는 `MemberScoreBreakdown.of(List<PairScore>)` 한 곳에 모았습니다.
+  `MatchProposalCreationService.memberScore()`를 `memberBreakdown()`으로 바꿨고,
+  `total`은 기존과 같은 "pair 총점 평균"이라 **저장되는 `member_score` 값은 달라지지 않습니다.**
+- 분해값은 API 응답 DTO에 노출하지 않습니다. 사후 분석용 데이터이지 사용자에게 보여줄 값이
+  아닙니다.
+
+**테스트**
+
+`MatchProposalCreationServiceIntegrationTest`의 기존 `@ValueSource(ints = {2,3,4})` 하네스에
+얹었습니다. 새 테스트 클래스나 fixture는 만들지 않았습니다.
+
+- `prepareGroup(size)`는 다른 테스트 20여 개가 "전원 동일 태그 = 100.00"에 의존하므로 동작을
+  유지한 채 후보 구성을 받는 오버로드를 추가했습니다. 기존 파라미터 테스트에는 분해 컬럼 검증만
+  얹었습니다(Jaccard 단독이므로 `cosine_score IS NULL`).
+- 다양화한 후보로 2인 fallback, 3인 혼합, 4인 전원 보유를 덮고, 3인은 전원 보유·전원 미보유·한
+  명만 보유를 추가해 `embedding_pair_count` 0·1·2를 모두 지나게 했습니다.
+- "한 명만 보유"는 전원 미보유와 저장 분해가 완전히 같다는 것을 명시적으로 확인합니다. 4-2절의
+  "혼자 입력해도 상대가 없으면 태그 계산과 같다"가 저장 값으로 드러나는 지점입니다.
+- 벡터는 OpenAI를 호출하지 않고 코사인이 0.60/0.80/0.96/0.00으로 딱 떨어지는 소차원 단위 벡터를
+  썼습니다. 가중치는 `@SpringBootTest` properties로 0.70/0.30에 고정해 환경변수
+  `MATCHING_SCORING_*`의 영향을 차단했습니다.
+- 단위 테스트로 `PairCompatibilityScorerTest`에 `scoreDetailed()` 4건(태그·임베딩 조합 전수에 대해
+  `scoreDetailed().total() == score()` 확인 포함), `MemberScoreBreakdownTest` 9건을 추가했습니다.
+  3인 혼합 산술이 가장 두꺼운 곳이라 컨테이너 없이 빠르게 도는 단위 테스트에 두었습니다.
+
+**실제 임베딩이 컬럼까지 도달하는지 별도 검증**
+
+위 저장 검증은 `float[]`를 `MatchingCandidate`에 직접 주입하므로 `MatchingBatchReader`를 지나지
+않습니다. 즉 산술과 저장은 덮이지만 아래 구간이 비어 있었고, 저장소 전체에
+`member_preference_embeddings`에 벡터를 넣는 테스트가 하나도 없었습니다.
+
+```text
+member_preference_embeddings (vector(1536), COMPLETED)
+  -> MatchingBatchReader.read()
+  -> MatchingCandidate.preferenceEmbedding
+  -> match_attempt_members.cosine_score
+```
+
+4-3절이 "구현 이후 양쪽이 임베딩을 보유한 매칭 사례가 한 번도 없었다"고 한 바로 그 구간이라
+`MatchingOrchestrationServiceIntegrationTest`에 scheduler tick 전체를 태우는 테스트를
+추가했습니다.
+
+- 후보를 회원 9110001·9110002·9110006·9110007 넷으로 좁혀 희망 인원 4의 조합이 하나뿐이 되게
+  하고, 그룹 선정 결과를 결정적으로 만들었습니다. fixture의 회원 9110007 ACTIVE cooldown과
+  9110001-9110006 차단을 지우지 않으면 후보가 4명이 되지 않습니다.
+- pgvector에 앞 두 성분만 값을 갖는 1536차원 단위 벡터를 넣어 상호 코사인이 0.60/0.80/0.96으로
+  떨어지게 했습니다. OpenAI는 호출하지 않습니다.
+- 회원 9110007에게는 **벡터를 가진 `FAILED` row**를 넣었습니다. reader의 `COMPLETED` 필터가
+  동작하면 이 회원은 어느 pair에도 임베딩이 적용되지 않아야 하고, 실제로
+  `cosine_score IS NULL`·`embedding_pair_count = 0`으로 저장됩니다.
+- 저장된 값이 손으로 계산한 기대값과 소수점 둘째 자리까지 일치했습니다
+  (그룹 점수 52.08, 회원별 42.33 / 68.38 / 36.49 / 61.11).
+
+**migration 번호 충돌 (2026-08-30)**
+
+로컬 `bootRun`이 기동에 실패했습니다.
+
+```text
+Migration checksum mismatch for migration version 22
+-> Applied to database : 1209229362
+-> Resolved locally    : -1281492574
+```
+
+원인은 파일 손상이 아니라 **번호 충돌**이었습니다. 공유 dev DB의 `flyway_schema_history`에는
+다른 작업의 V22(`add festival tourplace query indexes`, 2026-08-26)와
+V23(`add tour place region codes`, 2026-08-27)이 이미 적용돼 있었습니다. 두 파일은 아직
+`origin/dev`에 병합되지 않아 저장소에는 보이지 않지만 dev DB에는 반영된 상태였고, 여기에 같은
+번호의 V22를 올리자 Flyway가 체크섬 불일치로 막은 것입니다.
+
+- **`flyway repair`로 넘기지 않았습니다.** repair는 기록된 체크섬을 현재 파일 기준으로 덮어쓰므로,
+  dev DB에는 상대 작업의 인덱스만 있는데 "점수 분해 migration이 적용됨"으로 기록됩니다.
+  `ddl-auto=validate`가 없는 환경에서 조용히 깨지는 상태가 됩니다.
+- 파일을 `V24`로 옮겼습니다. dev DB의 최신 적용 번호가 23이라 24가 다음 빈 번호입니다.
+- **교훈**: 새 migration 번호는 저장소의 파일 목록만 보고 정하면 안 되고 공유 dev DB의
+  `flyway_schema_history`도 함께 확인해야 합니다. 미병합 브랜치가 dev DB에 먼저 적용해 둔 번호는
+  저장소에서 보이지 않습니다.
+- **이 문제는 자동 테스트로 잡히지 않습니다.** Testcontainers는 매번 빈 DB에서 시작해 22번이 비어
+  있으므로 정상 통과합니다. 이미 migration이 쌓인 실제 DB에 붙어 봐야만 드러납니다. 4-4절
+  작성 당시 "실사용 검증은 선택"으로 적었던 판단이 잘못이었고, 아래 남은 제약에 반영했습니다.
+
+**남은 제약**
+
+- V24 이전에 생성된 `match_attempt_members` row는 분해값이 NULL입니다. 백필하지 않기로 한 결과이며
+  의도된 상태입니다. CHECK 제약의 "전부 NULL" 분기는 `MatchingRestApiIntegrationTest`가 네 컬럼
+  없이 직접 INSERT하면서 실제 PostgreSQL에서 통과하는 것을 확인했습니다. 다만 **데이터가 있는
+  dev DB에 V24를 적용하는 것**은 Testcontainers가 항상 빈 DB에서 시작하므로 자동 검증 범위 밖이고,
+  배포 시점에 확인해야 합니다. 위 번호 충돌이 정확히 이 공백에서 나왔으므로, 코드 변경 후에는
+  실제 DB에 한 번 붙여 보는 절차를 생략하지 않습니다.
+- `match_attempts.score`(그룹 점수)는 여전히 총점만 저장합니다. 그룹 점수는 후보 조합 선정용이라
+  회원 단위 분석에 쓰이지 않아 이번 범위에서 제외했습니다.
+- 회원 단위 집계라 pair별 원값은 남지 않습니다. 혼합 회원의 `cosine_score`가 합성값이라는 한계는
+  `embedding_pair_count`로 판별만 할 수 있고, pair별 실제 코사인이 필요해지면 별도 테이블이
+  필요합니다.
+- 실제로 "임베딩이 매칭 품질을 높였는가"를 판단하려면 V24 이후 매칭 데이터가 쌓여야 합니다. 이번
+  단계는 그 판단에 필요한 데이터를 남기기 시작한 것까지입니다.
 
 ### 5. 검증 결과
 
+- (4-4단계) Backend 전체 513 tests가 failures/errors/skipped 0건으로 통과했습니다. Docker Desktop을
+  실행한 상태로 검증해 Testcontainers 통합 테스트가 실제로 수행됐습니다. 신규
+  `MemberScoreBreakdownTest` 9건, `PairCompatibilityScorerTest` 4건,
+  `MatchProposalCreationServiceIntegrationTest` 6건(파라미터 3 + focused 3),
+  `MatchingOrchestrationServiceIntegrationTest` 1건(실제 `vector(1536)` end-to-end)을 포함합니다.
+  실행 순서는 focused 점수 분해 → matching 전체 → backend 전체였습니다. JDK 17로 실행합니다.
+  기본 `JAVA_HOME`이 JDK 8이면 실패합니다.
+- (4-4단계) Frontend는 변경하지 않아 테스트를 다시 실행하지 않았습니다. 분해값은 API 응답에
+  노출하지 않으므로 frontend 계약이 바뀌지 않습니다.
 - (4-3단계) 실측 검증은 실행 코드를 바꾸지 않았습니다. 변경 대상이 `docs/10_PROGRESS_LOG.md`와
   신규 `scripts/verify-embedding-score.sql` 둘뿐이라 backend/frontend 자동 테스트를 다시 실행하지
   않았습니다. 검증 근거는 4-3절의 dev DB 실측값(`attempt 34` / `attempt 35`)입니다.

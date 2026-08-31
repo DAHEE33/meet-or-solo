@@ -249,8 +249,9 @@ feature/wbs-10-b-consent-followup
   `@Transactional` 안에서 OpenAI를 호출합니다. read timeout이 10초이므로 그동안 DB
   커넥션을 점유합니다. 회원가입 완료가 느리게 느껴지는 원인이기도 하므로 외부 호출을
   transaction 밖으로 분리하거나 비동기화하는 방안을 검토합니다.
-- **점수 분해 저장**: 매칭 점수가 총점 하나만 저장되어 임베딩의 기여도를 사후 분석할 수
-  없습니다. `jaccard`, `cosine`, 임베딩 사용 여부를 함께 남기려면 컬럼 추가가 필요합니다.
+- **점수 분해 저장**: 해소됐습니다. `V24`로 `match_attempt_members`에 `jaccard_score`,
+  `cosine_score`, `embedding_applied`, `embedding_pair_count`를 추가해 제안 생성 시점에
+  함께 저장합니다. 설계 결정과 저장 정의는 `docs/10_PROGRESS_LOG.md` 4-4절을 참고합니다.
 
 ## 5. 공통 보안·동시성 원칙
 
