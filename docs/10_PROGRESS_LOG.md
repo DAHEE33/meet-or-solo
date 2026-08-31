@@ -1,5 +1,34 @@
 # 진행 상태 기록
 
+## [10-A 후속 11] 홈에서 솔로 코스 진입 시 체크인 게이트 복구
+
+상태: 구현 완료(Frontend 전용). 두 브라우저 수동 검증 전
+
+- 증상: 체크인하지 않고 홈의 "혼자 즐기는 주변 관광지 추천" 배너를 누르면 체크인 안내가 아니라
+  코스 화면이 떴다.
+- 원인: `HomePage`의 `CtaBanner`가 `state={{ festivalId: hotFestival.id }}`를 넘기고 있었다.
+  `resolveSoloCourseFestival`은 `location.state.festivalId`를 1순위로 쓰므로 이 값이 항상 채워져
+  **체크인 안내 분기에 도달할 수 없었다.** 이번 작업에서 생긴 문제가 아니라
+  `[10-A 후속 3]`(docs/22 구현) 때부터의 동작이다.
+- **`docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md` 내부에 모순이 있었다.** 5장 말미와 7장·10장은
+  "홈 배너도 `hotFestival.id`를 state로 넘기도록 고쳐야 한다"고 했지만, 9장은 "체크인이 전혀 없는
+  상태로 진입 시 대표 축제로 대체하지 않고 체크인 안내만 보여준다"로 결정했다. 전자를 구현하면
+  후자가 도달 불가능해진다.
+- 사용자 기대가 9장과 같아 **9장 결정을 살리고** 홈 배너에서 `state`를 제거했다. 문서 5장·7장에
+  정정 메모를 추가했다.
+  - `FestivalDetailPage`에서 넘기는 `festivalId`는 그대로 둔다(5장 1순위). 그 화면은 사용자가 특정
+    축제를 보고 있으므로 체크인 없이 기준으로 삼아도 된다. 두 진입 경로의 동작 차이는 의도된 것이다 —
+    홈 배너는 "내 주변"을 뜻하므로 체크인이 기준이어야 한다.
+  - 배너 설명 문구도 "선택한 축제 주변"에서 "체크인한 축제 주변"으로 바꿨다.
+- `SoloCoursePage`의 안내 버튼을 `/check-in` → `/spots`로 바꿨다(`체크인할 축제 고르기`).
+  `[10-A 후속 10]`에서 `CheckInPage`가 축제 미지정 진입 시 `/spots`로 튕기게 했으므로, 그대로 두면
+  화면이 한 번 깜빡인다.
+- `[10-A 후속 10]`에서 놓친 로딩 표시도 함께 정리했다 — `SoloCoursePage`, `ProfileEditPage`,
+  `SignupPage`, `MyPage`의 텍스트 전용 로딩을 `LoadingState`/`Spinner`로 교체했다.
+- 회귀 방지 테스트 2건을 `SoloCoursePage.test.ts`에 추가했다(state 없이 체크인 없음 → `festivalId`
+  null, state 없이 체크인 있음 → 그 축제).
+- 검증: `tsc -b` 통과, vitest **341개 전부 통과**, `npm run build` 성공. Backend 변경 없음.
+
 ## [10-A 후속 10] 홈 체크인 축제 우선, 로딩 표시 통일, 필터 UI 개선
 
 상태: 구현 완료(Frontend 전용). Backend 소스 변경 없음. 두 브라우저 수동 검증 전

@@ -41,6 +41,7 @@ import PrimaryButton from '../components/common/PrimaryButton';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import { NICKNAME_MAX_LENGTH, NICKNAME_RULE_MESSAGE, validateNickname } from '../utils/nickname';
+import Spinner, { LoadingState } from '../components/common/Spinner';
 
 const TRAVEL_STYLES: { code: TravelStyleCode; label: string }[] = [
   { code: 'RELAXED', label: '느긋하게' },
@@ -290,7 +291,7 @@ export default function ProfileEditPage() {
     <MobileLayout showTabBar={false}>
       <PageHeader title="프로필 수정" />
       <main className="flex flex-col gap-6 px-5 pb-10 pt-2">
-        {isLoading ? <p className="py-10 text-center text-sm text-ink/50">프로필을 불러오는 중...</p> : <>
+        {isLoading ? <LoadingState className="py-10" message="프로필을 불러오는 중이에요" /> : <>
           <section className="flex flex-col items-center gap-3">
             {imagePreviewUrl || profileImageUrl ? (
               <img
@@ -358,7 +359,7 @@ export default function ProfileEditPage() {
           {/* 취향 전격 분석 */}
           <section className="flex flex-col gap-3 border-t border-line pt-6">
             {prefLoading ? (
-              <p className="text-[13px] text-ink/40">불러오는 중...</p>
+              <Spinner size="sm" />
             ) : (
               <>
                 {returnTo && !prefSaved && (

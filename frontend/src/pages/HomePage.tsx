@@ -190,12 +190,19 @@ export default function HomePage() {
         </section>
 
         {/* 혼자 즐기는 주변 관광지 추천 */}
+        {/*
+          festivalId를 state로 넘기지 않는다. 넘기면 SoloCoursePage가 그 축제를 기준으로 삼아
+          체크인하지 않은 사용자에게도 코스를 보여주는데, 이는
+          docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md 9장의 결정("체크인이 전혀 없는 상태로 진입 시
+          대표 축제로 대체하지 않고 체크인 안내만 보여준다")을 위반한다.
+          축제를 지정해 들어가는 경로는 FestivalDetailPage가 담당한다(그 화면에서 보고 있는 축제는
+          체크인 여부와 무관하게 기준으로 삼아도 된다 — 같은 문서 5장 1순위).
+        */}
         <CtaBanner
           to="/solo-course"
           tone="teal"
           title="혼자 즐기는 주변 관광지 추천"
-          description="선택한 축제 주변의 가볼 만한 곳을 찾아보세요"
-          state={hotFestival ? { festivalId: hotFestival.id } : undefined}
+          description="체크인한 축제 주변의 가볼 만한 곳을 찾아보세요"
         />
 
         {/* 축제와 함께 둘러보기 */}
