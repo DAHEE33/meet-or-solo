@@ -348,6 +348,36 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
   신고 API·current group 재조회·WebSocket SEND 부재를 기존 경계와 전체 회귀로 확인한다.
 - 접근 가능한 dialog title/description, `Escape`, focus 복원과 `Tab` 순환을 구현 경계로
   확인하고 자유 입력·상대 추론·채팅 UI가 추가되지 않았는지 회귀한다.
+## 매칭 점수 분해 저장 검증 기준
+
+- pair 단위는 `PairCompatibilityScorerTest`에서 `scoreDetailed()`의 Jaccard·코사인 분리,
+  fallback pair의 코사인 대입과 미적용 표시를 검증한다. 태그·임베딩 조합 전수에 대해
+  `scoreDetailed().total()`이 기존 `score()`와 같은지 확인해 그룹 선정 점수와 저장 점수가
+  갈라지지 않는 3절 원칙을 회귀한다.
+- 회원 단위 집계는 `MemberScoreBreakdownTest`에서 검증한다. 3인 이상에서만 나타나는
+  "한 회원 안에 임베딩 pair와 fallback pair가 섞이는" 혼합 상황이 핵심 대상이며, 전체 pair를
+  분모로 두는 정의에서 `total = w_j * jaccard + w_e * cosine` 항등식이 성립하는지 확인한다.
+- 저장까지는 `MatchProposalCreationServiceIntegrationTest`의 기존 `{2,3,4}` 하네스에 얹어
+  실제 PostgreSQL에서 검증한다. 2인 fallback, 3인 혼합, 4인 전원 보유를 덮고, 3인은
+  `embedding_pair_count` 0·1·2를 모두 지나도록 전원 보유·전원 미보유·한 명만 보유를 추가한다.
+- 임베딩 벡터는 OpenAI를 호출하지 않고 코사인이 딱 떨어지는 소차원 단위 벡터를 쓴다.
+  가중치는 `@SpringBootTest` properties로 `0.70`/`0.30`에 고정해 환경변수 영향을 차단한다.
+- 기존 `member_score` 값이 바뀌지 않았는지, `match_attempts.score`(그룹 점수)와 분해값이
+  같은 pair 계산에서 나오는지 함께 확인한다.
+- 위 저장 검증은 `float[]`를 `MatchingCandidate`에 직접 주입하므로 `MatchingBatchReader`를
+  지나지 않는다. DB의 실제 벡터가 컬럼까지 도달하는지는
+  `MatchingOrchestrationServiceIntegrationTest`에서 `member_preference_embeddings`에
+  `vector(1536)`을 시딩하고 scheduler tick 전체를 태워 검증한다. `COMPLETED`가 아닌 회원은
+  벡터를 가지고 있어도 어느 pair에도 적용되지 않아야 한다(reader의 상태 필터).
+- 분해값으로 총점을 재구성하는 검증은 pair 단위 반올림 때문에 3~4인에서 0.01까지 어긋날 수
+  있으므로 2인은 정확 일치, 3~4인은 0.01 허용으로 나눈다.
+- 실행 순서는 focused 점수 분해 → matching 전체 → backend 전체다. Testcontainers가 실제로
+  수행되도록 Docker를 실행한 상태에서 JDK 17로 검증한다.
+- Testcontainers는 매번 빈 DB에서 시작하므로 migration 번호 충돌과 checksum 불일치를 잡지
+  못한다. 새 migration을 추가한 뒤에는 이미 migration이 쌓인 실제 DB(local 또는 dev)에 한 번
+  기동해 확인한다. 번호는 저장소 파일 목록뿐 아니라 대상 DB의 `flyway_schema_history`도 보고
+  정한다. 미병합 브랜치가 공유 dev DB에 먼저 적용해 둔 번호는 저장소에서 보이지 않는다.
+
 ## 회원 본인 차단 목록 조회·해제 Backend 검증
 
 - Controller/API는 JWT cookie 미인증 거절, `200` 빈 배열, 공개 필드 제한과 `204` 빈 body를 검증한다.

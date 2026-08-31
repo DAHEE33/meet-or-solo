@@ -54,6 +54,9 @@ public class PairCompatibilityScorer {
      * 점수만 사용한다. 이 fallback은 {@code cosine = jaccard}로 간주하는 것과 결과가 같으므로
      * 임베딩 보유자와 미보유자가 같은 후보 pool에 섞여도 점수 스케일이 왜곡되지 않는다.
      *
+     * <p>분해값이 필요하면 {@link #scoreDetailed}를 쓴다. 그룹 선정 점수와 저장 점수가 갈라지지
+     * 않도록 이 메서드는 {@code scoreDetailed(...).total()}만 반환한다.
+     *
      * @param leftEmbedding  임베딩 미보유 또는 미완료 회원은 null
      * @param rightEmbedding 임베딩 미보유 또는 미완료 회원은 null
      */
@@ -63,14 +66,37 @@ public class PairCompatibilityScorer {
             float[] leftEmbedding,
             float[] rightEmbedding
     ) {
+        return scoreDetailed(leftStyles, rightStyles, leftEmbedding, rightEmbedding).total();
+    }
+
+    /**
+     * {@link #score}와 같은 계산을 수행하되 총점과 함께 분해값을 반환한다.
+     *
+     * <p>fallback pair는 임베딩 항 투입값을 Jaccard로 둔다. 이렇게 하면 fallback 여부와 무관하게
+     * {@code total = w_j * jaccard + w_e * cosine}이 성립해 저장된 값만으로 총점을 재구성할 수 있다.
+     * 실제 임베딩이 쓰였는지는 {@link PairScore#embeddingApplied()}로 구분한다.
+     */
+    public PairScore scoreDetailed(
+            Collection<TravelStyleCode> leftStyles,
+            Collection<TravelStyleCode> rightStyles,
+            float[] leftEmbedding,
+            float[] rightEmbedding
+    ) {
         BigDecimal jaccard = travelStyleScorer.score(leftStyles, rightStyles);
         BigDecimal cosine = embeddingScorer.score(leftEmbedding, rightEmbedding);
         if (cosine == null) {
-            return jaccard.setScale(SCORE_SCALE, RoundingMode.HALF_UP);
+            BigDecimal fallback = jaccard.setScale(SCORE_SCALE, RoundingMode.HALF_UP);
+            return new PairScore(fallback, fallback, false, fallback);
         }
-        return jaccard.multiply(jaccardWeight)
+        BigDecimal total = jaccard.multiply(jaccardWeight)
                 .add(cosine.multiply(embeddingWeight))
                 .setScale(SCORE_SCALE, RoundingMode.HALF_UP);
+        return new PairScore(
+                jaccard.setScale(SCORE_SCALE, RoundingMode.HALF_UP),
+                cosine.setScale(SCORE_SCALE, RoundingMode.HALF_UP),
+                true,
+                total
+        );
     }
 
     /** 현재 적용된 Jaccard 가중치. 로그·테스트 확인용. */

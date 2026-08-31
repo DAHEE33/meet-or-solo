@@ -20,6 +20,12 @@
 --   scripts/start-dev-db-tunnel.ps1 로 터널을 올린 뒤 psql로 접속해 단계별로 실행한다.
 --   전체를 한 번에 실행하지 않는다. 라운드 사이에 브라우저 조작과 대기가 필요하다.
 --
+-- V24 이후 참고
+--   match_attempt_members에 jaccard_score / cosine_score / embedding_applied /
+--   embedding_pair_count가 저장되므로, V24 이후 생성된 attempt는 아래 역산 절차 없이
+--   해당 컬럼만 조회해도 임베딩 반영 여부를 판별할 수 있다. 이 스크립트는 V24 이전 데이터
+--   재현과 계산식 자체의 실측 대조용으로 남긴다.
+--
 -- 주의
 --   - 이 스크립트는 검증 데이터를 쓴다. 운영 DB에서 실행하지 않는다.
 --   - 6단계 원복(RESTORE)을 반드시 수행한다. 건너뛰면 회원 B의 취향이 매칭에서 계속 무시된다.

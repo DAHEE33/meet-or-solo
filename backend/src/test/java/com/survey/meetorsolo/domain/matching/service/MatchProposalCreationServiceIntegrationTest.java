@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.matching.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 
 import com.survey.meetorsolo.domain.matching.group.MatchGroupCombination;
 import com.survey.meetorsolo.domain.matching.group.MatchingCandidate;
@@ -9,6 +10,7 @@ import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
 import com.survey.meetorsolo.domain.safety.block.service.MatchBlockService;
 import com.survey.meetorsolo.domain.safety.block.service.MemberBlockService;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -39,7 +41,10 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
         "app.matching.scheduler.enabled=false",
-        "app.matching.no-show-scheduler.enabled=false"
+        "app.matching.no-show-scheduler.enabled=false",
+        // 점수 분해 기대값이 환경변수 MATCHING_SCORING_* 에 흔들리지 않도록 고정한다.
+        "app.matching.scoring.jaccard-weight=0.70",
+        "app.matching.scoring.embedding-weight=0.30"
 }) @Testcontainers
 @Sql(scripts = {"/fixtures/matching-engine-cleanup.sql", "/fixtures/matching-engine-foundation.sql"},
         config = @SqlConfig(transactionMode = SqlConfig.TransactionMode.ISOLATED))
@@ -62,8 +67,42 @@ class MatchProposalCreationServiceIntegrationTest {
         assertThat(jdbc.queryForMap("SELECT status,score,started_at,expires_at FROM match_attempts WHERE id=?", attemptId))
                 .containsEntry("status", "WAITING_RESPONSES").containsEntry("score", new BigDecimal("100.00"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_attempt_members WHERE attempt_id=? AND status='PROPOSED' AND member_score=100.00", Integer.class, attemptId)).isEqualTo(size);
+        // 전원 동일 태그 + 임베딩 미보유이므로 Jaccard 단독이고 분해값도 그 사실을 그대로 남긴다.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_attempt_members WHERE attempt_id=? AND jaccard_score=100.00 AND cosine_score IS NULL AND embedding_applied=FALSE AND embedding_pair_count=0", Integer.class, attemptId)).isEqualTo(size);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_proposals WHERE attempt_id=? AND proposal_type='INITIAL_MATCH' AND proposal_round=1 AND status='SENT' AND sent_at=? AND expires_at=?", Integer.class, attemptId, NOW, NOW.plusSeconds(30))).isEqualTo(size);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE id IN (" + ids(size) + ") AND status='PROPOSED' AND locked_at IS NULL AND lock_token IS NULL", Integer.class)).isEqualTo(size);
+    }
+
+    /**
+     * 점수 분해 저장의 핵심 검증.
+     *
+     * <p>후보 태그와 임베딩 보유 여부를 인원수별로 다르게 구성해 2인 fallback, 3인 혼합, 4인 전원 보유를
+     * 덮는다. 3인 혼합은 한 회원 안에서 임베딩 pair와 fallback pair가 섞이는 유일한 구간이라 이 작업의
+     * 설계 결정이 걸린 곳이고, 아래 세 개의 focused 테스트로 pair_count 0/1/2를 모두 지난다.
+     */
+    @ParameterizedTest @ValueSource(ints = {2,3,4})
+    void 점수_분해를_pair_구성별로_저장한다(int size) {
+        Scenario scenario = switch (size) {
+            case 2 -> TWO_FALLBACK;
+            case 3 -> THREE_MIXED;
+            default -> FOUR_ALL_EMBEDDED;
+        };
+        assertScenario(scenario);
+    }
+
+    @Test void 세명_전원_임베딩_보유는_모든_pair에_임베딩이_적용된다() {
+        assertScenario(THREE_ALL_EMBEDDED);
+    }
+
+    @Test void 세명_전원_임베딩_미보유는_모든_회원의_cosine이_null이다() {
+        assertScenario(THREE_NONE_EMBEDDED);
+    }
+
+    @Test void 세명중_한명만_보유하면_어느_pair에도_적용되지_않아_전원_미보유와_같은_분해가_저장된다() {
+        // score()는 짝 단위 계산이라 양쪽 모두 보유해야 코사인 항이 작동한다. 혼자 입력한 회원도
+        // 상대가 없으면 태그 계산과 같아진다는 사실이 저장 값으로 드러나는지 확인한다.
+        assertScenario(THREE_ONLY_ONE_EMBEDDED);
+        assertThat(THREE_ONLY_ONE_EMBEDDED.expectations()).isEqualTo(THREE_NONE_EMBEDDED.expectations());
     }
 
     @Test void token이_다르면_전체를_거부하고_중간_data를_남기지_않는다() {
@@ -439,16 +478,146 @@ class MatchProposalCreationServiceIntegrationTest {
         assertNothingCreatedAndLocked();
     }
 
+    // ---- 점수 분해 검증용 후보 구성과 기대값 ----
+    // 벡터는 OpenAI 호출 없이 코사인이 딱 떨어지도록 잡은 임의 단위 벡터다.
+    private static final float[] V_X = {1.0f, 0.0f};          // 상호 코사인: V_X-V_DIAG 0.60
+    private static final float[] V_DIAG = {0.6f, 0.8f};       //             V_X-V_FLAT 0.80
+    private static final float[] V_FLAT = {0.8f, 0.6f};       //             V_DIAG-V_FLAT 0.96
+    private static final float[] V_Y = {0.0f, 1.0f};          //             V_X-V_Y 0.00
+
+    private static final List<TravelStyleCode> T_PHOTO = List.of(TravelStyleCode.PHOTO);
+    private static final List<TravelStyleCode> T_PHOTO_FOOD = List.of(TravelStyleCode.PHOTO, TravelStyleCode.FOOD);
+    private static final List<TravelStyleCode> T_FOOD_ACTIVE = List.of(TravelStyleCode.FOOD, TravelStyleCode.ACTIVE);
+
+    /** 2인 fallback: 한쪽만 임베딩을 가져 코사인 항이 작동하지 않는다. */
+    private static final Scenario TWO_FALLBACK = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO_FOOD, V_X), new CandidateProfile(T_FOOD_ACTIVE, null)),
+            "33.33",
+            List.of(new ScoreExpectation(9_110_002L, "33.33", "33.33", null, 0),
+                    new ScoreExpectation(9_110_006L, "33.33", "33.33", null, 0)));
+
+    /** 3인 혼합: 회원 2·6은 pair 하나만 임베딩, 회원 10은 벡터가 없어 전부 fallback. */
+    private static final Scenario THREE_MIXED = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO, V_X), new CandidateProfile(T_PHOTO_FOOD, V_DIAG),
+                    new CandidateProfile(T_FOOD_ACTIVE, null)),
+            "28.78",
+            List.of(new ScoreExpectation(9_110_002L, "26.50", "25.00", "30.00", 1),
+                    new ScoreExpectation(9_110_006L, "43.17", "41.67", "46.67", 1),
+                    new ScoreExpectation(9_110_010L, "16.67", "16.67", null, 0)));
+
+    private static final Scenario THREE_ALL_EMBEDDED = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO, V_X), new CandidateProfile(T_PHOTO_FOOD, V_DIAG),
+                    new CandidateProfile(T_FOOD_ACTIVE, V_FLAT)),
+            "43.04",
+            List.of(new ScoreExpectation(9_110_002L, "38.50", "25.00", "70.00", 2),
+                    new ScoreExpectation(9_110_006L, "52.57", "41.67", "78.00", 2),
+                    new ScoreExpectation(9_110_010L, "38.07", "16.67", "88.00", 2)));
+
+    private static final List<ScoreExpectation> THREE_TAGS_ONLY = List.of(
+            new ScoreExpectation(9_110_002L, "25.00", "25.00", null, 0),
+            new ScoreExpectation(9_110_006L, "41.67", "41.67", null, 0),
+            new ScoreExpectation(9_110_010L, "16.67", "16.67", null, 0));
+
+    private static final Scenario THREE_NONE_EMBEDDED = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO, null), new CandidateProfile(T_PHOTO_FOOD, null),
+                    new CandidateProfile(T_FOOD_ACTIVE, null)),
+            "27.78", THREE_TAGS_ONLY);
+
+    private static final Scenario THREE_ONLY_ONE_EMBEDDED = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO, V_X), new CandidateProfile(T_PHOTO_FOOD, null),
+                    new CandidateProfile(T_FOOD_ACTIVE, null)),
+            "27.78", THREE_TAGS_ONLY);
+
+    private static final Scenario FOUR_ALL_EMBEDDED = new Scenario(
+            List.of(new CandidateProfile(T_PHOTO, V_X), new CandidateProfile(T_PHOTO_FOOD, V_DIAG),
+                    new CandidateProfile(T_FOOD_ACTIVE, V_FLAT), new CandidateProfile(T_PHOTO_FOOD, V_Y)),
+            "49.91",
+            List.of(new ScoreExpectation(9_110_002L, "37.33", "33.33", "46.67", 3),
+                    new ScoreExpectation(9_110_006L, "66.38", "61.11", "78.67", 3),
+                    new ScoreExpectation(9_110_010L, "39.15", "22.22", "78.67", 3),
+                    new ScoreExpectation(9_110_011L, "56.78", "61.11", "46.67", 3)));
+
+    private record CandidateProfile(List<TravelStyleCode> tags, float[] embedding) { }
+
+    private record ScoreExpectation(long memberId, String memberScore, String jaccard, String cosine,
+                                    int embeddingPairCount) { }
+
+    private record Scenario(List<CandidateProfile> profiles, String groupScore,
+                            List<ScoreExpectation> expectations) { }
+
+    private void assertScenario(Scenario scenario) {
+        MatchGroupCombination group = prepareGroup(scenario);
+        long attemptId = service.createInitial(group, TOKEN, NOW, Duration.ofSeconds(30)).attemptId();
+        assertThat(jdbc.queryForObject("SELECT score FROM match_attempts WHERE id=?", BigDecimal.class, attemptId))
+                .isEqualByComparingTo(scenario.groupScore());
+        scenario.expectations().forEach(expectation -> assertBreakdown(attemptId, expectation));
+    }
+
+    private void assertBreakdown(long attemptId, ScoreExpectation expectation) {
+        var row = jdbc.queryForMap("SELECT member_score,jaccard_score,cosine_score,embedding_applied,"
+                + "embedding_pair_count FROM match_attempt_members WHERE attempt_id=? AND member_id=?",
+                attemptId, expectation.memberId());
+        String context = "member " + expectation.memberId();
+        assertThat((BigDecimal) row.get("member_score")).as(context)
+                .isEqualByComparingTo(expectation.memberScore());
+        assertThat((BigDecimal) row.get("jaccard_score")).as(context)
+                .isEqualByComparingTo(expectation.jaccard());
+        assertThat(((Number) row.get("embedding_pair_count")).intValue()).as(context)
+                .isEqualTo(expectation.embeddingPairCount());
+        BigDecimal cosine = (BigDecimal) row.get("cosine_score");
+        if (expectation.cosine() == null) {
+            assertThat(cosine).as(context).isNull();
+            assertThat(row.get("embedding_applied")).as(context).isEqualTo(false);
+        } else {
+            assertThat(cosine).as(context).isEqualByComparingTo(expectation.cosine());
+            assertThat(row.get("embedding_applied")).as(context).isEqualTo(true);
+        }
+        assertReconstructable(context, (BigDecimal) row.get("member_score"),
+                (BigDecimal) row.get("jaccard_score"), cosine);
+    }
+
+    /**
+     * 저장된 분해값과 가중치만으로 member_score를 재구성할 수 있는지 확인한다. 총점 하나만 남기던
+     * 구조에서 이 재구성이 불가능했던 것이 점수 분해 저장의 동기다.
+     *
+     * <p>pair 점수가 pair마다 반올림된 뒤 평균되므로 3~4인은 0.01까지 어긋날 수 있다. 기존
+     * member_score 계산 순서를 바꾸지 않는 한 제거할 수 없는 오차라 허용 범위로 둔다.
+     */
+    private void assertReconstructable(String context, BigDecimal memberScore, BigDecimal jaccard,
+                                       BigDecimal cosine) {
+        if (cosine == null) {
+            assertThat(memberScore).as(context + " fallback 재구성").isEqualByComparingTo(jaccard);
+            return;
+        }
+        BigDecimal reconstructed = jaccard.multiply(new BigDecimal("0.70"))
+                .add(cosine.multiply(new BigDecimal("0.30")))
+                .setScale(2, RoundingMode.HALF_UP);
+        assertThat(reconstructed).as(context + " 가중 합산 재구성")
+                .isCloseTo(memberScore, within(new BigDecimal("0.01")));
+    }
+
     private MatchGroupCombination prepareGroup(int size) {
+        return prepareGroup(size, IntStream.range(0, size)
+                        .mapToObj(index -> new CandidateProfile(List.of(TravelStyleCode.PHOTO), null)).toList(),
+                new BigDecimal("100.00"));
+    }
+
+    private MatchGroupCombination prepareGroup(Scenario scenario) {
+        return prepareGroup(scenario.profiles().size(), scenario.profiles(),
+                new BigDecimal(scenario.groupScore()));
+    }
+
+    private MatchGroupCombination prepareGroup(int size, List<CandidateProfile> profiles, BigDecimal groupScore) {
         jdbc.update("DELETE FROM user_blocks"); jdbc.update("DELETE FROM match_cooldowns");
         List<Long> poolIds = List.of(9_120_002L, 9_120_006L, 9_120_010L, 9_120_011L).subList(0, size);
         for (long id : poolIds) jdbc.update("UPDATE match_pools SET preferred_group_size=?,status='LOCKED',locked_at=?,lock_token=?,search_expires_at=? WHERE id=?", size, NOW, TOKEN, NOW.plusMinutes(1), id);
         List<MatchingCandidate> candidates = IntStream.range(0, poolIds.size()).mapToObj(index -> {
             long id = poolIds.get(index);
+            CandidateProfile profile = profiles.get(index);
             return new MatchingCandidate(id, 9_110_000L + (id - 9_120_000L), id, 9_100_001L,
-                    size, false, NOW.minusSeconds(index), List.of(TravelStyleCode.PHOTO));
+                    size, false, NOW.minusSeconds(index), profile.tags(), profile.embedding());
         }).toList();
-        return new MatchGroupCombination(candidates, new BigDecimal("100.00"));
+        return new MatchGroupCombination(candidates, groupScore);
     }
     private long insertExclusionSource() {
         Long attempt = jdbc.queryForObject("""
