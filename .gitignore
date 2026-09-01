@@ -57,3 +57,6 @@ temp/
 
 # 로컬 확인용 캡처 화면 (저장소에 커밋하지 않는다)
 screen/
+
+# Claude Code 다음 작업 프롬프트 (개인 작업용, 매 작업마다 덮어씀)
+docs/NEXT_PROMPT.md
