@@ -120,6 +120,29 @@ public interface FestivalRepository extends JpaRepository<Festival, Long> {
     );
 
     /**
+     * 관리자 만남 장소 화면의 "축제 선택" 검색 전용. {@link #findVisibleFestivals}와 달리
+     * {@code eventEndDate}로 종료 여부를 걸러내지 않는다 — 관리자는 방금 끝난 축제의 만남
+     * 장소도 조회·수정해야 하기 때문이다(docs/24_ADMIN_MEETING_POINT_MANAGEMENT_DESIGN.md
+     * 7장 후속 과제). 대신 {@code statuses}로 노출 범위를 호출부가 직접 정한다 — 관리자
+     * 화면은 {@code ACTIVE}/{@code ENDED}만 넘기고, {@code HIDDEN}/{@code INACTIVE}(운영자가
+     * 숨겼거나 동기화상 비활성 시즌인 축제)는 제외한다.
+     */
+    @Query("""
+            select new com.survey.meetorsolo.domain.festival.dto.FestivalSummary(
+                festival.id, festival.contentId, festival.title, festival.address,
+                festival.areaCode, festival.sigunguCode, festival.eventStartDate,
+                festival.eventEndDate, festival.status, festival.mapX, festival.mapY)
+            from Festival festival
+            where festival.status in :statuses
+              and lower(festival.title) like lower(concat('%', :keyword, '%'))
+            """)
+    Page<FestivalSummary> findForAdmin(
+            @Param("statuses") Collection<FestivalStatus> statuses,
+            @Param("keyword") String keyword,
+            Pageable pageable
+    );
+
+    /**
      * 지역 선택 UI용 시군구 집계. 시군구 이름이 DB에 없어 그룹별 대표 주소를 함께 가져오고,
      * 이름은 {@code RegionNameResolver}가 주소 두 번째 토큰에서 뽑는다. 목록 조회와 같은
      * 가시성 조건을 써서 "선택하면 항상 빈 결과인 지역"이 노출되지 않게 한다.

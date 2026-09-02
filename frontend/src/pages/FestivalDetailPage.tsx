@@ -11,6 +11,7 @@ import {
   getFestivalStatusSoftClass,
 } from '../utils/festival';
 import { formatDistanceLabel } from '../utils/tourSpot';
+import { buildKakaoDirectionsUrl } from '../utils/geo';
 import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
 import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
 import MobileLayout from '../components/layout/MobileLayout';
@@ -18,6 +19,7 @@ import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
 import Spinner, { LoadingState } from '../components/common/Spinner';
+import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
 export default function FestivalDetailPage() {
   const { festivalId } = useParams<{ festivalId: string }>();
@@ -229,21 +231,32 @@ export default function FestivalDetailPage() {
           </section>
         )}
 
-        {/* 오시는 길 */}
+        {/* 오시는 길 — 좌표(mapX=경도, mapY=위도)가 있을 때만 실제 지도를 그린다.
+            관광공사 동기화 데이터는 좌표가 비어 있을 수 있어, 그 경우 주소만 보여준다. */}
         {festival.address && (
           <section className="flex flex-col gap-2.5">
             <h3 className="text-[17px] font-bold text-ink">오시는 길</h3>
             <div className="flex flex-col gap-3 rounded-2xl bg-white p-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
-              <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+              {festival.mapX !== null && festival.mapY !== null ? (
+                <KakaoMeetingPointMap
+                  meetingPoint={{ name: festival.title, latitude: festival.mapY, longitude: festival.mapX }}
+                />
+              ) : (
+                <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+              )}
               <div className="flex items-center justify-between gap-3 px-1 pb-1">
                 <span className="text-[13px] text-ink/75">{festival.address}</span>
-                <button
-                  type="button"
-                  className="flex shrink-0 items-center gap-1 rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink"
-                >
-                  <Navigation size={14} />
-                  길찾기
-                </button>
+                {festival.mapX !== null && festival.mapY !== null && (
+                  <a
+                    href={buildKakaoDirectionsUrl(festival.title, festival.mapY, festival.mapX)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink"
+                  >
+                    <Navigation size={14} />
+                    길찾기
+                  </a>
+                )}
               </div>
             </div>
           </section>

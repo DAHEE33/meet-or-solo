@@ -3,10 +3,12 @@ package com.survey.meetorsolo.domain.festival.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
+import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +73,26 @@ class FestivalRepositoryIntegrationTest {
                     assertThat(summary.title()).isEqualTo("장소 있는 축제");
                     assertThat(summary.status()).isEqualTo(FestivalStatus.ACTIVE);
                 });
+    }
+
+    @Test
+    @Sql(statements = {
+            // 종료일이 지났지만 동기화 상태는 여전히 ACTIVE인 축제 — 공개 findVisibleFestivals에서는
+            // 숨겨지지만(항상 eventEndDate >= today), 관리자 검색 findForAdmin에는 나와야 한다.
+            "INSERT INTO festivals (id, content_id, content_type_id, title, status, event_start_date, event_end_date, map_x, map_y, created_at, updated_at) "
+                    + "VALUES (9200004, 'repo-fixture-past-active', '15', '날짜는 지난 축제', 'ACTIVE', '2000-01-01', '2000-01-05', 128.4, 37.4, now(), now())",
+            // HIDDEN 축제 — 관리자 검색에서도 제외돼야 한다.
+            "INSERT INTO festivals (id, content_id, content_type_id, title, status, map_x, map_y, created_at, updated_at) "
+                    + "VALUES (9200005, 'repo-fixture-hidden', '15', '숨겨진 축제', 'HIDDEN', 128.5, 37.5, now(), now())"
+    })
+    void findForAdmin은_ACTIVE_ENDED만_종료일과_무관하게_반환한다() {
+        var page = festivals.findForAdmin(
+                List.of(FestivalStatus.ACTIVE, FestivalStatus.ENDED), "", PageRequest.of(0, 100));
+
+        assertThat(page.getContent())
+                .extracting(FestivalSummary::contentId)
+                .contains("repo-fixture-past-active", "repo-fixture-ended")
+                .doesNotContain("repo-fixture-hidden");
     }
 
     @Test
