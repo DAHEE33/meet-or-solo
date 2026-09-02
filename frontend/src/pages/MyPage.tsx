@@ -17,6 +17,7 @@ import { checkInRecords } from '../data/mock/checkIns';
 import { tourSpots } from '../data/mock/tourSpots';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import Spinner from '../components/common/Spinner';
 
 const favoriteSpots = tourSpots.slice(1, 4); // 찜한 관광지 mock
 
@@ -89,7 +90,7 @@ export default function MyPage() {
           )}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-[17px] font-bold text-ink">
-              {profile?.nickname ?? '프로필 불러오는 중...'}
+              {profile?.nickname ?? <Spinner size="sm" />}
             </span>
             <span className="text-[13px] text-ink/50">
               {profile?.email ?? '등록된 이메일이 없습니다.'}

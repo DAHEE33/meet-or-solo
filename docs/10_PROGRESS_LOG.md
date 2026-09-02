@@ -1,5 +1,34 @@
 # 진행 상태 기록
 
+## [10-A 후속 11] 홈에서 솔로 코스 진입 시 체크인 게이트 복구
+
+상태: 구현 완료(Frontend 전용). 두 브라우저 수동 검증 전
+
+- 증상: 체크인하지 않고 홈의 "혼자 즐기는 주변 관광지 추천" 배너를 누르면 체크인 안내가 아니라
+  코스 화면이 떴다.
+- 원인: `HomePage`의 `CtaBanner`가 `state={{ festivalId: hotFestival.id }}`를 넘기고 있었다.
+  `resolveSoloCourseFestival`은 `location.state.festivalId`를 1순위로 쓰므로 이 값이 항상 채워져
+  **체크인 안내 분기에 도달할 수 없었다.** 이번 작업에서 생긴 문제가 아니라
+  `[10-A 후속 3]`(docs/22 구현) 때부터의 동작이다.
+- **`docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md` 내부에 모순이 있었다.** 5장 말미와 7장·10장은
+  "홈 배너도 `hotFestival.id`를 state로 넘기도록 고쳐야 한다"고 했지만, 9장은 "체크인이 전혀 없는
+  상태로 진입 시 대표 축제로 대체하지 않고 체크인 안내만 보여준다"로 결정했다. 전자를 구현하면
+  후자가 도달 불가능해진다.
+- 사용자 기대가 9장과 같아 **9장 결정을 살리고** 홈 배너에서 `state`를 제거했다. 문서 5장·7장에
+  정정 메모를 추가했다.
+  - `FestivalDetailPage`에서 넘기는 `festivalId`는 그대로 둔다(5장 1순위). 그 화면은 사용자가 특정
+    축제를 보고 있으므로 체크인 없이 기준으로 삼아도 된다. 두 진입 경로의 동작 차이는 의도된 것이다 —
+    홈 배너는 "내 주변"을 뜻하므로 체크인이 기준이어야 한다.
+  - 배너 설명 문구도 "선택한 축제 주변"에서 "체크인한 축제 주변"으로 바꿨다.
+- `SoloCoursePage`의 안내 버튼을 `/check-in` → `/spots`로 바꿨다(`체크인할 축제 고르기`).
+  `[10-A 후속 10]`에서 `CheckInPage`가 축제 미지정 진입 시 `/spots`로 튕기게 했으므로, 그대로 두면
+  화면이 한 번 깜빡인다.
+- `[10-A 후속 10]`에서 놓친 로딩 표시도 함께 정리했다 — `SoloCoursePage`, `ProfileEditPage`,
+  `SignupPage`, `MyPage`의 텍스트 전용 로딩을 `LoadingState`/`Spinner`로 교체했다.
+- 회귀 방지 테스트 2건을 `SoloCoursePage.test.ts`에 추가했다(state 없이 체크인 없음 → `festivalId`
+  null, state 없이 체크인 있음 → 그 축제).
+- 검증: `tsc -b` 통과, vitest **341개 전부 통과**, `npm run build` 성공. Backend 변경 없음.
+
 ## [10-B MATCH-09] 매칭 실패 → 솔로 코스 전환 연결
 
 상태: 구현·Frontend 자동 검증·dev 수동 검증 완료(Frontend 전용). Backend·migration 변경 없음
@@ -3055,3 +3084,54 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
 - penalty/cooldown/event/회원 점수/group 상태는 변경하지 않으며 migration은 변경하지 않았다.
 - Controller/DTO/Service/Repository 경계와 실제 PostgreSQL Testcontainers focused 테스트를 추가했다.
 - proposal 생성 race 보강, matching 전체 회귀와 실제 후보 복귀 통합 검증은 2단계로 남긴다.
+
+## [10-관리자 후속] 만남 장소 화면 — 마감 축제 검색 + 진행중/예정/마감 3분류
+
+상태: 완료
+
+- `/admin/meeting-points`가 재사용하던 공개 `GET /api/festivals`는 `festival.eventEndDate >= 오늘`
+  조건을 항상 걸어(`FestivalRepository.findVisibleFestivals`) 종료된 축제를 숨기는 사양이라,
+  관리자가 방금 끝난 축제의 만남 장소를 찾을 수 없었다(`docs/24_...` 7장에서 후속 과제로 남겨뒀던
+  항목). 이번 작업이 그 후속 과제를 처리한다.
+- Backend: `GET /api/admin/festivals?keyword=`(`AdminFestivalController` → `FestivalAdminQueryService`
+  → `FestivalRepository.findForAdmin`)를 신설했다. `eventEndDate` 필터 없이 `status in
+  (ACTIVE, ENDED)`만 걸어 검색하고, `HIDDEN`/`INACTIVE`는 제외한다. 인가는 다른 신규 admin
+  서비스와 같은 `AdminAuthorizationService.requireAdmin`을 쓴다(기존 `FestivalMeetingPointAdminService`의
+  로컬 `requireAdmin`과는 다른, 더 최신 공통 패턴).
+- Frontend: `utils/festival.ts`에 `groupFestivalsByDisplayStatus`를 추가해 기존
+  `resolveDisplayStatus` 규칙(오늘 날짜 vs `eventStartDate`/`eventEndDate`/`status`) 그대로
+  진행 중/진행 예정/마감 3그룹으로 나눈다. `AdminMeetingPointsPage`는 검색어 없이 진입해도 항상
+  이 3그룹을 채워 보여주고, 마감 그룹은 기본은 접어두되 선택된 축제가 그 안에 있으면 펼쳐서
+  시작한다.
+- 마감된 축제도 장소 등록/수정/활성화를 계속 허용한다 — 매칭 진입 자체는 어차피
+  `FestivalCheckinService`가 체크인 시점에 `ACTIVE`만 허용해 막아주므로, 화면에서 추가로
+  제약할 이유가 없다.
+- 공개 사용자 화면(`festivalsApi.getList`, 홈/탐색 목록)은 건드리지 않았다 — 종료 축제 숨김은
+  그 화면들에서는 여전히 의도된 정책이다.
+- backend 신규 unit(`FestivalAdminQueryServiceTest`)·controller(`AdminFestivalControllerTest`)
+  테스트와 `FestivalRepositoryIntegrationTest`에 `findForAdmin` 케이스를 추가했고, frontend는
+  `utils/festival.test.ts`(`groupFestivalsByDisplayStatus`)를 신규로, `useAdminMeetingPoints.test.ts`는
+  변경된 `searchFestivals` 응답 형태에 맞춰 갱신했다.
+
+## [10-관리자 후속 2] 만남 장소 등록 폼 — 카카오맵 검색·좌표 선택기 연동
+
+상태: 완료
+
+- 위도/경도를 숫자로 직접 입력하던 등록/수정 폼에 카카오맵 기반 보조 UI를 추가했다. Kakao
+  Local REST API(매칭 엔진의 후보 검색용으로 이미 계획된 것, 서버 전용 키 필요)가 아니라, 이미
+  로드하는 Kakao Maps JS SDK의 `services` 라이브러리(`Places.keywordSearch`)를 썼다 — 새 키나
+  백엔드 변경 없이 SDK 로드 URL에 `&libraries=services`만 추가했다.
+- `components/admin/KakaoPlaceSearch.tsx`(장소/주소 검색 → 이름·주소·좌표·`kakaoPlaceId` 자동
+  채움)와 `components/admin/KakaoCoordinatePicker.tsx`(선택된 좌표를 지도로 보여주고 클릭하면
+  그 지점으로 좌표를 옮기는 미세조정용 지도)를 신규 추가하고, `AdminMeetingPointFormDialogContent`
+  에 연결했다. 위도/경도 숫자 입력 필드는 fallback으로 그대로 남겨 검색/지도가 실패해도 등록이
+  막히지 않는다.
+- `components/matching/KakaoMeetingPointMap.tsx`의 `KakaoMaps` SDK 타입에 `services`/`event`를
+  추가해 재사용했다(`loadKakaoMaps` 로더는 그대로).
+- 신규 장소 등록 폼의 좌표 선택기 초기 중심점을 선택된 축제의 좌표로 잡기 위해, admin 축제
+  검색 응답(`AdminFestivalSummaryResponse`, `AdminFestivalSummary`)에 `mapX`/`mapY`를 추가했다
+  (`FestivalAdminQueryService`가 이미 갖고 있던 `FestivalSummary.mapX/mapY`를 그대로 옮김).
+- 검색 결과 매핑(`toPlacePick`), 중심점 기본값 계산(`resolveCenter`), 신규 등록 초기값 계산
+  (`toFormState`)을 순수 함수로 분리해 유닛 테스트를 추가했다 — 이 저장소 vitest 설정에는
+  jsdom이 없어(`MyPage.test.tsx` 주석 참고) 클릭 같은 DOM 상호작용은 직접 테스트하지 못하고,
+  로직만 순수 함수로 뽑아 검증했다.

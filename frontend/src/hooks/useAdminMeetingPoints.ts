@@ -5,13 +5,14 @@ import {
   type AdminMeetingPointStatus,
   type AdminMeetingPointUpsertRequest,
 } from '../api/adminMeetingPoints';
-import { festivalsApi, type FestivalListItem } from '../api/festivals';
+import { adminFestivalsApi, type AdminFestivalSummary } from '../api/adminFestivals';
 
 export type AdminMeetingPointsState = {
   keyword: string;
   festivalSearchStatus: 'IDLE' | 'LOADING' | 'READY' | 'ERROR';
-  festivalResults: FestivalListItem[];
-  selectedFestival: { id: number; title: string } | null;
+  festivalResults: AdminFestivalSummary[];
+  // mapX/mapY는 신규 장소 등록 폼의 카카오맵 좌표 선택기 초기 중심점으로 쓴다.
+  selectedFestival: { id: number; title: string; mapX: number | null; mapY: number | null } | null;
   pointsStatus: 'IDLE' | 'LOADING' | 'READY' | 'ERROR';
   points: AdminMeetingPoint[];
   formOpen: boolean;
@@ -40,8 +41,7 @@ export const INITIAL_ADMIN_MEETING_POINTS_STATE: AdminMeetingPointsState = {
 };
 
 type Dependencies = {
-  searchFestivals: (keyword: string, page: number, size: number, signal: AbortSignal) =>
-    Promise<{ items: FestivalListItem[] }>;
+  searchFestivals: (keyword: string, signal: AbortSignal) => Promise<AdminFestivalSummary[]>;
   listPoints: (festivalId: number, signal: AbortSignal) => Promise<AdminMeetingPoint[]>;
   create: (festivalId: number, request: AdminMeetingPointUpsertRequest, signal: AbortSignal) =>
     Promise<AdminMeetingPoint>;
@@ -91,17 +91,17 @@ export function createAdminMeetingPointsSession(
       const requestId = ++festivalSearchRequestId;
       publish({ ...state, keyword, festivalSearchStatus: 'LOADING' });
       try {
-        const page = await dependencies.searchFestivals(keyword, 0, 10, controller.signal);
+        const results = await dependencies.searchFestivals(keyword, controller.signal);
         if (stopped || controller.signal.aborted || requestId !== festivalSearchRequestId) return;
-        publish({ ...state, festivalSearchStatus: 'READY', festivalResults: page.items });
+        publish({ ...state, festivalSearchStatus: 'READY', festivalResults: results });
       } catch {
         if (stopped || controller.signal.aborted || requestId !== festivalSearchRequestId) return;
         publish({ ...state, festivalSearchStatus: 'ERROR', festivalResults: [] });
       }
     },
-    selectFestival: (id: number, title: string) => {
+    selectFestival: (id: number, title: string, mapX: number | null = null, mapY: number | null = null) => {
       publish({
-        ...state, selectedFestival: { id, title }, points: [], pointsStatus: 'LOADING',
+        ...state, selectedFestival: { id, title, mapX, mapY }, points: [], pointsStatus: 'LOADING',
         formOpen: false, editingPointId: null, formError: null, successMessage: null,
       });
       return loadPoints(id);
@@ -186,8 +186,7 @@ export function useAdminMeetingPoints() {
   useEffect(() => {
     const session = createAdminMeetingPointsSession(
       {
-        // festivalsApi.getList는 AbortSignal을 받지 않는다 — 요청 폐기는 requestId 비교로만 방어한다.
-        searchFestivals: (keyword, page, size) => festivalsApi.getList(page, size, keyword || undefined),
+        searchFestivals: (keyword, signal) => adminFestivalsApi.search(keyword || undefined, signal),
         listPoints: adminMeetingPointsApi.list,
         create: adminMeetingPointsApi.create,
         update: adminMeetingPointsApi.update,
@@ -202,7 +201,11 @@ export function useAdminMeetingPoints() {
   return {
     state,
     searchFestivals: useCallback((keyword: string) => sessionRef.current?.searchFestivals(keyword), []),
-    selectFestival: useCallback((id: number, title: string) => sessionRef.current?.selectFestival(id, title), []),
+    selectFestival: useCallback(
+      (id: number, title: string, mapX: number | null = null, mapY: number | null = null) =>
+        sessionRef.current?.selectFestival(id, title, mapX, mapY),
+      [],
+    ),
     reloadPoints: useCallback(() => sessionRef.current?.reloadPoints(), []),
     openCreateForm: useCallback(() => sessionRef.current?.openCreateForm(), []),
     openEditForm: useCallback((pointId: number) => sessionRef.current?.openEditForm(pointId), []),

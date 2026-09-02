@@ -1,7 +1,7 @@
 import { isValidElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AdminMeetingPoint, AdminMeetingPointUpsertRequest } from '../api/adminMeetingPoints';
-import { AdminMeetingPointFormDialogContent, isLastActivePoint } from './AdminMeetingPointsPage';
+import { AdminMeetingPointFormDialogContent, isLastActivePoint, toFormState } from './AdminMeetingPointsPage';
 
 function nodes(node: ReactNode): Array<{ type: unknown; props: Record<string, unknown> }> {
   if (Array.isArray(node)) return node.flatMap(nodes);
@@ -33,6 +33,33 @@ describe('isLastActivePoint', () => {
   });
   it('대상 장소가 이미 INACTIVE면 false다', () => {
     expect(isLastActivePoint([point(1, 'INACTIVE')], point(1, 'INACTIVE'))).toBe(false);
+  });
+});
+
+describe('toFormState', () => {
+  it('신규 등록은 축제 좌표를 좌표 선택기 초기 중심점으로 채운다', () => {
+    const form = toFormState(null, { longitude: 128.1, latitude: 37.1 });
+
+    expect(form.longitude).toBe(128.1);
+    expect(form.latitude).toBe(37.1);
+    expect(form.kakaoPlaceId).toBe('');
+  });
+
+  it('축제 좌표가 없으면 0/0으로 둔다(좌표 선택기가 자체 기본값으로 대체)', () => {
+    const form = toFormState(null, { longitude: null, latitude: null });
+
+    expect(form.longitude).toBe(0);
+    expect(form.latitude).toBe(0);
+  });
+
+  it('수정 모드는 축제 좌표와 무관하게 기존 장소 값을 그대로 쓴다', () => {
+    const existing = point(1, 'ACTIVE');
+
+    const form = toFormState(existing, { longitude: 128.9, latitude: 37.9 });
+
+    expect(form.longitude).toBe(existing.longitude);
+    expect(form.latitude).toBe(existing.latitude);
+    expect(form.kakaoPlaceId).toBe(existing.kakaoPlaceId);
   });
 });
 
