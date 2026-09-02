@@ -387,12 +387,15 @@ export function AdminMeetingPointFormDialogContent({
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm font-semibold">경도
-              <input required type="number" step="0.0000000001" min={-180} max={180} value={form.longitude}
+              {/* step="0.0000000001"였을 때 카카오맵 검색/좌표선택기가 채우는 부동소수점 값이
+                  브라우저 number input의 step 배수 판정에서 거의 항상 걸려("가장 근접한
+                  유효값" 메시지) 저장이 막혔다. min/max만 검증하도록 step을 끈다. */}
+              <input required type="number" step="any" min={-180} max={180} value={form.longitude}
                 onChange={(event) => onChange({ ...form, longitude: Number(event.target.value) })}
                 className="mt-1 block w-full rounded-xl border border-line p-2 font-normal" />
             </label>
             <label className="text-sm font-semibold">위도
-              <input required type="number" step="0.0000000001" min={-90} max={90} value={form.latitude}
+              <input required type="number" step="any" min={-90} max={90} value={form.latitude}
                 onChange={(event) => onChange({ ...form, latitude: Number(event.target.value) })}
                 className="mt-1 block w-full rounded-xl border border-line p-2 font-normal" />
             </label>
