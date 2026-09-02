@@ -18,6 +18,7 @@ import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
+import ShareSheet from '../components/common/ShareSheet';
 import Spinner, { LoadingState } from '../components/common/Spinner';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
@@ -28,6 +29,7 @@ export default function FestivalDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
   const { state: checkinState, checkIn } = useFestivalCheckin(festival?.id ?? null);
   // 이 화면에서 방금 체크인한 결과(checkinState)뿐 아니라, 이전에 체크인해두고 다시
   // 들어온 경우도 매칭 시작 버튼이 활성화돼야 하므로 실제 체크인 상태를 함께 조회한다.
@@ -96,12 +98,20 @@ export default function FestivalDetailPage() {
           <button
             type="button"
             aria-label="공유"
+            onClick={() => setShowShareSheet(true)}
             className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
           >
             <Share2 size={20} strokeWidth={1.8} />
           </button>
         }
       />
+      {showShareSheet && (
+        <ShareSheet
+          title={festival.title}
+          url={window.location.href}
+          onClose={() => setShowShareSheet(false)}
+        />
+      )}
       <main className="flex flex-col gap-5 px-5 pb-[120px] pt-1">
         <div className="relative -mx-5">
           {festival.originImageUrl ? (

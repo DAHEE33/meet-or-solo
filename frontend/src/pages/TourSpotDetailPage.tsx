@@ -10,6 +10,7 @@ import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import PlaceScrollCard from '../components/common/PlaceScrollCard';
+import ShareSheet from '../components/common/ShareSheet';
 import FestivalListItem from '../components/festival/FestivalListItem';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
@@ -21,6 +22,7 @@ export default function TourSpotDetailPage() {
   const [otherSpots, setOtherSpots] = useState<TourSpot[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
 
   useEffect(() => {
     const id = Number(spotId);
@@ -95,12 +97,16 @@ export default function TourSpotDetailPage() {
           <button
             type="button"
             aria-label="공유"
+            onClick={() => setShowShareSheet(true)}
             className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
           >
             <Share2 size={20} strokeWidth={1.8} />
           </button>
         }
       />
+      {showShareSheet && (
+        <ShareSheet title={spot.name} url={window.location.href} onClose={() => setShowShareSheet(false)} />
+      )}
       <main className="flex flex-col gap-5 px-5 pb-[120px] pt-1">
         <div className="relative -mx-5">
           {detail.imageUrl ? (
