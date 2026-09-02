@@ -9,10 +9,12 @@ import {
   canBeginRetry,
   deriveMatchingState,
   isAbortError,
+  observedActivePoolId,
   pollingDelay,
   retrySourceAfterRefresh,
   stateAfterPoolEntry,
   stateAfterPoolEntryFailure,
+  type MatchingSnapshot,
 } from './useMatchingSession';
 
 const restriction = (active = false): MatchingRestriction => ({
@@ -107,6 +109,20 @@ const state = (
     ...overrides,
   });
 
+const snapshot = (overrides: Partial<MatchingSnapshot> = {}): MatchingSnapshot => ({
+  pool: null,
+  proposal: null,
+  group: null,
+  restriction: restriction(),
+  ...overrides,
+});
+
+/** 이 세션에서 진행 상태를 관측한 pool id를 함께 넘겨 상태를 파생한다. */
+const observedState = (
+  sessionObservedPoolId: number | null,
+  overrides: Partial<MatchingSnapshot> = {},
+) => deriveMatchingState(snapshot(overrides), sessionObservedPoolId);
+
 describe('deriveMatchingState', () => {
   it('group을 다른 서버 상태보다 우선하여 MATCHED로 복원한다', () => {
     expect(
@@ -155,6 +171,57 @@ describe('deriveMatchingState', () => {
   it('active 서버 상태가 없으면 cooldown, 그마저 없으면 IDLE을 사용한다', () => {
     expect(state({ restriction: restriction(true) }).status).toBe('COOLDOWN');
     expect(state().status).toBe('IDLE');
+  });
+
+  it.each(['CANCELLED', 'EXPIRED'] as const)(
+    '세션 중 관측한 pool이 %s로 끝나면 cooldown이 없어도 종료 상태를 유지한다',
+    (status) => {
+      // 60초 탐색 만료는 cooldown을 만들지 않는다. 이 분기가 없으면 가장 흔한 매칭 실패에서
+      // 종료 안내와 솔로 코스 전환이 화면에 아예 뜨지 않는다(docs/26 3장).
+      expect(observedState(1, { pool: pool(status) }).status).toBe(status);
+    },
+  );
+
+  it('관측 기록이 없는 terminal pool은 과거 이력으로 보고 IDLE로 복원한다', () => {
+    // `[10-A 후속 2]` 종료 화면 고착 수정을 유지한다 — 새 mount에서 다시 종료 카드를 띄우지 않는다.
+    expect(observedState(null, { pool: pool('EXPIRED') }).status).toBe('IDLE');
+  });
+
+  it('관측 기록이 다른 pool이면 이번 종료로 오인하지 않는다', () => {
+    expect(observedState(7, { pool: pool('EXPIRED') }).status).toBe('IDLE');
+  });
+
+  it('관측한 group이 취소되어 MATCHED pool만 남으면 CANCELLED로 보여준다', () => {
+    expect(observedState(1, { pool: pool('MATCHED') }).status).toBe('CANCELLED');
+  });
+});
+
+describe('observedActivePoolId', () => {
+  it.each(['WAITING', 'LOCKED', 'PROPOSED'] as const)(
+    '진행 중인 pool %s를 관측으로 기록한다',
+    (status) => {
+      expect(observedActivePoolId(snapshot({ pool: pool(status) }), null)).toBe(1);
+    },
+  );
+
+  it('MATCHED는 group이 실제로 있을 때만 관측으로 기록한다', () => {
+    // group 없이 남은 MATCHED pool은 이미 취소된 과거 이력이다. 이것까지 관측으로 세면
+    // 새 mount에서 종료 카드가 다시 뜬다.
+    expect(observedActivePoolId(snapshot({ pool: pool('MATCHED'), group }), null)).toBe(1);
+    expect(observedActivePoolId(snapshot({ pool: pool('MATCHED') }), null)).toBeNull();
+  });
+
+  it('terminal pool을 봐도 기존 관측 기록을 지우지 않는다', () => {
+    expect(observedActivePoolId(snapshot({ pool: pool('EXPIRED') }), 1)).toBe(1);
+  });
+
+  it('pool 조회 결과가 없어도 기존 관측 기록을 유지한다', () => {
+    expect(observedActivePoolId(snapshot(), 1)).toBe(1);
+  });
+
+  it('새 pool로 다시 신청하면 관측 기록이 새 pool id로 갱신된다', () => {
+    const retriedPool = { ...pool('WAITING'), poolId: 9 };
+    expect(observedActivePoolId(snapshot({ pool: retriedPool }), 1)).toBe(9);
   });
 });
 

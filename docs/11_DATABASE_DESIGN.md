@@ -657,7 +657,7 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 매칭 실패 후 제공하는 솔로 45분 코스 추천 결과를 저장한다. |
+| 목적 | 매칭 실패 후 전환한 솔로 코스 추천 결과를 저장하기 위해 설계했다. |
 | 주요 컬럼 | `id`, `member_id`, `festival_id`, `source_attempt_id`, `title`, `status`, `created_at`, `expires_at` |
 | PK | `id` |
 | FK | `member_id -> members.id`, `festival_id -> festivals.id`, `source_attempt_id -> match_attempts.id` |
@@ -666,7 +666,7 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 | UNIQUE | 없음 |
 | INDEX | `idx_solo_courses_member_status`, `idx_solo_courses_festival_created_at` |
 | 개인정보/보안 | 추천 결과는 서비스 사용 이력이다. 과도한 장기 보관을 피한다. |
-| MVP 필수 | 필수 |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
 
 ### solo_course_places
 
@@ -681,7 +681,7 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 | UNIQUE | `(solo_course_id, display_order)`, `(solo_course_id, tour_place_id)` |
 | INDEX | `idx_solo_course_places_course_order` |
 | 개인정보/보안 | 추천 근거는 구조화된 짧은 코드 또는 문구로 제한한다. |
-| MVP 필수 | 필수 |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
 
 ### recommendation_click_logs
 
@@ -696,7 +696,32 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 | UNIQUE | 없음 |
 | INDEX | `idx_recommendation_click_logs_member_clicked_at`, `idx_recommendation_click_logs_festival_clicked_at`, `idx_recommendation_click_logs_source_clicked_at` |
 | 개인정보/보안 | 행동 로그는 분석 목적의 최소 필드만 저장하고 장기 보관 정책을 별도로 둔다. |
-| MVP 필수 | 필수 |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
+
+### 추천/솔로 3개 테이블의 현재 상태
+
+`solo_courses`, `solo_course_places`, `recommendation_click_logs` 세 테이블은 V4에 생성되어 있지만
+**backend에서 읽지도 쓰지도 않습니다.** Entity와 Repository 자체가 없고 dev DB도 0건입니다.
+
+`GET /api/festivals/{id}/solo-course`는 요청마다 `SoloCourseService`가 코스를 즉석 계산해서 응답하고
+결과를 저장하지 않습니다. 사용자가 코스를 다시 꺼내 보는 기능(저장된 코스 목록, 이어보기)이 없고
+관리자 화면도 이 데이터를 참조하지 않으므로, 저장은 순수하게 전환율 통계 용도입니다.
+
+MVP 단계에서는 그 통계를 볼 화면도 볼 사람도 없어 **저장하지 않기로 결정했습니다.**
+근거와 재검토 조건은 `docs/26_MATCH_FAILURE_SOLO_COURSE_LINK_DESIGN.md` 4장에 있습니다.
+
+다시 필요해지면 테이블과 `solo_courses.source_attempt_id` FK가 그대로 남아 있어 새 migration 없이
+Entity와 저장 시점만 추가하면 됩니다. 다만 **전환 이력은 소급 생성이 불가능하므로** 도입 시점부터의
+데이터만 쌓입니다.
+
+### 솔로 코스 예산값
+
+이 문서 초안의 "45분 코스"는 구현되지 않았습니다. 실제 값은 `SoloCourseStayPolicy`의
+`HALF` 240분 / `FULL` 480분입니다.
+
+45분은 현재 상수 조합으로는 성립하지 않습니다. 체류시간 최소값이 문화시설 45분이고
+`walkMinutes()`가 최소 1분을 보장하므로 `1 + 45 = 46 > 45`가 되어 어떤 후보도 예산을 통과하지 못하고
+항상 빈 코스가 나옵니다. 설계 근거는 `docs/23_SOLO_COURSE_ITINERARY_DESIGN.md` 3.2절입니다.
 
 ## 7. 매칭 흐름과 DB 표현
 
