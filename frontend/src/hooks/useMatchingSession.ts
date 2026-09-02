@@ -63,7 +63,35 @@ const INITIAL_RETRY_FORM_STATE: RetryFormState = {
   sourcePoolId: null,
 };
 
-export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSessionState {
+/**
+ * 이 세션에서 "진행 중"인 상태를 실제로 관측한 pool id를 기억한다.
+ *
+ * 종료 카드를 보여줄지 판단하는 기준이다. 세션 중 실시간으로 종료된 pool은 사용자가 종료 사유와
+ * 다음 선택지를 최소 한 번은 봐야 하고, 새 mount에서 발견한 과거 terminal pool은 곧바로 신청
+ * 화면으로 돌려보내야 한다(`[10-A 후속 2]` 종료 화면 고착 수정).
+ *
+ * `MATCHED`는 group이 실제로 있을 때만 관측으로 기록한다. group 없이 남은 `MATCHED` pool은 이미
+ * 취소된 과거 이력이라, 이것까지 관측으로 세면 새 mount에서 종료 카드가 다시 뜬다.
+ */
+export function observedActivePoolId(
+  snapshot: MatchingSnapshot,
+  current: number | null,
+): number | null {
+  const { pool, group } = snapshot;
+  if (!pool) return current;
+  if (pool.status === 'WAITING' || pool.status === 'LOCKED' || pool.status === 'PROPOSED') {
+    return pool.poolId;
+  }
+  if (pool.status === 'MATCHED' && group) {
+    return pool.poolId;
+  }
+  return current;
+}
+
+export function deriveMatchingState(
+  snapshot: MatchingSnapshot,
+  sessionObservedPoolId: number | null = null,
+): MatchingSessionState {
   const { pool, proposal, group, restriction } = snapshot;
 
   if (group) {
@@ -105,7 +133,20 @@ export function deriveMatchingState(snapshot: MatchingSnapshot): MatchingSession
     return { status: terminalStatus, pool, proposal, group, restriction, error: null };
   }
   if (pool?.status === 'MATCHED' || pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') {
-    // cooldown이 없는 과거 terminal pool → 새로 신청 가능
+    // 이 세션에서 진행 상태를 관측한 pool이 종료된 경우에만 종료 카드를 보여준다.
+    // 60초 탐색 만료는 cooldown을 만들지 않으므로, 이 분기가 없으면 가장 흔한 매칭 실패에서
+    // 종료 안내와 솔로 코스 전환이 화면에 아예 뜨지 않는다(docs/26 3장).
+    if (sessionObservedPoolId !== null && sessionObservedPoolId === pool.poolId) {
+      return {
+        status: pool.status === 'MATCHED' ? 'CANCELLED' : pool.status,
+        pool,
+        proposal,
+        group,
+        restriction,
+        error: null,
+      };
+    }
+    // 새 mount에서 발견한 과거 terminal pool → 새로 신청 가능 (`[10-A 후속 2]`)
     return { status: 'IDLE', pool, proposal, group, restriction, error: null };
   }
   return { status: 'IDLE', pool, proposal, group, restriction, error: null };
@@ -192,6 +233,8 @@ export function useMatchingSession() {
   const mutationAbortRef = useRef<AbortController | null>(null);
   const consecutiveErrorsRef = useRef(0);
   const retrySourcePoolIdRef = useRef<number | null>(null);
+  /** 이 mount에서 진행 상태를 관측한 pool id. 새 mount면 null에서 다시 시작한다. */
+  const observedActivePoolIdRef = useRef<number | null>(null);
 
   const updateRetrySourcePoolId = useCallback((sourcePoolId: number | null) => {
     retrySourcePoolIdRef.current = sourcePoolId;
@@ -218,7 +261,12 @@ export function useMatchingSession() {
           restriction.serverNow,
           requestStartedAt + (responseReceivedAt - requestStartedAt) / 2,
         ));
-        const nextState = deriveMatchingState({ pool, proposal, group, restriction });
+        const snapshot = { pool, proposal, group, restriction };
+        observedActivePoolIdRef.current = observedActivePoolId(
+          snapshot,
+          observedActivePoolIdRef.current,
+        );
+        const nextState = deriveMatchingState(snapshot, observedActivePoolIdRef.current);
         const nextRetrySourcePoolId = retrySourceAfterRefresh(retrySourcePoolIdRef.current, nextState);
         if (nextRetrySourcePoolId !== retrySourcePoolIdRef.current) {
           updateRetrySourcePoolId(nextRetrySourcePoolId);

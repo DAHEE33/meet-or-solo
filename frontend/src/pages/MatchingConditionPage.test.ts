@@ -363,19 +363,41 @@ describe('terminal retry form', () => {
     expect(onEnterRoom).toHaveBeenCalledOnce();
   });
 
-  it('종료 카드는 festivalId가 있으면 코스 보러가기 링크를 함께 보여준다', () => {
+  it('종료 카드는 재신청과 솔로 코스 추천 두 선택지를 나란히 보여준다', () => {
     const tree = renderNode(MatchBody(bodyProps({ status: 'EXPIRED', festivalId: 144 })));
     const link = elements(tree).find(
-      (element) => text(element as never) === '솔로 코스 보러가기',
+      (element) => text(element as never) === '솔로 코스 추천 보기',
     );
+    expect(text(tree)).toContain('다시 신청하기');
     expect(link).toBeDefined();
     expect(link?.props.to).toBe('/solo-course');
     expect(link?.props.state).toEqual({ festivalId: 144 });
   });
 
-  it('festivalId가 없으면 코스 보러가기 링크를 보여주지 않는다', () => {
+  it('festivalId가 없으면 솔로 코스 버튼을 보여주지 않는다', () => {
     const tree = renderNode(MatchBody(bodyProps({ status: 'EXPIRED', festivalId: null })));
-    expect(text(tree)).not.toContain('솔로 코스 보러가기');
+    expect(text(tree)).not.toContain('솔로 코스 추천 보기');
+    expect(text(tree)).toContain('다시 신청하기');
+  });
+
+  it('cooldown 중에도 솔로 코스 버튼은 열어 두고 재신청만 잠근다', () => {
+    // 기다릴 이유가 있을 때 cooldown이 재신청을 막아주므로, 별도 유도 규칙 없이
+    // 솔로 코스가 자연스럽게 유일한 선택지가 된다 — docs/26 5.2절.
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'CANCELLED',
+      festivalId: 144,
+      cooldownActive: true,
+      cooldownRemaining: 120,
+    })));
+    const retryButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '다시 신청하기',
+    );
+    const link = elements(tree).find(
+      (element) => text(element as never) === '솔로 코스 추천 보기',
+    );
+    expect(retryButton?.props.disabled).toBe(true);
+    expect(text(tree)).toContain('2:00 후 재신청 가능');
+    expect(link?.props.to).toBe('/solo-course');
   });
 
   it('cooldown 카드에서는 retry button이 비활성화된다', () => {

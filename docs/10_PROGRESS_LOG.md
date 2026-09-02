@@ -1,5 +1,98 @@
 # 진행 상태 기록
 
+## [10-B MATCH-09] 매칭 실패 → 솔로 코스 전환 연결
+
+상태: 구현·Frontend 자동 검증·dev 수동 검증 완료(Frontend 전용). Backend·migration 변경 없음
+
+### 착수 전 범위 재산정
+
+기획서 `MATCH-09`를 그대로 새 작업으로 잡으면 `[10-A 후속 3·4·5]`와 중복되므로, 착수 전에 남은
+범위를 다시 산정했다. 결과는 `docs/26_MATCH_FAILURE_SOLO_COURSE_LINK_DESIGN.md`에 정리했다.
+
+코스 생성 API(`GET /api/festivals/{id}/solo-course`)와 `SoloCoursePage` 타임라인은 이미 완료
+상태였고, 실제 공백은 **전환 트리거**와 **문서 정합성** 두 가지였다.
+
+### 발견 — 종료 카드가 화면에 뜨지 않았다
+
+`[10-A 후속 5]`가 넣은 솔로 코스 링크는 매칭 실패의 대표 상황에서 노출되지 않았다.
+
+- `deriveMatchingState()`가 cooldown이 없는 terminal pool을 곧바로 `IDLE`로 접었고, 링크가 붙어
+  있는 `CancelledCard`는 `CANCELLED`/`EXPIRED`/`COOLDOWN`에서만 렌더됐다. 그 세 상태는 cooldown이
+  active일 때만 만들어진다.
+- 그런데 60초 탐색 만료는 `MatchPoolRepository.expireWaitingPools()`가 `EXPIRED`로만 바꾸고
+  cooldown을 만들지 않는다(`docs/05_MATCHING_POLICY.md`). 결과적으로 링크가 실제로 노출되는 건
+  `TIMEOUT`/`REJECT`/`POOL_CANCEL` cooldown이 걸린 경우뿐이었고, **"60초 안에 상대를 못 찾음"에서는
+  사용자가 종료 카드를 한 번도 보지 못하고 신청 화면으로 되돌아갔다.**
+- 기존 링크 테스트는 `MatchBody({ status: 'EXPIRED' })`를 직접 호출해 `deriveMatchingState`를
+  우회하므로 이 구멍을 잡지 못했다.
+
+### 수정
+
+- `deriveMatchingState(snapshot, sessionObservedPoolId)`로 시그니처를 확장했다. **이 세션에서
+  진행 상태를 실제로 관측한 pool**이 종료된 경우에만 cooldown 없이도 종료 상태를 반환하고, 새
+  mount에서 발견한 과거 terminal pool은 기존대로 `IDLE`로 돌려보낸다. 단순 롤백이 아니라
+  `[10-A 후속 2]`의 "종료 화면 고착" 수정을 유지하기 위한 조건이다.
+- 관측 기록은 순수 함수 `observedActivePoolId(snapshot, current)`로 계산해 hook의 ref에 보관한다.
+  `WAITING`/`LOCKED`/`PROPOSED`는 그대로 기록하고, `MATCHED`는 group이 실제로 있을 때만 기록한다
+  (group 없이 남은 `MATCHED`는 이미 취소된 과거 이력이라, 이것까지 세면 새 mount에서 종료 카드가
+  다시 뜬다).
+- `CancelledCard`를 `다시 신청하기` / `솔로 코스 추천 보기` 두 버튼 구조로 바꿨다. 문구는 이동
+  대상 화면 헤더(`솔로 코스 추천`)에 맞췄고, `festivalId`가 없으면 솔로 코스 버튼은 숨긴다.
+
+### 확정 정책 — 버튼 2개, 선택은 사용자에게
+
+"솔로 코스로 유도할지 재매칭을 기다리게 할지"를 서버나 화면이 판단하지 않는다. 잔여 cooldown이나
+체크인 잔여시간 기준의 임계값 유도 규칙은 검토했으나 채택하지 않았다. 기존 cooldown 동작이 이미
+같은 일을 하기 때문이다 — cooldown이 있으면 재신청 버튼이 잠기고 카운트다운이 뜨므로 솔로 코스가
+자연스럽게 유일한 선택지가 되고, cooldown이 없으면 둘 다 열린다. `docs/05_MATCHING_POLICY.md`
+`매칭 실패 후 솔로 코스 전환 정책`에 반영했다.
+
+재매칭 가능 시점 안내(R7) 자체는 이미 구현되어 있었다(`cooldown.remainingSeconds` 카운트다운,
+버튼 비활성화, 만료 시 자동 `refresh()`, `serverNow` 기준 offset 보정). 추가 구현은 없다.
+
+### 전환 이력을 저장하지 않기로 한 결정
+
+`solo_courses`는 V4에 있고 `source_attempt_id` FK까지 잡혀 있지만 backend가 아무것도 쓰지 않는다
+(Entity·Repository 없음, dev DB 0건). 검토 결과 **이번 범위에서 저장하지 않기로 했다.**
+
+- 저장된 코스를 다시 읽어가는 기능이 없다. 저장은 순수하게 전환율 통계 용도인데 MVP 단계에서 그
+  숫자를 볼 화면도 볼 사람도 없다.
+- 테이블과 FK가 그대로 남아 있어 나중에 도입해도 새 migration 없이 Entity와 저장 시점만 추가하면
+  된다. 다만 **전환 이력은 소급 생성이 불가능**하므로 도입 시점부터의 데이터만 쌓인다.
+- `recommendation_click_logs`도 함께 제외했다. CHECK 제약이
+  `tour_place_id IS NOT NULL OR solo_course_id IS NOT NULL`이라 `solo_courses` row 없이는 전환을
+  기록할 수단이 없어 두 테이블은 함께 살거나 함께 빠진다.
+- `docs/11_DATABASE_DESIGN.md`의 세 테이블 MVP 표기를 "필수"에서 "V4 선반영, MVP 범위에서 미사용"
+  으로 정정하고 재도입 조건을 남겼다.
+
+### 문서 정정 — "솔로 45분 코스"
+
+`docs/11_DATABASE_DESIGN.md`의 "45분"은 구현되지 않았다. 실제 값은 `SoloCourseStayPolicy`의
+`HALF` 240분 / `FULL` 480분이다. 45분은 현재 상수 조합으로 성립하지 않는다 — 체류시간 최소값이
+문화시설 45분이고 `walkMinutes()`가 최소 1분을 보장해 `1 + 45 = 46 > 45`가 되므로 어떤 후보도
+예산을 통과하지 못하고 항상 빈 코스가 나온다.
+
+### 검증
+
+- Frontend 전체 Vitest 40 files/352 tests 통과(신규 10건 포함). `npx tsc --noEmit`,
+  production/PWA `generateSW` build 성공.
+- 신규 테스트는 `deriveMatchingState`를 실제로 통과한다. 기존 테스트가 `MatchBody`를 직접 호출해
+  놓친 구멍을 덮는 것이 목적이다.
+- Backend 소스, API 계약, DB schema, Flyway migration은 변경하지 않았다.
+- **dev 수동 검증 완료.** 네 경로를 모두 확인했다.
+  1. 신청 후 60초 탐색 만료 → 종료 카드가 뜨고 두 버튼이 모두 활성이다.
+     수정 전에는 이 경우 카드 자체가 뜨지 않았다.
+  2. 제안 거절(`REJECT`) → cooldown 상태에서 `솔로 코스 추천 보기`가 활성으로 유지된다.
+  3. 종료 카드를 본 뒤 다른 화면에 갔다 돌아오면 카드가 다시 뜨지 않고 신청 화면으로 리셋된다.
+     `[10-A 후속 2]` 종료 화면 고착 수정이 유지된다.
+  4. `솔로 코스 추천 보기` → `/solo-course`가 기준 축제로 코스를 표시한다.
+
+### 이번 범위에서 제외
+
+- 전환 이력 저장 3개 테이블
+- 코스 알고리즘 파라미터 조정(`MAX_HOP_METERS`, `MAX_STOPS`, 체류시간 추정치) — `docs/23` 담당자 범위
+- `[10-A 후속 3·4]`의 코스 품질 수동 검증 — 만든 담당자가 판단할 영역
+
 ## [10-A 후속 10] 홈 체크인 축제 우선, 로딩 표시 통일, 필터 UI 개선
 
 상태: 구현 완료(Frontend 전용). Backend 소스 변경 없음. 두 브라우저 수동 검증 전
@@ -2936,8 +3029,9 @@ feature/wbs-10-b-rematch-opponent-exclusion
 
 1. ~~AI 임베딩 생성·동의·fallback과 scoring 결합~~ (**완료**, 4-5절 실사용 검증까지 종료.
    코사인 스케일 조정은 데이터가 더 쌓인 뒤 별도 작업)
-2. 매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)
-3. 신고·안전·후기와 관리자 연계
+2. ~~매칭 실패 시 솔로 코스와 재매칭 타이밍 연결(`MATCH-09`)~~ (**완료**, dev 수동 검증까지 종료.
+   문서 상단 `[10-B MATCH-09] 매칭 실패 → 솔로 코스 전환 연결` 참고)
+3. 신고·안전·후기와 관리자 연계 (**다음 작업**)
 4. 주요 화면과 실제 API 연결 완료 후 ISSUE-MR-009를 포함한 Frontend 전체 UX 안정화
 
 2026-08-25에 1번과 2번의 순서를 교체했습니다. `MATCH-09` 솔로 코스는 관광공사 OpenAPI

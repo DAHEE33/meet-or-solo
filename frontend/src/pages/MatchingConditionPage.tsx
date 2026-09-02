@@ -867,18 +867,22 @@ function CancelledCard({
           {fmt(cooldownRemaining)} 후 재신청 가능
         </span>
       )}
-      <PrimaryButton disabled={cooldownActive} onClick={onRetry} className="mt-1">
-        다시 신청하기
-      </PrimaryButton>
-      {festivalId !== null && (
-        <Link
-          to="/solo-course"
-          state={{ festivalId }}
-          className="text-[13px] font-semibold text-teal underline underline-offset-2"
-        >
-          솔로 코스 보러가기
-        </Link>
-      )}
+      {/* 솔로 코스로 갈지 재매칭을 기다릴지는 사용자가 고른다. cooldown이 있으면 재신청만 잠기고
+          솔로 코스는 계속 열려 있다 — docs/05 `매칭 실패 후 솔로 코스 전환 정책`. */}
+      <div className="mt-1 flex w-full flex-col gap-2">
+        <PrimaryButton disabled={cooldownActive} onClick={onRetry}>
+          다시 신청하기
+        </PrimaryButton>
+        {festivalId !== null && (
+          <Link
+            to="/solo-course"
+            state={{ festivalId }}
+            className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+          >
+            솔로 코스 추천 보기
+          </Link>
+        )}
+      </div>
     </section>
   );
 }
