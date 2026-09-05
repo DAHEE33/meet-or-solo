@@ -12,6 +12,8 @@ public interface MatchPenaltyEventRepository extends JpaRepository<MatchPenaltyE
 
     boolean existsByRelatedPoolId(long relatedPoolId);
 
+    boolean existsByRelatedReportId(long relatedReportId);
+
     boolean existsByRelatedGroupIdAndMemberIdAndEventType(
             long relatedGroupId, long memberId, String eventType);
 

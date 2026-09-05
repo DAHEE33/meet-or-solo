@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AdminMemberActionRequest, AdminMemberDetail, AdminMemberPage } from '../api/adminMembers';
 import { createAdminMembersSession, type AdminMembersState } from './useAdminMembers';
 
-const detail = (id: number, status: AdminMemberDetail['status'] = 'ACTIVE'): AdminMemberDetail => ({ memberId: id, nickname: `회원${id}`, profileImageUrl: null, role: 'USER', status, penaltyScore: 0, mannerTemperature: 36.5, suspendedAt: null, suspendedUntil: null, createdAt: '2026-08-16T09:00:00+09:00', lastLoginAt: null, reports: [], actions: [] });
+const detail = (id: number, status: AdminMemberDetail['status'] = 'ACTIVE'): AdminMemberDetail => ({ memberId: id, nickname: `회원${id}`, profileImageUrl: null, role: 'USER', status, penaltyScore: 0, mannerTemperature: 36.5, suspendedAt: null, suspendedUntil: null, createdAt: '2026-08-16T09:00:00+09:00', lastLoginAt: null, recentValidReportCount: 0, safetyReviewRequired: false, reports: [], actions: [] });
 const page = (items = [detail(1)], cursor: string | null = null): AdminMemberPage => ({ items, pagination: { size: 20, hasNext: cursor !== null, nextCursor: cursor } });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((res) => { resolve = res; }); return { promise, resolve }; }
 

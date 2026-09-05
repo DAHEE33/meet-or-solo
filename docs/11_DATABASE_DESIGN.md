@@ -54,7 +54,7 @@
 | 관광/축제 | `festivals`, `festival_images`, `tour_places`, `tour_api_call_logs` |
 | 체크인 | `festival_checkins` |
 | 매칭 | `user_blocks`, `match_pools`, `match_attempts`, `match_attempt_members`, `match_proposals`, `match_responses`, `match_groups`, `match_group_members`, `match_events`, `match_cooldowns`, `match_penalty_events` |
-| 안전/운영 | `member_reviews`, `reports`, `admin_actions` |
+| 안전/운영 | `member_reviews`, `reports`, `admin_actions`, `admin_safety_alerts` |
 | 추천/솔로 | `solo_courses`, `solo_course_places`, `recommendation_click_logs` |
 
 ### 추후 분리 가능 테이블
@@ -232,6 +232,21 @@ REPORT_REJECT
 MANUAL_PENALTY
 DATA_CORRECTION
 ```
+
+`UNSUSPEND`는 `V20`에서 추가했다.
+
+### admin_safety_alerts.status
+
+```text
+OPEN
+ACKNOWLEDGED
+CLOSED
+```
+
+- `OPEN`: 누적 임계 도달로 생성된 미확인 알림이다.
+- `ACKNOWLEDGED`: 관리자가 확인했으나 아직 조치하지 않은 상태다.
+- `CLOSED`: 관리자가 해당 회원을 `SUSPEND` 또는 `BAN`해 조치가 끝난 상태다.
+  제재 transaction에서 함께 전환한다.
 
 ## 6. 테이블별 설계안
 
@@ -597,13 +612,13 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. |
-| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `related_proposal_id`, `created_at` |
+| 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. `manner_temperature` 차감 이력도 같은 row에 기록한다. |
+| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `manner_temperature_delta`, `reason`, `related_group_id`, `related_attempt_id`, `related_proposal_id`, `related_pool_id`, `related_report_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id`, `related_proposal_id -> match_proposals.id` |
+| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id`, `related_proposal_id -> match_proposals.id`, `related_report_id -> reports.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','DECAY','ADMIN_ADJUST')` |
-| UNIQUE | nullable `related_proposal_id` partial unique index |
+| CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','ADMIN_ADJUST','DECAY','POOL_CANCEL')`, `score_delta <> 0` |
+| UNIQUE | nullable `related_proposal_id`, `related_pool_id`, `related_report_id` 각각의 partial unique index |
 | INDEX | `idx_match_penalty_events_member_created_at`, `idx_match_penalty_events_type_created_at` |
 | 개인정보/보안 | 운영 이력은 30일 후 삭제 또는 집계 전환 후보로 둔다. |
 | MVP 필수 | 필수 |
@@ -643,15 +658,40 @@ migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancell
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 신고 처리, 제재, 수동 패널티, 데이터 보정 등 관리자 조치 이력을 남긴다. |
-| 주요 컬럼 | `id`, `admin_member_id`, `target_member_id`, `report_id`, `action_type`, `reason`, `metadata`, `created_at` |
+| 주요 컬럼 | `id`, `admin_member_id`, `target_member_id`, `report_id`, `action_type`, `reason_code`, `reason`, `metadata`, `idempotency_key`, `created_at` |
 | PK | `id` |
 | FK | `admin_member_id -> members.id`, `target_member_id -> members.id`, `report_id -> reports.id` |
 | 상태값 | `admin_actions.action_type` |
-| CHECK | `action_type IN (...)` |
-| UNIQUE | 없음 |
+| CHECK | `action_type IN (...)`, `reason_code IS NULL OR reason_code IN (...)` |
+| UNIQUE | nullable `idempotency_key` partial unique index (`V19`) |
 | INDEX | `idx_admin_actions_admin_created_at`, `idx_admin_actions_target_created_at`, `idx_admin_actions_report` |
 | 개인정보/보안 | 관리자 사유와 metadata에는 Secret, token, GPS 원본 좌표를 저장하지 않는다. |
 | MVP 필수 | 필수 |
+
+`admin_member_id`가 `NOT NULL`이므로 관리자 없이 발생하는 자동 처리 이력은 이
+table에 담을 수 없다. 신고 누적 자동 알림은 `admin_safety_alerts`를 사용한다.
+
+### admin_safety_alerts
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 유효 신고 누적 임계 도달을 관리자에게 알리는 경량 queue다. 임계를 돌파한 시점과 관리자 확인 여부를 남긴다. |
+| 주요 컬럼 | `id`, `reported_member_id`, `alert_type`, `trigger_report_id`, `valid_report_count`, `status`, `handled_admin_id`, `handled_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `reported_member_id -> members.id`, `trigger_report_id -> reports.id`, `handled_admin_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `admin_safety_alerts.status` |
+| CHECK | `alert_type IN ('REPORT_THRESHOLD')`, `status IN ('OPEN','ACKNOWLEDGED','CLOSED')`, `valid_report_count > 0`, `OPEN`이면 `handled_admin_id`/`handled_at`이 `NULL`이고 그 외에는 둘 다 `NOT NULL` |
+| UNIQUE | `trigger_report_id` unique. 같은 신고를 다시 판정해도 알림은 1건이다. |
+| INDEX | `idx_admin_safety_alerts_status_created_at`, `idx_admin_safety_alerts_member_created_at` |
+| 개인정보/보안 | 신고자 identity와 신고 상세를 저장하지 않는다. 관리자만 조회하며 피신고 회원 API에 노출하지 않는다. |
+| MVP 필수 | 필수 |
+
+- `trigger_report_id` unique가 자동 알림의 멱등성 원인 key다.
+- 관리자 확인은 `OPEN -> ACKNOWLEDGED`, 제재 완료는 `-> CLOSED`로 전환한다.
+  `handled_admin_id`에는 확인 또는 제재를 수행한 관리자를 기록한다.
+- 같은 회원에게 `OPEN` 알림이 있는 동안은 새 알림을 생성하지 않는다.
+- 누적 카운트를 회원 컬럼으로 저장하지 않는다. 30일 window 집계는 조회 시점에
+  계산하고, 이 table의 `valid_report_count`는 돌파 당시 snapshot으로만 사용한다.
 
 ### solo_courses
 
@@ -839,6 +879,24 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - 적용 여부는 현재 후보 두 pool의 member/check-in 정규화 조합과 row가 정확히 일치하는지로 판단한다. 과거 row는 새 check-in에 적용되지 않는다.
 - 즉시 삭제 Scheduler는 두지 않는다. 감사·문제 분석 보존 기간과 삭제 시점은 match event 및 개인정보 보존 정책과 함께 후속 확정한다.
 
+### V25__add_report_safety_automation.sql
+
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md` 4.3 신고 누적·안전 자동화용 schema입니다.
+번호는 저장소 파일 목록뿐 아니라 공유 dev DB의 `flyway_schema_history`도 확인해
+확정합니다. 미병합 브랜치가 먼저 선점한 번호는 저장소에서 보이지 않습니다.
+
+| 변경 | 내용 |
+| --- | --- |
+| `match_penalty_events.related_report_id` | 유효 판정 신고 1건당 penalty event 1건을 강제하는 멱등성 원인 key. `reports.id` FK `RESTRICT` + partial unique index |
+| `match_penalty_events.manner_temperature_delta` | `NUMERIC(5,2)` nullable. 실제 적용된 매너온도 차감량을 기록한다. 하한 clamp로 차감이 줄어든 경우 줄어든 값을 저장한다 |
+| `admin_safety_alerts` | 신규 table. 6장 설계안 참고 |
+
+- `score_delta <> 0` CHECK이 있어 penalty 없는 온도 차감만 저장할 수는 없다.
+  현재 정책은 penalty `+5`와 온도 `-5.00`을 항상 함께 적용하므로 문제가 없다.
+- 기존 row의 `related_report_id`와 `manner_temperature_delta`는 `NULL`로 남긴다.
+  소급 적용하지 않는다.
+- `match_cooldowns`는 변경하지 않는다. 신고 기반 cooldown을 만들지 않기 때문이다.
+
 이미 적용된 migration은 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
@@ -859,7 +917,16 @@ backend/src/main/resources/db/migration/V15__add_festival_meeting_points.sql
 backend/src/main/resources/db/migration/V16__complete_match_rooms.sql
 backend/src/main/resources/db/migration/V17__enforce_one_hour_checkin_validity.sql
 backend/src/main/resources/db/migration/V18__add_match_opponent_exclusions.sql
+backend/src/main/resources/db/migration/V19__add_admin_member_sanctions.sql
+backend/src/main/resources/db/migration/V20__allow_unsuspend_action_type.sql
+backend/src/main/resources/db/migration/V21__add_pool_cancel_cooldown_support.sql
+backend/src/main/resources/db/migration/V22__add_festival_tourplace_query_indexes.sql
+backend/src/main/resources/db/migration/V23__add_tour_place_region_codes.sql
+backend/src/main/resources/db/migration/V24__add_match_attempt_member_score_breakdown.sql
 ```
+
+`V19`~`V24`는 이 목록이 `V18`까지만 유지되던 동안 추가된 migration이라 4.3 작업에서
+함께 반영했습니다.
 
 기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반
 멱등성은 `V12`에서 추가했고, `V13`은

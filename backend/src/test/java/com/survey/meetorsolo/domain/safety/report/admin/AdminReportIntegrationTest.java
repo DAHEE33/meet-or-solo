@@ -225,10 +225,20 @@ class AdminReportIntegrationTest {
     }
 
     @Test
-    void 처리_전후_매칭과_회원_점수_제재_이벤트는_변하지_않는다() {
+    void 유효_판정은_매칭_상태와_회원_상태를_바꾸지_않는다() {
+        // docs/19 4.3부터 RESOLVED는 penalty score와 매너온도를 변경한다.
+        // 매칭 상태, cooldown, 회원 status는 그대로여야 한다.
+        long reportId = insertReport("SUBMITTED", "SAFETY", NOW.minusMinutes(1));
+        String before = matchingSideEffects();
+        service.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.RESOLVED);
+        assertThat(matchingSideEffects()).isEqualTo(before);
+    }
+
+    @Test
+    void 기각은_회원_점수와_매너온도를_바꾸지_않는다() {
         long reportId = insertReport("SUBMITTED", "SAFETY", NOW.minusMinutes(1));
         String before = sideEffects();
-        service.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.RESOLVED);
+        service.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.REJECTED);
         assertThat(sideEffects()).isEqualTo(before);
     }
 
@@ -320,6 +330,20 @@ class AdminReportIntegrationTest {
                     (SELECT count(*) FROM match_proposals),
                     (SELECT count(*) FROM match_attempts))
                 """, String.class, REPORTED, REPORTED, REPORTED, GROUP, GROUP);
+    }
+
+    /** 유효 판정으로 바뀌어도 되는 회원 점수를 제외한, 매칭·회원 상태 side effect. */
+    private String matchingSideEffects() {
+        return jdbc.queryForObject("""
+                SELECT concat_ws('|',
+                    (SELECT count(*) FROM match_cooldowns),
+                    (SELECT status FROM members WHERE id=?),
+                    (SELECT count(*) FROM match_events WHERE group_id=?),
+                    (SELECT status FROM match_groups WHERE id=?),
+                    (SELECT count(*) FROM match_pools),
+                    (SELECT count(*) FROM match_proposals),
+                    (SELECT count(*) FROM match_attempts))
+                """, String.class, REPORTED, GROUP, GROUP);
     }
 
     private jakarta.servlet.http.Cookie cookie(long memberId) {
