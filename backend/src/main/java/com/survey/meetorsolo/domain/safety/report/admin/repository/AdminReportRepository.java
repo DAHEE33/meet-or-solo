@@ -76,6 +76,27 @@ public class AdminReportRepository {
                 "reportId", reportId));
     }
 
+    /**
+     * 피신고 회원의 유효 신고 누적 건수.
+     *
+     * <p>유효 신고는 {@code RESOLVED}와 {@code ACTION_TAKEN}이다. 같은 만남에서 사유만 다른
+     * 여러 신고를 하나로 압축하기 위해 {@code (reporter_member_id, group_id)} 조합의 distinct
+     * 개수를 센다. 같은 reporter가 다른 group에서 다시 신고한 경우는 실제 재발이므로 별건이다.
+     *
+     * <p>누적 카운터를 컬럼으로 저장하지 않고 조회 시점에 계산하므로 window가 지나면 카운트가
+     * 자동으로 줄어든다.
+     */
+    public long countValidReportsSince(long reportedMemberId, OffsetDateTime since) {
+        Long count = jdbc.queryForObject("""
+                SELECT COUNT(DISTINCT (reporter_member_id, group_id))
+                FROM reports
+                WHERE reported_member_id = :reportedMemberId
+                  AND status IN ('RESOLVED', 'ACTION_TAKEN')
+                  AND created_at >= :since
+                """, Map.of("reportedMemberId", reportedMemberId, "since", since), Long.class);
+        return count == null ? 0L : count;
+    }
+
     public void insertAdminAction(
             long adminMemberId, long targetMemberId, long reportId, String actionType,
             OffsetDateTime now) {

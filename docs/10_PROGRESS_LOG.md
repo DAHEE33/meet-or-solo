@@ -1,5 +1,160 @@
 # 진행 상태 기록
 
+## [10-B 4.3] 신고 누적·안전 자동화
+
+상태: 정책 확정, Backend·Frontend 구현, 자동 테스트 완료. dev 수동 검증 전
+
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md` 4.3절 작업이다. 브랜치는
+`feature/wbs-10-b-report-safety-automation`이며 `dev`(`7ede73d`)에서 분기했다.
+
+### 착수 전 확인
+
+- `origin/dev` 단독에서 기존 실패 15건을 baseline으로 재현했다
+  (`FestivalControllerTest` 9, `TourPlaceControllerTest` 5,
+  `FestivalCheckinCancelledEventHandlerIntegrationTest` 1). Controller 테스트를 추가하는
+  작업이라 원인 오판을 막기 위해 선행 확인이 필요했다.
+- 공유 dev DB `flyway_schema_history`는 조회하지 못했다. 저장소 `.env`는 local Docker
+  PostgreSQL 전용이고 dev DB 접속 정보가 없다. **`V25` 번호는 PR 전에 dev DB에서 다시
+  확인해야 한다.**
+
+### 정책보다 먼저 나온 구조적 충돌 3건
+
+코드보다 정책이 먼저인 작업이었고, 조사 과정에서 기획서 후보 정책을 그대로 쓸 수 없는
+이유가 세 가지 나왔다.
+
+- **기획서 3개를 그대로 합치면 유효 신고 1건이 영구 매칭 제한이 된다.** 시작값 `36.50`에서
+  `-10`이면 `26.50`이 되어 "30도 이하 매칭 제한"에 즉시 걸린다. `member_reviews`는 `V4`에
+  table만 있고 코드가 없어 온도를 올릴 경로가 하나도 없다.
+- **`match_cooldowns`는 회원당 `ACTIVE` row가 1개다.**
+  `uq_match_cooldowns_member_active` 때문에 신고 기반 cooldown은 기존 매칭 cooldown과
+  충돌한다. 그래서 cooldown을 만들지 않는다.
+- **`admin_actions.admin_member_id`가 `NOT NULL`이다.** 관리자 없이 생성되는 자동 알림을
+  담을 수 없어 별도 table이 필요했다.
+
+### 확정 정책
+
+상세는 `docs/05_MATCHING_POLICY.md`의
+`관리자 유효 판정 신고 (REPORT_CONFIRMED)` 절과 `docs/19` 4.3절에 있다.
+
+| 항목 | 확정값 |
+| --- | --- |
+| 유효 신고 정의 | `reports.status IN ('RESOLVED','ACTION_TAKEN')`. `REJECTED` 제외 |
+| 누적 집계 | 30일 rolling, `(reporter_member_id, group_id)` distinct, 임계 3 |
+| penalty | `+5`, cooldown 미생성 |
+| 매너온도 | `-5.00`, 하한 `20.00`, 증분 적용, 재계산 batch 없음 |
+| 적용 시점 | 관리자 `RESOLVED` transaction 내 동기. Scheduler 없음 |
+| 자동 제한 | 회원 `status` 미변경. 관리자 알림과 "제한 검토 대상" 표시까지만 |
+| 알림 | `admin_safety_alerts` queue + 조회·확인 API + `AdminNav` badge |
+| 멱등성 key | `match_penalty_events.related_report_id`, `admin_safety_alerts.trigger_report_id` |
+
+자동 제한을 넣지 않은 이유는 세 가지다. `docs/19` 2장의 필수 요구가 "자동 알림"이고 자동
+제한은 후보다. `AdminMemberService.act()`가 active 매칭 회원의 `SUSPEND`를 `409`로 거절하는데
+자동 경로는 이 거절을 사용자에게 전달할 곳이 없다. 그리고 트리거가 관리자의 `RESOLVED`
+클릭이라 동기 자동 정지는 관리자 클릭 하나를 줄이는 대신 의도하지 않은 정지 위험만 진다.
+
+Scheduler를 두지 않은 이유는 기존 Scheduler가 모두 시간 경과로 조건이 바뀌는 대상을
+처리하는데, 신고 누적은 관리자 행위로만 변하기 때문이다. 30일 window는 저장 카운터 없이
+조회 시점에 계산해 batch를 없앴다.
+
+### 구현 중 발견한 deadlock
+
+`AdminReportService.changeStatus()`에 `members` 갱신을 넣자 기존 동시성 테스트
+`RESOLVED와_REJECTED_동시성은_단일_terminal과_감사로그만_남긴다`에서 실제 deadlock이 났다.
+
+- `RESOLVED`는 `members` FOR UPDATE 뒤 `reports`를 잠근다.
+- `REJECTED`는 `reports`를 잠근 뒤 `admin_actions`를 INSERT하고, **그 FK 검사가 `members`
+  row에 KEY SHARE lock을 건다.**
+- 두 방향이 엇갈려 cycle이 생겼다.
+
+그래서 `RESOLVED`뿐 아니라 **terminal 전이 전체**가 member를 먼저 잠그도록 고쳤다. FK가
+암묵적으로 거는 row lock도 잠금 순서 설계에 포함해야 한다는 것이 이번 교훈이다.
+
+### 구현 범위
+
+- `V25__add_report_safety_automation.sql`: `match_penalty_events.related_report_id`와
+  `manner_temperature_delta`, 부분 unique index, 30일 집계용 `reports` 복합 index,
+  신규 `admin_safety_alerts` table
+- `ReportConfirmationService`: 유효 판정 적용과 누적 집계, 임계 알림 생성
+- `Member.increasePenaltyScore()`, `Member.decreaseMannerTemperature()` 하한 clamp
+- `AdminReportService.changeStatus()` 잠금 순서 통일과 `RESOLVED` 경로 연결
+- `AdminMemberService.act()`의 `SUSPEND`/`BAN` 시 미종료 알림 `CLOSED` 처리
+- `GET /api/admin/safety-alerts`, `PUT /api/admin/safety-alerts/{id}/acknowledgement`
+- 관리자 회원 상세에 `recentValidReportCount`, `safetyReviewRequired` 추가
+- Frontend `AdminSafetyAlertSection`, `AdminNav` 미확인 badge, 회원 상세 표시
+
+### 검증 결과
+
+- Backend 전체 `test` 714건 중 실패 15건. **baseline 15건과 동일하며 신규 실패 0건이다.**
+- `ReportSafetyAutomationIntegrationTest` PostgreSQL Testcontainers 20건 통과
+  (권한 경계, 값 적용, 멱등성, 동시 판정, 사유별 3건 압축, 하한 clamp, 30일 window 경계,
+  `ACTION_TAKEN` 집계, 알림 확인·종료, cursor pagination, deadlock 회귀).
+- 그중 `신고_접수부터_판정_알림_확인_제재까지_실제_HTTP_경로로_동작한다`는 **SQL INSERT를
+  전혀 쓰지 않고** 실제 endpoint만 사용한다.
+  `POST /api/match-groups/{groupId}/reports` → `PATCH /api/admin/reports/{id}/status` →
+  `GET /api/admin/safety-alerts` → `PUT .../acknowledgement` →
+  `POST /api/admin/members/{id}/actions` 순서로 접수의 참여자·기간 검증까지 함께 태운다.
+  접수만으로는 penalty·매너온도·알림이 생기지 않는 것도 같은 테스트에서 확인한다.
+- `접수_API는_참여하지_않은_group과_기간이_지난_group을_거절한다`로 비참여자 `404`와
+  30일 초과 `REPORT_WINDOW_EXPIRED` `409`를 확인했다.
+- `MemberSafetyPenaltyTest` 7건 통과.
+- 기존 `AdminReportIntegrationTest`의 "처리 전후 회원 점수가 변하지 않는다"는 확정 정책이
+  의도적으로 바꾸는 동작이라, 매칭·회원 상태 불변 검증과 기각 시 불변 검증으로 나눠 갱신했다.
+- Frontend 42 files/367 tests, `npx tsc --noEmit`, production/PWA build 성공.
+
+### dev 실사용 검증 결과 (2026-09-04)
+
+실제 dev DB와 실제 HTTP endpoint로 확인했다. 관리자 토큰을 발급해 API를 직접 호출했고,
+화면은 브라우저로 확인했다.
+
+| 단계 | penalty | 매너온도 | 30일 누적 | OPEN 알림 | REPORT cooldown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 판정 전 | 18 | 36.50 | 1 | 0 | 0 |
+| report 4 판정 | 23 | 31.50 | **1 유지** | 0 | 0 |
+| report 5 판정 | 28 | 26.50 | 2 | 0 | 0 |
+| report 6 판정 | 33 | 21.50 | 3 | **1** | 0 |
+
+- report 4는 report 1과 같은 `(reporter, group)` 쌍이라 penalty·매너온도만 적용되고 누적은
+  늘지 않았다. 사유별 압축이 실사용에서 확인됐다.
+- 3건째에서 알림이 생성됐고 회원 상태는 `ACTIVE`를 유지했다. 자동 제한을 넣지 않은 정책대로다.
+- penalty event는 판정 1건당 1행씩 `REPORT_CONFIRMED / +5 / -5.00`으로 저장됐다.
+- 같은 신고 재판정은 `200`을 반환하지만 penalty event 3건과 점수 33이 그대로 유지됐다.
+- 권한 경계는 일반 회원 `403`, 미인증 `401`, 없는 알림 `404`, 잘못된 status `400`이었다.
+- 관리자 화면에서 `AdminNav` badge, 알림 섹션, 회원 상세의 누적 건수와 "이용 제한 검토 대상"
+  표시를 확인했다.
+
+### 검증 중 수정한 Frontend 동작
+
+미확인 목록에서 알림을 `확인` 처리하면 badge는 즉시 줄어드는데 목록 행은 남아 있어
+새로고침 전까지 filter와 어긋났다. 미확인 목록은 처리 대기 큐이므로 확인한 항목을 목록에서
+즉시 제거하도록 바꿨다. `전체`·`확인` filter에서는 결과를 볼 수 있게 제자리 갱신을 유지한다.
+- MATCH-09 교훈에 따라 `AdminReportsPage.test.tsx`로 안전 알림 섹션이 신고 목록 상태와
+  무관하게 실제 화면에 붙어 있는지 확인했다. 섹션은 `state.status` 분기 밖에 있어 목록
+  조회가 실패해도 노출된다.
+
+### 검증 중 발견 — 과거 완료 만남을 신고할 화면 경로가 없다
+
+수동 검증 절차를 만들다가 확인했다. 이번 작업 범위는 아니지만 기록해 둔다.
+
+- `신고하기` 버튼은 `MatchRoomPage`에만 있고, 그 화면은
+  `GET /api/matching/groups/me/current`에 의존한다.
+- 그 쿼리는 `matching_group.status IN ('CONFIRMED','IN_PROGRESS')`와 활성 member만 반환한다.
+- 반면 접수 API는 `COMPLETED`/`CANCELLED` 이후 30일까지 신고를 허용한다.
+- 결과적으로 **만남이 끝난 뒤에는 신고 가능 기간이 남아 있어도 신고할 화면이 없다.**
+  `docs/05_MATCHING_POLICY.md`의 "MatchRoom 신고 UI는 후속 범위" 항목과 이어진다.
+- 수동 검증에서 서로 실제로 신고하려면 group이 `CONFIRMED`/`IN_PROGRESS`인 동안 해야 하고,
+  임계 3건에 도달하려면 서로 다른 group 3개가 필요하다.
+
+### 남은 일
+
+- ~~dev 브라우저 수동 검증~~ (**완료**. 위 `dev 실사용 검증 결과` 참고)
+- ~~`V25` 번호를 공유 dev DB `flyway_schema_history`에서 재확인~~ (**확인 완료**.
+  2026-09-02 16:33:26에 `V25`가 `success=t`로 dev DB에 적용됐다. V24가 최신이었으므로
+  번호 충돌은 없었다. local profile의 `.env`가 `127.0.0.1:15432` SSH 터널로 dev DB를
+  가리키기 때문에 backend 실행 시 Flyway가 적용했다.)
+- 후속 항목 2건을 `docs/19` 4.8·4.9로 분리했다. 4.8 회원 제재 사유·기간 통보는 **현재
+  관리자가 수동 정지해도 사용자가 이유와 기간을 알 수 없다**는 문제이고, 4.9는 매너온도
+  회복과 30도 매칭 제한이다.
+
 ## [10-B MATCH-09] 매칭 실패 → 솔로 코스 전환 연결
 
 상태: 구현·Frontend 자동 검증·dev 수동 검증 완료(Frontend 전용). Backend·migration 변경 없음

@@ -3,7 +3,9 @@ package com.survey.meetorsolo.domain.admin.member.service;
 import com.survey.meetorsolo.domain.admin.member.dto.*;
 import com.survey.meetorsolo.domain.admin.member.event.AdminMemberAccessRevokedEvent;
 import com.survey.meetorsolo.domain.admin.member.repository.AdminMemberRepository;
+import com.survey.meetorsolo.domain.admin.safety.repository.AdminSafetyAlertRepository;
 import com.survey.meetorsolo.domain.admin.service.AdminAuthorizationService;
+import com.survey.meetorsolo.domain.safety.report.admin.service.ReportConfirmationService;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
@@ -28,6 +30,8 @@ public class AdminMemberService {
     private final AdminMemberRepository adminMembers;
     private final AdminMemberCursorCodec cursorCodec;
     private final RefreshTokenRepository refreshTokens;
+    private final AdminSafetyAlertRepository safetyAlerts;
+    private final ReportConfirmationService reportConfirmation;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
@@ -37,6 +41,8 @@ public class AdminMemberService {
             AdminMemberRepository adminMembers,
             AdminMemberCursorCodec cursorCodec,
             RefreshTokenRepository refreshTokens,
+            AdminSafetyAlertRepository safetyAlerts,
+            ReportConfirmationService reportConfirmation,
             ApplicationEventPublisher events,
             Clock clock
     ) {
@@ -45,6 +51,8 @@ public class AdminMemberService {
         this.adminMembers = adminMembers;
         this.cursorCodec = cursorCodec;
         this.refreshTokens = refreshTokens;
+        this.safetyAlerts = safetyAlerts;
+        this.reportConfirmation = reportConfirmation;
         this.events = events;
         this.clock = clock;
     }
@@ -127,6 +135,8 @@ public class AdminMemberService {
                 || request.action() == AdminMemberActionType.BAN) {
             refreshTokens.revokeByMemberId(memberId, now);
             events.publishEvent(new AdminMemberAccessRevokedEvent(memberId));
+            // 제재로 대응이 끝난 안전 알림을 같은 transaction에서 종료해 중복 대응을 막는다.
+            safetyAlerts.closeByMemberId(memberId, adminMemberId, now);
         }
         members.flush();
         return detail(memberId);
@@ -186,12 +196,15 @@ public class AdminMemberService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
         Member entity = members.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
+        long validReportCount = reportConfirmation.countValidReports(
+                memberId, OffsetDateTime.now(clock));
         return new AdminMemberDetailResponse(
                 member.memberId(), member.nickname(), member.profileImageUrl(), member.role(),
                 member.status(), member.penaltyScore(), member.mannerTemperature(),
                 entity.getSuspendedAt(), member.suspendedUntil(), member.createdAt(),
-                entity.getLastLoginAt(), adminMembers.findReports(memberId),
-                adminMembers.findActions(memberId));
+                entity.getLastLoginAt(), validReportCount,
+                reportConfirmation.isSafetyReviewRequired(validReportCount),
+                adminMembers.findReports(memberId), adminMembers.findActions(memberId));
     }
 
     private AdminMemberFilter filter(String query, String status, String role) {
