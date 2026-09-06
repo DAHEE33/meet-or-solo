@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.auth.service;
 
 import com.survey.meetorsolo.domain.auth.dto.AuthTokenResponse;
 import com.survey.meetorsolo.domain.auth.entity.RefreshToken;
+import com.survey.meetorsolo.domain.auth.event.MemberLoggedOutEvent;
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
@@ -18,6 +19,7 @@ import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.net.URI;
 import java.time.OffsetDateTime;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +32,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProvider jwtProvider;
     private final MemberAccessPolicy accessPolicy;
+    private final ApplicationEventPublisher events;
 
     public AuthService(
             KakaoOAuthClient kakaoOAuthClient,
@@ -37,7 +40,8 @@ public class AuthService {
             MemberRepository memberRepository,
             RefreshTokenRepository refreshTokenRepository,
             JwtProvider jwtProvider,
-            MemberAccessPolicy accessPolicy
+            MemberAccessPolicy accessPolicy,
+            ApplicationEventPublisher events
     ) {
         this.kakaoOAuthClient = kakaoOAuthClient;
         this.naverOAuthClient = naverOAuthClient;
@@ -45,6 +49,7 @@ public class AuthService {
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtProvider = jwtProvider;
         this.accessPolicy = accessPolicy;
+        this.events = events;
     }
 
     public URI getKakaoAuthorizeUri(String state) {
@@ -92,6 +97,38 @@ public class AuthService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         return issueTokens(member);
+    }
+
+    /**
+     * 로그아웃은 인증 여부와 무관하게 성공하는 멱등 동작이다.
+     * 토큰이 없거나 만료·변조되었으면 폐기할 session이 없으므로 조용히 종료하고,
+     * cookie 만료는 controller가 어떤 경우에도 응답에 담는다.
+     */
+    @Transactional
+    public void logout(String rawAccessToken) {
+        if (rawAccessToken == null || rawAccessToken.isBlank()) {
+            return;
+        }
+        long memberId;
+        try {
+            memberId = jwtProvider.getMemberIdFromAccessToken(rawAccessToken);
+        } catch (BusinessException exception) {
+            return;
+        }
+        revokeSession(memberId);
+    }
+
+    /**
+     * refresh token을 폐기하고 commit 이후 WebSocket session을 끊는다.
+     * 이미 폐기된 상태에서 다시 호출해도 갱신 건수만 0이 되므로 멱등하다.
+     * 진행 중인 매칭 pool/proposal/group은 정리하지 않는다. 로그아웃은 매칭 취소가 아니며,
+     * 미응답은 기존 proposal timeout과 penalty 정책이 그대로 처리한다.
+     * 회원 탈퇴(docs/19 4.4)에서도 같은 경로를 재사용한다.
+     */
+    @Transactional
+    public void revokeSession(long memberId) {
+        refreshTokenRepository.revokeByMemberId(memberId, SeoulDateTime.now());
+        events.publishEvent(new MemberLoggedOutEvent(memberId));
     }
 
     private AuthTokenResponse issueTokens(Member member) {

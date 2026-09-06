@@ -118,6 +118,22 @@ public class AuthController {
                 .build();
     }
 
+    /**
+     * 로그아웃은 인증 여부와 무관하게 항상 204와 cookie 만료 헤더를 반환하는 멱등 endpoint다.
+     * 토큰이 없거나 만료·변조되었으면 refresh token 폐기만 생략하고 cookie는 그대로 지운다.
+     * cookie 속성은 발급 때와 동일해야 브라우저가 실제로 삭제하므로 tokenCookie(...)를 재사용한다.
+     */
+    @PostMapping("/api/auth/logout")
+    public ResponseEntity<Void> logout(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        authService.logout(accessToken);
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, expiredTokenCookie(ACCESS_TOKEN_COOKIE).toString())
+                .header(HttpHeaders.SET_COOKIE, expiredTokenCookie(REFRESH_TOKEN_COOKIE).toString())
+                .build();
+    }
+
     @GetMapping("/api/auth/naver/callback")
     public ResponseEntity<Void> naverCallback(
             @RequestParam(required = false) String code,
@@ -199,6 +215,10 @@ public class AuthController {
                 .path("/")
                 .maxAge(maxAge)
                 .build();
+    }
+
+    private ResponseCookie expiredTokenCookie(String name) {
+        return tokenCookie(name, "", Duration.ZERO);
     }
 
     private static final class MemberStatusRedirect {

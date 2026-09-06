@@ -226,40 +226,48 @@ feature/wbs-10-b-inquiry-center
 관리자 답변, 공개 범위, 암호화, 첨부파일과 보관 정책을 먼저 확정하고 신규 migration으로
 별도 구현합니다. 신고·회원 관리 브랜치에 함께 넣지 않습니다.
 
-### 4.6 로그아웃 — 미착수
+### 4.6 로그아웃 — 완료
 
-권장 브랜치:
+브랜치: `feature/wbs-10-b-logout`
 
-```text
-feature/wbs-10-b-logout
-```
+이전 상태:
 
-현재 상태:
+- `frontend/src/pages/MyPage.tsx`의 "로그아웃" 버튼이 `navigate('/login')`만 호출했습니다.
+- backend에 로그아웃 endpoint가 없어 `access_token` cookie, refresh token, WebSocket session이
+  모두 그대로 남았습니다.
 
-- `frontend/src/pages/MyPage.tsx`의 "로그아웃" 버튼은 `navigate('/login')`만 호출합니다.
-  `access_token` cookie와 refresh token, WebSocket session이 모두 그대로 남습니다.
-- backend에 로그아웃 endpoint가 없습니다.
-- `docs/06_SECURITY_POLICY.md`의 "logout 시 Refresh Token 무효화"는 아직 계획이며 구현이
-  아닙니다.
+#### 확정 사항 4건
 
-예상 계약:
+| 항목 | 확정값 | 근거 |
+| --- | --- | --- |
+| 미인증 요청 응답 | `204` 멱등 | 로그아웃은 상태를 없애는 요청이므로 이미 없으면 성공으로 본다. access token 만료 후 버튼을 눌러도 오류 화면 대신 로그인으로 보낸다 |
+| WebSocket session | 함께 종료 | 관리자 제재가 이미 revoke → `AFTER_COMMIT` event → `closeAll` 순서를 쓰고 있어 일관된다. 끊지 않으면 공용 기기에서 MatchRoom 상태 이벤트가 계속 흐른다 |
+| access token 무효화 | cookie 만료만, 한계 문서화 | stateless JWT(기본 30분)라 서버가 강제 무효화할 수 없다. denylist는 migration과 인증 경로 전체 변경이 필요해 별도 단계로 미룬다 |
+| 진행 중 매칭 | 허용하되 정리하지 않음 | 로그아웃은 매칭 취소가 아니다. 로그아웃으로 매칭을 종료시키면 penalty 회피 경로가 된다. 미응답은 기존 proposal timeout·penalty가 처리한다 |
 
-```http
-POST /api/auth/logout
-```
+구현 범위:
 
-필수 범위:
+- `POST /api/auth/logout` — 항상 `204`, `access_token`·`refresh_token` cookie를 `Max-Age=0`으로
+  만료. 발급용 `tokenCookie(...)`를 그대로 재사용해 `Path`, `HttpOnly`, `Secure`, `SameSite`
+  속성 불일치 가능성을 차단했습니다.
+- `AuthService.logout(rawAccessToken)` — 토큰이 없거나 만료·변조되면 조용히 종료합니다.
+- `AuthService.revokeSession(memberId)` — `revokeByMemberId` 폐기와 `MemberLoggedOutEvent` 발행.
+  4.4 회원 탈퇴가 이 경로를 재사용합니다.
+- `domain/auth/event/MemberLoggedOutEvent`와 `MemberLoggedOutEventHandler`(`AFTER_COMMIT` →
+  `WebSocketSessionRegistry.closeAll`). 관리자 제재 이벤트를 auth 도메인이 발행하지 않도록
+  분리했습니다.
+- Frontend `src/api/auth.ts` 신설, `MyPage`의 로그아웃 버튼이 API 호출 후 `/login`으로 이동.
+  실패해도 이동하되 오류 문구를 노출하고 중복 클릭을 막습니다.
+- `SecurityConfig`, `WebMvcConfig`, migration은 변경하지 않았습니다. `/api/auth/**`는 이미
+  `MemberAccessInterceptor` 제외 경로여서 정지된 회원도 로그아웃할 수 있습니다.
 
-- `access_token` HttpOnly cookie 만료 처리
-- refresh token 폐기. `RefreshTokenRepository.revokeByMemberId()`가 이미 있으므로 재사용한다.
-- transaction commit 이후 WebSocket session 종료. 관리자 제재(`AdminMemberService`)가 이미
-  같은 순서를 구현했으므로 그 패턴을 재사용한다.
-- 미인증 요청과 중복 로그아웃의 멱등 처리
-- 진행 중인 pool·proposal·group이 있는 회원의 로그아웃 허용 여부와 상태 정리 정책 확정
-- 로그아웃 후 기존 access token으로 보호 endpoint에 접근되지 않는지 검증
+검증 결과:
 
-회원 탈퇴(4.4)와 refresh token 폐기·session 종료 로직이 겹칩니다. 4.6을 먼저 구현해 공통
-경로를 만든 뒤 4.4에서 재사용하면 중복 구현을 피할 수 있습니다.
+- Backend 전체 726 tests 실패 0건(기존 716 + 신규 10). 신규는 `AuthServiceTest` 4건,
+  `AuthControllerTest` 2건, `AuthLogoutIntegrationTest` 4건입니다.
+- 통합 테스트는 실제 PostgreSQL에서 refresh token 폐기 후 `refresh` 거절, 재호출 멱등성,
+  변조 토큰의 무영향, commit 이후 WebSocket session 종료를 확인합니다.
+- Frontend 43 files/370 tests 통과, `npx tsc --noEmit` 통과.
 
 ### 4.7 동의·개인정보 후속 — 미착수
 
@@ -437,15 +445,15 @@ feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
 feature/wbs-10-b-report-safety-automation     — 완료 (PR #50)
 feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
 feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
-feature/wbs-10-b-logout                       — 미착수 (4.6)
+feature/wbs-10-b-logout                       — 완료 (4.6)
 feature/wbs-10-b-consent-followup             — 미착수 (4.7)
 feature/wbs-10-b-member-sanction-notice       — 미착수 (4.8)
 feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9)
 feature/wbs-10-b-match-report-entry           — 미착수 (4.10)
 ```
 
-4.6 로그아웃은 4.4 회원 탈퇴와 refresh token 폐기·session 종료를 공유하므로 4.4보다 먼저
-진행하는 편이 유리합니다.
+4.6 로그아웃이 먼저 끝났으므로 4.4 회원 탈퇴는 `AuthService.revokeSession(memberId)`을 그대로
+재사용합니다.
 
 각 브랜치는 `dev`에서 분기하고 작업 완료 후 PR로 `dev`에 병합합니다. 앞 단계 PR이
 병합되기 전에 다음 단계를 같은 작업 트리에 누적하지 않습니다.

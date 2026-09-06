@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.auth.dto.AuthTokenResponse;
 import com.survey.meetorsolo.domain.auth.service.AuthService;
 import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -70,5 +73,42 @@ class AuthControllerTest {
         ResponseEntity<Void> response = controller.naverCallback("code", "state", null, "state");
 
         assertThat(response.getHeaders().getFirst(HttpHeaders.LOCATION)).isEqualTo("http://localhost:5173/");
+    }
+
+    @Test
+    void 로그아웃은_access와_refresh_cookie를_발급과_동일한_속성으로_만료시킨다() {
+        when(authService.loginWithNaver("code", "state")).thenReturn(new AuthTokenResponse(
+                "Bearer", "access", "refresh", 1800, 1209600, 1L, "ACTIVE"));
+        List<String> issued = controller.naverCallback("code", "state", null, "state")
+                .getHeaders().get(HttpHeaders.SET_COOKIE);
+
+        ResponseEntity<Void> response = controller.logout("access-token");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(authService).logout("access-token");
+        List<String> cleared = response.getHeaders().get(HttpHeaders.SET_COOKIE);
+        assertThat(cleared).hasSize(2);
+        // 속성이 발급 때와 하나라도 다르면 브라우저가 cookie를 지우지 않는다.
+        assertThat(attributes(cleared.get(0))).isEqualTo(attributes(issued.get(0)));
+        assertThat(attributes(cleared.get(1))).isEqualTo(attributes(issued.get(1)));
+        assertThat(cleared.get(0)).startsWith("access_token=;").contains("Max-Age=0");
+        assertThat(cleared.get(1)).startsWith("refresh_token=;").contains("Max-Age=0");
+    }
+
+    /** 값과 수명을 뺀 cookie 속성만 남긴다. Path, HttpOnly, Secure, SameSite 일치를 비교하기 위한 것이다. */
+    private static List<String> attributes(String setCookie) {
+        return Arrays.stream(setCookie.split("; "))
+                .skip(1)
+                .filter(attribute -> !attribute.startsWith("Max-Age=") && !attribute.startsWith("Expires="))
+                .toList();
+    }
+
+    @Test
+    void 토큰이_없어도_로그아웃은_204와_cookie_만료를_돌려준다() {
+        ResponseEntity<Void> response = controller.logout(null);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(204);
+        verify(authService).logout(null);
+        assertThat(response.getHeaders().get(HttpHeaders.SET_COOKIE)).hasSize(2);
     }
 }
