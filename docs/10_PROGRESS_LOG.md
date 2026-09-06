@@ -1,5 +1,137 @@
 # 진행 상태 기록
 
+## [10-B FIX] 기존 실패 테스트 15건 복구와 체크인 취소 pool 정리 트랜잭션 버그
+
+상태: Backend 구현·전체 회귀 완료. PR 대기
+
+브랜치는 `fix/wbs-10-b-failing-tests-and-checkin-pool-transaction`이며 `dev`(`586f112`)에서
+분기했다. 오래 "기존 실패"로 방치돼 있던 15건을 0으로 만드는 작업이다. 조사 결과 원인이 둘로
+갈렸고 **그중 1건은 테스트 문제가 아니라 실제 운영 버그였다.**
+
+### (A) 14건 — `@WebMvcTest` 슬라이스에 `JwtProvider` 누락
+
+`FestivalControllerTest` 9건, `TourPlaceControllerTest` 5건이다. 둘 다
+`@WebMvcTest(...)` + `@Import(SecurityConfig.class)` 구성인데, `SecurityConfig`가 요구하는
+`JwtProvider` mock이 없어 컨텍스트 로딩 자체가 `NoSuchBeanDefinitionException`으로 실패했다.
+테스트 본문이 아니라 컨텍스트 로딩에서 터지므로 클래스 내 전체 테스트가 함께 실패한다.
+
+같은 구조인데 통과하는 `MemberConsentControllerTest`와의 차이가 정확히 한 줄이었다.
+
+```java
+@MockitoBean
+private JwtProvider jwtProvider;
+```
+
+두 파일에 위 선언과 `import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;`를 추가했다.
+
+### (B) 1건 — `AFTER_COMMIT` 리스너에서 쓰기 트랜잭션이 열리지 않던 실제 버그
+
+`FestivalCheckinCancelledEventHandlerIntegrationTest`의
+`다른_축제로_재체크인하면_기존_축제의_WAITING_pool이_CANCELLED로_정리된다`가
+`expected: "CANCELLED" but was: "WAITING"`으로 실패했다. 원인은 테스트 리포트 XML의
+`system-out`에 남아 있었다.
+
+```text
+ERROR ... FestivalCheckinCancelledEventHandler : 체크인 취소에 따른 match pool 정리에 실패했습니다.
+org.springframework.dao.InvalidDataAccessApiUsageException: no transaction is in progress
+```
+
+메커니즘은 다음과 같다.
+
+- `FestivalCheckinCancelledEventHandler`가 `@TransactionalEventListener(AFTER_COMMIT)`이다.
+- 거기서 호출하는 `MatchPoolCheckinCancellationService.cancelWaitingPool()`이
+  `@Transactional` 기본값 `REQUIRED`였다.
+- `AFTER_COMMIT` 시점에는 원본 트랜잭션이 이미 커밋됐지만 트랜잭션 동기화는 살아 있다.
+  그래서 Spring이 새 트랜잭션을 열지 않고 이미 완료된 트랜잭션에 참여하려 한다.
+- 그 상태에서 `@Modifying` UPDATE를 실행하면 `no transaction is in progress`로 터진다.
+- handler가 `catch (RuntimeException)`으로 로그만 남기고 삼키므로 **운영에서도 조용히 실패했다.**
+
+**즉 수정 전 dev/운영에서는 다른 축제로 재체크인해도 기존 축제의 `WAITING` pool이 정리되지
+않았다.** `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md` 설계대로 동작하지 않은 것이다.
+
+수정은 pool entry 매칭 경로와 동일하게 `REQUIRES_NEW`로 맞췄다.
+
+```java
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public int cancelWaitingPool(long memberId, long festivalId, OffsetDateTime now) { ... }
+```
+
+**왜 지금까지 안 걸렸나**: 같은 클래스의 `LOCKED`/`PROPOSED` 테스트 3건은 "건드리지 않아야
+한다"를 검증하므로 handler가 아예 동작하지 않아도 통과한다. 실제 동작을 검증하는 것은 실패한
+1건뿐이었고, 그게 "기존 실패"로 분류돼 방치됐다.
+
+### 함께 점검한 `AFTER_COMMIT` 리스너 전수 조사
+
+같은 결함이 더 있는지 `@TransactionalEventListener`를 전수 확인했다. 4개가 있었다.
+
+| 리스너 | DB 쓰기 | 전파 속성 | 판정 |
+| --- | --- | --- | --- |
+| `FestivalCheckinCancelledEventHandler` | 있음 | `REQUIRED` → **`REQUIRES_NEW`로 수정** | 이번 수정 대상 |
+| `MatchingPoolEnteredEventHandler` | 있음 | 하위 서비스 전부 `REQUIRES_NEW` | 이상 없음 |
+| `MatchingStateChangedEventHandler` | 없음(WebSocket 전송만) | — | 이상 없음 |
+| `AdminMemberAccessRevokedEventHandler` | 없음(session 종료만) | — | 이상 없음 |
+
+`MatchingPoolEnteredEventHandler`가 부르는 `PoolEntryMatchingOrchestrationService`는 자신에게
+`@Transactional`이 없고, 하위 `PoolEntryMatchPoolClaimService`, `MatchingBatchReader`,
+`MatchProposalCreationService`, `MatchPoolReleaseService`가 모두 `REQUIRES_NEW`다. 즉
+`REQUIRES_NEW`가 이 프로젝트의 확립된 패턴이었고 `MatchPoolCheckinCancellationService`만
+빠져 있었다.
+
+### (C) 수정이 드러낸 공허하게 통과하던 테스트 1건
+
+(B)를 고치자 같은 클래스의
+`같은_축제_재체크인은_그_축제의_WAITING_pool을_취소하지_않는다`가 실패로 바뀌었다. 이 테스트도
+handler가 아예 돌지 않아 그동안 자기 주장을 검증한 적이 없었다. handler가 실제로 돌기 시작하니
+"같은 축제로 재체크인해도 pool은 `WAITING`으로 남는다"는 주장이 거짓임이 드러났다. 취소되는
+체크인마다 이벤트가 발행되므로 같은 축제의 pool도 `CANCELLED`가 된다.
+
+**운영 코드가 아니라 테스트를 고치기로 했다.** 근거는 두 가지다.
+
+첫째, 이 테스트의 주장에 문서 근거가 없다. `docs/21` 6장이 요구한 것은 다음 한 줄이다.
+
+> 같은 축제로 재체크인(기존 3.2절 케이스, **이번 이벤트와 무관**) 시 기존 동작이 깨지지 않는지
+> 회귀 확인.
+
+여기서 "기존 동작"은 같은 문서 1.1절 4번 단계의 내용, 즉 취소 UPDATE를 새 INSERT보다 먼저
+flush해 `uq_festival_checkins_member_festival_active` 부분 unique index 위반을 막는 것이다.
+pool 상태에 대한 요구가 아니고, 오히려 "이번 이벤트와 무관"이라고 명시했다. 실패한 테스트는
+문서가 요구한 것보다 강한 주장을 스스로 추가한 것이었다.
+
+둘째, 이 경로는 화면으로 도달할 수 없다.
+
+| 값 | 실제 | 위치 |
+| --- | --- | --- |
+| 체크인 유효기간 | 1시간 | `CheckinValidityPolicy.VALIDITY` |
+| `WAITING` pool 검색 window | 60초 | `MatchPoolEntryService` — `now.plusSeconds(60)` |
+| 같은 축제 체크인 버튼 | 체크인이 유효한 동안 숨김 | `FestivalDetailPage.tsx` — `!isCheckedIntoThisFestival` |
+
+`WAITING` pool은 60초만 산다. 그 60초 안에 같은 축제로 재체크인해야 문제가 되는데, 그 시점에
+체크인은 아직 55분 넘게 유효해서 버튼이 보이지 않는다. 체크인이 1시간 뒤 만료돼 재체크인할
+때는 pool이 이미 59분 전에 `EXPIRED`라 취소 대상이 없다. 즉 도달 불가능한 시나리오를 위해
+운영 코드에 분기를 넣는 셈이 된다.
+
+그래서 테스트를 `docs/21` 6장이 실제로 요구한 회귀 가드로 다시 썼다. 이름을
+`같은_축제_재체크인은_unique_index_위반_없이_기존_체크인을_대체한다`로 바꾸고, 새 체크인이
+`ACTIVE`로 생성되고 기존 체크인이 `CANCELLED`가 되며 해당 축제의 `ACTIVE` 체크인이 1건만
+남는지를 검증한다. pool이 `CANCELLED`가 되는 현재 동작도 함께 명시하고, 왜 이 경로가 화면으로
+도달 불가능한지를 Javadoc에 남겨 다음 사람이 같은 혼동을 겪지 않게 했다.
+
+### 함께 정리한 문서
+
+- `docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md`에 4.10 "만남 종료 후 신고 진입점 후속" 절을
+  신설하고 7장 권장 브랜치 순서에 `feature/wbs-10-b-match-report-entry`를 추가했다.
+  4.3 검증 중 발견한 "접수 API는 종료 후 30일까지 신고를 허용하는데 그 기간에 신고할 화면
+  경로가 없다"가 이 진행 로그에만 있고 로드맵에는 절 번호가 없어 묻힐 상태였다.
+- 같은 문서의 4.3 상태를 "병합 전"에서 "완료 (PR #50)"로 갱신했다. PR #50이 이미 `dev`에
+  병합됐는데 문서만 남아 있었다.
+
+### 후속 참고
+
+`ci.yml`이 `./gradlew build -x test`, `deploy-dev.yml`이 `bootJar -x test`라 현재 CI에서
+테스트가 실행되지 않는다. 실패가 0건이 된 지금은 `-x test`를 뗄 수 있는 상태다. 다만 이번
+범위에 CI 변경은 포함하지 않았다.
+
+
 ## [10-B 4.3] 신고 누적·안전 자동화
 
 상태: 정책 확정, Backend·Frontend 구현, 자동 테스트 완료. dev 수동 검증 전

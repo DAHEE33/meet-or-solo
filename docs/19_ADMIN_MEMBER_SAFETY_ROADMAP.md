@@ -3,7 +3,7 @@
 ## 1. 문서 목적과 상태
 
 - 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 4.2 관리자 회원 조회·제재 완료,
-  4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 구현·dev 검증 완료(병합 전)
+  4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 완료(PR #50 dev 병합)
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -114,7 +114,7 @@ WebSocket/application event도 발행하지 않습니다.
 - Backend 비-컨테이너 187건 통과, Frontend 24 files/189 tests 통과
 - 2026-08-18 브라우저 수동 검증 PASS
 
-### 4.3 신고 누적·안전 자동화 3차 — 구현·dev 검증 완료, 병합 전
+### 4.3 신고 누적·안전 자동화 3차 — 완료 (PR #50, dev 병합 완료)
 
 권장 브랜치:
 
@@ -354,6 +354,38 @@ feature/wbs-10-b-manner-temperature-recovery
 - 4.3에서 확인한 비대칭도 함께 정리한다. 누적 유효 신고 카운트는 30일 window로
   자동 감소하지만 `manner_temperature`는 영구 하강이다.
 
+### 4.10 만남 종료 후 신고 진입점 후속 — 미착수
+
+권장 브랜치:
+
+```text
+feature/wbs-10-b-match-report-entry
+```
+
+4.3 검증 절차를 만들다 확인했습니다. 접수 API는 만남 종료 후 30일까지 신고를 허용하는데,
+그 기간에 신고할 화면 경로가 없습니다.
+
+- `신고하기` 버튼은 `MatchRoomPage`에만 있다.
+- 그 화면은 `GET /api/matching/groups/me/current`에 의존하고, 쿼리 조건이
+  `matching_group.status IN ('CONFIRMED','IN_PROGRESS')` + 활성 member다.
+- 따라서 만남이 끝나면 신고 가능 기간이 남아 있어도 진입점이 사라진다.
+- `docs/05_MATCHING_POLICY.md`의 "MatchRoom 신고 UI는 후속 범위"와 이어진다.
+
+필수 범위:
+
+- 최근 만남 목록 API. `findLatestCompletedByMemberId`가 1건만 반환하므로 목록 조회로 확장한다.
+- 목록 화면 또는 MyPage 섹션.
+- 신고 dialog는 `useMatchReport`와 `MatchRoomPage`의 기존 UI를 재사용한다.
+- 신고 가능 기간을 함께 재확정한다.
+
+신고 가능 기간:
+
+현재 `MatchReportService.REPORT_WINDOW_DAYS = 30`입니다. 화면이 없어 실질 기간이 0이었으므로
+진입점을 만들 때 함께 확정합니다. 7일은 성희롱·안전 사안을 놓칠 수 있고 축제가 주말에 열리는
+패턴과도 맞지 않아 14일을 권장합니다. 변경 시 `docs/05_MATCHING_POLICY.md`의 신고 기간 절,
+`MatchReportIntegrationTest`의 기간 경계 테스트,
+`ReportSafetyAutomationIntegrationTest`의 기간 초과 거절 테스트를 함께 고칩니다.
+
 ## 5. 공통 보안·동시성 원칙
 
 - 관리자 endpoint는 JWT cookie의 회원 ID로 `members.role=ADMIN`을 매 요청 다시 확인합니다.
@@ -402,13 +434,14 @@ Frontend:
 feature/wbs-10-b-admin-report-review          — 완료 (PR #34)
 feature/wbs-10-b-admin-member-sanctions       — 완료 (PR #35)
 feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
-feature/wbs-10-b-report-safety-automation     — 진행 중 (4.3, 정책 확정 완료)
+feature/wbs-10-b-report-safety-automation     — 완료 (PR #50)
 feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
 feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
 feature/wbs-10-b-logout                       — 미착수 (4.6)
 feature/wbs-10-b-consent-followup             — 미착수 (4.7)
 feature/wbs-10-b-member-sanction-notice       — 미착수 (4.8)
 feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9)
+feature/wbs-10-b-match-report-entry           — 미착수 (4.10)
 ```
 
 4.6 로그아웃은 4.4 회원 탈퇴와 refresh token 폐기·session 종료를 공유하므로 4.4보다 먼저
