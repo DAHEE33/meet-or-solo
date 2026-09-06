@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
@@ -46,6 +47,9 @@ class FestivalControllerTest {
 
     @MockitoBean
     private SoloCourseService soloCourseService;
+
+    @MockitoBean
+    private JwtProvider jwtProvider;
 
     private FestivalListResponse listResponse;
 

@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
@@ -35,6 +36,9 @@ class TourPlaceControllerTest {
 
     @MockitoBean
     private TourPlaceQueryService tourPlaceQueryService;
+
+    @MockitoBean
+    private JwtProvider jwtProvider;
 
     @Test
     void 관광지_목록을_공통_응답_형식으로_반환한다() throws Exception {
