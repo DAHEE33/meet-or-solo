@@ -56,6 +56,7 @@
 | 매칭 | `user_blocks`, `match_pools`, `match_attempts`, `match_attempt_members`, `match_proposals`, `match_responses`, `match_groups`, `match_group_members`, `match_events`, `match_cooldowns`, `match_penalty_events` |
 | 안전/운영 | `member_reviews`, `reports`, `admin_actions`, `admin_safety_alerts` |
 | 추천/솔로 | `solo_courses`, `solo_course_places`, `recommendation_click_logs` |
+| 콘텐츠 참여 | `content_bookmarks`, `content_comments`, `content_comment_likes` |
 
 ### 추후 분리 가능 테이블
 
@@ -763,6 +764,65 @@ Entity와 저장 시점만 추가하면 됩니다. 다만 **전환 이력은 소
 `walkMinutes()`가 최소 1분을 보장하므로 `1 + 45 = 46 > 45`가 되어 어떤 후보도 예산을 통과하지 못하고
 항상 빈 코스가 나옵니다. 설계 근거는 `docs/23_SOLO_COURSE_ITINERARY_DESIGN.md` 3.2절입니다.
 
+### content_bookmarks
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 축제 또는 관광지를 찜(북마크)한 상태를 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `festival_id`, `tour_place_id`, `created_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, `festival_id -> festivals.id`, `tour_place_id -> tour_places.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | 없음 |
+| CHECK | `chk_content_bookmarks_target`: `(festival_id IS NOT NULL) <> (tour_place_id IS NOT NULL)` — 대상은 정확히 하나 |
+| UNIQUE | `uq_content_bookmarks_member_festival`, `uq_content_bookmarks_member_place` partial unique index 2개 |
+| INDEX | `idx_content_bookmarks_member_created_at` |
+| 개인정보/보안 | 찜은 개인 데이터다. 공개 찜 수는 제공하지 않고 본인 조회만 허용한다. 탈퇴 시 물리 삭제한다. |
+| MVP 필수 | 필수 |
+
+`user_blocks`와 같은 구조다 — `(소유자, 대상)` unique pair, `created_at`만, 해제는 물리 삭제.
+partial unique index 2개가 동시 요청 중복을 DB에서 흡수한다. 설계 근거는
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 3.2절이다.
+
+### content_comments
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 축제·관광지에 대한 공개 댓글을 저장한다. `like_count`는 조회 성능을 위한 비정규화 카운터다. |
+| 주요 컬럼 | `id`, `member_id`, `festival_id`, `tour_place_id`, `body`, `like_count`, `status`, `deleted_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, `festival_id -> festivals.id`, `tour_place_id -> tour_places.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `status`: `VISIBLE`, `DELETED`(작성자 삭제), `HIDDEN`(관리자 숨김) |
+| CHECK | 대상 정확히 하나, `char_length(btrim(body)) BETWEEN 1 AND 500`, `like_count >= 0`, `status IN (...)`, `(status = 'VISIBLE') = (deleted_at IS NULL)` |
+| UNIQUE | 없음 |
+| INDEX | `idx_content_comments_festival_visible`, `idx_content_comments_place_visible`(둘 다 `status = 'VISIBLE'` partial index), `idx_content_comments_member_created_at` |
+| 개인정보/보안 | 공개 콘텐츠이므로 본문을 암호화하지 않는다(`member_reviews.comment_encrypted`와 반대). 응답에 `memberId`와 프로필 이미지를 노출하지 않는다. |
+| MVP 필수 | 필수 |
+
+`deleted_at` 단독 soft delete가 아니라 `status` 상태 머신 + 시점 컬럼 조합이다. 저장소의 기존
+관용구이며, `(status = 'VISIBLE') = (deleted_at IS NULL)` 짝 CHECK는 V25 `admin_safety_alerts`와
+같은 방식이다. 목록 정렬 키는 `created_at`이 아니라 `id DESC`다.
+
+### content_comment_likes
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 댓글 좋아요를 저장한다. `content_comments.like_count` 정합성의 원본이다. |
+| 주요 컬럼 | `id`, `comment_id`, `member_id`, `created_at` |
+| PK | `id` |
+| FK | `comment_id -> content_comments.id`, `member_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | 없음 |
+| CHECK | 없음. 자기 댓글 좋아요는 허용한다 |
+| UNIQUE | `uq_content_comment_likes_pair (comment_id, member_id)` |
+| INDEX | `idx_content_comment_likes_member` |
+| 개인정보/보안 | 누가 좋아요를 눌렀는지는 공개하지 않는다. 응답은 총 개수와 본인 여부만 담는다. |
+| MVP 필수 | 필수 |
+
+`uq_content_comment_likes_pair`가 멱등성의 근원이다. **카운터는 이 테이블의 INSERT/DELETE가
+실제로 행에 영향을 준 경우에만 움직인다**(`ON CONFLICT DO NOTHING` 후 affected rows 확인).
+`like_count = like_count ± 1`은 PostgreSQL row lock으로 직렬화되어 lost update가 없고,
+`like_count >= 0` CHECK와 `WHERE like_count > 0` 가드가 음수를 이중으로 막는다. 정합성 복구
+쿼리는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 8.3절에 있다.
+
 ## 7. 매칭 흐름과 DB 표현
 
 1. 사용자가 축제 상세 또는 체크인 화면에서 GPS 검증을 통과한다.
@@ -828,6 +888,8 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - active 상태의 `match_pools(member_id)`
 - active 상태의 `match_group_members(member_id)`
 - active 상태의 `match_cooldowns(member_id)`
+- `festival_id IS NOT NULL`인 `content_bookmarks(member_id, festival_id)`
+- `tour_place_id IS NOT NULL`인 `content_bookmarks(member_id, tour_place_id)`
 
 ### 주요 조회 인덱스 후보
 
@@ -843,6 +905,9 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - `reports(status, created_at)`
 - `tour_api_call_logs(operation_name, called_at)`
 - `recommendation_click_logs(source, clicked_at)`
+- `VISIBLE`인 `content_comments(festival_id, id DESC)`
+- `VISIBLE`인 `content_comments(tour_place_id, id DESC)`
+- `content_bookmarks(member_id, created_at DESC, id DESC)`
 
 ## 9. 개인정보와 보안 고려사항
 
@@ -945,6 +1010,24 @@ matching SQL도 저장값과 정책 상한 중 이른 시각을 사용하므로 
 row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 `V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.
+
+### V26__add_content_bookmarks_comments.sql
+
+찜(북마크)과 공개 댓글·좋아요를 위한 신규 테이블 3개를 생성합니다. 설계 근거는
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`입니다.
+
+- `content_bookmarks` — 회원별 축제/관광지 찜. partial unique index 2개로 중복을 DB에서 흡수.
+- `content_comments` — 공개 댓글. `status` 상태 머신(`VISIBLE`/`DELETED`/`HIDDEN`) +
+  비정규화 `like_count`.
+- `content_comment_likes` — 댓글 좋아요. `(comment_id, member_id)` unique가 멱등성의 근원.
+
+기존 테이블과 constraint는 변경하지 않고 신규 생성만 합니다. 대상(축제/관광지) 표현은
+`target_type` + `target_id`가 아니라 nullable FK 2개 + `정확히 하나` CHECK이며,
+`recommendation_click_logs`의 기존 방식을 따르되 CHECK를 `OR`에서 배타적 조건으로 조였습니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V26`이 비어 있는지 확인해야 합니다.
+`ddl-auto: validate`이므로 entity와 migration이 정확히 일치해야 부팅됩니다.
+
 ## `user_blocks` 조회·해제 접근 규칙
 
 - 목록은 `user_blocks.blocker_member_id = :authenticated_member_id`로 제한하고

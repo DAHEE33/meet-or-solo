@@ -15,12 +15,36 @@ import {
   type PreferenceState,
 } from '../components/preference/preferenceStatus';
 import { checkInRecords } from '../data/mock/checkIns';
-import { tourSpots } from '../data/mock/tourSpots';
+import { contentBookmarksApi, type BookmarkedContent } from '../api/contentBookmarks';
+import { bookmarkedContentId, bookmarkedContentTitle } from '../hooks/useContentBookmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import Spinner from '../components/common/Spinner';
 
-const favoriteSpots = tourSpots.slice(1, 4); // 찜한 관광지 mock
+/** 마이페이지 요약에 보여줄 찜 항목 수. 전체는 /mypage/favorites에서 본다. */
+const FAVORITE_PREVIEW_LIMIT = 6;
+
+/** 요약 카드가 열어야 할 상세 경로. 축제/관광지 중 채워진 쪽을 따른다. */
+export function bookmarkedContentPath(item: BookmarkedContent): string | null {
+  const id = bookmarkedContentId(item);
+  if (id === null) return null;
+  return item.targetType === 'FESTIVAL' ? `/festivals/${id}` : `/spots/${id}`;
+}
+
+/**
+ * 축제와 관광지 찜을 최신순으로 합쳐 상위 N건만 남긴다.
+ * 두 종류를 각각 조회하므로 화면에서 한 번 더 정렬해야 순서가 섞이지 않는다.
+ */
+export function mergeFavoritePreview(
+  festivals: readonly BookmarkedContent[],
+  tourPlaces: readonly BookmarkedContent[],
+  limit = FAVORITE_PREVIEW_LIMIT,
+): BookmarkedContent[] {
+  return [...festivals, ...tourPlaces]
+    .filter((item) => bookmarkedContentPath(item) !== null)
+    .sort((left, right) => right.bookmarkedAt.localeCompare(left.bookmarkedAt))
+    .slice(0, limit);
+}
 
 export default function MyPage() {
   const navigate = useNavigate();
@@ -29,6 +53,24 @@ export default function MyPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [favorites, setFavorites] = useState<BookmarkedContent[] | null>(null);
+
+  // 찜 요약은 부가 정보다. 조회에 실패하면 빈 목록으로 두고 마이페이지는 그대로 보여준다.
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([
+      contentBookmarksApi.getMine('FESTIVAL', 0, FAVORITE_PREVIEW_LIMIT, controller.signal),
+      contentBookmarksApi.getMine('TOUR_PLACE', 0, FAVORITE_PREVIEW_LIMIT, controller.signal),
+    ])
+      .then(([festivalPage, tourPlacePage]) => {
+        if (controller.signal.aborted) return;
+        setFavorites(mergeFavoritePreview(festivalPage.items, tourPlacePage.items));
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFavorites([]);
+      });
+    return () => controller.abort();
+  }, []);
 
   // 취향 상태는 부가 정보다. 조회에 실패하면 섹션을 조용히 숨기고 마이페이지는 그대로 보여준다.
   useEffect(() => {
@@ -182,18 +224,37 @@ export default function MyPage() {
           </Link>
         </section>
 
-        {/* 찜한 관광지 */}
+        {/* 찜한 곳 — 축제와 관광지를 함께 최신순으로 보여주고 전체는 /mypage/favorites에서 본다 */}
         <section className="flex flex-col gap-2">
-          <h2 className="text-[15px] font-bold text-ink">찜한 관광지</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[15px] font-bold text-ink">찜한 곳</h2>
+            <Link to="/mypage/favorites" className="flex items-center text-[13px] font-semibold text-ink/50">
+              전체 보기
+              <ChevronRight size={14} aria-hidden="true" />
+            </Link>
+          </div>
           <div className="flex flex-col gap-2">
-            {favoriteSpots.map((spot) => (
+            {favorites === null && (
+              <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+                <Spinner size="sm" />
+                <span className="text-[13px] text-ink/50">찜한 곳을 불러오는 중이에요</span>
+              </div>
+            )}
+            {favorites?.length === 0 && (
+              <p className="rounded-2xl bg-white px-4 py-3 text-[13px] text-ink/55 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+                아직 찜한 곳이 없어요
+              </p>
+            )}
+            {favorites?.map((item) => (
               <Link
-                key={spot.id}
-                to={`/spots/${spot.id}`}
+                key={`${item.targetType}-${bookmarkedContentId(item)}`}
+                to={bookmarkedContentPath(item) ?? '/mypage/favorites'}
                 className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
               >
                 <Heart size={16} className="shrink-0 fill-coral text-coral" />
-                <span className="flex-1 text-[14px] font-medium text-ink">{spot.name}</span>
+                <span className="flex-1 truncate text-[14px] font-medium text-ink">
+                  {bookmarkedContentTitle(item)}
+                </span>
                 <ChevronRight size={16} className="text-ink/30" />
               </Link>
             ))}

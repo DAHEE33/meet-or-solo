@@ -8,9 +8,12 @@ import { buildKakaoDirectionsUrl } from '../utils/geo';
 import type { Festival, TourSpot } from '../types';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBookmark';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import PlaceScrollCard from '../components/common/PlaceScrollCard';
 import ShareSheet from '../components/common/ShareSheet';
+import BookmarkButton from '../components/common/BookmarkButton';
+import ContentCommentSection from '../components/comment/ContentCommentSection';
 import FestivalListItem from '../components/festival/FestivalListItem';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
@@ -23,6 +26,10 @@ export default function TourSpotDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showShareSheet, setShowShareSheet] = useState(false);
+  // 찜·댓글은 관광지 id가 확정된 뒤에만 조회한다. 로그인 여부도 이 응답으로만 판단한다
+  // (docs/27 2.1 — /api/members/me를 부르면 비로그인 사용자가 화면째로 튕긴다).
+  const bookmarkTarget = detail ? ({ type: 'TOUR_PLACE', id: detail.id } as const) : null;
+  const { state: bookmarkState, toggle: toggleBookmark } = useContentBookmark(bookmarkTarget);
 
   useEffect(() => {
     const id = Number(spotId);
@@ -94,14 +101,26 @@ export default function TourSpotDetailPage() {
       <PageHeader
         title={spot.name}
         rightAction={
-          <button
-            type="button"
-            aria-label="공유"
-            onClick={() => setShowShareSheet(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
-          >
-            <Share2 size={20} strokeWidth={1.8} />
-          </button>
+          <div className="flex items-center">
+            <BookmarkButton
+              bookmarked={bookmarkState.bookmarked}
+              disabled={bookmarkState.status !== 'READY'}
+              pending={bookmarkState.submitting}
+              onClick={() => {
+                const action = resolveBookmarkAction(bookmarkState);
+                if (action === 'LOGIN') navigate('/login');
+                if (action === 'TOGGLE') void toggleBookmark();
+              }}
+            />
+            <button
+              type="button"
+              aria-label="공유"
+              onClick={() => setShowShareSheet(true)}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
+            >
+              <Share2 size={20} strokeWidth={1.8} />
+            </button>
+          </div>
         }
       />
       {showShareSheet && (
@@ -203,6 +222,14 @@ export default function TourSpotDetailPage() {
             </div>
           </section>
         )}
+
+        {/* 공개 댓글 — 화면 최하단(docs/27 7.1) */}
+        <ContentCommentSection
+          target={{ type: 'TOUR_PLACE', id: detail.id }}
+          loggedIn={bookmarkState.loggedIn}
+          admin={bookmarkState.admin}
+          initialCount={bookmarkState.commentCount}
+        />
       </main>
 
       {/* 하단 고정 액션 */}

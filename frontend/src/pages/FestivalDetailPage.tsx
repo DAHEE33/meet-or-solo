@@ -14,6 +14,7 @@ import { formatDistanceLabel } from '../utils/tourSpot';
 import { buildKakaoDirectionsUrl } from '../utils/geo';
 import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
 import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
+import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBookmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
@@ -21,6 +22,8 @@ import GPSPermissionModal from '../components/common/GPSPermissionModal';
 import ShareSheet from '../components/common/ShareSheet';
 import Spinner, { LoadingState } from '../components/common/Spinner';
 import ExpandableText from '../components/common/ExpandableText';
+import BookmarkButton from '../components/common/BookmarkButton';
+import ContentCommentSection from '../components/comment/ContentCommentSection';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
 export default function FestivalDetailPage() {
@@ -35,6 +38,10 @@ export default function FestivalDetailPage() {
   // 이 화면에서 방금 체크인한 결과(checkinState)뿐 아니라, 이전에 체크인해두고 다시
   // 들어온 경우도 매칭 시작 버튼이 활성화돼야 하므로 실제 체크인 상태를 함께 조회한다.
   const { state: currentCheckinState, refresh: refreshCurrentCheckin } = useCurrentCheckin();
+  // 찜·댓글은 축제 id가 확정된 뒤에만 조회한다. 로그인 여부도 이 응답으로만 판단한다
+  // (docs/27 2.1 — /api/members/me를 부르면 비로그인 사용자가 화면째로 튕긴다).
+  const bookmarkTarget = festival ? ({ type: 'FESTIVAL', id: festival.id } as const) : null;
+  const { state: bookmarkState, toggle: toggleBookmark } = useContentBookmark(bookmarkTarget);
   useEffect(() => {
     if (checkinState.status === 'success') void refreshCurrentCheckin();
   }, [checkinState.status, refreshCurrentCheckin]);
@@ -96,14 +103,26 @@ export default function FestivalDetailPage() {
       <PageHeader
         title={festival.title}
         rightAction={
-          <button
-            type="button"
-            aria-label="공유"
-            onClick={() => setShowShareSheet(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
-          >
-            <Share2 size={20} strokeWidth={1.8} />
-          </button>
+          <div className="flex items-center">
+            <BookmarkButton
+              bookmarked={bookmarkState.bookmarked}
+              disabled={bookmarkState.status !== 'READY'}
+              pending={bookmarkState.submitting}
+              onClick={() => {
+                const action = resolveBookmarkAction(bookmarkState);
+                if (action === 'LOGIN') navigate('/login');
+                if (action === 'TOGGLE') void toggleBookmark();
+              }}
+            />
+            <button
+              type="button"
+              aria-label="공유"
+              onClick={() => setShowShareSheet(true)}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
+            >
+              <Share2 size={20} strokeWidth={1.8} />
+            </button>
+          </div>
         }
       />
       {showShareSheet && (
@@ -288,6 +307,14 @@ export default function FestivalDetailPage() {
             <ChevronRight size={14} />
           </button>
         </div>
+
+        {/* 공개 댓글 — 화면 최하단(docs/27 7.1) */}
+        <ContentCommentSection
+          target={{ type: 'FESTIVAL', id: festival.id }}
+          loggedIn={bookmarkState.loggedIn}
+          admin={bookmarkState.admin}
+          initialCount={bookmarkState.commentCount}
+        />
       </main>
 
       {/* 하단 고정 CTA — 이 축제에 체크인 완료해야 활성화된다 */}

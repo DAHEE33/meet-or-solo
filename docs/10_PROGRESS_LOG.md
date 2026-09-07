@@ -1,5 +1,113 @@
 # 진행 상태 기록
 
+## [10-C 콘텐츠 참여] 찜(북마크)과 공개 댓글·좋아요
+
+상태: 설계·Backend·Frontend 구현 완료. **Backend 통합 테스트 미실행(Docker 없음), 런타임 미검증**
+
+기획서·WBS에 없던 신규 범위이며, 사용자 승인에 따라 10-B의 다음 작업으로 잡혀 있던
+`신고·안전·후기와 관리자 연계`보다 **먼저** 진행했다. 설계 전문은
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`이고 DB는 `docs/11_DATABASE_DESIGN.md`,
+화면 규칙은 `docs/03_FRONTEND_GUIDE.md`, 서버 규칙은 `docs/04_BACKEND_GUIDE.md`, 보안은
+`docs/06_SECURITY_POLICY.md`, 검증 기준은 `docs/09_TEST_AND_QUALITY_STRATEGY.md`에 반영했다.
+
+작업 브랜치는 사용자 선택에 따라 새로 만들지 않고 `feature/wbs-10-a-festival-course`에서
+이어서 작업했다. 댓글 본문이 재사용하는 `ExpandableText`가 그 브랜치에만 있었기 때문이다.
+
+### 먼저 확정한 판단 3건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 공개 조회의 인증 | 비로그인·만료·무효 쿠키 전부 `200`. 로그인 여부는 `engagement`의 `viewer.loggedIn`으로만 판단 |
+| 좋아요 카운터 | `content_comment_likes`의 실제 영향 행 수가 1일 때만 `like_count` 증감 |
+| 댓글 신고 | 이번 범위 제외. 작성자 삭제 + 관리자 숨김으로 최소 모더레이션 확보 |
+
+첫 번째가 가장 중요하다. frontend `apiClient`는 **모든 `401`을
+`window.location.replace('/login')` 전역 리다이렉트로 처리**한다. 그래서 공개 상세 화면에 붙는
+조회 API가 `401`을 주거나 로그인 여부를 알기 위해 `GET /api/members/me`를 호출하면, 비로그인
+사용자가 축제·관광지 상세를 **열기만 해도 로그인 화면으로 튕긴다.** 이 제약이 `engagement`
+endpoint와 `OptionalMemberResolver`의 존재 이유다.
+
+세 번째는 `reports`에 target 개념이 없기 때문이다(`reported_member_id NOT NULL` + match group
+한정). 댓글을 붙이려면 `admin_actions.report_id`, `match_penalty_events.related_report_id`,
+`admin_safety_alerts.trigger_report_id`와 V25가 만든 30일 유효 신고 누적 자동 제재 파이프라인까지
+함께 건드려야 해서, 매너온도·제재 정책 변경이 된다.
+
+### DB
+
+`V26__add_content_bookmarks_comments.sql`로 `content_bookmarks`, `content_comments`,
+`content_comment_likes` 3개를 생성했다. 기존 테이블과 constraint는 변경하지 않았다.
+
+대상(축제/관광지) 표현은 `target_type` + `target_id`가 아니라 nullable FK 2개 +
+`정확히 하나` CHECK다. `recommendation_click_logs`의 기존 방식을 따르되 CHECK를 `OR`(둘 다 채워도
+통과)에서 배타적 조건으로 조였다. 동기화가 축제를 물리 삭제하지 않고 `INACTIVE` 표시만 하므로
+(`FestivalSyncWriter.markMissingFestivalsInactive`) `ON DELETE RESTRICT`가 안전하다.
+
+댓글은 `deleted_at` 단독 soft delete 선례가 없어 `status` 상태 머신
+(`VISIBLE`/`DELETED`/`HIDDEN`) + 시점 컬럼 관용구를 따랐고,
+`(status = 'VISIBLE') = (deleted_at IS NULL)` 짝 CHECK는 V25 `admin_safety_alerts`와 같은 방식이다.
+
+**적용 전 공유 dev DB의 `flyway_schema_history`에서 V26이 비어 있는지 확인해야 한다.**
+
+### Backend
+
+`domain/content/{support,bookmark,comment,engagement}`에 entity·repository·service·controller·DTO를
+추가하고 `ErrorCode`에 `CONTENT_TARGET_NOT_FOUND`,
+`CONTENT_COMMENT_{INVALID_REQUEST,NOT_FOUND,FORBIDDEN,PROFILE_REQUIRED,TOO_FREQUENT}`를 넣었다.
+`429`는 `handleBusinessException`이 `errorCode.getStatus()`를 쓰므로 handler 변경이 없었다.
+
+endpoint는 `GET|PUT /api/{festivals|spots}/{id}/engagement|bookmark`,
+`GET|POST /api/{festivals|spots}/{id}/comments`, `DELETE /api/comments/{id}`,
+`PUT /api/comments/{id}/like`, `PUT /api/admin/comments/{id}/visibility`,
+`GET /api/members/me/bookmarks?type&page&size`다. 토글은 `POST`/`DELETE` 쌍이 아니라
+`PUT` + 상태 body 하나로 뒀다 — 기존 `PUT .../cancellation`·`.../acknowledgement` 방식과 같고
+멱등성과 "현재 카운트를 응답으로 돌려준다"를 동시에 만족한다.
+
+정지·차단·비활성 회원의 신규 작성은 기존 `MemberAccessInterceptor`가 자동으로 막으므로 별도
+구현하지 않았다. `PROFILE_REQUIRED`는 닉네임이 없어 표시할 이름이 없으므로 따로 막는다.
+
+### Frontend
+
+`useMemberBlocks` 패턴대로 `createContentBookmarkSession`/`createContentCommentsSession` 세션
+팩토리와 얇은 hook을 만들고, 두 상세 화면의 `PageHeader.rightAction`에 `BookmarkButton`을 공유
+버튼과 나란히 두고 `<main>` 마지막에 `ContentCommentSection`을 붙였다. 댓글 본문은
+`ExpandableText`(200자 컷)를 재사용하고 좋아요는 `ThumbsUp`으로 찜(`Heart`)과 구분한다.
+
+`MyPage`의 mock 찜 섹션(`data/mock/tourSpots.ts`)을 실데이터로 교체하고
+`/mypage/favorites`(`FavoritesPage`)를 추가했다. `data/mock/tourSpots.ts`는 이제 참조되지 않으므로
+후속 작업에서 삭제 대상이다.
+
+낙관적 갱신은 하지 않는다. 좋아요 카운트도 서버가 돌려준 실제값으로 덮는다.
+
+### 검증
+
+- Frontend: `tsc --noEmit` 통과, vitest **55 파일 / 478 테스트 통과**(기존 399 + 신규 79),
+  `npm run build` 성공. 코디네이터가 직접 재실행해 확인했다.
+- Backend: `compileJava`/`compileTestJava` 통과, `ContentCommentServiceTest` 18건과
+  `OptionalMemberResolverTest` 5건 통과.
+- **Backend 통합 테스트 `ContentBookmarkCommentIntegrationTest`(24건)는 컴파일만 되고 실행되지
+  않았다.** 작업 머신에 Docker가 없어 Testcontainers가 `ContainerFetchException`으로 실패한다.
+  이 저장소의 Spring context 테스트는 전부 Testcontainers를 요구해 우회 경로가 없다.
+- 그래서 **신규 JPQL의 Hibernate 파싱**과 **`ddl-auto: validate`의 entity↔V26 일치**가 런타임으로
+  검증되지 않았다. Docker 없이 가능한 정적 교차 확인은 마쳤다 — 참조하는 모든 entity 경로가 실제
+  필드명과 일치하고(특히 `Festival`의 지역 필드는 `regionCode`가 아니라 **`areaCode`**),
+  constructor projection record 타입이 selection과 맞고, entity 컬럼명·nullable·length가 V26 DDL과
+  일치한다.
+- Gradle은 이 머신에서 `JAVA_HOME="C:\java\zulu17"`을 지정해야 빌드된다(기본 `JAVA_HOME`이 JDK 8).
+
+### 남은 작업
+
+1. **Docker 환경에서 통합 테스트와 애플리케이션 부팅 1회 확인** — 그 전까지 "코드 완성, 런타임
+   미검증"으로 취급한다.
+2. **탈퇴 연동 미배선.** `ContentCommentService.softDeleteAllOnWithdrawal`과
+   `ContentBookmarkService.deleteAllOnWithdrawal`은 구현·테스트까지 되어 있지만, 이 저장소에는
+   회원 탈퇴 서비스 자체가 없다(`members.withdrawn_at` 컬럼만 있고 탈퇴 endpoint가 없다.
+   문서에 등장하는 `DELETE /api/members/me`는 미구현). 탈퇴 기능 담당자가 같은 transaction에서
+   두 메서드를 호출해야 하며 `ContentCommentService`에 TODO를 남겼다.
+3. 두 브라우저 수동 검증 — 비로그인 진입, 찜 토글, 댓글 등록·삭제, 좋아요 연타, 관리자 숨김.
+4. `data/mock/tourSpots.ts` 삭제.
+5. 이번 범위 제외 항목은 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 9장 참고 — 대댓글, 댓글 신고,
+   인기순 정렬, 찜 공개 카운트, 목록 화면 하트, cursor 페이징.
+
 ## [10-A 후속 11] 홈에서 솔로 코스 진입 시 체크인 게이트 복구
 
 상태: 구현 완료(Frontend 전용). 두 브라우저 수동 검증 전
