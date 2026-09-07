@@ -208,23 +208,23 @@ class MatchReportIntegrationTest {
     }
 
     @Test
-    void 종료_후_30일_직전은_허용한다() {
-        insertGroup("COMPLETED", TEST_NOW.minusDays(30).plusSeconds(1), null,
+    void 종료_후_14일_직전은_허용한다() {
+        insertGroup("COMPLETED", TEST_NOW.minusDays(14).plusSeconds(1), null,
                 REPORTER_ID, REPORTED_ID);
 
         assertThat(submit().status()).isEqualTo("SUBMITTED");
     }
 
     @Test
-    void 종료_후_정확히_30일_경계는_허용한다() {
-        insertGroup("CANCELLED", null, TEST_NOW.minusDays(30), REPORTER_ID, REPORTED_ID);
+    void 종료_후_정확히_14일_경계는_허용한다() {
+        insertGroup("CANCELLED", null, TEST_NOW.minusDays(14), REPORTER_ID, REPORTED_ID);
 
         assertThat(submit().status()).isEqualTo("SUBMITTED");
     }
 
     @Test
-    void 종료_후_30일_초과는_거절한다() {
-        insertGroup("COMPLETED", TEST_NOW.minusDays(30).minusSeconds(1), null,
+    void 종료_후_14일_초과는_거절한다() {
+        insertGroup("COMPLETED", TEST_NOW.minusDays(14).minusSeconds(1), null,
                 REPORTER_ID, REPORTED_ID);
 
         assertThatThrownBy(this::submit)

@@ -105,6 +105,37 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             """, nativeQuery = true)
     List<Long> findActiveMemberIdsByGroupId(@Param("groupId") long groupId);
 
+    /**
+     * 매칭 기록 목록에 붙일 상대 참가자다. 본인은 신고 대상이 아니므로 조회 단계에서 제외한다.
+     *
+     * <p>{@code findCompletedMembersWithProfileByGroupId}는 {@code status = 'COMPLETED'}로 좁혀져
+     * 있어 취소된 그룹의 참가자를 담지 못한다. 이력 열람은 상태와 무관하게 함께 있었던 사람을
+     * 보여줘야 하므로 별도 조회를 둔다.
+     */
+    @Query(value = """
+            SELECT
+                group_member.group_id AS groupId,
+                member.id AS memberId,
+                member.nickname AS nickname,
+                member.profile_image_url AS profileImageUrl
+            FROM match_group_members group_member
+            JOIN members member ON member.id = group_member.member_id
+            WHERE group_member.group_id IN (:groupIds)
+              AND group_member.member_id <> :excludedMemberId
+            ORDER BY group_member.group_id, group_member.id
+            """, nativeQuery = true)
+    List<MatchHistoryMemberProjection> findHistoryMembersByGroupIds(
+            @Param("groupIds") List<Long> groupIds,
+            @Param("excludedMemberId") long excludedMemberId
+    );
+
+    interface MatchHistoryMemberProjection {
+        Long getGroupId();
+        Long getMemberId();
+        String getNickname();
+        String getProfileImageUrl();
+    }
+
     interface ActiveGroupMemberProjection {
         Long getGroupMemberId();
         Long getMemberId();

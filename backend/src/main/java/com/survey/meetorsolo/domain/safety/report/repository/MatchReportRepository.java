@@ -75,6 +75,37 @@ public class MatchReportRepository {
                 reasonCode.name()).stream().findFirst();
     }
 
+    /**
+     * 내가 이미 신고한 (group, 상대) 쌍이다.
+     *
+     * <p>{@code reports}의 유니크 키는 사유까지 포함한 (reporter, reported, group, reason_code)라
+     * 같은 상대를 다른 사유로 여러 번 신고할 수 있다. 화면의 "신고됨" 표시는 사유와 무관하게
+     * "이 만남에서 이 사람을 신고한 적이 있다"를 뜻하므로 DISTINCT로 사유를 접는다.
+     */
+    public List<ReportedPair> findReportedPairs(long reporterMemberId, List<Long> groupIds) {
+        if (groupIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(groupIds.size(), "?"));
+        Object[] arguments = new Object[groupIds.size() + 1];
+        arguments[0] = reporterMemberId;
+        for (int index = 0; index < groupIds.size(); index++) {
+            arguments[index + 1] = groupIds.get(index);
+        }
+        return jdbc.query("""
+                SELECT DISTINCT group_id, reported_member_id
+                FROM reports
+                WHERE reporter_member_id = ?
+                  AND group_id IN (%s)
+                """.formatted(placeholders), REPORTED_PAIR_ROW_MAPPER, arguments);
+    }
+
+    public record ReportedPair(long groupId, long reportedMemberId) {
+    }
+
+    private static final RowMapper<ReportedPair> REPORTED_PAIR_ROW_MAPPER = (rs, rowNum) ->
+            new ReportedPair(rs.getLong("group_id"), rs.getLong("reported_member_id"));
+
     private static final RowMapper<GroupSnapshot> GROUP_ROW_MAPPER = (rs, rowNum) ->
             new GroupSnapshot(
                     rs.getLong("id"),

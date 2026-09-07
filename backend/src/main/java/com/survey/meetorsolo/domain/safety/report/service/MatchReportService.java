@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.safety.report.service;
 
 import com.survey.meetorsolo.domain.safety.report.dto.MatchReportReasonCode;
+import com.survey.meetorsolo.domain.safety.report.policy.MatchReportWindowPolicy;
 import com.survey.meetorsolo.domain.safety.report.dto.MatchReportResponse;
 import com.survey.meetorsolo.domain.safety.report.repository.MatchReportRepository;
 import com.survey.meetorsolo.domain.safety.report.repository.MatchReportRepository.GroupSnapshot;
@@ -14,8 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MatchReportService {
-
-    private static final int REPORT_WINDOW_DAYS = 30;
 
     private final MatchReportRepository reports;
     private final Clock clock;
@@ -72,7 +71,7 @@ public class MatchReportService {
         if (terminalAt == null) {
             throw new BusinessException(ErrorCode.REPORT_CONFLICT);
         }
-        if (now.isAfter(terminalAt.plusDays(REPORT_WINDOW_DAYS))) {
+        if (!MatchReportWindowPolicy.isReportable(terminalAt, now)) {
             throw new BusinessException(ErrorCode.REPORT_WINDOW_EXPIRED);
         }
     }

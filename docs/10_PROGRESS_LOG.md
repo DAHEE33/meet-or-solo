@@ -1,8 +1,112 @@
 # 진행 상태 기록
 
+## [10-B 안전 후속] 만남 종료 후 신고 진입점 (docs/19 4.10)
+
+상태: Backend/Frontend 구현·전체 회귀·수동 검증 완료. PR 대기
+
+브랜치는 `feature/wbs-10-b-match-report-entry`이며 `dev`(`08197fa`)에서 분기했다.
+
+### 문제
+
+접수 API는 만남 종료 후 30일까지 신고를 허용하는데 **그 기간에 신고할 화면이 없었다.**
+`신고하기` 버튼이 `MatchRoomPage`에만 있고 그 화면은
+`matching_group.status IN ('CONFIRMED','IN_PROGRESS')`인 현재 그룹에만 의존한다. 만남이 끝나면
+진입점이 사라지므로 **실질 신고 가능 기간이 0이었다.** 4.3에서 신고 누적 자동화까지
+만들어 뒀는데 정작 신고를 넣을 화면이 없는 상태였다.
+
+### 먼저 확정한 정책 4건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 신고 가능 기간 | 14일, `completed_at`/`cancelled_at` 기준 (기준 컬럼은 그대로) |
+| 화면 위치 | MyPage "매칭 기록" 카드 → `/mypage/matches` 별도 화면 |
+| 노출 범위 | `COMPLETED` + `CANCELLED` 전체 이력, 기간 지난 건은 버튼만 비활성화 |
+| 이미 신고한 상대 | 버튼 비활성화 + `신고됨` 배지 |
+
+### 구현에서 중요한 판단
+
+**기간 정책을 한 곳으로 모았다.** `MatchReportWindowPolicy`를 신설해 접수 API와 목록이
+같은 상수와 판정을 쓰게 했다. 목록이 자체 계산을 하면 화면에서 "신고 가능"으로 보인 항목이
+접수에서 `REPORT_WINDOW_EXPIRED`로 거절되는 어긋남이 생긴다.
+
+**기간·신고여부 판정을 서버에 뒀다.** 응답에 `reportable`, `reportableUntil`, 참가자별
+`reported`를 담는다. 프론트가 날짜를 계산하면 같은 문제가 재발한다.
+
+**기존 조회를 재사용하지 않았다.** `findLatestCompletedByMemberId`는 매칭 완료 판정용이라
+조건이 다르고, `findCompletedMembersWithProfileByGroupId`는 `status = 'COMPLETED'`로 좁혀져
+취소 그룹의 참가자를 담지 못한다. 각각 이력 전용 조회를 추가했다.
+
+**"신고됨" 판정에서 사유를 접었다.** `reports`의 유니크 키는
+`(reporter, reported, group, reason_code)`라 같은 상대를 다른 사유로 여러 번 신고할 수 있다.
+화면 표시는 사유와 무관하게 "이 만남에서 이 사람을 신고한 적 있음"이어야 하므로 `DISTINCT`로
+접었다.
+
+**cursor에 HMAC을 붙이지 않았다.** 관리자 목록 codec들은 filter fingerprint를 서명하지만,
+이 조회는 JWT 회원으로 고정돼 있고 filter가 없어 위조해도 자기 목록 안에서 위치만 바뀐다.
+관리자 cursor secret을 회원 API가 공유하는 것도 부적절하다.
+
+**신고 dialog에 groupId를 직접 들려 보냈다.** 상대 ID로 목록을 되짚으면 같은 사람과 여러 번
+만났을 때 다른 만남에 신고가 붙을 수 있다.
+
+### 건드리지 않은 것
+
+기간을 30일 → 14일로 줄였지만 목적이 다른 두 window는 그대로 뒀다.
+
+- `ReportConfirmationService.AGGREGATION_WINDOW_DAYS` (30일) — 신고 누적 집계 window
+- `MatchBlockService.BLOCK_WINDOW_DAYS` (30일) — 차단 허용 기간
+
+migration, 신고 접수 API, 매칭 transaction 경계도 변경하지 않았다.
+
+### 검증
+
+- `MatchHistoryIntegrationTest` 10건(PostgreSQL Testcontainers) 통과 — 종료·취소 함께 반환,
+  진행 중 제외, 본인 제외, 미참여자 차단, 14일 경계, 사유 무관 신고됨 표시, 타인 신고
+  비노출, cursor 연속성, 동일 시각 id tiebreaker, 위조 cursor 거절.
+- 기존 `MatchReportIntegrationTest`의 30일 경계 테스트 3건을 14일로 갱신했다.
+- Backend 전체 **737 tests 실패 0건**(기존 727 + 신규 10).
+- Frontend 45 files/379 tests 통과, `npx tsc --noEmit` 통과.
+
+테스트 픽스처에서 두 가지에 걸렸다. `match_groups.attempt_id`는 `uq_match_groups_attempt`로
+유일해서 기록을 여러 건 만들려면 그룹마다 attempt가 따로 있어야 한다. 그리고
+`uq_match_group_members_member_active`가 회원당 활성 참여를 1건으로 제한하므로, 종료된 그룹의
+참여 상태를 실제와 같이 `COMPLETED`/`CANCELLED`로 넣어야 한다.
+
+Frontend 테스트에서 `expect(html).not.toContain('disabled')`는 Tailwind의 `disabled:` 클래스가
+마크업에 항상 남아 **거짓 양성**이었다. `disabled=""` 속성으로 바꿨다.
+
+### 브라우저 수동 검증 PASS
+
+dev DB에 연결한 로컬 환경에서 실제 계정 2개(카카오 `dev카테` id 2, 네이버 `테스트` id 27)로
+확인했다.
+
+- 매칭 확정 → 양쪽 `도착했어요` → 그룹 `COMPLETED` 전환.
+  `MatchArrivalService`가 활성 참가자 전원 `ARRIVED`인 순간 그룹을 완료 처리한다.
+- `/mypage/matches`에서 해당 만남이 신고 가능 상태로 노출.
+- 신고 접수 후 목록이 다시 읽히며 `신고됨` 배지로 전환.
+- 접수된 신고가 관리자 화면에 정상 노출.
+- 기존 매칭 기록(2026-08-14 이전, 14일 초과분)은 `신고 기간 종료`로 버튼이 잠기고, 취소된
+  만남은 `취소됨` 배지로 구분됐다.
+
+### 남은 것
+
+- 차단 허용 기간 30일과 신고 14일이 갈라진 점. 버그는 아니지만 정책 일관성 검토 후보다.
+
+### 검증 중 확인한 별건
+
+`frontend/.env.local`의 `VITE_DEV_FESTIVAL_ID=144`가 남아 있어, 체크인 없이 `/matching`에
+들어가면 `MatchingConditionPage.resolveFestivalId`의 개발 fallback이 걸려 축제 선택 없이
+`Matching UI test festival`(dev DB id 144)로 바로 체크인 화면이 뜬다. 이 축제는 좌표가
+`NULL`인 더미다.
+
+`.env.local`은 커밋 대상이 아니고 fallback도 의도된 개발 편의 장치라 **버그는 아니다.** 다만
+체크인이 실제로 붙은 지금은 값이 낡았다. 축제 선택 단계를 건너뛰는 인지 문제 자체는
+`ISSUE-MR-009` 후속(비동기 상태 복원·화면 전환 안정화)의 "자동 매칭 진입이 `2 -> 1` 역순으로
+인지된다"와 같은 뿌리다.
+
+
 ## [10-B 안전 후속] 로그아웃 구현과 소셜 계정 전환 (docs/19 4.6)
 
-상태: Backend/Frontend 구현·전체 회귀 완료. PR 대기
+상태: 완료 (PR #52, dev 병합 완료)
 
 브랜치는 `feature/wbs-10-b-logout`이며 `dev`(`d7c04c5`)에서 분기했다. 로그아웃 버튼이
 `navigate('/login')`만 호출해 **누르고도 로그아웃이 되지 않던** 문제를 없앤다. cookie,
@@ -83,12 +187,13 @@ refresh token + WebSocket)과 카카오 계정 세션(`kakao.com` cookie)이 별
 파라미터 하나씩 추가하는 것이다.
 
 - 카카오 `prompt=select_account` — [공식 문서](https://developers.kakao.com/docs/ko/kakaologin/rest-api)로 확인했다.
-- 네이버 `auth_type=reauthenticate` — **공식 문서 접근이 차단되어 커뮤니티 자료로만 확인했다.**
-  값이 틀렸을 가능성이 남아 있으므로 네이버 로그인 화면을 직접 확인해야 한다.
+- 네이버 `auth_type=reauthenticate` — 공식 문서(`developers.naver.com`)가 이 환경에서 열리지
+  않아 커뮤니티 자료로만 확인했으나, **브라우저에서 재인증 화면이 실제로 뜨는 것을 확인했다.**
+
+두 파라미터 모두 브라우저에서 계정 선택·재인증 화면이 뜨는 것을 확인했다.
 
 ### 남은 것
 
-- 네이버 `auth_type=reauthenticate` 값 검증. 공식 문서가 열리면 확정한다.
 - 4.4 회원 탈퇴에서 `revokeSession` 재사용.
 
 
