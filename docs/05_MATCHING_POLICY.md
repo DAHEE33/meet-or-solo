@@ -535,16 +535,42 @@ pool이 종료됐는지**로 판단한다.
 - API는 reporter ID를 받지 않고 HttpOnly `access_token`의 회원 ID를 사용한다.
 - 본인 신고와 양쪽 중 한 명이라도 group 참여 이력이 없는 요청은 거절한다.
 - `CONFIRMED`, `IN_PROGRESS` group은 진행 중 신고를 허용한다.
-- `COMPLETED`는 `completed_at`, `CANCELLED`는 `cancelled_at`부터 30일 이내 신고를
-  허용하며 정확히 30일 경계도 허용한다. terminal timestamp가 없으면 임의 시각으로
+- `COMPLETED`는 `completed_at`, `CANCELLED`는 `cancelled_at`부터 **14일** 이내 신고를
+  허용하며 정확히 14일 경계도 허용한다. terminal timestamp가 없으면 임의 시각으로
   대체하지 않고 정합성 충돌로 거절한다.
+  - 기간은 `MatchReportWindowPolicy.WINDOW_DAYS` 한 곳에 둔다. 접수 API와 매칭 기록
+    목록이 같은 판정을 써야 화면에서 "신고 가능"으로 보인 항목이 접수에서 거절되지 않는다.
+  - 원래 30일이었으나 진입 화면이 없어 실질 기간이 0이었다. 진입점을 만들면서 14일로
+    확정했다. 7일은 성희롱·안전 사안을 놓칠 수 있고 축제가 주말에 열리는 패턴과도 맞지
+    않는다.
+  - 신고 누적 자동화의 집계 window(`ReportConfirmationService.AGGREGATION_WINDOW_DAYS`,
+    30일)와 차단 허용 기간(`MatchBlockService.BLOCK_WINDOW_DAYS`, 30일)은 목적이 달라
+    별개로 유지한다.
 - 허용 사유는 `RUDE`, `SEXUAL_HARASSMENT`, `NO_SHOW`, `SCAM`, `SAFETY`, `OTHER`이다.
   자유 입력 상세는 1차 범위에서 받거나 저장하지 않는다.
 - 동일 reporter/reported/group/reason 요청은 기존 신고 snapshot을 반환하는 멱등
   성공이며 `SUBMITTED` 이후 관리 상태를 초기화하지 않는다.
 - 신고 접수만으로 penalty, cooldown, `penalty_score`, `manner_temperature`를
   변경하지 않는다. 피신고자 WebSocket/event도 발행하지 않는다.
-- 차단, 관리자 검토와 제재, MatchRoom 신고 UI는 후속 범위다.
+- 차단, 관리자 검토와 제재는 후속 범위로 진행했다.
+
+### 만남 종료 후 신고 진입점
+
+- `GET /api/members/me/match-history`가 매칭 기록을 최신순으로 반환한다. 조회 대상은
+  `access_token`의 회원으로 고정하며 회원 ID를 요청에서 받지 않는다.
+- `COMPLETED`와 `CANCELLED`를 모두 담는다. 취소 과정에서 생긴 문제도 신고할 수 있어야
+  하고 접수 API도 두 상태를 받기 때문이다. 화면은 `취소됨` 배지로 구분한다.
+- 신고 가능 기간이 지난 기록도 목록에는 남기고 신고 버튼만 비활성화한다. 목록이 매칭
+  기록 열람을 겸하기 때문이다.
+- 신고 가능 여부(`reportable`)와 만료 시각(`reportableUntil`)은 서버가 판정해 내려준다.
+  화면이 날짜를 다시 계산하면 정책이 갈라진다.
+- 본인은 신고 대상이 아니므로 조회 단계에서 제외한다.
+- 내가 이미 신고한 상대는 `reported`로 표시하고 버튼을 잠근다. `reports`의 유니크 키는
+  사유까지 포함하므로 사유와 무관하게 "이 만남에서 이 사람을 신고한 적이 있음"으로
+  접어서 판정한다. 신고 사실은 신고자 본인에게만 보이며 상대에게 노출되지 않는다.
+- cursor는 (종료 시각, group id) 복합이다. 종료 시각이 같아도 순서가 흔들리지 않는다.
+  조회가 항상 본인으로 고정돼 위조해도 자기 목록 안에서 위치만 바뀌므로 관리자 목록과
+  달리 HMAC 서명을 붙이지 않는다.
 
 ## MatchRoom 상대 회원 차단 Backend 1차 정책
 

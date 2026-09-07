@@ -56,6 +56,60 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
             @Param("memberId") long memberId
     );
 
+    /**
+     * 매칭 기록 목록이다. 신고 진입점(docs/19 4.10)이 쓰는 조회로, 정상 종료와 취소를 모두 담는다.
+     *
+     * <p>완료 판정에 쓰는 {@code findLatestCompletedByMemberId}와 목적이 다르다. 그쪽은 최신 1건의
+     * 완료 여부를 보는 것이고 이 조회는 이력 열람이므로 조건을 공유하지 않는다.
+     *
+     * <p>cursor는 (종료 시각, group id) 복합이다. 종료 시각이 같은 행이 있어도 순서가 흔들리지
+     * 않도록 id를 tiebreaker로 함께 비교한다.
+     */
+    @Query(value = """
+            SELECT
+                matching_group.id AS groupId,
+                matching_group.status AS status,
+                matching_group.confirmed_member_count AS confirmedMemberCount,
+                matching_group.meeting_place_name AS meetingPlaceName,
+                COALESCE(matching_group.completed_at, matching_group.cancelled_at) AS endedAt,
+                festival.title AS festivalTitle,
+                festival.address AS festivalAddress
+            FROM match_groups matching_group
+            JOIN match_group_members group_member
+              ON group_member.group_id = matching_group.id
+            JOIN festivals festival
+              ON festival.id = matching_group.festival_id
+            WHERE group_member.member_id = :memberId
+              AND matching_group.status IN ('COMPLETED', 'CANCELLED')
+              AND COALESCE(matching_group.completed_at, matching_group.cancelled_at) IS NOT NULL
+              AND (
+                  CAST(:cursorEndedAt AS timestamptz) IS NULL
+                  OR (
+                      COALESCE(matching_group.completed_at, matching_group.cancelled_at),
+                      matching_group.id
+                  ) < (CAST(:cursorEndedAt AS timestamptz), :cursorGroupId)
+              )
+            ORDER BY COALESCE(matching_group.completed_at, matching_group.cancelled_at) DESC,
+                     matching_group.id DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<MatchHistoryGroupProjection> findHistoryByMemberId(
+            @Param("memberId") long memberId,
+            @Param("cursorEndedAt") java.time.OffsetDateTime cursorEndedAt,
+            @Param("cursorGroupId") long cursorGroupId,
+            @Param("limit") int limit
+    );
+
+    interface MatchHistoryGroupProjection {
+        Long getGroupId();
+        String getStatus();
+        Integer getConfirmedMemberCount();
+        String getMeetingPlaceName();
+        java.time.Instant getEndedAt();
+        String getFestivalTitle();
+        String getFestivalAddress();
+    }
+
     @Query(value = """
             SELECT matching_group.*
             FROM match_groups matching_group

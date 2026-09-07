@@ -362,37 +362,53 @@ feature/wbs-10-b-manner-temperature-recovery
 - 4.3에서 확인한 비대칭도 함께 정리한다. 누적 유효 신고 카운트는 30일 window로
   자동 감소하지만 `manner_temperature`는 영구 하강이다.
 
-### 4.10 만남 종료 후 신고 진입점 후속 — 미착수
+### 4.10 만남 종료 후 신고 진입점 후속 — 완료
 
-권장 브랜치:
+브랜치: `feature/wbs-10-b-match-report-entry`
 
-```text
-feature/wbs-10-b-match-report-entry
-```
+이전 상태:
 
-4.3 검증 절차를 만들다 확인했습니다. 접수 API는 만남 종료 후 30일까지 신고를 허용하는데,
-그 기간에 신고할 화면 경로가 없습니다.
+- 접수 API는 만남 종료 후 30일까지 신고를 허용했지만 그 기간에 신고할 화면 경로가 없었다.
+  **실질 신고 가능 기간이 0이었다.**
+- `신고하기` 버튼이 `MatchRoomPage`에만 있고, 그 화면은
+  `matching_group.status IN ('CONFIRMED','IN_PROGRESS')`인 현재 그룹에만 의존했다.
 
-- `신고하기` 버튼은 `MatchRoomPage`에만 있다.
-- 그 화면은 `GET /api/matching/groups/me/current`에 의존하고, 쿼리 조건이
-  `matching_group.status IN ('CONFIRMED','IN_PROGRESS')` + 활성 member다.
-- 따라서 만남이 끝나면 신고 가능 기간이 남아 있어도 진입점이 사라진다.
-- `docs/05_MATCHING_POLICY.md`의 "MatchRoom 신고 UI는 후속 범위"와 이어진다.
+#### 확정 사항 4건
 
-필수 범위:
+| 항목 | 확정값 | 근거 |
+| --- | --- | --- |
+| 신고 가능 기간 | 14일, `completed_at`/`cancelled_at` 기준 | 7일은 성희롱·안전 사안을 놓치고 축제가 주말에 열리는 패턴과 맞지 않는다. 기준 시각은 기존 컬럼을 유지해 변경 범위를 줄였다 |
+| 화면 위치 | MyPage "매칭 기록" 카드 → `/mypage/matches` 별도 화면 | `/mypage/blocks`와 같은 패턴이고 MyPage가 길어지지 않으며 pagination을 붙이기 쉽다 |
+| 노출 범위 | `COMPLETED` + `CANCELLED` 전체 이력, 기간 지난 건은 버튼만 비활성화 | 목록이 매칭 기록 열람을 겸한다. 취소 과정에서 생긴 문제도 신고할 수 있어야 하고 접수 API도 두 상태를 받는다 |
+| 이미 신고한 상대 | 버튼 비활성화 + `신고됨` 배지 | 접수는 이미 멱등이지만 안내가 없으면 접수 여부를 확인할 수 없다 |
 
-- 최근 만남 목록 API. `findLatestCompletedByMemberId`가 1건만 반환하므로 목록 조회로 확장한다.
-- 목록 화면 또는 MyPage 섹션.
-- 신고 dialog는 `useMatchReport`와 `MatchRoomPage`의 기존 UI를 재사용한다.
-- 신고 가능 기간을 함께 재확정한다.
+구현 범위:
 
-신고 가능 기간:
+- `MatchReportWindowPolicy` 신설. 기간 상수와 판정을 접수 API와 목록이 공유한다. 화면에서
+  "신고 가능"으로 보인 항목이 접수에서 거절되는 어긋남을 구조적으로 막는다.
+- `GET /api/members/me/match-history` 신설. 조회 대상을 JWT의 회원으로 고정하고 회원 ID를
+  요청에서 받지 않는다. `reportable`·`reportableUntil`·`reported`를 서버가 판정해 내려준다.
+- `MatchGroupRepository.findHistoryByMemberId` — (종료 시각, group id) 복합 cursor. 완료
+  판정에 쓰는 `findLatestCompletedByMemberId`는 목적이 달라 건드리지 않았다.
+- `MatchGroupMemberRepository.findHistoryMembersByGroupIds` — 기존 완료 참가자 조회는
+  `status = 'COMPLETED'`로 좁혀져 취소 그룹을 담지 못해 별도로 추가했다. 본인은 제외한다.
+- `MatchReportRepository.findReportedPairs` — 사유를 접어 신고 이력 여부만 판정한다.
+- Frontend `/mypage/matches` 화면 신설. 신고 dialog는 `useMatchReport`와 `ReportDialog`를
+  그대로 재사용했다. MyPage의 "준비 중" 매칭 기록 카드를 실제 진입점으로 연결했다.
+- migration 없음. 신고 접수 API와 매칭 transaction 경계는 변경하지 않았다.
 
-현재 `MatchReportService.REPORT_WINDOW_DAYS = 30`입니다. 화면이 없어 실질 기간이 0이었으므로
-진입점을 만들 때 함께 확정합니다. 7일은 성희롱·안전 사안을 놓칠 수 있고 축제가 주말에 열리는
-패턴과도 맞지 않아 14일을 권장합니다. 변경 시 `docs/05_MATCHING_POLICY.md`의 신고 기간 절,
-`MatchReportIntegrationTest`의 기간 경계 테스트,
-`ReportSafetyAutomationIntegrationTest`의 기간 초과 거절 테스트를 함께 고칩니다.
+기간을 30일에서 14일로 줄였지만 **신고 누적 집계 window**
+(`ReportConfirmationService.AGGREGATION_WINDOW_DAYS`)와 **차단 허용 기간**
+(`MatchBlockService.BLOCK_WINDOW_DAYS`)은 목적이 달라 30일로 유지했다.
+
+검증 결과:
+
+- `MatchHistoryIntegrationTest` 10건(PostgreSQL Testcontainers) — 종료·취소 함께 반환,
+  진행 중 제외, 본인 제외, 미참여자 차단, 14일 경계, 사유 무관 신고됨 표시, 타인 신고
+  비노출, cursor 연속성, 동일 시각 tiebreaker, 위조 cursor 거절.
+- 기존 `MatchReportIntegrationTest`의 30일 경계 테스트를 14일로 갱신했다.
+- Backend 전체 737 tests 실패 0건(기존 727 + 신규 10).
+- Frontend 45 files/379 tests, `npx tsc --noEmit` 통과.
 
 ## 5. 공통 보안·동시성 원칙
 
@@ -449,7 +465,7 @@ feature/wbs-10-b-logout                       — 완료 (4.6)
 feature/wbs-10-b-consent-followup             — 미착수 (4.7)
 feature/wbs-10-b-member-sanction-notice       — 미착수 (4.8)
 feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9)
-feature/wbs-10-b-match-report-entry           — 미착수 (4.10)
+feature/wbs-10-b-match-report-entry           — 완료 (4.10)
 ```
 
 4.6 로그아웃이 먼저 끝났으므로 4.4 회원 탈퇴는 `AuthService.revokeSession(memberId)`을 그대로
