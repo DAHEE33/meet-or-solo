@@ -222,6 +222,38 @@ public class Member {
         restorePreviousStatus();
     }
 
+    /**
+     * 관리자 유효 판정 신고의 penalty score를 누적한다.
+     * {@code penalty_score}는 감사 목적의 누적값이므로 상한을 두지 않는다.
+     */
+    public void increasePenaltyScore(int scoreDelta) {
+        if (scoreDelta <= 0) {
+            throw new IllegalArgumentException("penalty score 증가량은 양수여야 합니다.");
+        }
+        this.penaltyScore = this.penaltyScore + scoreDelta;
+    }
+
+    /**
+     * 매너온도를 하한까지만 차감하고 실제로 적용된 차감량을 반환한다.
+     * 이미 하한이면 {@code 0.00}을 반환한다. 후기 기능이 없어 상승 경로가 없으므로
+     * 하한 clamp로 무한 하강을 막는다.
+     */
+    public BigDecimal decreaseMannerTemperature(BigDecimal amount, BigDecimal floor) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("매너온도 차감량은 양수여야 합니다.");
+        }
+        if (floor == null || floor.signum() < 0) {
+            throw new IllegalArgumentException("매너온도 하한은 0 이상이어야 합니다.");
+        }
+        BigDecimal current = this.mannerTemperature;
+        if (current.compareTo(floor) <= 0) {
+            return BigDecimal.ZERO.setScale(current.scale());
+        }
+        BigDecimal target = current.subtract(amount).max(floor);
+        this.mannerTemperature = target;
+        return current.subtract(target);
+    }
+
     public boolean restoreExpiredSuspension(OffsetDateTime now) {
         if (!STATUS_SUSPENDED.equals(status) || suspendedUntil == null || suspendedUntil.isAfter(now)) {
             return false;

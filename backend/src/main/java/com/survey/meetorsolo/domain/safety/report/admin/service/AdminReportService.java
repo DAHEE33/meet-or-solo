@@ -1,6 +1,8 @@
 package com.survey.meetorsolo.domain.safety.report.admin.service;
 
 import com.survey.meetorsolo.domain.admin.service.AdminAuthorizationService;
+import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.safety.report.admin.dto.*;
 import com.survey.meetorsolo.domain.safety.report.admin.repository.AdminReportRepository;
 import com.survey.meetorsolo.domain.safety.report.dto.MatchReportReasonCode;
@@ -23,17 +25,23 @@ public class AdminReportService {
     private final AdminAuthorizationService authorization;
     private final AdminReportRepository reports;
     private final AdminReportCursorCodec cursorCodec;
+    private final MemberRepository members;
+    private final ReportConfirmationService reportConfirmation;
     private final Clock clock;
 
     public AdminReportService(
             AdminAuthorizationService authorization,
             AdminReportRepository reports,
             AdminReportCursorCodec cursorCodec,
+            MemberRepository members,
+            ReportConfirmationService reportConfirmation,
             Clock clock
     ) {
         this.authorization = authorization;
         this.reports = reports;
         this.cursorCodec = cursorCodec;
+        this.members = members;
+        this.reportConfirmation = reportConfirmation;
         this.clock = clock;
     }
 
@@ -72,16 +80,41 @@ public class AdminReportService {
     public AdminReportDetailResponse changeStatus(
             long adminMemberId, long reportId, AdminReportTargetStatus targetStatus) {
         authorization.requireAdmin(adminMemberId);
+        AdminReportStatus target = AdminReportStatus.valueOf(targetStatus.name());
+        boolean terminal = target == AdminReportStatus.RESOLVED
+                || target == AdminReportStatus.REJECTED;
+
+        // 잠금 순서는 모든 service에서 member -> report로 고정한다. AdminMemberService.act()가
+        // 같은 순서를 사용하므로, 여기서 report를 먼저 잠그면 관리자 두 명 사이에 deadlock이
+        // 가능해진다.
+        //
+        // RESOLVED만 members를 직접 갱신하지만 REJECTED도 member를 먼저 잠근다. terminal 전이는
+        // admin_actions를 INSERT하고, 그 FK 검사가 members row에 KEY SHARE lock을 걸기 때문이다.
+        // 즉 REJECTED도 report lock을 쥔 뒤 members lock을 요구하므로 순서를 맞추지 않으면
+        // RESOLVED와 REJECTED 사이에 deadlock이 발생한다.
+        Member reportedMember = null;
+        if (terminal) {
+            long reportedMemberId = reports.findDetail(reportId)
+                    .orElseThrow(this::notFound)
+                    .reportedMember()
+                    .memberId();
+            reportedMember = members.findByIdForUpdate(reportedMemberId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
+        }
+
         AdminReportDetailResponse current = reports.findDetailForUpdate(reportId)
                 .orElseThrow(this::notFound);
-        AdminReportStatus target = AdminReportStatus.valueOf(targetStatus.name());
+        if (reportedMember != null
+                && current.reportedMember().memberId() != reportedMember.getId()) {
+            // reports.reported_member_id는 갱신되지 않지만 잠금 사이의 변화를 방어적으로 검증한다.
+            throw new BusinessException(ErrorCode.ADMIN_REPORT_STATUS_CONFLICT);
+        }
         if (current.status() == target) {
             return current;
         }
         validateTransition(current.status(), target);
 
         OffsetDateTime now = OffsetDateTime.now(clock);
-        boolean terminal = target == AdminReportStatus.RESOLVED || target == AdminReportStatus.REJECTED;
         if (reports.updateStatus(reportId, target, now, terminal) != 1) {
             throw new BusinessException(ErrorCode.ADMIN_REPORT_STATUS_CONFLICT);
         }
@@ -92,6 +125,11 @@ public class AdminReportService {
                     reportId,
                     target == AdminReportStatus.RESOLVED ? "REPORT_RESOLVE" : "REPORT_REJECT",
                     now);
+        }
+        if (target == AdminReportStatus.RESOLVED) {
+            // 유효 판정만 적용한다. REJECTED는 기각이므로 penalty와 매너온도를 건드리지 않는다.
+            // 누적 집계가 방금 판정한 신고를 포함해야 하므로 상태 갱신 뒤에 호출한다.
+            reportConfirmation.apply(reportedMember, reportId, now);
         }
         return reports.findDetail(reportId).orElseThrow(this::notFound);
     }

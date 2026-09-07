@@ -16,6 +16,10 @@ public record AdminMemberDetailResponse(
         OffsetDateTime suspendedUntil,
         OffsetDateTime createdAt,
         OffsetDateTime lastLoginAt,
+        /** 최근 30일 누적 유효 신고 건수. 같은 만남의 사유별 중복은 1건으로 압축한다. */
+        long recentValidReportCount,
+        /** 누적 유효 신고가 임계에 도달해 이용 제한을 검토해야 하는 회원인지. */
+        boolean safetyReviewRequired,
         List<AdminMemberReportHistoryResponse> reports,
         List<AdminMemberActionHistoryResponse> actions
 ) {

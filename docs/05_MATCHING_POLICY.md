@@ -253,9 +253,9 @@ penalty 또는 cooldown 적용 대상:
 - 관리자에 의해 유효하다고 판단된 신고
 
 MVP는 단순 cooldown window로 시작합니다. `penalty_score`는 단기 재매칭 제한과
-운영 감사에 사용하고, `manner_temperature`는 후기·신고·관리자 정책이 함께
-구현되는 후속 단계에서 연결합니다. 현재 확정 후 취소·노쇼 구현에서는
-`manner_temperature`를 변경하지 않습니다.
+운영 감사에 사용합니다. `manner_temperature`는 관리자가 유효하다고 판정한 신고에서만
+차감하며, 그 정책은 아래 `관리자 유효 판정 신고 (REPORT_CONFIRMED)` 절에서 확정합니다.
+확정 후 취소·노쇼·timeout·자발적 취소는 `manner_temperature`를 변경하지 않습니다.
 
 ### 매칭 탐색 자발적 취소 (WAITING/LOCKED)
 
@@ -422,6 +422,89 @@ NO_SHOW Scheduler는 기본 비활성화하고 명시적 환경 설정에서만 
 `group_id + member_id + cause`를 원인 key로 사용합니다. PostgreSQL unique
 constraint와 상태 재검증을 함께 사용하며 Redis와 JVM 전역 lock에 의존하지
 않습니다.
+
+### 관리자 유효 판정 신고 (REPORT_CONFIRMED)
+
+관리자가 신고를 유효하다고 판정하면 피신고 회원에게 penalty와
+`manner_temperature` 차감을 적용합니다. 신고 접수만으로는 아무것도 적용하지
+않으며, 이 정책은 `MatchRoom 구조화 신고 1차 정책`의 접수 규칙과 분리됩니다.
+
+#### 유효 신고의 정의
+
+- 유효 신고는 `reports.status`가 `RESOLVED` 또는 `ACTION_TAKEN`인 신고다.
+- `SUBMITTED`, `REVIEWING`은 아직 판정 전이므로 유효 신고가 아니다.
+- `REJECTED`는 기각이므로 유효 신고에서 제외한다.
+- 유효 판정 시점은 관리자의 `SUBMITTED|REVIEWING -> RESOLVED` 전이 시점이다.
+- `ACTION_TAKEN`은 `RESOLVED` 이후 제재까지 연결된 상태이므로 유효 판정을 다시
+  적용하지 않는다.
+
+#### 적용 값
+
+| 대상 | 값 |
+| --- | --- |
+| `match_penalty_events.event_type` | `REPORT_CONFIRMED` |
+| `match_penalty_events.score_delta` | `+5` |
+| `match_penalty_events.manner_temperature_delta` | `-5.00` |
+| `members.penalty_score` | `+5` |
+| `members.manner_temperature` | `GREATEST(현재값 - 5.00, 20.00)` |
+| `match_cooldowns` | 생성하지 않는다 |
+
+- penalty score `+5`는 `NO_SHOW`의 `+3`보다 무겁게 두어 유효 신고의 심각도를 반영한다.
+- cooldown을 생성하지 않는 이유는 두 가지다. `match_cooldowns`는
+  `uq_match_cooldowns_member_active` 부분 unique index로 회원당 `ACTIVE` row를
+  하나만 허용하므로 기존 매칭 cooldown과 충돌한다. 또 신고 검토는 만남이 끝난
+  뒤에 이뤄지므로 즉시 재매칭을 억제하는 효과가 약하다.
+- `manner_temperature` 하한은 `20.00`으로 clamp한다. 후기 기능이 아직 없어
+  온도를 올릴 경로가 없으므로 하강만 누적되는 것을 막는다.
+- 하한에 도달한 뒤의 유효 판정도 penalty event row는 그대로 남긴다.
+  `manner_temperature_delta`에는 실제 적용된 차감량을 기록한다.
+
+#### 누적 집계와 자동 처리
+
+- 누적 집계 대상은 피신고 회원(`reported_member_id`)의 유효 신고다.
+- window는 최근 **30일**이며 `reports.created_at`을 `Asia/Seoul` 기준으로 판정한다.
+- 같은 만남에서 사유만 다른 여러 신고를 하나로 압축하기 위해
+  `(reporter_member_id, group_id)` 조합의 distinct 개수로 계산한다.
+- 같은 reporter가 다른 group에서 다시 신고한 경우는 별건으로 계산한다.
+  실제 재발이기 때문이다.
+- 누적 카운터를 컬럼으로 저장하지 않고 조회 시점에 계산한다. window가 지나면
+  카운트가 자동으로 줄어든다.
+- 누적 유효 신고가 **3건**에 도달하면 관리자 알림을 생성한다.
+- 같은 회원에게 이미 미확인(`OPEN`) 알림이 있으면 새로 생성하지 않는다. 임계를 넘긴
+  뒤의 모든 유효 판정마다 알림이 쌓이는 것을 막는다. 관리자가 조치해 `CLOSED`가 된
+  뒤 새 신고가 누적되면 다시 생성한다.
+- 자동 처리는 회원 `status`를 변경하지 않는다. 실제 `WARNING`, `SUSPEND`, `BAN`은
+  관리자 수동 경로만 사용한다.
+- 신고 접수를 제한하지 않는다. 사용자가 한 만남에서 여러 사유를 남기는 것은
+  관리자 판단에 유용하므로 그대로 받고, 자동 트리거만 위 규칙으로 보수적으로 센다.
+
+#### 적용 시점과 멱등성
+
+- penalty, `manner_temperature`, 누적 판정과 관리자 알림은 관리자의 `RESOLVED`
+  전이 transaction 안에서 동기 처리한다. 별도 Scheduler를 추가하지 않는다.
+- 신고 누적은 시간 경과가 아니라 관리자 행위로만 변하므로 batch 대상이 아니다.
+- 유효 판정 1건에 penalty event는 정확히 1건이다. 멱등성 원인 key는
+  `match_penalty_events.related_report_id`이며 부분 unique index로 강제한다.
+- 관리자 알림의 멱등성 원인 key는 임계를 돌파시킨 신고 ID다.
+- report와 member를 함께 잠그는 모든 service는 **member -> report** 순서를
+  사용한다. 관리자 두 명이 신고 검토와 회원 제재를 동시에 수행할 때의 deadlock을
+  막기 위한 고정 순서다.
+- `RESOLVED`뿐 아니라 `REJECTED`도 member를 먼저 잠근다. terminal 전이는
+  `admin_actions`를 INSERT하고 그 FK 검사가 `members` row에 KEY SHARE lock을 걸기
+  때문이다. 즉 `REJECTED`도 report lock을 쥔 뒤 members lock을 요구하므로, 순서를
+  맞추지 않으면 `RESOLVED`와 `REJECTED` 사이에 deadlock이 발생한다. 실제로 구현 중
+  기존 동시성 테스트에서 이 deadlock을 재현했다.
+- 관리자 수동 처리가 자동 처리보다 항상 우선한다. 자동 처리가 `status`를
+  변경하지 않으므로 상태 전이 충돌은 발생하지 않는다.
+
+#### 이번 단계에서 도입하지 않는 항목
+
+- `manner_temperature` 30도 이하 매칭 제한. 상승 경로가 없는 상태에서 도입하면
+  사실상 영구 매칭 제한이 되므로 후기 기능과 함께 설계한다.
+- `manner_temperature` 회복·재계산. 증분 적용만 하며 재계산 batch를 두지 않는다.
+- 피신고 회원에게 보내는 제재 사유·기간 통보. 신고자 identity 비노출 제약과 함께
+  별도로 설계한다.
+- 자동 `SUSPEND`와 자동 `BAN`.
 
 ## 매칭 실패 후 솔로 코스 전환 정책
 

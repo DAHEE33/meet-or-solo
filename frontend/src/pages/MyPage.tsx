@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
+import { authApi } from '../api/auth';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import { adminReportsApi } from '../api/adminReports';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
@@ -27,6 +28,7 @@ export default function MyPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // 취향 상태는 부가 정보다. 조회에 실패하면 섹션을 조용히 숨기고 마이페이지는 그대로 보여준다.
   useEffect(() => {
@@ -63,6 +65,21 @@ export default function MyPage() {
       .catch(() => { if (!controller.signal.aborted) setIsAdmin(false); });
     return () => controller.abort();
   }, []);
+
+  // 로그아웃은 서버가 refresh token을 폐기하고 cookie를 만료시켜야 완료된다.
+  // 호출이 실패해도 공용 기기에 화면을 남기지 않도록 로그인으로 보내되 실패 사실은 알린다.
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await authApi.logout();
+    } catch {
+      setErrorMessage('로그아웃 처리에 실패했습니다. 공용 기기라면 브라우저를 종료해 주세요.');
+    } finally {
+      setIsLoggingOut(false);
+      navigate('/login', { replace: true });
+    }
+  };
 
   return (
     <MobileLayout>
@@ -197,10 +214,11 @@ export default function MyPage() {
 
         <button
           type="button"
-          onClick={() => navigate('/login')}
-          className="mt-2 rounded-2xl border border-line bg-white py-3.5 text-[14px] font-semibold text-ink/60 active:bg-sand"
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          className="mt-2 rounded-2xl border border-line bg-white py-3.5 text-[14px] font-semibold text-ink/60 active:bg-sand disabled:opacity-60"
         >
-          로그아웃
+          {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
         </button>
       </main>
     </MobileLayout>

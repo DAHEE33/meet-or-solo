@@ -101,14 +101,33 @@ class FestivalCheckinCancelledEventHandlerIntegrationTest {
         assertThat(poolStatus(poolId)).isEqualTo("PROPOSED");
     }
 
+    /**
+     * {@code docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md} 6장이 요구한 것은 "같은 축제로
+     * 재체크인(이번 이벤트와 무관) 시 기존 동작이 깨지지 않는지 회귀 확인"이다. 여기서 말하는
+     * 기존 동작은 같은 문서 1.1절 4번 단계의 내용, 즉 취소 UPDATE를 새 INSERT보다 먼저 flush해
+     * {@code uq_festival_checkins_member_festival_active} 부분 unique index 위반을 막는 것이다.
+     * 따라서 이 테스트가 지켜야 할 것은 pool 상태가 아니라 재체크인 성공 자체다.
+     *
+     * <p>pool 상태는 다음과 같이 확정했다. 취소되는 체크인마다 이벤트가 발행되므로 같은 축제로
+     * 재체크인해도 그 축제의 {@code WAITING} pool은 {@code CANCELLED}가 된다. 이 경로는 화면으로는
+     * 도달할 수 없다. {@code WAITING} pool의 검색 window가 60초인데
+     * ({@code MatchPoolEntryService}) 그 60초 동안 체크인은 아직 55분 넘게 유효하고,
+     * {@code FestivalDetailPage}는 이미 체크인한 축제의 체크인 버튼을 숨긴다
+     * ({@code !isCheckedIntoThisFestival}). 체크인이 1시간 뒤 만료돼 재체크인할 때는 pool이 이미
+     * {@code EXPIRED}라 취소 대상이 없다.
+     */
     @Test
-    void 같은_축제_재체크인은_그_축제의_WAITING_pool을_취소하지_않는다() {
-        FestivalCheckinResponse checkinA = checkinAtFestivalA();
-        long poolId = insertWaitingPool(checkinA.id());
+    void 같은_축제_재체크인은_unique_index_위반_없이_기존_체크인을_대체한다() {
+        FestivalCheckinResponse first = checkinAtFestivalA();
+        long poolId = insertWaitingPool(first.id());
 
-        checkinAtFestivalA();
+        FestivalCheckinResponse second = checkinAtFestivalA();
 
-        assertThat(poolStatus(poolId)).isEqualTo("WAITING");
+        assertThat(second.id()).isNotEqualTo(first.id());
+        assertThat(checkinStatus(first.id())).isEqualTo("CANCELLED");
+        assertThat(checkinStatus(second.id())).isEqualTo("ACTIVE");
+        assertThat(activeCheckinCount(FESTIVAL_A_ID)).isEqualTo(1);
+        assertThat(poolStatus(poolId)).isEqualTo("CANCELLED");
     }
 
     private FestivalCheckinResponse checkinAtFestivalA() {
@@ -119,6 +138,16 @@ class FestivalCheckinCancelledEventHandlerIntegrationTest {
     private FestivalCheckinResponse checkinAtFestivalB() {
         return checkinService.checkIn(MEMBER_ID, FESTIVAL_B_ID,
                 new CheckInRequest(new BigDecimal("38.1000000000"), new BigDecimal("129.1000000000"), null));
+    }
+
+    private String checkinStatus(long checkinId) {
+        return jdbc.queryForObject("SELECT status FROM festival_checkins WHERE id=?", String.class, checkinId);
+    }
+
+    private int activeCheckinCount(long festivalId) {
+        return jdbc.queryForObject(
+                "SELECT count(*) FROM festival_checkins WHERE member_id=? AND festival_id=? AND status='ACTIVE'",
+                Integer.class, MEMBER_ID, festivalId);
     }
 
     private String poolStatus(long poolId) {

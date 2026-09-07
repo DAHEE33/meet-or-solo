@@ -235,16 +235,35 @@ CORS는 profile별로 분리합니다.
 - Access Token: 짧은 만료 시간의 JWT
 - Refresh Token: DB 저장
 - Refresh Token 만료와 폐기 지원
-- logout 시 Refresh Token 무효화 (미구현)
+- logout 시 Refresh Token 무효화 (구현 완료)
 - 회원 탈퇴 시 개인정보 삭제 또는 익명화 (미구현)
 
 cookie/header 전략은 인증 구현 단계에서 확정합니다.
 
-로그아웃과 회원 탈퇴는 아직 구현되지 않았습니다. 현재 화면의 "로그아웃" 버튼은 `/login`으로
-이동만 하며 `access_token` cookie, refresh token, WebSocket session을 그대로 둡니다. backend에
-로그아웃 endpoint도 없습니다. 구현 계획은
-[관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.6 로그아웃과 4.4 회원 본인
-탈퇴를 따릅니다.
+### 로그아웃
+
+`POST /api/auth/logout`이 로그아웃을 처리합니다.
+
+- `access_token` cookie의 회원을 찾아 refresh token을 폐기합니다(`revokeByMemberId`).
+- transaction commit 이후 `MemberLoggedOutEvent`로 해당 회원의 WebSocket session을 종료합니다.
+  관리자 제재와 같은 순서입니다.
+- `access_token`과 `refresh_token` cookie를 `Max-Age=0`으로 만료시킵니다. 발급 때와 동일한
+  `Path=/`, `HttpOnly`, `Secure`, `SameSite=Lax` 속성을 유지해야 브라우저가 실제로 삭제합니다.
+- 인증 여부와 무관하게 항상 `204`를 반환하는 멱등 endpoint입니다. 토큰이 없거나 만료·변조된
+  경우 폐기만 생략하고 cookie 만료 헤더는 그대로 내려줍니다.
+- 진행 중인 매칭 pool/proposal/group은 정리하지 않습니다. 로그아웃은 매칭 취소가 아니며,
+  로그아웃으로 매칭을 종료시키면 penalty 회피 경로가 됩니다. 미응답은 기존 proposal timeout과
+  penalty 정책이 처리합니다.
+
+알려진 한계로, access token은 stateless JWT(기본 30분)이므로 서버가 강제로 무효화하지
+않습니다. 브라우저는 cookie가 사라져 즉시 `401`이 되지만, 이미 유출된 raw token은 남은 만료
+시간까지 유효합니다. 즉시 무효화가 필요해지면 회원별 `logout_at`(또는 token version) denylist를
+`MemberAccessInterceptor`에서 검증하는 방식을 별도 단계로 검토합니다.
+
+회원 탈퇴는 아직 구현되지 않았습니다. 구현 계획은
+[관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.4 회원 본인 탈퇴를 따르며,
+refresh token 폐기와 session 종료는 로그아웃이 만든 `AuthService.revokeSession(memberId)`을
+재사용합니다.
 
 ## WebSocket 인증과 권한
 

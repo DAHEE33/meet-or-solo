@@ -18,6 +18,14 @@ describe('MyPage', () => {
     expect(html).toContain('href="/mypage/blocks"');
   });
 
+  it('로그아웃은 링크가 아니라 API를 호출하는 button으로 그린다', () => {
+    // jsdom이 없어 클릭을 재현할 수 없으므로 마크업 수준에서 navigate 전용 link가 아님을 확인한다.
+    // 실제 호출 계약은 api/auth.test.ts가 검증한다.
+    const html = renderToStaticMarkup(<MemoryRouter><MyPage /></MemoryRouter>);
+    expect(html).toContain('로그아웃');
+    expect(html).not.toContain('href="/login"');
+  });
+
   it('취향 상태를 조회하기 전에는 상태 섹션을 그리지 않는다', () => {
     // useEffect가 돌지 않는 SSR 마크업이므로 초기 상태(LOADING)가 그대로 나온다.
     const html = renderToStaticMarkup(<MemoryRouter><MyPage /></MemoryRouter>);

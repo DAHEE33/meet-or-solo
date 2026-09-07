@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -64,6 +65,36 @@ public class MatchPenaltyEvent {
 
     @Column(name = "related_pool_id")
     private Long relatedPoolId;
+
+    @Column(name = "related_report_id")
+    private Long relatedReportId;
+
+    @Column(name = "manner_temperature_delta", precision = 5, scale = 2)
+    private BigDecimal mannerTemperatureDelta;
+
+    /**
+     * 관리자가 유효하다고 판정한 신고의 penalty event.
+     * {@code relatedReportId} 부분 unique index가 유효 판정 1건당 1건을 보장한다.
+     * {@code mannerTemperatureDelta}에는 하한 clamp 이후 실제로 적용된 차감량을 음수로 저장한다.
+     */
+    public static MatchPenaltyEvent forReportConfirmed(
+            long memberId,
+            int scoreDelta,
+            BigDecimal mannerTemperatureDelta,
+            String reason,
+            long reportId,
+            OffsetDateTime now
+    ) {
+        MatchPenaltyEvent event = new MatchPenaltyEvent();
+        event.memberId = memberId;
+        event.eventType = "REPORT_CONFIRMED";
+        event.scoreDelta = scoreDelta;
+        event.mannerTemperatureDelta = mannerTemperatureDelta;
+        event.reason = reason;
+        event.relatedReportId = reportId;
+        event.createdAt = now;
+        return event;
+    }
 
     public static MatchPenaltyEvent forPoolCancel(long memberId, int scoreDelta,
             String reason, long poolId, OffsetDateTime now) {

@@ -29,6 +29,385 @@
   null, state 없이 체크인 있음 → 그 축제).
 - 검증: `tsc -b` 통과, vitest **341개 전부 통과**, `npm run build` 성공. Backend 변경 없음.
 
+## [10-B 안전 후속] 로그아웃 구현과 소셜 계정 전환 (docs/19 4.6)
+
+상태: Backend/Frontend 구현·전체 회귀 완료. PR 대기
+
+브랜치는 `feature/wbs-10-b-logout`이며 `dev`(`d7c04c5`)에서 분기했다. 로그아웃 버튼이
+`navigate('/login')`만 호출해 **누르고도 로그아웃이 되지 않던** 문제를 없앤다. cookie,
+refresh token, WebSocket session이 전부 살아 있어 공용 기기에서 보안 문제였다.
+
+### 먼저 확정한 정책 4건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 미인증 로그아웃 호출 | `204` 멱등. cookie 만료 헤더는 항상 내려준다 |
+| WebSocket session | 함께 종료. 관리자 제재와 같은 revoke → `AFTER_COMMIT` → `closeAll` 순서 |
+| access token 무효화 | cookie 만료만. denylist는 도입하지 않고 한계를 `docs/06`에 기록 |
+| 진행 중 매칭 pool/proposal/group | 로그아웃은 허용하되 정리하지 않는다 |
+
+세 번째가 중요하다. access token은 stateless JWT(기본 30분)라 **서버가 강제로 무효화할 수
+없다.** 브라우저는 cookie가 사라져 즉시 `401`이지만 이미 유출된 raw token은 남은 만료
+시간까지 유효하다. `docs/NEXT_PROMPT.md`의 "로그아웃 후 access token으로 401" 테스트 항목은
+cookie를 지우는 것만으로 성립하지 않아, "cookie 없이 호출하면 `401`" + "폐기된 refresh token은
+거절"로 바꿔 검증했다.
+
+네 번째는 로그아웃으로 매칭을 종료시키면 penalty 회피 경로가 열리기 때문이다. 로그아웃은
+매칭 취소가 아니고, 미응답은 기존 proposal timeout·penalty 정책이 그대로 처리한다.
+
+### 구현
+
+Backend
+
+- `POST /api/auth/logout` 신설. 항상 `204`, `access_token`·`refresh_token`을 `Max-Age=0`으로
+  만료한다. cookie 속성이 발급 때와 하나라도 다르면 브라우저가 지우지 않으므로 발급용
+  `tokenCookie(...)`에 `Duration.ZERO`를 넘겨 재사용했다.
+- `AuthService.logout(rawAccessToken)`은 토큰이 없거나 만료·변조되면 조용히 종료한다.
+- `AuthService.revokeSession(memberId)`이 `revokeByMemberId` 폐기와 `MemberLoggedOutEvent`
+  발행을 담당한다. 4.4 회원 탈퇴가 이 경로를 재사용한다.
+- `domain/auth/event/MemberLoggedOutEvent`·`MemberLoggedOutEventHandler`를 신설했다.
+  `AdminMemberAccessRevokedEvent`를 그대로 쓰지 않은 이유는 admin 도메인 이벤트를 auth가
+  발행하는 도메인 역전을 피하기 위해서다.
+- `SecurityConfig`, `WebMvcConfig`, migration은 변경하지 않았다. `/api/auth/**`는 이미
+  `MemberAccessInterceptor` 제외 경로여서 정지된 회원도 로그아웃할 수 있다.
+
+Frontend
+
+- `src/api/auth.ts`를 신설하고 `MyPage`의 버튼이 `authApi.logout()` 호출 후
+  `/login`으로 `replace` 이동하도록 고쳤다.
+- 호출이 실패해도 공용 기기에 화면을 남기지 않도록 이동은 하되 오류 문구를 노출하고,
+  `isLoggingOut`으로 중복 클릭을 막는다.
+
+### 검증
+
+- Backend 전체 **727 tests 실패 0건**(기존 716 + 신규 11).
+- `AuthLogoutIntegrationTest` 4건은 실제 PostgreSQL Testcontainers로 refresh token 폐기 후
+  `refresh` 거절, 재호출 멱등성, 변조 토큰의 무영향, commit 이후 WebSocket session 종료를
+  확인한다.
+- `AuthControllerTest`는 로그아웃 cookie의 속성을 **로그인 응답 cookie와 직접 비교**해
+  `Path`/`HttpOnly`/`Secure`/`SameSite` 불일치를 잡는다. 문자열을 하드코딩하지 않았다.
+- Frontend 43 files/370 tests 통과, `npx tsc --noEmit` 통과. jsdom이 없어 클릭 재현은
+  불가능하므로 호출 계약은 `src/api/auth.test.ts`가 검증한다.
+
+### 수동 검증에서 드러난 후속 — 소셜 계정 전환
+
+로그아웃 자체는 브라우저에서 PASS했다. `access_token`·`refresh_token` cookie가 모두
+삭제되는 것을 확인했다.
+
+그 과정에서 별개 문제를 확인했다. **로그아웃 후 카카오 버튼을 누르면 아이디 입력 없이
+직전 계정으로 즉시 재로그인된다.** 우리 로그아웃 버그가 아니라, 우리 세션(cookie + DB
+refresh token + WebSocket)과 카카오 계정 세션(`kakao.com` cookie)이 별개이기 때문이다.
+카카오 입장에서는 이미 로그인된 사용자라 인가 코드를 바로 돌려준다. 소셜 로그인의 표준
+동작이지만 **다른 계정으로 바꿀 수 없다**는 실사용 문제가 된다.
+
+검토한 선택지는 셋이었다.
+
+| 방법 | 결과 | 대가 |
+| --- | --- | --- |
+| `prompt=select_account` | 계정 선택 화면 | 없음. 채택 |
+| `prompt=login` | 매번 재인증 | 평소 로그인도 매번 아이디 입력 |
+| 카카오계정과 함께 로그아웃 | 카카오 세션 종료 | 다른 카카오 서비스도 로그아웃. `logout_redirect_uri` 콘솔 사전 등록. 로그아웃이 `204`로 끝날 수 없어 흐름 재설계 |
+
+세 번째는 로그아웃 API 계약 자체를 바꿔야 해서 제외했다. 채택한 구현은 authorize URL에
+파라미터 하나씩 추가하는 것이다.
+
+- 카카오 `prompt=select_account` — [공식 문서](https://developers.kakao.com/docs/ko/kakaologin/rest-api)로 확인했다.
+- 네이버 `auth_type=reauthenticate` — **공식 문서 접근이 차단되어 커뮤니티 자료로만 확인했다.**
+  값이 틀렸을 가능성이 남아 있으므로 네이버 로그인 화면을 직접 확인해야 한다.
+
+### 남은 것
+
+- 네이버 `auth_type=reauthenticate` 값 검증. 공식 문서가 열리면 확정한다.
+- 4.4 회원 탈퇴에서 `revokeSession` 재사용.
+
+
+## [10-B FIX] 기존 실패 테스트 15건 복구와 체크인 취소 pool 정리 트랜잭션 버그
+
+상태: 완료 (PR #51, dev 병합 완료)
+
+브랜치는 `fix/wbs-10-b-failing-tests-and-checkin-pool-transaction`이며 `dev`(`586f112`)에서
+분기했다. 오래 "기존 실패"로 방치돼 있던 15건을 0으로 만드는 작업이다. 조사 결과 원인이 둘로
+갈렸고 **그중 1건은 테스트 문제가 아니라 실제 운영 버그였다.**
+
+### (A) 14건 — `@WebMvcTest` 슬라이스에 `JwtProvider` 누락
+
+`FestivalControllerTest` 9건, `TourPlaceControllerTest` 5건이다. 둘 다
+`@WebMvcTest(...)` + `@Import(SecurityConfig.class)` 구성인데, `SecurityConfig`가 요구하는
+`JwtProvider` mock이 없어 컨텍스트 로딩 자체가 `NoSuchBeanDefinitionException`으로 실패했다.
+테스트 본문이 아니라 컨텍스트 로딩에서 터지므로 클래스 내 전체 테스트가 함께 실패한다.
+
+같은 구조인데 통과하는 `MemberConsentControllerTest`와의 차이가 정확히 한 줄이었다.
+
+```java
+@MockitoBean
+private JwtProvider jwtProvider;
+```
+
+두 파일에 위 선언과 `import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;`를 추가했다.
+
+### (B) 1건 — `AFTER_COMMIT` 리스너에서 쓰기 트랜잭션이 열리지 않던 실제 버그
+
+`FestivalCheckinCancelledEventHandlerIntegrationTest`의
+`다른_축제로_재체크인하면_기존_축제의_WAITING_pool이_CANCELLED로_정리된다`가
+`expected: "CANCELLED" but was: "WAITING"`으로 실패했다. 원인은 테스트 리포트 XML의
+`system-out`에 남아 있었다.
+
+```text
+ERROR ... FestivalCheckinCancelledEventHandler : 체크인 취소에 따른 match pool 정리에 실패했습니다.
+org.springframework.dao.InvalidDataAccessApiUsageException: no transaction is in progress
+```
+
+메커니즘은 다음과 같다.
+
+- `FestivalCheckinCancelledEventHandler`가 `@TransactionalEventListener(AFTER_COMMIT)`이다.
+- 거기서 호출하는 `MatchPoolCheckinCancellationService.cancelWaitingPool()`이
+  `@Transactional` 기본값 `REQUIRED`였다.
+- `AFTER_COMMIT` 시점에는 원본 트랜잭션이 이미 커밋됐지만 트랜잭션 동기화는 살아 있다.
+  그래서 Spring이 새 트랜잭션을 열지 않고 이미 완료된 트랜잭션에 참여하려 한다.
+- 그 상태에서 `@Modifying` UPDATE를 실행하면 `no transaction is in progress`로 터진다.
+- handler가 `catch (RuntimeException)`으로 로그만 남기고 삼키므로 **운영에서도 조용히 실패했다.**
+
+**즉 수정 전 dev/운영에서는 다른 축제로 재체크인해도 기존 축제의 `WAITING` pool이 정리되지
+않았다.** `docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md` 설계대로 동작하지 않은 것이다.
+
+수정은 pool entry 매칭 경로와 동일하게 `REQUIRES_NEW`로 맞췄다.
+
+```java
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public int cancelWaitingPool(long memberId, long festivalId, OffsetDateTime now) { ... }
+```
+
+**왜 지금까지 안 걸렸나**: 같은 클래스의 `LOCKED`/`PROPOSED` 테스트 3건은 "건드리지 않아야
+한다"를 검증하므로 handler가 아예 동작하지 않아도 통과한다. 실제 동작을 검증하는 것은 실패한
+1건뿐이었고, 그게 "기존 실패"로 분류돼 방치됐다.
+
+### 함께 점검한 `AFTER_COMMIT` 리스너 전수 조사
+
+같은 결함이 더 있는지 `@TransactionalEventListener`를 전수 확인했다. 4개가 있었다.
+
+| 리스너 | DB 쓰기 | 전파 속성 | 판정 |
+| --- | --- | --- | --- |
+| `FestivalCheckinCancelledEventHandler` | 있음 | `REQUIRED` → **`REQUIRES_NEW`로 수정** | 이번 수정 대상 |
+| `MatchingPoolEnteredEventHandler` | 있음 | 하위 서비스 전부 `REQUIRES_NEW` | 이상 없음 |
+| `MatchingStateChangedEventHandler` | 없음(WebSocket 전송만) | — | 이상 없음 |
+| `AdminMemberAccessRevokedEventHandler` | 없음(session 종료만) | — | 이상 없음 |
+
+`MatchingPoolEnteredEventHandler`가 부르는 `PoolEntryMatchingOrchestrationService`는 자신에게
+`@Transactional`이 없고, 하위 `PoolEntryMatchPoolClaimService`, `MatchingBatchReader`,
+`MatchProposalCreationService`, `MatchPoolReleaseService`가 모두 `REQUIRES_NEW`다. 즉
+`REQUIRES_NEW`가 이 프로젝트의 확립된 패턴이었고 `MatchPoolCheckinCancellationService`만
+빠져 있었다.
+
+### (C) 수정이 드러낸 공허하게 통과하던 테스트 1건
+
+(B)를 고치자 같은 클래스의
+`같은_축제_재체크인은_그_축제의_WAITING_pool을_취소하지_않는다`가 실패로 바뀌었다. 이 테스트도
+handler가 아예 돌지 않아 그동안 자기 주장을 검증한 적이 없었다. handler가 실제로 돌기 시작하니
+"같은 축제로 재체크인해도 pool은 `WAITING`으로 남는다"는 주장이 거짓임이 드러났다. 취소되는
+체크인마다 이벤트가 발행되므로 같은 축제의 pool도 `CANCELLED`가 된다.
+
+**운영 코드가 아니라 테스트를 고치기로 했다.** 근거는 두 가지다.
+
+첫째, 이 테스트의 주장에 문서 근거가 없다. `docs/21` 6장이 요구한 것은 다음 한 줄이다.
+
+> 같은 축제로 재체크인(기존 3.2절 케이스, **이번 이벤트와 무관**) 시 기존 동작이 깨지지 않는지
+> 회귀 확인.
+
+여기서 "기존 동작"은 같은 문서 1.1절 4번 단계의 내용, 즉 취소 UPDATE를 새 INSERT보다 먼저
+flush해 `uq_festival_checkins_member_festival_active` 부분 unique index 위반을 막는 것이다.
+pool 상태에 대한 요구가 아니고, 오히려 "이번 이벤트와 무관"이라고 명시했다. 실패한 테스트는
+문서가 요구한 것보다 강한 주장을 스스로 추가한 것이었다.
+
+둘째, 이 경로는 화면으로 도달할 수 없다.
+
+| 값 | 실제 | 위치 |
+| --- | --- | --- |
+| 체크인 유효기간 | 1시간 | `CheckinValidityPolicy.VALIDITY` |
+| `WAITING` pool 검색 window | 60초 | `MatchPoolEntryService` — `now.plusSeconds(60)` |
+| 같은 축제 체크인 버튼 | 체크인이 유효한 동안 숨김 | `FestivalDetailPage.tsx` — `!isCheckedIntoThisFestival` |
+
+`WAITING` pool은 60초만 산다. 그 60초 안에 같은 축제로 재체크인해야 문제가 되는데, 그 시점에
+체크인은 아직 55분 넘게 유효해서 버튼이 보이지 않는다. 체크인이 1시간 뒤 만료돼 재체크인할
+때는 pool이 이미 59분 전에 `EXPIRED`라 취소 대상이 없다. 즉 도달 불가능한 시나리오를 위해
+운영 코드에 분기를 넣는 셈이 된다.
+
+그래서 테스트를 `docs/21` 6장이 실제로 요구한 회귀 가드로 다시 썼다. 이름을
+`같은_축제_재체크인은_unique_index_위반_없이_기존_체크인을_대체한다`로 바꾸고, 새 체크인이
+`ACTIVE`로 생성되고 기존 체크인이 `CANCELLED`가 되며 해당 축제의 `ACTIVE` 체크인이 1건만
+남는지를 검증한다. pool이 `CANCELLED`가 되는 현재 동작도 함께 명시하고, 왜 이 경로가 화면으로
+도달 불가능한지를 Javadoc에 남겨 다음 사람이 같은 혼동을 겪지 않게 했다.
+
+### 함께 정리한 문서
+
+- `docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md`에 4.10 "만남 종료 후 신고 진입점 후속" 절을
+  신설하고 7장 권장 브랜치 순서에 `feature/wbs-10-b-match-report-entry`를 추가했다.
+  4.3 검증 중 발견한 "접수 API는 종료 후 30일까지 신고를 허용하는데 그 기간에 신고할 화면
+  경로가 없다"가 이 진행 로그에만 있고 로드맵에는 절 번호가 없어 묻힐 상태였다.
+- 같은 문서의 4.3 상태를 "병합 전"에서 "완료 (PR #50)"로 갱신했다. PR #50이 이미 `dev`에
+  병합됐는데 문서만 남아 있었다.
+
+### 후속 참고
+
+`ci.yml`이 `./gradlew build -x test`, `deploy-dev.yml`이 `bootJar -x test`라 현재 CI에서
+테스트가 실행되지 않는다. 실패가 0건이 된 지금은 `-x test`를 뗄 수 있는 상태다. 다만 이번
+범위에 CI 변경은 포함하지 않았다.
+
+
+## [10-B 4.3] 신고 누적·안전 자동화
+
+상태: 정책 확정, Backend·Frontend 구현, 자동 테스트 완료. dev 수동 검증 전
+
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md` 4.3절 작업이다. 브랜치는
+`feature/wbs-10-b-report-safety-automation`이며 `dev`(`7ede73d`)에서 분기했다.
+
+### 착수 전 확인
+
+- `origin/dev` 단독에서 기존 실패 15건을 baseline으로 재현했다
+  (`FestivalControllerTest` 9, `TourPlaceControllerTest` 5,
+  `FestivalCheckinCancelledEventHandlerIntegrationTest` 1). Controller 테스트를 추가하는
+  작업이라 원인 오판을 막기 위해 선행 확인이 필요했다.
+- 공유 dev DB `flyway_schema_history`는 조회하지 못했다. 저장소 `.env`는 local Docker
+  PostgreSQL 전용이고 dev DB 접속 정보가 없다. **`V25` 번호는 PR 전에 dev DB에서 다시
+  확인해야 한다.**
+
+### 정책보다 먼저 나온 구조적 충돌 3건
+
+코드보다 정책이 먼저인 작업이었고, 조사 과정에서 기획서 후보 정책을 그대로 쓸 수 없는
+이유가 세 가지 나왔다.
+
+- **기획서 3개를 그대로 합치면 유효 신고 1건이 영구 매칭 제한이 된다.** 시작값 `36.50`에서
+  `-10`이면 `26.50`이 되어 "30도 이하 매칭 제한"에 즉시 걸린다. `member_reviews`는 `V4`에
+  table만 있고 코드가 없어 온도를 올릴 경로가 하나도 없다.
+- **`match_cooldowns`는 회원당 `ACTIVE` row가 1개다.**
+  `uq_match_cooldowns_member_active` 때문에 신고 기반 cooldown은 기존 매칭 cooldown과
+  충돌한다. 그래서 cooldown을 만들지 않는다.
+- **`admin_actions.admin_member_id`가 `NOT NULL`이다.** 관리자 없이 생성되는 자동 알림을
+  담을 수 없어 별도 table이 필요했다.
+
+### 확정 정책
+
+상세는 `docs/05_MATCHING_POLICY.md`의
+`관리자 유효 판정 신고 (REPORT_CONFIRMED)` 절과 `docs/19` 4.3절에 있다.
+
+| 항목 | 확정값 |
+| --- | --- |
+| 유효 신고 정의 | `reports.status IN ('RESOLVED','ACTION_TAKEN')`. `REJECTED` 제외 |
+| 누적 집계 | 30일 rolling, `(reporter_member_id, group_id)` distinct, 임계 3 |
+| penalty | `+5`, cooldown 미생성 |
+| 매너온도 | `-5.00`, 하한 `20.00`, 증분 적용, 재계산 batch 없음 |
+| 적용 시점 | 관리자 `RESOLVED` transaction 내 동기. Scheduler 없음 |
+| 자동 제한 | 회원 `status` 미변경. 관리자 알림과 "제한 검토 대상" 표시까지만 |
+| 알림 | `admin_safety_alerts` queue + 조회·확인 API + `AdminNav` badge |
+| 멱등성 key | `match_penalty_events.related_report_id`, `admin_safety_alerts.trigger_report_id` |
+
+자동 제한을 넣지 않은 이유는 세 가지다. `docs/19` 2장의 필수 요구가 "자동 알림"이고 자동
+제한은 후보다. `AdminMemberService.act()`가 active 매칭 회원의 `SUSPEND`를 `409`로 거절하는데
+자동 경로는 이 거절을 사용자에게 전달할 곳이 없다. 그리고 트리거가 관리자의 `RESOLVED`
+클릭이라 동기 자동 정지는 관리자 클릭 하나를 줄이는 대신 의도하지 않은 정지 위험만 진다.
+
+Scheduler를 두지 않은 이유는 기존 Scheduler가 모두 시간 경과로 조건이 바뀌는 대상을
+처리하는데, 신고 누적은 관리자 행위로만 변하기 때문이다. 30일 window는 저장 카운터 없이
+조회 시점에 계산해 batch를 없앴다.
+
+### 구현 중 발견한 deadlock
+
+`AdminReportService.changeStatus()`에 `members` 갱신을 넣자 기존 동시성 테스트
+`RESOLVED와_REJECTED_동시성은_단일_terminal과_감사로그만_남긴다`에서 실제 deadlock이 났다.
+
+- `RESOLVED`는 `members` FOR UPDATE 뒤 `reports`를 잠근다.
+- `REJECTED`는 `reports`를 잠근 뒤 `admin_actions`를 INSERT하고, **그 FK 검사가 `members`
+  row에 KEY SHARE lock을 건다.**
+- 두 방향이 엇갈려 cycle이 생겼다.
+
+그래서 `RESOLVED`뿐 아니라 **terminal 전이 전체**가 member를 먼저 잠그도록 고쳤다. FK가
+암묵적으로 거는 row lock도 잠금 순서 설계에 포함해야 한다는 것이 이번 교훈이다.
+
+### 구현 범위
+
+- `V25__add_report_safety_automation.sql`: `match_penalty_events.related_report_id`와
+  `manner_temperature_delta`, 부분 unique index, 30일 집계용 `reports` 복합 index,
+  신규 `admin_safety_alerts` table
+- `ReportConfirmationService`: 유효 판정 적용과 누적 집계, 임계 알림 생성
+- `Member.increasePenaltyScore()`, `Member.decreaseMannerTemperature()` 하한 clamp
+- `AdminReportService.changeStatus()` 잠금 순서 통일과 `RESOLVED` 경로 연결
+- `AdminMemberService.act()`의 `SUSPEND`/`BAN` 시 미종료 알림 `CLOSED` 처리
+- `GET /api/admin/safety-alerts`, `PUT /api/admin/safety-alerts/{id}/acknowledgement`
+- 관리자 회원 상세에 `recentValidReportCount`, `safetyReviewRequired` 추가
+- Frontend `AdminSafetyAlertSection`, `AdminNav` 미확인 badge, 회원 상세 표시
+
+### 검증 결과
+
+- Backend 전체 `test` 714건 중 실패 15건. **baseline 15건과 동일하며 신규 실패 0건이다.**
+- `ReportSafetyAutomationIntegrationTest` PostgreSQL Testcontainers 20건 통과
+  (권한 경계, 값 적용, 멱등성, 동시 판정, 사유별 3건 압축, 하한 clamp, 30일 window 경계,
+  `ACTION_TAKEN` 집계, 알림 확인·종료, cursor pagination, deadlock 회귀).
+- 그중 `신고_접수부터_판정_알림_확인_제재까지_실제_HTTP_경로로_동작한다`는 **SQL INSERT를
+  전혀 쓰지 않고** 실제 endpoint만 사용한다.
+  `POST /api/match-groups/{groupId}/reports` → `PATCH /api/admin/reports/{id}/status` →
+  `GET /api/admin/safety-alerts` → `PUT .../acknowledgement` →
+  `POST /api/admin/members/{id}/actions` 순서로 접수의 참여자·기간 검증까지 함께 태운다.
+  접수만으로는 penalty·매너온도·알림이 생기지 않는 것도 같은 테스트에서 확인한다.
+- `접수_API는_참여하지_않은_group과_기간이_지난_group을_거절한다`로 비참여자 `404`와
+  30일 초과 `REPORT_WINDOW_EXPIRED` `409`를 확인했다.
+- `MemberSafetyPenaltyTest` 7건 통과.
+- 기존 `AdminReportIntegrationTest`의 "처리 전후 회원 점수가 변하지 않는다"는 확정 정책이
+  의도적으로 바꾸는 동작이라, 매칭·회원 상태 불변 검증과 기각 시 불변 검증으로 나눠 갱신했다.
+- Frontend 42 files/367 tests, `npx tsc --noEmit`, production/PWA build 성공.
+
+### dev 실사용 검증 결과 (2026-09-04)
+
+실제 dev DB와 실제 HTTP endpoint로 확인했다. 관리자 토큰을 발급해 API를 직접 호출했고,
+화면은 브라우저로 확인했다.
+
+| 단계 | penalty | 매너온도 | 30일 누적 | OPEN 알림 | REPORT cooldown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 판정 전 | 18 | 36.50 | 1 | 0 | 0 |
+| report 4 판정 | 23 | 31.50 | **1 유지** | 0 | 0 |
+| report 5 판정 | 28 | 26.50 | 2 | 0 | 0 |
+| report 6 판정 | 33 | 21.50 | 3 | **1** | 0 |
+
+- report 4는 report 1과 같은 `(reporter, group)` 쌍이라 penalty·매너온도만 적용되고 누적은
+  늘지 않았다. 사유별 압축이 실사용에서 확인됐다.
+- 3건째에서 알림이 생성됐고 회원 상태는 `ACTIVE`를 유지했다. 자동 제한을 넣지 않은 정책대로다.
+- penalty event는 판정 1건당 1행씩 `REPORT_CONFIRMED / +5 / -5.00`으로 저장됐다.
+- 같은 신고 재판정은 `200`을 반환하지만 penalty event 3건과 점수 33이 그대로 유지됐다.
+- 권한 경계는 일반 회원 `403`, 미인증 `401`, 없는 알림 `404`, 잘못된 status `400`이었다.
+- 관리자 화면에서 `AdminNav` badge, 알림 섹션, 회원 상세의 누적 건수와 "이용 제한 검토 대상"
+  표시를 확인했다.
+
+### 검증 중 수정한 Frontend 동작
+
+미확인 목록에서 알림을 `확인` 처리하면 badge는 즉시 줄어드는데 목록 행은 남아 있어
+새로고침 전까지 filter와 어긋났다. 미확인 목록은 처리 대기 큐이므로 확인한 항목을 목록에서
+즉시 제거하도록 바꿨다. `전체`·`확인` filter에서는 결과를 볼 수 있게 제자리 갱신을 유지한다.
+- MATCH-09 교훈에 따라 `AdminReportsPage.test.tsx`로 안전 알림 섹션이 신고 목록 상태와
+  무관하게 실제 화면에 붙어 있는지 확인했다. 섹션은 `state.status` 분기 밖에 있어 목록
+  조회가 실패해도 노출된다.
+
+### 검증 중 발견 — 과거 완료 만남을 신고할 화면 경로가 없다
+
+수동 검증 절차를 만들다가 확인했다. 이번 작업 범위는 아니지만 기록해 둔다.
+
+- `신고하기` 버튼은 `MatchRoomPage`에만 있고, 그 화면은
+  `GET /api/matching/groups/me/current`에 의존한다.
+- 그 쿼리는 `matching_group.status IN ('CONFIRMED','IN_PROGRESS')`와 활성 member만 반환한다.
+- 반면 접수 API는 `COMPLETED`/`CANCELLED` 이후 30일까지 신고를 허용한다.
+- 결과적으로 **만남이 끝난 뒤에는 신고 가능 기간이 남아 있어도 신고할 화면이 없다.**
+  `docs/05_MATCHING_POLICY.md`의 "MatchRoom 신고 UI는 후속 범위" 항목과 이어진다.
+- 수동 검증에서 서로 실제로 신고하려면 group이 `CONFIRMED`/`IN_PROGRESS`인 동안 해야 하고,
+  임계 3건에 도달하려면 서로 다른 group 3개가 필요하다.
+
+### 남은 일
+
+- ~~dev 브라우저 수동 검증~~ (**완료**. 위 `dev 실사용 검증 결과` 참고)
+- ~~`V25` 번호를 공유 dev DB `flyway_schema_history`에서 재확인~~ (**확인 완료**.
+  2026-09-02 16:33:26에 `V25`가 `success=t`로 dev DB에 적용됐다. V24가 최신이었으므로
+  번호 충돌은 없었다. local profile의 `.env`가 `127.0.0.1:15432` SSH 터널로 dev DB를
+  가리키기 때문에 backend 실행 시 Flyway가 적용했다.)
+- 후속 항목 2건을 `docs/19` 4.8·4.9로 분리했다. 4.8 회원 제재 사유·기간 통보는 **현재
+  관리자가 수동 정지해도 사용자가 이유와 기간을 알 수 없다**는 문제이고, 4.9는 매너온도
+  회복과 30도 매칭 제한이다.
+
 ## [10-B MATCH-09] 매칭 실패 → 솔로 코스 전환 연결
 
 상태: 구현·Frontend 자동 검증·dev 수동 검증 완료(Frontend 전용). Backend·migration 변경 없음

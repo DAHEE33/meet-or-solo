@@ -12,6 +12,10 @@ export type AdminMemberListItem = {
 };
 export type AdminMemberDetail = AdminMemberListItem & {
   suspendedAt: string | null; lastLoginAt: string | null;
+  /** 최근 30일 누적 유효 신고 건수. 같은 만남의 사유별 중복은 1건으로 압축한다. */
+  recentValidReportCount: number;
+  /** 누적 유효 신고가 임계에 도달해 이용 제한을 검토해야 하는 회원인지. */
+  safetyReviewRequired: boolean;
   reports: Array<{ reportId: number; reasonCode: string; status: string; createdAt: string; resolvedAt: string | null }>;
   actions: Array<{ actionId: number; actionType: AdminMemberActionType; reasonCode: AdminMemberActionReasonCode; reasonNote: string | null; reportId: number | null; createdAt: string }>;
 };

@@ -31,6 +31,9 @@ class NaverOAuthClientTest {
         assertThat(params.getFirst("state")).isEqualTo("state-value");
         assertThat(params.getFirst("redirect_uri"))
                 .isEqualTo("http://localhost:8080/api/auth/naver/callback");
+        // 우리 로그아웃은 네이버 계정 세션을 끊지 못한다. 이 값이 없으면 직전 계정으로 즉시
+        // 재로그인되어 다른 계정으로 바꿀 수 없다.
+        assertThat(params.getFirst("auth_type")).isEqualTo("reauthenticate");
     }
 
     @Test
