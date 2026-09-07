@@ -20,6 +20,7 @@ import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
 import ShareSheet from '../components/common/ShareSheet';
 import Spinner, { LoadingState } from '../components/common/Spinner';
+import ExpandableText from '../components/common/ExpandableText';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
 export default function FestivalDetailPage() {
@@ -199,7 +200,7 @@ export default function FestivalDetailPage() {
         {festival.intro && (
           <section className="flex flex-col gap-2.5">
             <h3 className="text-[17px] font-bold text-ink">소개</h3>
-            <p className="whitespace-pre-line text-[14px] leading-relaxed text-ink/75">{festival.intro}</p>
+            <ExpandableText text={festival.intro} className="text-[14px] text-ink/75" />
           </section>
         )}
 
@@ -233,7 +234,7 @@ export default function FestivalDetailPage() {
                     <span className="text-xs text-ink/50 tabular-nums">{program.time}</span>
                   )}
                   {program.description && (
-                    <span className="text-[13px] text-ink/65">{program.description}</span>
+                    <ExpandableText text={program.description} className="text-[13px] text-ink/65" />
                   )}
                 </div>
               ))}
