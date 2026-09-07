@@ -4,22 +4,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.auth.entity.RefreshToken;
+import com.survey.meetorsolo.domain.auth.event.MemberLoggedOutEvent;
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.global.error.ErrorCode;
+import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.naver.NaverOAuthClient;
 import com.survey.meetorsolo.external.naver.dto.NaverTokenResponse;
 import com.survey.meetorsolo.external.naver.dto.NaverUserResponse;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.Test;
 
 class AuthServiceTest {
@@ -30,8 +39,10 @@ class AuthServiceTest {
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final JwtProvider jwtProvider = mock(JwtProvider.class);
     private final MemberAccessPolicy accessPolicy = mock(MemberAccessPolicy.class);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final AuthService authService = new AuthService(
-            kakaoClient, naverClient, memberRepository, refreshTokenRepository, jwtProvider, accessPolicy);
+            kakaoClient, naverClient, memberRepository, refreshTokenRepository, jwtProvider, accessPolicy,
+            events);
 
     @BeforeEach
     void token정책() {
@@ -91,6 +102,47 @@ class AuthServiceTest {
         authService.loginWithNaver("code", "state");
 
         verify(refreshTokenRepository).save(existingToken);
+    }
+
+    @Test
+    void 로그아웃은_refresh_token을_폐기하고_session_종료_event를_발행한다() {
+        when(jwtProvider.getMemberIdFromAccessToken("access-token")).thenReturn(7L);
+
+        authService.logout("access-token");
+
+        verify(refreshTokenRepository).revokeByMemberId(eq(7L), any(OffsetDateTime.class));
+        verify(events).publishEvent(new MemberLoggedOutEvent(7L));
+    }
+
+    @Test
+    void 이미_폐기된_상태에서_다시_로그아웃해도_예외없이_멱등하다() {
+        when(jwtProvider.getMemberIdFromAccessToken("access-token")).thenReturn(7L);
+        when(refreshTokenRepository.revokeByMemberId(eq(7L), any(OffsetDateTime.class))).thenReturn(0);
+
+        authService.logout("access-token");
+        authService.logout("access-token");
+
+        verify(refreshTokenRepository, times(2)).revokeByMemberId(eq(7L), any(OffsetDateTime.class));
+        verify(events, times(2)).publishEvent(new MemberLoggedOutEvent(7L));
+    }
+
+    @Test
+    void 토큰이_없으면_로그아웃은_아무것도_폐기하지_않는다() {
+        authService.logout(null);
+        authService.logout("  ");
+
+        verifyNoInteractions(refreshTokenRepository, events);
+    }
+
+    @Test
+    void 만료되거나_변조된_토큰이면_로그아웃은_조용히_종료한다() {
+        when(jwtProvider.getMemberIdFromAccessToken("broken"))
+                .thenThrow(new BusinessException(ErrorCode.UNAUTHORIZED));
+
+        authService.logout("broken");
+
+        verify(refreshTokenRepository, never()).revokeByMemberId(anyLong(), any(OffsetDateTime.class));
+        verifyNoInteractions(events);
     }
 
     private NaverUserResponse user(String id, String nickname, String email) {

@@ -1,8 +1,100 @@
 # 진행 상태 기록
 
+## [10-B 안전 후속] 로그아웃 구현과 소셜 계정 전환 (docs/19 4.6)
+
+상태: Backend/Frontend 구현·전체 회귀 완료. PR 대기
+
+브랜치는 `feature/wbs-10-b-logout`이며 `dev`(`d7c04c5`)에서 분기했다. 로그아웃 버튼이
+`navigate('/login')`만 호출해 **누르고도 로그아웃이 되지 않던** 문제를 없앤다. cookie,
+refresh token, WebSocket session이 전부 살아 있어 공용 기기에서 보안 문제였다.
+
+### 먼저 확정한 정책 4건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 미인증 로그아웃 호출 | `204` 멱등. cookie 만료 헤더는 항상 내려준다 |
+| WebSocket session | 함께 종료. 관리자 제재와 같은 revoke → `AFTER_COMMIT` → `closeAll` 순서 |
+| access token 무효화 | cookie 만료만. denylist는 도입하지 않고 한계를 `docs/06`에 기록 |
+| 진행 중 매칭 pool/proposal/group | 로그아웃은 허용하되 정리하지 않는다 |
+
+세 번째가 중요하다. access token은 stateless JWT(기본 30분)라 **서버가 강제로 무효화할 수
+없다.** 브라우저는 cookie가 사라져 즉시 `401`이지만 이미 유출된 raw token은 남은 만료
+시간까지 유효하다. `docs/NEXT_PROMPT.md`의 "로그아웃 후 access token으로 401" 테스트 항목은
+cookie를 지우는 것만으로 성립하지 않아, "cookie 없이 호출하면 `401`" + "폐기된 refresh token은
+거절"로 바꿔 검증했다.
+
+네 번째는 로그아웃으로 매칭을 종료시키면 penalty 회피 경로가 열리기 때문이다. 로그아웃은
+매칭 취소가 아니고, 미응답은 기존 proposal timeout·penalty 정책이 그대로 처리한다.
+
+### 구현
+
+Backend
+
+- `POST /api/auth/logout` 신설. 항상 `204`, `access_token`·`refresh_token`을 `Max-Age=0`으로
+  만료한다. cookie 속성이 발급 때와 하나라도 다르면 브라우저가 지우지 않으므로 발급용
+  `tokenCookie(...)`에 `Duration.ZERO`를 넘겨 재사용했다.
+- `AuthService.logout(rawAccessToken)`은 토큰이 없거나 만료·변조되면 조용히 종료한다.
+- `AuthService.revokeSession(memberId)`이 `revokeByMemberId` 폐기와 `MemberLoggedOutEvent`
+  발행을 담당한다. 4.4 회원 탈퇴가 이 경로를 재사용한다.
+- `domain/auth/event/MemberLoggedOutEvent`·`MemberLoggedOutEventHandler`를 신설했다.
+  `AdminMemberAccessRevokedEvent`를 그대로 쓰지 않은 이유는 admin 도메인 이벤트를 auth가
+  발행하는 도메인 역전을 피하기 위해서다.
+- `SecurityConfig`, `WebMvcConfig`, migration은 변경하지 않았다. `/api/auth/**`는 이미
+  `MemberAccessInterceptor` 제외 경로여서 정지된 회원도 로그아웃할 수 있다.
+
+Frontend
+
+- `src/api/auth.ts`를 신설하고 `MyPage`의 버튼이 `authApi.logout()` 호출 후
+  `/login`으로 `replace` 이동하도록 고쳤다.
+- 호출이 실패해도 공용 기기에 화면을 남기지 않도록 이동은 하되 오류 문구를 노출하고,
+  `isLoggingOut`으로 중복 클릭을 막는다.
+
+### 검증
+
+- Backend 전체 **727 tests 실패 0건**(기존 716 + 신규 11).
+- `AuthLogoutIntegrationTest` 4건은 실제 PostgreSQL Testcontainers로 refresh token 폐기 후
+  `refresh` 거절, 재호출 멱등성, 변조 토큰의 무영향, commit 이후 WebSocket session 종료를
+  확인한다.
+- `AuthControllerTest`는 로그아웃 cookie의 속성을 **로그인 응답 cookie와 직접 비교**해
+  `Path`/`HttpOnly`/`Secure`/`SameSite` 불일치를 잡는다. 문자열을 하드코딩하지 않았다.
+- Frontend 43 files/370 tests 통과, `npx tsc --noEmit` 통과. jsdom이 없어 클릭 재현은
+  불가능하므로 호출 계약은 `src/api/auth.test.ts`가 검증한다.
+
+### 수동 검증에서 드러난 후속 — 소셜 계정 전환
+
+로그아웃 자체는 브라우저에서 PASS했다. `access_token`·`refresh_token` cookie가 모두
+삭제되는 것을 확인했다.
+
+그 과정에서 별개 문제를 확인했다. **로그아웃 후 카카오 버튼을 누르면 아이디 입력 없이
+직전 계정으로 즉시 재로그인된다.** 우리 로그아웃 버그가 아니라, 우리 세션(cookie + DB
+refresh token + WebSocket)과 카카오 계정 세션(`kakao.com` cookie)이 별개이기 때문이다.
+카카오 입장에서는 이미 로그인된 사용자라 인가 코드를 바로 돌려준다. 소셜 로그인의 표준
+동작이지만 **다른 계정으로 바꿀 수 없다**는 실사용 문제가 된다.
+
+검토한 선택지는 셋이었다.
+
+| 방법 | 결과 | 대가 |
+| --- | --- | --- |
+| `prompt=select_account` | 계정 선택 화면 | 없음. 채택 |
+| `prompt=login` | 매번 재인증 | 평소 로그인도 매번 아이디 입력 |
+| 카카오계정과 함께 로그아웃 | 카카오 세션 종료 | 다른 카카오 서비스도 로그아웃. `logout_redirect_uri` 콘솔 사전 등록. 로그아웃이 `204`로 끝날 수 없어 흐름 재설계 |
+
+세 번째는 로그아웃 API 계약 자체를 바꿔야 해서 제외했다. 채택한 구현은 authorize URL에
+파라미터 하나씩 추가하는 것이다.
+
+- 카카오 `prompt=select_account` — [공식 문서](https://developers.kakao.com/docs/ko/kakaologin/rest-api)로 확인했다.
+- 네이버 `auth_type=reauthenticate` — **공식 문서 접근이 차단되어 커뮤니티 자료로만 확인했다.**
+  값이 틀렸을 가능성이 남아 있으므로 네이버 로그인 화면을 직접 확인해야 한다.
+
+### 남은 것
+
+- 네이버 `auth_type=reauthenticate` 값 검증. 공식 문서가 열리면 확정한다.
+- 4.4 회원 탈퇴에서 `revokeSession` 재사용.
+
+
 ## [10-B FIX] 기존 실패 테스트 15건 복구와 체크인 취소 pool 정리 트랜잭션 버그
 
-상태: Backend 구현·전체 회귀 완료. PR 대기
+상태: 완료 (PR #51, dev 병합 완료)
 
 브랜치는 `fix/wbs-10-b-failing-tests-and-checkin-pool-transaction`이며 `dev`(`586f112`)에서
 분기했다. 오래 "기존 실패"로 방치돼 있던 15건을 0으로 만드는 작업이다. 조사 결과 원인이 둘로

@@ -28,6 +28,8 @@ public class NaverOAuthClient {
     private final String clientId;
     private final String clientSecret;
     private final String redirectUri;
+    private static final String NAVER_REAUTHENTICATE_AUTH_TYPE = "reauthenticate";
+
     private final String authorizationUri;
     private final String tokenUri;
     private final String userInfoUri;
@@ -83,6 +85,9 @@ public class NaverOAuthClient {
                 .queryParam("client_id", clientId)
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("state", state)
+                // 카카오의 prompt=select_account와 같은 목적이다. 네이버 계정 세션이 남아 있어도
+                // 다시 로그인 화면을 띄워 다른 계정으로 바꿀 수 있게 한다.
+                .queryParam("auth_type", NAVER_REAUTHENTICATE_AUTH_TYPE)
                 .build()
                 .encode()
                 .toUri();

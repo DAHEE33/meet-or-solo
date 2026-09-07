@@ -24,6 +24,7 @@ public class KakaoOAuthClient {
     private static final Logger log = LoggerFactory.getLogger(KakaoOAuthClient.class);
 
     private static final String KAKAO_AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize";
+    private static final String KAKAO_ACCOUNT_SELECT_PROMPT = "select_account";
     private static final String KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token";
     private static final String KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me";
 
@@ -51,6 +52,9 @@ public class KakaoOAuthClient {
                 .queryParam("client_id", clientId)
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("state", state)
+                // 우리 서비스에서 로그아웃해도 카카오 계정 세션은 남는다. 이 값이 없으면 로그인 버튼을
+                // 눌렀을 때 직전 계정으로 즉시 재로그인되어 다른 계정으로 바꿀 수 없다.
+                .queryParam("prompt", KAKAO_ACCOUNT_SELECT_PROMPT)
                 .build()
                 .toUri();
     }
