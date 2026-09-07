@@ -2,7 +2,7 @@
 
 ## [10-B 안전 후속] 로그아웃 구현과 소셜 계정 전환 (docs/19 4.6)
 
-상태: Backend/Frontend 구현·전체 회귀 완료. PR 대기
+상태: 완료 (PR #52, dev 병합 완료)
 
 브랜치는 `feature/wbs-10-b-logout`이며 `dev`(`d7c04c5`)에서 분기했다. 로그아웃 버튼이
 `navigate('/login')`만 호출해 **누르고도 로그아웃이 되지 않던** 문제를 없앤다. cookie,
@@ -83,12 +83,13 @@ refresh token + WebSocket)과 카카오 계정 세션(`kakao.com` cookie)이 별
 파라미터 하나씩 추가하는 것이다.
 
 - 카카오 `prompt=select_account` — [공식 문서](https://developers.kakao.com/docs/ko/kakaologin/rest-api)로 확인했다.
-- 네이버 `auth_type=reauthenticate` — **공식 문서 접근이 차단되어 커뮤니티 자료로만 확인했다.**
-  값이 틀렸을 가능성이 남아 있으므로 네이버 로그인 화면을 직접 확인해야 한다.
+- 네이버 `auth_type=reauthenticate` — 공식 문서(`developers.naver.com`)가 이 환경에서 열리지
+  않아 커뮤니티 자료로만 확인했으나, **브라우저에서 재인증 화면이 실제로 뜨는 것을 확인했다.**
+
+두 파라미터 모두 브라우저에서 계정 선택·재인증 화면이 뜨는 것을 확인했다.
 
 ### 남은 것
 
-- 네이버 `auth_type=reauthenticate` 값 검증. 공식 문서가 열리면 확정한다.
 - 4.4 회원 탈퇴에서 `revokeSession` 재사용.
 
 
