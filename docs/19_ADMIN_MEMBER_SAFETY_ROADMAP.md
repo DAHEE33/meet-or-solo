@@ -409,6 +409,9 @@ feature/wbs-10-b-manner-temperature-recovery
 - 기존 `MatchReportIntegrationTest`의 30일 경계 테스트를 14일로 갱신했다.
 - Backend 전체 737 tests 실패 0건(기존 727 + 신규 10).
 - Frontend 45 files/379 tests, `npx tsc --noEmit` 통과.
+- 2026-09-08 브라우저 수동 검증 PASS. 실제 계정 2개로 매칭 확정 → 양쪽 도착 → `COMPLETED`
+  전환 후, `/mypage/matches` 노출·신고 접수·`신고됨` 배지 전환·관리자 화면 노출을 확인했다.
+  14일이 지난 기존 기록의 버튼 잠금과 취소된 만남의 `취소됨` 배지도 함께 확인했다.
 
 ## 5. 공통 보안·동시성 원칙
 

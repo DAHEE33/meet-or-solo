@@ -2,7 +2,7 @@
 
 ## [10-B 안전 후속] 만남 종료 후 신고 진입점 (docs/19 4.10)
 
-상태: Backend/Frontend 구현·전체 회귀 완료. PR 대기
+상태: Backend/Frontend 구현·전체 회귀·수동 검증 완료. PR 대기
 
 브랜치는 `feature/wbs-10-b-match-report-entry`이며 `dev`(`08197fa`)에서 분기했다.
 
@@ -74,10 +74,34 @@ migration, 신고 접수 API, 매칭 transaction 경계도 변경하지 않았�
 Frontend 테스트에서 `expect(html).not.toContain('disabled')`는 Tailwind의 `disabled:` 클래스가
 마크업에 항상 남아 **거짓 양성**이었다. `disabled=""` 속성으로 바꿨다.
 
+### 브라우저 수동 검증 PASS
+
+dev DB에 연결한 로컬 환경에서 실제 계정 2개(카카오 `dev카테` id 2, 네이버 `테스트` id 27)로
+확인했다.
+
+- 매칭 확정 → 양쪽 `도착했어요` → 그룹 `COMPLETED` 전환.
+  `MatchArrivalService`가 활성 참가자 전원 `ARRIVED`인 순간 그룹을 완료 처리한다.
+- `/mypage/matches`에서 해당 만남이 신고 가능 상태로 노출.
+- 신고 접수 후 목록이 다시 읽히며 `신고됨` 배지로 전환.
+- 접수된 신고가 관리자 화면에 정상 노출.
+- 기존 매칭 기록(2026-08-14 이전, 14일 초과분)은 `신고 기간 종료`로 버튼이 잠기고, 취소된
+  만남은 `취소됨` 배지로 구분됐다.
+
 ### 남은 것
 
-- 브라우저 수동 검증(MyPage 카드 진입, 신고 후 `신고됨` 반영, 기간 종료 건 버튼 잠금).
 - 차단 허용 기간 30일과 신고 14일이 갈라진 점. 버그는 아니지만 정책 일관성 검토 후보다.
+
+### 검증 중 확인한 별건
+
+`frontend/.env.local`의 `VITE_DEV_FESTIVAL_ID=144`가 남아 있어, 체크인 없이 `/matching`에
+들어가면 `MatchingConditionPage.resolveFestivalId`의 개발 fallback이 걸려 축제 선택 없이
+`Matching UI test festival`(dev DB id 144)로 바로 체크인 화면이 뜬다. 이 축제는 좌표가
+`NULL`인 더미다.
+
+`.env.local`은 커밋 대상이 아니고 fallback도 의도된 개발 편의 장치라 **버그는 아니다.** 다만
+체크인이 실제로 붙은 지금은 값이 낡았다. 축제 선택 단계를 건너뛰는 인지 문제 자체는
+`ISSUE-MR-009` 후속(비동기 상태 복원·화면 전환 안정화)의 "자동 매칭 진입이 `2 -> 1` 역순으로
+인지된다"와 같은 뿌리다.
 
 
 ## [10-B 안전 후속] 로그아웃 구현과 소셜 계정 전환 (docs/19 4.6)
