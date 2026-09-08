@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
 import { authApi } from '../api/auth';
+import { matchHistoryApi } from '../api/matchHistory';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import { adminReportsApi } from '../api/adminReports';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
@@ -53,6 +54,7 @@ export default function MyPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [matchHistory, setMatchHistory] = useState<{ count: number; hasMore: boolean } | null>(null);
   const [favorites, setFavorites] = useState<BookmarkedContent[] | null>(null);
 
   // 찜 요약은 부가 정보다. 조회에 실패하면 빈 목록으로 두고 마이페이지는 그대로 보여준다.
@@ -105,6 +107,23 @@ export default function MyPage() {
     adminReportsApi.getSession(controller.signal)
       .then(() => { if (!controller.signal.aborted) setIsAdmin(true); })
       .catch(() => { if (!controller.signal.aborted) setIsAdmin(false); });
+    return () => controller.abort();
+  }, []);
+
+  // 매칭 기록 건수는 부가 정보다. 조회에 실패해도 카드는 그대로 두고 진입만 유지한다.
+  useEffect(() => {
+    const controller = new AbortController();
+    matchHistoryApi.getMine(null, controller.signal)
+      .then((history) => {
+        if (!controller.signal.aborted) {
+          // 첫 page만 읽으므로 뒤가 더 있으면 정확한 총계가 아니라 "20+"로 표기한다.
+          setMatchHistory({
+            count: history.items.length,
+            hasMore: history.pagination.hasNext,
+          });
+        }
+      })
+      .catch(() => undefined);
     return () => controller.abort();
   }, []);
 
@@ -207,11 +226,13 @@ export default function MyPage() {
         {/* 기록 요약 */}
         <section className="grid grid-cols-2 gap-3">
           <Link
-            to="/matching"
+            to="/mypage/matches"
             className="flex flex-col gap-1 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
           >
             <HeartHandshake size={18} className="text-coral" />
-            <span className="text-sm font-semibold text-ink/55">준비 중</span>
+            <span className="text-lg font-bold text-ink tabular-nums">
+              {matchHistory ? `${matchHistory.count}${matchHistory.hasMore ? '+' : ''}` : '-'}
+            </span>
             <span className="text-xs text-ink/50">매칭 기록</span>
           </Link>
           <Link
