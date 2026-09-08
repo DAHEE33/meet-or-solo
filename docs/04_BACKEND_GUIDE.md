@@ -539,3 +539,68 @@ Redis를 명시적으로 도입하기 전까지 backend는 Redis 전용 동작�
 - actor는 event member가 같은 active group의 active member일 때만 `memberId`, `nickname`을 공개합니다.
 - `ARRIVAL_TIME_SELECTED`는 허용된 `arrivalMinutes`만 파싱하며 malformed event는 해당 항목만 제외합니다.
 - `MATCH_CONFIRMED` 저장은 group/member 확정과 같은 transaction이며 event insert 실패 시 확정도 rollback됩니다.
+
+## 찜(북마크)과 댓글·좋아요
+
+설계 근거는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`입니다. 패키지는
+`domain/content/{support,bookmark,comment,engagement}`이며 축제와 관광지가 같은 코드를 공유합니다.
+
+### 공개 조회의 optional 인증
+
+- `GET /api/{festivals|spots}/{id}/engagement`와 `GET /api/{festivals|spots}/{id}/comments`는
+  **비로그인과 만료·무효 쿠키에서도 `200`** 입니다. `OptionalMemberResolver`가 쿠키 부재·공백·파싱
+  실패를 모두 `null`로 바꾸고 예외를 던지지 않습니다.
+- 이것은 편의가 아니라 필수 제약입니다. frontend `apiClient`가 모든 `401`을 `/login` 전역
+  리다이렉트로 처리하므로, 이 두 endpoint가 `401`을 주면 비로그인 사용자가 공개 상세 화면을 열기만
+  해도 로그인 화면으로 튕깁니다.
+- 기존 controller의 `memberId(accessToken)` helper(쿠키 없으면 `UNAUTHORIZED`)는 쓰기 endpoint에만
+  씁니다. 두 방식을 혼동하면 위 사고가 재발합니다.
+- `engagement` 응답의 `viewer.loggedIn`·`viewer.admin`이 화면의 로그인 분기와 관리자 숨김 버튼
+  노출 근거입니다. 관리자 판정을 위해 별도 요청을 만들지 않습니다.
+
+### 좋아요 카운터 정합성
+
+- `content_comments.like_count`는 비정규화 카운터이고, **`content_comment_likes`의 INSERT/DELETE가
+  실제로 1행에 영향을 준 경우에만** 증감합니다(`insert ... on conflict do nothing` 후 affected
+  rows 확인). 이것이 멱등성과 카운터 정합성을 동시에 만족시키는 지점입니다.
+- `like_count = like_count ± 1`은 PostgreSQL row-level lock으로 직렬화되어 lost update가 없습니다.
+- 감소는 `where like_count > 0` 가드와 DB `chk_content_comments_like_count`가 음수를 이중으로
+  막습니다.
+- 카운터 update는 native `@Modifying` 쿼리이고 `clearAutomatically`로 persistence context를
+  비우므로, 응답에 담을 실제 카운트는 update 후 다시 읽습니다.
+- 찜 등록도 같은 방식입니다. 충돌 대상을 지정하지 않는 `on conflict do nothing`이
+  `uq_content_bookmarks_member_festival`과 `uq_content_bookmarks_member_place` 두 partial unique
+  index를 함께 커버합니다.
+
+### 상태 전이와 멱등성
+
+- 댓글 삭제·숨김·재공개는 모두 조건부 `update`의 affected rows로 판단합니다. 작성자 삭제는
+  `status = 'VISIBLE'`인 본인 댓글만 전환하고, affected가 0이면 이미 삭제된 것으로 보고 그대로
+  `204`(멱등)입니다. 존재하지만 작성자가 다르면 `FORBIDDEN`입니다.
+- 관리자 재공개는 `HIDDEN`만 되돌립니다. 작성자가 삭제한 `DELETED`는 되살리지 않으며, 응답의
+  `changed = false`가 그 사실을 알려줍니다.
+- `status`와 `deleted_at`은 `chk_content_comments_deleted_at`으로 짝이 강제되므로 모든 전이가
+  두 컬럼을 함께 씁니다.
+
+### 조회 규칙
+
+- 목록 정렬은 `id desc`입니다. `created_at`이 아니라 `id`인 이유는 동시 삽입 tie-break가 필요 없고
+  `status = 'VISIBLE'` partial index가 그대로 적중하기 때문입니다.
+- 축제용·관광지용 쿼리를 `:festivalId is null or ...` 형태로 합치지 않습니다. 합치면 위 partial
+  index를 타지 못합니다.
+- 내 좋아요 여부는 `comment_id in (:ids)` 한 번으로 조회해 N+1을 만들지 않습니다.
+- 내 찜 목록은 `HIDDEN` 대상을 제외하고 `INACTIVE`·종료 대상은 남깁니다. 축제 대표 이미지는
+  `festival_images`에서 `FestivalQueryService.representativeImages`와 같은 방식으로 채웁니다.
+- **`Festival` entity의 지역 필드명은 `areaCode`입니다.** 응답 DTO에서만 `regionCode`로 노출되므로
+  JPQL에서 `festival.regionCode`를 쓰면 런타임에 실패합니다.
+
+### 쓰기 제약
+
+- 정지·차단·비활성 회원의 신규 작성은 기존 `MemberAccessInterceptor`가 `/api/**`에서 자동으로
+  막습니다. 별도 구현하지 않습니다.
+- `PROFILE_REQUIRED` 회원은 댓글을 쓸 수 없습니다. 닉네임이 없어 표시할 이름이 없습니다.
+- 도배 완화는 같은 회원의 마지막 댓글로부터 5초이며 초과 시 `429`입니다. 삭제된 댓글도 기준에
+  포함하므로 삭제로 우회할 수 없습니다. 동시 요청 2건은 둘 다 통과할 수 있는 완화책이며,
+  엄격한 차단은 회원 단위 advisory lock이 필요해 MVP 범위에서 제외했습니다.
+- 응답에 `memberId`와 프로필 이미지를 담지 않습니다. 삭제 버튼 노출은 `mine` boolean으로만
+  판단합니다.

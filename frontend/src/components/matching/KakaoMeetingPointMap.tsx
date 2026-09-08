@@ -1,11 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MatchGroupMeetingPoint } from '../../api/matching';
+
+/** 지도를 그리는 데 필요한 최소 정보. MatchGroupMeetingPoint(만남 장소)뿐 아니라
+ * 축제/관광지 좌표(mapY=위도, mapX=경도)에서도 그대로 만들어 넘길 수 있다. */
+export type KakaoMapPoint = {
+  name: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type KakaoLatLng = { getLat(): number; getLng(): number };
+export type KakaoMap = { setCenter(position: unknown): void };
+export type KakaoMarker = { setPosition(position: unknown): void };
+
+/** Places.keywordSearch가 콜백으로 주는 결과 한 건. 관리자 만남 장소 검색이 쓴다. */
+export type KakaoPlaceSearchItem = {
+  id: string;
+  place_name: string;
+  address_name: string;
+  road_address_name: string;
+  x: string; // 경도(longitude), 문자열로 내려온다
+  y: string; // 위도(latitude), 문자열로 내려온다
+};
+
+type KakaoPlacesService = {
+  keywordSearch(
+    keyword: string,
+    callback: (data: KakaoPlaceSearchItem[], status: string) => void,
+  ): void;
+};
 
 type KakaoMaps = {
   load(callback: () => void): void;
-  LatLng: new (latitude: number, longitude: number) => unknown;
-  Map: new (container: HTMLElement, options: { center: unknown; level: number }) => unknown;
-  Marker: new (options: { map: unknown; position: unknown }) => unknown;
+  LatLng: new (latitude: number, longitude: number) => KakaoLatLng;
+  Map: new (container: HTMLElement, options: { center: unknown; level: number }) => KakaoMap;
+  Marker: new (options: { map: unknown; position: unknown }) => KakaoMarker;
+  event: {
+    addListener(target: unknown, type: string, handler: (event: { latLng: KakaoLatLng }) => void): void;
+  };
+  services: {
+    Places: new () => KakaoPlacesService;
+    Status: { OK: string; ZERO_RESULT: string; ERROR: string };
+  };
 };
 
 declare global {
@@ -41,7 +76,10 @@ export function loadKakaoMaps(appKey: string): Promise<KakaoMaps> {
     };
     script.id = SCRIPT_ID;
     script.async = true;
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(appKey)}&autoload=false`;
+    // libraries=services — 좌표 선택기(components/admin/KakaoCoordinatePicker)의
+    // 장소 검색(Places.keywordSearch)에 필요하다. 지도만 그리는 다른 화면에는 영향 없다.
+    script.src =
+      `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(appKey)}&autoload=false&libraries=services`;
     script.addEventListener('load', ready, { once: true });
     script.addEventListener('error', fail, { once: true });
     document.head.appendChild(script);
@@ -59,7 +97,7 @@ export function resetKakaoMapsLoaderForTest() {
   document.getElementById(SCRIPT_ID)?.remove();
 }
 
-export default function KakaoMeetingPointMap({ meetingPoint }: { meetingPoint: MatchGroupMeetingPoint }) {
+export default function KakaoMeetingPointMap({ meetingPoint }: { meetingPoint: KakaoMapPoint }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
 

@@ -568,3 +568,64 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   재조회하거나 WebSocket `SEND`를 하지 않습니다.
 - dialog는 `role=dialog`, `aria-modal`, title/description 연결, 최초 focus, `Escape`, focus
   복원과 `Tab` 순환을 제공하며 loading·성공·오류는 live region으로 알립니다.
+
+## 찜(북마크)과 댓글·좋아요
+
+설계 근거는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`입니다.
+
+### 로그인 여부 판단 규칙
+
+- **공개 상세 화면에서 `GET /api/members/me`를 호출하지 않습니다.** `apiClient`가 모든 `401`을
+  `window.location.replace('/login')`으로 처리하므로, 비로그인 사용자가 축제·관광지 상세를 열기만
+  해도 로그인 화면으로 튕깁니다.
+- 로그인 여부는 `GET /api/{festivals|spots}/{id}/engagement` 응답의 `viewer.loggedIn`으로만
+  판단합니다. 이 응답은 비로그인과 만료 쿠키에서도 `200`입니다.
+- 비로그인 상태에서 찜 버튼이나 댓글 입력을 누르면 요청을 보내지 않고 화면이 직접 `/login`으로
+  이동합니다. 이 분기 판단은 순수 함수 `resolveBookmarkAction(state)`
+  (`'LOGIN' | 'TOGGLE' | 'IGNORE'`)로 뽑아 두 상세 화면이 공유하고 단위 테스트로 고정합니다.
+
+### 축제 상세 / 관광지 상세
+
+- `FestivalDetailPage`와 `TourSpotDetailPage`는 `PageHeader.rightAction`에 `BookmarkButton`과
+  기존 공유 버튼을 나란히 둡니다. 찜 상태는 `Heart`를 `fill-coral text-coral`로 채워 표시하며,
+  이는 `MyPage`가 쓰던 관용구와 같습니다.
+- 댓글 섹션(`ContentCommentSection`)은 `<main>`의 마지막 요소입니다. 두 화면이 같은 컴포넌트를
+  `target={{ type: 'FESTIVAL' | 'TOUR_PLACE', id }}`로 재사용합니다.
+- 댓글 본문은 `ExpandableText`(200자 컷)를 재사용해 길어지면 접습니다.
+- 좋아요는 `ThumbsUp`으로 찜(`Heart`)과 구분합니다. `Star`는 유보된 리뷰 도메인
+  (`TourSpot.rating`)과 충돌하므로 쓰지 않습니다.
+- 목록은 무한 스크롤이 아니라 `댓글 더 보기` 버튼입니다. 두 상세 화면 모두 하단 고정 CTA가 있어
+  무한 스크롤이 스크롤 종료 지점을 잡아먹습니다.
+- 본문 길이 제한은 500자이며 `validateCommentBody`로 trim 후 검증합니다. 입력 중 남은 글자 수를
+  표시합니다.
+- 삭제 버튼은 `mine`이 `true`일 때만 노출합니다. 관리자 숨김 버튼은 `viewer.admin`이 `true`일 때만
+  노출하며, 이 두 값 모두 이미 받은 응답에서 나오므로 추가 요청이 없습니다.
+
+### 상태 관리와 방어 규칙
+
+- `useContentBookmark`, `useContentComments`는 `useMemberBlocks` 패턴을 따릅니다. framework 없는
+  `createContentBookmarkSession` / `createContentCommentsSession` closure가 상태와 in-flight
+  guard, `AbortController`, request identity를 들고 있고 hook은 얇은 wrapper입니다. 이 저장소
+  vitest는 node 환경이고 jsdom이 없어 렌더링 없이 검증할 수 있어야 하기 때문입니다.
+- **낙관적 갱신을 하지 않습니다.** 찜 토글, 댓글 등록·삭제, 좋아요는 서버 응답 성공 후에만
+  화면 상태를 바꿉니다. 좋아요 카운트는 서버가 돌려준 실제값(`{liked, likeCount}`)으로 덮습니다.
+- 이중 클릭은 동기 in-flight guard로 흡수하고, unmount 뒤 늦은 응답은 request identity와
+  `stop()`으로 무시합니다.
+- 다음 페이지를 불러올 때 `dedupeCommentsById`로 `id` 중복을 제거합니다. offset 페이징이라
+  새 댓글이 등록되면 다음 페이지에 1건이 중복될 수 있습니다
+  (`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 5.5절의 알려진 한계).
+- 성공 안내는 기존 `successMessage` + `clearSuccess` 인라인 pill 패턴을 씁니다. toast 컴포넌트는
+  도입하지 않았습니다.
+
+## 마이페이지 찜 목록
+
+- 마이페이지의 `찜한 곳` 섹션은 mock(`data/mock/tourSpots.ts`)을 제거하고 실제 API로 교체했습니다.
+  축제와 관광지를 각각 조회해 클라이언트에서 병합합니다(합쳐 주는 단일 엔드포인트는 없습니다).
+- 헤더 우측 `전체 보기`는 `/mypage/favorites`(`FavoritesPage`)로 이동합니다. `/mypage/blocks`와
+  같은 계층이며 loading, `아직 찜한 곳이 없어요`, 오류·재시도 상태를 구분하는
+  `BlockedMembersPage` 패턴을 따릅니다.
+- 상단 `Chip` 탭으로 축제와 관광지를 나눕니다. 항목은 `FestivalListItem`과 `ExploreSpotItem`을
+  재사용하므로 진행 중·예정·마감 배지가 기존 규칙 그대로 표시됩니다.
+- 목록에서 찜을 해제할 때도 낙관적으로 제거하지 않고, 서버 성공 후 해당 항목만 제거합니다.
+- `HIDDEN` 대상은 서버가 목록에서 제외합니다. `INACTIVE`와 종료된 축제는 목록에 남기고 배지로만
+  구분합니다 — 사용자가 명시적으로 저장한 항목이 동기화 사정으로 사라지면 안 됩니다.

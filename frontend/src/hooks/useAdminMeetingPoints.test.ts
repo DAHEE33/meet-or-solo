@@ -16,7 +16,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function makeDeps(overrides: Partial<Parameters<typeof createAdminMeetingPointsSession>[0]> = {}) {
   return {
-    searchFestivals: vi.fn().mockResolvedValue({ items: [] }),
+    searchFestivals: vi.fn().mockResolvedValue([]),
     listPoints: vi.fn().mockResolvedValue([]),
     create: vi.fn(),
     update: vi.fn(),

@@ -1,5 +1,142 @@
 # 진행 상태 기록
 
+## [10-C 콘텐츠 참여] 찜(북마크)과 공개 댓글·좋아요
+
+상태: 설계·Backend·Frontend 구현 완료. **Backend 통합 테스트 미실행(Docker 없음), 런타임 미검증**
+
+기획서·WBS에 없던 신규 범위이며, 사용자 승인에 따라 10-B의 다음 작업으로 잡혀 있던
+`신고·안전·후기와 관리자 연계`보다 **먼저** 진행했다. 설계 전문은
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`이고 DB는 `docs/11_DATABASE_DESIGN.md`,
+화면 규칙은 `docs/03_FRONTEND_GUIDE.md`, 서버 규칙은 `docs/04_BACKEND_GUIDE.md`, 보안은
+`docs/06_SECURITY_POLICY.md`, 검증 기준은 `docs/09_TEST_AND_QUALITY_STRATEGY.md`에 반영했다.
+
+작업 브랜치는 사용자 선택에 따라 새로 만들지 않고 `feature/wbs-10-a-festival-course`에서
+이어서 작업했다. 댓글 본문이 재사용하는 `ExpandableText`가 그 브랜치에만 있었기 때문이다.
+
+### 먼저 확정한 판단 3건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 공개 조회의 인증 | 비로그인·만료·무효 쿠키 전부 `200`. 로그인 여부는 `engagement`의 `viewer.loggedIn`으로만 판단 |
+| 좋아요 카운터 | `content_comment_likes`의 실제 영향 행 수가 1일 때만 `like_count` 증감 |
+| 댓글 신고 | 이번 범위 제외. 작성자 삭제 + 관리자 숨김으로 최소 모더레이션 확보 |
+
+첫 번째가 가장 중요하다. frontend `apiClient`는 **모든 `401`을
+`window.location.replace('/login')` 전역 리다이렉트로 처리**한다. 그래서 공개 상세 화면에 붙는
+조회 API가 `401`을 주거나 로그인 여부를 알기 위해 `GET /api/members/me`를 호출하면, 비로그인
+사용자가 축제·관광지 상세를 **열기만 해도 로그인 화면으로 튕긴다.** 이 제약이 `engagement`
+endpoint와 `OptionalMemberResolver`의 존재 이유다.
+
+세 번째는 `reports`에 target 개념이 없기 때문이다(`reported_member_id NOT NULL` + match group
+한정). 댓글을 붙이려면 `admin_actions.report_id`, `match_penalty_events.related_report_id`,
+`admin_safety_alerts.trigger_report_id`와 V25가 만든 30일 유효 신고 누적 자동 제재 파이프라인까지
+함께 건드려야 해서, 매너온도·제재 정책 변경이 된다.
+
+### DB
+
+`V26__add_content_bookmarks_comments.sql`로 `content_bookmarks`, `content_comments`,
+`content_comment_likes` 3개를 생성했다. 기존 테이블과 constraint는 변경하지 않았다.
+
+대상(축제/관광지) 표현은 `target_type` + `target_id`가 아니라 nullable FK 2개 +
+`정확히 하나` CHECK다. `recommendation_click_logs`의 기존 방식을 따르되 CHECK를 `OR`(둘 다 채워도
+통과)에서 배타적 조건으로 조였다. 동기화가 축제를 물리 삭제하지 않고 `INACTIVE` 표시만 하므로
+(`FestivalSyncWriter.markMissingFestivalsInactive`) `ON DELETE RESTRICT`가 안전하다.
+
+댓글은 `deleted_at` 단독 soft delete 선례가 없어 `status` 상태 머신
+(`VISIBLE`/`DELETED`/`HIDDEN`) + 시점 컬럼 관용구를 따랐고,
+`(status = 'VISIBLE') = (deleted_at IS NULL)` 짝 CHECK는 V25 `admin_safety_alerts`와 같은 방식이다.
+
+**적용 전 공유 dev DB의 `flyway_schema_history`에서 V26이 비어 있는지 확인해야 한다.**
+
+### Backend
+
+`domain/content/{support,bookmark,comment,engagement}`에 entity·repository·service·controller·DTO를
+추가하고 `ErrorCode`에 `CONTENT_TARGET_NOT_FOUND`,
+`CONTENT_COMMENT_{INVALID_REQUEST,NOT_FOUND,FORBIDDEN,PROFILE_REQUIRED,TOO_FREQUENT}`를 넣었다.
+`429`는 `handleBusinessException`이 `errorCode.getStatus()`를 쓰므로 handler 변경이 없었다.
+
+endpoint는 `GET|PUT /api/{festivals|spots}/{id}/engagement|bookmark`,
+`GET|POST /api/{festivals|spots}/{id}/comments`, `DELETE /api/comments/{id}`,
+`PUT /api/comments/{id}/like`, `PUT /api/admin/comments/{id}/visibility`,
+`GET /api/members/me/bookmarks?type&page&size`다. 토글은 `POST`/`DELETE` 쌍이 아니라
+`PUT` + 상태 body 하나로 뒀다 — 기존 `PUT .../cancellation`·`.../acknowledgement` 방식과 같고
+멱등성과 "현재 카운트를 응답으로 돌려준다"를 동시에 만족한다.
+
+정지·차단·비활성 회원의 신규 작성은 기존 `MemberAccessInterceptor`가 자동으로 막으므로 별도
+구현하지 않았다. `PROFILE_REQUIRED`는 닉네임이 없어 표시할 이름이 없으므로 따로 막는다.
+
+### Frontend
+
+`useMemberBlocks` 패턴대로 `createContentBookmarkSession`/`createContentCommentsSession` 세션
+팩토리와 얇은 hook을 만들고, 두 상세 화면의 `PageHeader.rightAction`에 `BookmarkButton`을 공유
+버튼과 나란히 두고 `<main>` 마지막에 `ContentCommentSection`을 붙였다. 댓글 본문은
+`ExpandableText`(200자 컷)를 재사용하고 좋아요는 `ThumbsUp`으로 찜(`Heart`)과 구분한다.
+
+`MyPage`의 mock 찜 섹션(`data/mock/tourSpots.ts`)을 실데이터로 교체하고
+`/mypage/favorites`(`FavoritesPage`)를 추가했다. `data/mock/tourSpots.ts`는 이제 참조되지 않으므로
+후속 작업에서 삭제 대상이다.
+
+낙관적 갱신은 하지 않는다. 좋아요 카운트도 서버가 돌려준 실제값으로 덮는다.
+
+### 검증
+
+- Frontend: `tsc --noEmit` 통과, vitest **55 파일 / 478 테스트 통과**(기존 399 + 신규 79),
+  `npm run build` 성공. 코디네이터가 직접 재실행해 확인했다.
+- Backend: `compileJava`/`compileTestJava` 통과, `ContentCommentServiceTest` 18건과
+  `OptionalMemberResolverTest` 5건 통과.
+- **Backend 통합 테스트 `ContentBookmarkCommentIntegrationTest`(24건)는 컴파일만 되고 실행되지
+  않았다.** 작업 머신에 Docker가 없어 Testcontainers가 `ContainerFetchException`으로 실패한다.
+  이 저장소의 Spring context 테스트는 전부 Testcontainers를 요구해 우회 경로가 없다.
+- 그래서 **신규 JPQL의 Hibernate 파싱**과 **`ddl-auto: validate`의 entity↔V26 일치**가 런타임으로
+  검증되지 않았다. Docker 없이 가능한 정적 교차 확인은 마쳤다 — 참조하는 모든 entity 경로가 실제
+  필드명과 일치하고(특히 `Festival`의 지역 필드는 `regionCode`가 아니라 **`areaCode`**),
+  constructor projection record 타입이 selection과 맞고, entity 컬럼명·nullable·length가 V26 DDL과
+  일치한다.
+- Gradle은 이 머신에서 `JAVA_HOME="C:\java\zulu17"`을 지정해야 빌드된다(기본 `JAVA_HOME`이 JDK 8).
+
+### 남은 작업
+
+1. **Docker 환경에서 통합 테스트와 애플리케이션 부팅 1회 확인** — 그 전까지 "코드 완성, 런타임
+   미검증"으로 취급한다.
+2. **탈퇴 연동 미배선.** `ContentCommentService.softDeleteAllOnWithdrawal`과
+   `ContentBookmarkService.deleteAllOnWithdrawal`은 구현·테스트까지 되어 있지만, 이 저장소에는
+   회원 탈퇴 서비스 자체가 없다(`members.withdrawn_at` 컬럼만 있고 탈퇴 endpoint가 없다.
+   문서에 등장하는 `DELETE /api/members/me`는 미구현). 탈퇴 기능 담당자가 같은 transaction에서
+   두 메서드를 호출해야 하며 `ContentCommentService`에 TODO를 남겼다.
+3. 두 브라우저 수동 검증 — 비로그인 진입, 찜 토글, 댓글 등록·삭제, 좋아요 연타, 관리자 숨김.
+4. `data/mock/tourSpots.ts` 삭제.
+5. 이번 범위 제외 항목은 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 9장 참고 — 대댓글, 댓글 신고,
+   인기순 정렬, 찜 공개 카운트, 목록 화면 하트, cursor 페이징.
+
+## [10-A 후속 11] 홈에서 솔로 코스 진입 시 체크인 게이트 복구
+
+상태: 구현 완료(Frontend 전용). 두 브라우저 수동 검증 전
+
+- 증상: 체크인하지 않고 홈의 "혼자 즐기는 주변 관광지 추천" 배너를 누르면 체크인 안내가 아니라
+  코스 화면이 떴다.
+- 원인: `HomePage`의 `CtaBanner`가 `state={{ festivalId: hotFestival.id }}`를 넘기고 있었다.
+  `resolveSoloCourseFestival`은 `location.state.festivalId`를 1순위로 쓰므로 이 값이 항상 채워져
+  **체크인 안내 분기에 도달할 수 없었다.** 이번 작업에서 생긴 문제가 아니라
+  `[10-A 후속 3]`(docs/22 구현) 때부터의 동작이다.
+- **`docs/22_SOLO_COURSE_NEARBY_SPOT_DESIGN.md` 내부에 모순이 있었다.** 5장 말미와 7장·10장은
+  "홈 배너도 `hotFestival.id`를 state로 넘기도록 고쳐야 한다"고 했지만, 9장은 "체크인이 전혀 없는
+  상태로 진입 시 대표 축제로 대체하지 않고 체크인 안내만 보여준다"로 결정했다. 전자를 구현하면
+  후자가 도달 불가능해진다.
+- 사용자 기대가 9장과 같아 **9장 결정을 살리고** 홈 배너에서 `state`를 제거했다. 문서 5장·7장에
+  정정 메모를 추가했다.
+  - `FestivalDetailPage`에서 넘기는 `festivalId`는 그대로 둔다(5장 1순위). 그 화면은 사용자가 특정
+    축제를 보고 있으므로 체크인 없이 기준으로 삼아도 된다. 두 진입 경로의 동작 차이는 의도된 것이다 —
+    홈 배너는 "내 주변"을 뜻하므로 체크인이 기준이어야 한다.
+  - 배너 설명 문구도 "선택한 축제 주변"에서 "체크인한 축제 주변"으로 바꿨다.
+- `SoloCoursePage`의 안내 버튼을 `/check-in` → `/spots`로 바꿨다(`체크인할 축제 고르기`).
+  `[10-A 후속 10]`에서 `CheckInPage`가 축제 미지정 진입 시 `/spots`로 튕기게 했으므로, 그대로 두면
+  화면이 한 번 깜빡인다.
+- `[10-A 후속 10]`에서 놓친 로딩 표시도 함께 정리했다 — `SoloCoursePage`, `ProfileEditPage`,
+  `SignupPage`, `MyPage`의 텍스트 전용 로딩을 `LoadingState`/`Spinner`로 교체했다.
+- 회귀 방지 테스트 2건을 `SoloCoursePage.test.ts`에 추가했다(state 없이 체크인 없음 → `festivalId`
+  null, state 없이 체크인 있음 → 그 축제).
+- 검증: `tsc -b` 통과, vitest **341개 전부 통과**, `npm run build` 성공. Backend 변경 없음.
+
 ## [10-B 안전 후속] 만남 종료 후 신고 진입점 (docs/19 4.10)
 
 상태: Backend/Frontend 구현·전체 회귀·수동 검증 완료. PR 대기
@@ -3539,3 +3676,54 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
 - penalty/cooldown/event/회원 점수/group 상태는 변경하지 않으며 migration은 변경하지 않았다.
 - Controller/DTO/Service/Repository 경계와 실제 PostgreSQL Testcontainers focused 테스트를 추가했다.
 - proposal 생성 race 보강, matching 전체 회귀와 실제 후보 복귀 통합 검증은 2단계로 남긴다.
+
+## [10-관리자 후속] 만남 장소 화면 — 마감 축제 검색 + 진행중/예정/마감 3분류
+
+상태: 완료
+
+- `/admin/meeting-points`가 재사용하던 공개 `GET /api/festivals`는 `festival.eventEndDate >= 오늘`
+  조건을 항상 걸어(`FestivalRepository.findVisibleFestivals`) 종료된 축제를 숨기는 사양이라,
+  관리자가 방금 끝난 축제의 만남 장소를 찾을 수 없었다(`docs/24_...` 7장에서 후속 과제로 남겨뒀던
+  항목). 이번 작업이 그 후속 과제를 처리한다.
+- Backend: `GET /api/admin/festivals?keyword=`(`AdminFestivalController` → `FestivalAdminQueryService`
+  → `FestivalRepository.findForAdmin`)를 신설했다. `eventEndDate` 필터 없이 `status in
+  (ACTIVE, ENDED)`만 걸어 검색하고, `HIDDEN`/`INACTIVE`는 제외한다. 인가는 다른 신규 admin
+  서비스와 같은 `AdminAuthorizationService.requireAdmin`을 쓴다(기존 `FestivalMeetingPointAdminService`의
+  로컬 `requireAdmin`과는 다른, 더 최신 공통 패턴).
+- Frontend: `utils/festival.ts`에 `groupFestivalsByDisplayStatus`를 추가해 기존
+  `resolveDisplayStatus` 규칙(오늘 날짜 vs `eventStartDate`/`eventEndDate`/`status`) 그대로
+  진행 중/진행 예정/마감 3그룹으로 나눈다. `AdminMeetingPointsPage`는 검색어 없이 진입해도 항상
+  이 3그룹을 채워 보여주고, 마감 그룹은 기본은 접어두되 선택된 축제가 그 안에 있으면 펼쳐서
+  시작한다.
+- 마감된 축제도 장소 등록/수정/활성화를 계속 허용한다 — 매칭 진입 자체는 어차피
+  `FestivalCheckinService`가 체크인 시점에 `ACTIVE`만 허용해 막아주므로, 화면에서 추가로
+  제약할 이유가 없다.
+- 공개 사용자 화면(`festivalsApi.getList`, 홈/탐색 목록)은 건드리지 않았다 — 종료 축제 숨김은
+  그 화면들에서는 여전히 의도된 정책이다.
+- backend 신규 unit(`FestivalAdminQueryServiceTest`)·controller(`AdminFestivalControllerTest`)
+  테스트와 `FestivalRepositoryIntegrationTest`에 `findForAdmin` 케이스를 추가했고, frontend는
+  `utils/festival.test.ts`(`groupFestivalsByDisplayStatus`)를 신규로, `useAdminMeetingPoints.test.ts`는
+  변경된 `searchFestivals` 응답 형태에 맞춰 갱신했다.
+
+## [10-관리자 후속 2] 만남 장소 등록 폼 — 카카오맵 검색·좌표 선택기 연동
+
+상태: 완료
+
+- 위도/경도를 숫자로 직접 입력하던 등록/수정 폼에 카카오맵 기반 보조 UI를 추가했다. Kakao
+  Local REST API(매칭 엔진의 후보 검색용으로 이미 계획된 것, 서버 전용 키 필요)가 아니라, 이미
+  로드하는 Kakao Maps JS SDK의 `services` 라이브러리(`Places.keywordSearch`)를 썼다 — 새 키나
+  백엔드 변경 없이 SDK 로드 URL에 `&libraries=services`만 추가했다.
+- `components/admin/KakaoPlaceSearch.tsx`(장소/주소 검색 → 이름·주소·좌표·`kakaoPlaceId` 자동
+  채움)와 `components/admin/KakaoCoordinatePicker.tsx`(선택된 좌표를 지도로 보여주고 클릭하면
+  그 지점으로 좌표를 옮기는 미세조정용 지도)를 신규 추가하고, `AdminMeetingPointFormDialogContent`
+  에 연결했다. 위도/경도 숫자 입력 필드는 fallback으로 그대로 남겨 검색/지도가 실패해도 등록이
+  막히지 않는다.
+- `components/matching/KakaoMeetingPointMap.tsx`의 `KakaoMaps` SDK 타입에 `services`/`event`를
+  추가해 재사용했다(`loadKakaoMaps` 로더는 그대로).
+- 신규 장소 등록 폼의 좌표 선택기 초기 중심점을 선택된 축제의 좌표로 잡기 위해, admin 축제
+  검색 응답(`AdminFestivalSummaryResponse`, `AdminFestivalSummary`)에 `mapX`/`mapY`를 추가했다
+  (`FestivalAdminQueryService`가 이미 갖고 있던 `FestivalSummary.mapX/mapY`를 그대로 옮김).
+- 검색 결과 매핑(`toPlacePick`), 중심점 기본값 계산(`resolveCenter`), 신규 등록 초기값 계산
+  (`toFormState`)을 순수 함수로 분리해 유닛 테스트를 추가했다 — 이 저장소 vitest 설정에는
+  jsdom이 없어(`MyPage.test.tsx` 주석 참고) 클릭 같은 DOM 상호작용은 직접 테스트하지 못하고,
+  로직만 순수 함수로 뽑아 검증했다.

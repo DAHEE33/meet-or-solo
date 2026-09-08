@@ -401,3 +401,38 @@ coverage 숫자는 참고 지표입니다. 핵심 위험 로직이 테스트되�
   검증한다.
 - 마이페이지 진입과 공개 필드, dialog 정책·접근성, 기존 MatchRoom 신고·차단, current group
   재조회와 WebSocket SEND 부재를 focused 및 전체 Vitest로 회귀 검증한다.
+
+## 찜과 댓글·좋아요 검증
+
+설계 근거는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 10장이며, 검증 상태는 같은 문서 11장에
+기록한다.
+
+### Backend
+
+- 좋아요 카운터를 최우선으로 검증한다 — 중복 ON은 1, 동시 ON 2건도 1, OFF 후 ON은 1, OFF 2번은
+  0 유지(음수 방지). 카운터가 `content_comment_likes`의 실제 영향 행 수만 따라간다는 규칙이
+  깨지면 화면 숫자가 영구히 어긋나므로 단순 CRUD보다 우선한다.
+- 찜 멱등성(ON 2번은 row 1건, OFF 2번도 성공)은 partial unique index에 의존하므로 실제
+  PostgreSQL에서만 의미가 있다.
+- **비로그인 목록 조회가 `200`이고 만료 토큰도 `200`인 것을 회귀 테스트로 고정한다.** 이 지점이
+  `401`로 바뀌면 비로그인 사용자가 공개 상세 화면에서 로그인으로 튕기는데, frontend 전역 401
+  리다이렉트 때문에 증상이 화면 전체 이동으로 나타나 원인을 찾기 어렵다.
+- 삭제된 댓글의 목록 제외와 그 댓글 좋아요 `NOT_FOUND`, 남의 댓글 삭제 `FORBIDDEN`, 탈퇴 시 일괄
+  전환, 도배 완화 5초 규칙을 함께 검증한다.
+- 상태 전이는 affected rows 기반이므로 "이미 그 상태인 대상에 다시 요청" 경로를 반드시 포함한다.
+- 단위 테스트는 Mockito로 service 규칙만 고정하고, 위 항목들은 Testcontainers 통합 테스트로
+  검증한다. `ContentCommentServiceTest` 18건과 `OptionalMemberResolverTest` 5건은 Docker 없이
+  실행된다.
+
+### Frontend
+
+- 이 저장소 vitest는 node 환경이고 jsdom이 없으므로, 결정 로직을 순수 함수와 세션 팩토리로 뽑아
+  렌더링 없이 검증한다.
+- `resolveBookmarkAction`이 2.1절 회귀를 막는 핵심 단정이다 — 상태가 `READY`가 아니면 `IGNORE`,
+  비로그인이면 `LOGIN`, 로그인이면 `TOGGLE`. 비로그인에서 `TOGGLE`이 나오면 공개 화면이 튕긴다.
+- 세션 팩토리는 loading/오류/재시도 전이, 이중 제출 1회 흡수, 실패 시 목록 유지, `stop()` 후 늦은
+  응답 무시를 검증한다. 낙관적 갱신을 하지 않으므로 "서버 성공 전에는 화면이 바뀌지 않는다"도
+  단정에 포함한다.
+- 본문 검증(trim, 1~500자), `id` 기준 dedupe, `formatRelativeTime` 경계값을 순수 함수로 검증한다.
+- 두 상세 화면은 `loading: true`로 시작해 SSR 마크업이 로드 완료 분기에 도달하지 못한다. 컴포넌트
+  단위로 마크업을 검증하고, 화면에는 배선이 깨지면 실패하는 SSR smoke 테스트만 둔다.

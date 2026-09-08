@@ -74,3 +74,28 @@ describe('formatDurationLabel', () => {
     expect(formatDurationLabel(0)).toBe('0분');
   });
 });
+
+describe('홈 배너 진입(축제 미지정)은 체크인 기준을 따른다', () => {
+  // 회귀 방지: 홈 배너가 festivalId를 state로 넘기면 1순위 조건이 항상 충족돼
+  // 체크인 안내 화면에 도달할 수 없다(docs/22 9장 결정 위반).
+  it('state가 없고 체크인도 없으면 festivalId가 null이라 체크인 안내를 띄운다', () => {
+    expect(
+      resolveSoloCourseFestival(null, { status: 'loaded', checkin: null }),
+    ).toEqual({ status: 'ready', festivalId: null });
+  });
+
+  it('state가 없고 체크인이 있으면 체크인한 축제를 기준으로 삼는다', () => {
+    expect(
+      resolveSoloCourseFestival(null, {
+        status: 'loaded',
+        checkin: {
+          checkinId: 1,
+          festivalId: 77,
+          festivalName: '체크인 축제',
+          checkedInAt: '2026-08-31T10:00:00+09:00',
+          expiresAt: '2026-08-31T11:00:00+09:00',
+        },
+      }),
+    ).toEqual({ status: 'ready', festivalId: 77 });
+  });
+});

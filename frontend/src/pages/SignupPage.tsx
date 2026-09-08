@@ -27,6 +27,7 @@ import {
   type PreferenceDraft,
 } from '../components/preference/preferenceText';
 import { NICKNAME_MAX_LENGTH, NICKNAME_RULE_MESSAGE, validateNickname } from '../utils/nickname';
+import { LoadingState } from '../components/common/Spinner';
 
 const TRAVEL_STYLES: { code: TravelStyleCode; label: string }[] = [
   { code: 'RELAXED', label: '느긋하게' },
@@ -192,7 +193,7 @@ export default function SignupPage() {
       <PageHeader title="나의 프로필 설정" />
       <main className="flex flex-col gap-6 px-5 pb-10 pt-2">
         {isLoading ? (
-          <p className="py-10 text-center text-sm text-ink/50">프로필을 불러오는 중...</p>
+          <LoadingState className="py-10" message="프로필을 불러오는 중이에요" />
         ) : (
           <>
         <div className="flex flex-col gap-3">

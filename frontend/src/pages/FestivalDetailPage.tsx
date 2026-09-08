@@ -11,13 +11,20 @@ import {
   getFestivalStatusSoftClass,
 } from '../utils/festival';
 import { formatDistanceLabel } from '../utils/tourSpot';
+import { buildKakaoDirectionsUrl } from '../utils/geo';
 import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
 import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
+import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBookmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
+import ShareSheet from '../components/common/ShareSheet';
 import Spinner, { LoadingState } from '../components/common/Spinner';
+import ExpandableText from '../components/common/ExpandableText';
+import BookmarkButton from '../components/common/BookmarkButton';
+import ContentCommentSection from '../components/comment/ContentCommentSection';
+import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
 
 export default function FestivalDetailPage() {
   const { festivalId } = useParams<{ festivalId: string }>();
@@ -26,10 +33,15 @@ export default function FestivalDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
   const { state: checkinState, checkIn } = useFestivalCheckin(festival?.id ?? null);
   // 이 화면에서 방금 체크인한 결과(checkinState)뿐 아니라, 이전에 체크인해두고 다시
   // 들어온 경우도 매칭 시작 버튼이 활성화돼야 하므로 실제 체크인 상태를 함께 조회한다.
   const { state: currentCheckinState, refresh: refreshCurrentCheckin } = useCurrentCheckin();
+  // 찜·댓글은 축제 id가 확정된 뒤에만 조회한다. 로그인 여부도 이 응답으로만 판단한다
+  // (docs/27 2.1 — /api/members/me를 부르면 비로그인 사용자가 화면째로 튕긴다).
+  const bookmarkTarget = festival ? ({ type: 'FESTIVAL', id: festival.id } as const) : null;
+  const { state: bookmarkState, toggle: toggleBookmark } = useContentBookmark(bookmarkTarget);
   useEffect(() => {
     if (checkinState.status === 'success') void refreshCurrentCheckin();
   }, [checkinState.status, refreshCurrentCheckin]);
@@ -91,15 +103,35 @@ export default function FestivalDetailPage() {
       <PageHeader
         title={festival.title}
         rightAction={
-          <button
-            type="button"
-            aria-label="공유"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
-          >
-            <Share2 size={20} strokeWidth={1.8} />
-          </button>
+          <div className="flex items-center">
+            <BookmarkButton
+              bookmarked={bookmarkState.bookmarked}
+              disabled={bookmarkState.status !== 'READY'}
+              pending={bookmarkState.submitting}
+              onClick={() => {
+                const action = resolveBookmarkAction(bookmarkState);
+                if (action === 'LOGIN') navigate('/login');
+                if (action === 'TOGGLE') void toggleBookmark();
+              }}
+            />
+            <button
+              type="button"
+              aria-label="공유"
+              onClick={() => setShowShareSheet(true)}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-ink active:bg-black/5"
+            >
+              <Share2 size={20} strokeWidth={1.8} />
+            </button>
+          </div>
         }
       />
+      {showShareSheet && (
+        <ShareSheet
+          title={festival.title}
+          url={window.location.href}
+          onClose={() => setShowShareSheet(false)}
+        />
+      )}
       <main className="flex flex-col gap-5 px-5 pb-[120px] pt-1">
         <div className="relative -mx-5">
           {festival.originImageUrl ? (
@@ -187,7 +219,7 @@ export default function FestivalDetailPage() {
         {festival.intro && (
           <section className="flex flex-col gap-2.5">
             <h3 className="text-[17px] font-bold text-ink">소개</h3>
-            <p className="whitespace-pre-line text-[14px] leading-relaxed text-ink/75">{festival.intro}</p>
+            <ExpandableText text={festival.intro} className="text-[14px] text-ink/75" />
           </section>
         )}
 
@@ -221,7 +253,7 @@ export default function FestivalDetailPage() {
                     <span className="text-xs text-ink/50 tabular-nums">{program.time}</span>
                   )}
                   {program.description && (
-                    <span className="text-[13px] text-ink/65">{program.description}</span>
+                    <ExpandableText text={program.description} className="text-[13px] text-ink/65" />
                   )}
                 </div>
               ))}
@@ -229,21 +261,32 @@ export default function FestivalDetailPage() {
           </section>
         )}
 
-        {/* 오시는 길 */}
+        {/* 오시는 길 — 좌표(mapX=경도, mapY=위도)가 있을 때만 실제 지도를 그린다.
+            관광공사 동기화 데이터는 좌표가 비어 있을 수 있어, 그 경우 주소만 보여준다. */}
         {festival.address && (
           <section className="flex flex-col gap-2.5">
             <h3 className="text-[17px] font-bold text-ink">오시는 길</h3>
             <div className="flex flex-col gap-3 rounded-2xl bg-white p-3 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
-              <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+              {festival.mapX !== null && festival.mapY !== null ? (
+                <KakaoMeetingPointMap
+                  meetingPoint={{ name: festival.title, latitude: festival.mapY, longitude: festival.mapX }}
+                />
+              ) : (
+                <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+              )}
               <div className="flex items-center justify-between gap-3 px-1 pb-1">
                 <span className="text-[13px] text-ink/75">{festival.address}</span>
-                <button
-                  type="button"
-                  className="flex shrink-0 items-center gap-1 rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink"
-                >
-                  <Navigation size={14} />
-                  길찾기
-                </button>
+                {festival.mapX !== null && festival.mapY !== null && (
+                  <a
+                    href={buildKakaoDirectionsUrl(festival.title, festival.mapY, festival.mapX)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink"
+                  >
+                    <Navigation size={14} />
+                    길찾기
+                  </a>
+                )}
               </div>
             </div>
           </section>
@@ -264,6 +307,14 @@ export default function FestivalDetailPage() {
             <ChevronRight size={14} />
           </button>
         </div>
+
+        {/* 공개 댓글 — 화면 최하단(docs/27 7.1) */}
+        <ContentCommentSection
+          target={{ type: 'FESTIVAL', id: festival.id }}
+          loggedIn={bookmarkState.loggedIn}
+          admin={bookmarkState.admin}
+          initialCount={bookmarkState.commentCount}
+        />
       </main>
 
       {/* 하단 고정 CTA — 이 축제에 체크인 완료해야 활성화된다 */}

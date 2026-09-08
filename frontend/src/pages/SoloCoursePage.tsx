@@ -8,6 +8,7 @@ import { readNumberFromLocationState } from '../utils/positiveInteger';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
+import { LoadingState } from '../components/common/Spinner';
 
 export type SoloCourseFestivalResolution =
   | { status: 'loading' }
@@ -84,7 +85,7 @@ export default function SoloCoursePage() {
     return (
       <MobileLayout>
         <PageHeader title="솔로 코스 추천" noBack />
-        <p className="py-16 text-center text-[14px] text-ink/45">불러오는 중이에요...</p>
+        <LoadingState className="py-16" />
       </MobileLayout>
     );
   }
@@ -95,11 +96,13 @@ export default function SoloCoursePage() {
         <PageHeader title="솔로 코스 추천" noBack />
         <main className="flex flex-col items-center gap-3 px-5 py-16 text-center">
           <p className="text-[14px] text-ink/55">체크인한 축제가 있어야 코스를 추천할 수 있어요.</p>
+          {/* 어느 축제로 체크인할지 아직 모르므로 체크인 화면이 아니라 축제·관광 탐색으로 보낸다.
+              /check-in으로 보내면 그 화면이 다시 /spots로 튕겨 화면이 한 번 깜빡인다. */}
           <Link
-            to="/check-in"
+            to="/spots"
             className="rounded-xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-white"
           >
-            체크인하러 가기
+            체크인할 축제 고르기
           </Link>
         </main>
       </MobileLayout>

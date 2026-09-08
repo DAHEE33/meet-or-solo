@@ -248,11 +248,19 @@ public class FestivalMeetingPointBackfillService {
 
 **화면 구성**
 
-1. **축제 선택** — 신규 admin 전용 목록 API를 만들지 않고, 기존 공개 API `GET /api/festivals?keyword=`
-   (`FestivalController.getFestivals`)를 그대로 재사용해 키워드 검색 + 선택 UI(select 또는 검색
-   콤보박스)를 만든다. 이 API는 `ACTIVE` 축제만 반환하므로, 만남 장소 관리가 실질적으로 필요한
-   대상(현재 진행 중인 축제)과 범위가 자연스럽게 맞는다. `ENDED`/`HIDDEN` 축제의 과거 장소를 봐야
-   하는 경우는 이번 범위에서 제외한다(7장 후속 과제).
+1. **축제 선택** — `GET /api/admin/festivals?keyword=`(`AdminFestivalController` →
+   `FestivalAdminQueryService`, `AdminAuthorizationService.requireAdmin`으로 ADMIN 권한 확인)를
+   admin 전용으로 신설해 키워드 검색 + 선택 UI를 만든다. 공개 `GET /api/festivals`
+   (`FestivalController.getFestivals`)는 일반 사용자 화면을 위해 `festival.eventEndDate >= 오늘`
+   조건을 항상 걸어 종료된 축제를 숨기므로(`FestivalRepository.findVisibleFestivals`), 처음에는
+   이를 그대로 재사용했으나 관리자가 방금 끝난 축제의 만남 장소를 조회·수정할 수 없는 문제가 있어
+   별도 엔드포인트로 분리했다(`FestivalRepository.findForAdmin`). 대상 상태는 `ACTIVE`/`ENDED`만
+   포함하고, 운영자가 숨긴 `HIDDEN`과 동기화상 비활성 시즌인 `INACTIVE`는 제외한다. 결과는
+   `eventStartDate`/`eventEndDate`/`status`를 함께 내려주고, frontend가
+   `resolveDisplayStatus`/`groupFestivalsByDisplayStatus`(`utils/festival.ts`)로 **진행 중/진행
+   예정/마감** 3개 그룹으로 나눠 보여준다 — 검색어 없이 진입해도 항상 이 3그룹이 채워진다. 마감된
+   축제도 장소 등록/수정/활성화를 계속 허용한다(체크인 자체가 `FestivalCheckinService`에서
+   `ACTIVE`만 허용되므로 매칭에는 영향이 없다).
 2. **선택한 축제의 장소 목록** — `GET /api/admin/festivals/{festivalId}/meeting-points` 결과를
    `assignmentOrder` 순 테이블/카드로 표시한다. 각 행에 이름, 주소, 좌표, 상태 배지(`ACTIVE`=teal,
    `INACTIVE`=회색), 배정 순서, `kakaoPlaceId`가 `AUTO-`로 시작하면 "자동 생성" 태그를 보여준다.
@@ -261,9 +269,18 @@ public class FestivalMeetingPointBackfillService {
    등록 직후 "활성화" 버튼을 바로 눌러야 함을 안내 문구로 표시한다.
 4. **상태 토글** — `PATCH /{pointId}/status`를 호출하는 활성/비활성 버튼. 마지막 `ACTIVE` 장소를
    비활성화하려는 경우 3.5절에서 언급한 경고 confirm을 띄운다(클라이언트 판단만으로, 서버 차단은 없음).
-5. **좌표 입력 보조** — 이번 범위에서는 위도/경도 숫자 입력만 제공한다. 카카오 로컬 API로 실제
-   장소를 검색해 좌표/주소/place_id를 자동으로 채우는 UX는 다루지 않는다(7장 후속 과제) — 관리자가
-   직접 좌표를 알고 입력하거나, 자동 시딩된 축제 좌표를 미세 조정하는 용도로 충분하다.
+5. **좌표 입력 보조** — 위도/경도 숫자 입력은 fallback으로 남기고, 그 위에 카카오맵 기반 보조
+   UI 두 가지를 둔다. Kakao **Local REST API**(서버 전용 키, 매칭 엔진의 후보 검색용으로 이미
+   계획된 것)가 아니라, 이미 로드하는 Kakao Maps **JS SDK의 `services` 라이브러리**를 쓴다 —
+   추가 키·백엔드 변경이 필요 없다(`&libraries=services`만 SDK 로드 URL에 추가).
+   - `KakaoPlaceSearch`(`components/admin/KakaoPlaceSearch.tsx`) — `Places.keywordSearch`로
+     이름/주소로 검색해 이름·주소·좌표·`kakaoPlaceId`를 폼에 채운다.
+   - `KakaoCoordinatePicker`(`components/admin/KakaoCoordinatePicker.tsx`) — 검색으로 채운
+     좌표를 지도로 보여주고, 클릭하면 그 지점으로 좌표를 옮긴다. 신규 등록의 초기 중심점은
+     선택된 축제의 좌표(`AdminFestivalSummaryResponse.mapX/mapY`)를 쓴다 — 없으면 춘천을
+     기본값으로 쓴다.
+   - 검색/지도가 실패하거나 원하는 결과가 없어도 숫자 입력 필드가 그대로 있어 등록이
+     막히지 않는다.
 
 **Frontend 파일 계획**
 
@@ -271,10 +288,15 @@ public class FestivalMeetingPointBackfillService {
   `list(festivalId)`, `create(festivalId, body)`, `update(festivalId, pointId, body)`,
   `changeStatus(festivalId, pointId, status)`를 감싼다. 응답 타입은
   `FestivalMeetingPointResponse`를 그대로 옮긴 TypeScript 타입으로 정의한다.
+- `frontend/src/api/adminFestivals.ts` — `GET /api/admin/festivals?keyword=`를 감싼
+  `adminFestivalsApi.search(keyword?)`. 공개 `festivalsApi.getList`와 별도인 이유는 위 4.2절 참고.
 - `frontend/src/hooks/useAdminMeetingPoints.ts` — `useAdminMembers.ts`/`useAdminReports.ts`와
   같은 결로 상태(`LOADING`/`READY`/`ERROR`), 선택된 축제 변경, 등록/수정/상태변경 요청과 in-flight
   가드·`AbortController`를 관리한다.
 - `frontend/src/pages/AdminMeetingPointsPage.tsx` — 화면 본체.
+- `frontend/src/components/admin/KakaoPlaceSearch.tsx`, `KakaoCoordinatePicker.tsx` — 5번
+  항목의 카카오맵 검색/좌표 선택 보조 UI. `components/matching/KakaoMeetingPointMap.tsx`의
+  SDK 로더(`loadKakaoMaps`)를 그대로 재사용한다.
 - 기존 `useAdminMembers.test.ts`/`useAdminReports.test.ts`와 대응하는 신규 테스트 파일들.
 
 ## 5. Backend 구현 계획 (요약)
@@ -300,11 +322,8 @@ public class FestivalMeetingPointBackfillService {
 
 ## 7. 이번 범위에서 제외 (후속 과제)
 
-- 카카오 로컬 API 연동 장소 검색 UI(주소/좌표/`kakao_place_id` 자동완성) — `docs/13_FESTIVAL_TOURSPOT_API_DESIGN.md`
-  3장에서 이미 별도 역할로 분리해둔 Kakao Local API 연동을 관리자 화면에 붙이는 작업이다.
 - 만남 장소 hard delete API — 현재는 `ACTIVE`/`INACTIVE` 전환만 가능하고 행 삭제가 없다. 잘못
   등록된 자동 시딩 값을 지우고 싶은 경우 `PUT`으로 값을 고치는 방식만 가능하다.
-- `ENDED`/`HIDDEN` 축제까지 포함하는 admin 전용 축제 목록 API.
 - 축제별 여러 활성 장소에 대한 혼잡도 기반 분산 배정(`docs/10_PROGRESS_LOG.md` `[10-매칭 23차 준비]`에
   이미 확장 방향으로 명시).
 - 마지막 `ACTIVE` 장소 비활성화를 서버에서 차단하는 정책(현재는 클라이언트 경고로만 완화).

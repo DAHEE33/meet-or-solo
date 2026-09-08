@@ -42,6 +42,26 @@ export function resolveDisplayStatus(
   return 'ongoing';
 }
 
+export type FestivalDisplayStatusGroups<T> = {
+  ongoing: T[];
+  upcoming: T[];
+  ended: T[];
+};
+
+/**
+ * 목록을 진행 중/진행 예정/마감 3개 그룹으로 나눈다. 관리자 만남 장소 화면처럼, 화면에
+ * 종료된 항목까지 함께 보여줘야 하는 곳에서 쓴다 — 분류 규칙은 resolveDisplayStatus와 같다.
+ */
+export function groupFestivalsByDisplayStatus<
+  T extends Pick<FestivalDetail, 'status' | 'eventStartDate' | 'eventEndDate'>,
+>(festivals: readonly T[], now: Date = new Date()): FestivalDisplayStatusGroups<T> {
+  const groups: FestivalDisplayStatusGroups<T> = { ongoing: [], upcoming: [], ended: [] };
+  for (const festival of festivals) {
+    groups[resolveDisplayStatus(festival, now)].push(festival);
+  }
+  return groups;
+}
+
 /** 예정 축제의 D-day 뱃지 문구를 계산한다. 진행 중/종료 축제는 호출부에서 getFestivalStatusLabel로 대체된다. */
 export function resolveDdayLabel(
   detail: Pick<FestivalDetail, 'eventStartDate'>,

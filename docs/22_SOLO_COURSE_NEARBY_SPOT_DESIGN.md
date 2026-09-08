@@ -65,9 +65,15 @@ GET /api/festivals/{id}/nearby-spots?radiusMeters(기본 5000, 100~20000)&limit(
 3. 둘 다 없으면 → "체크인 후 이용할 수 있어요" 안내 + 체크인하기 버튼
    (`MatchingConditionPage`의 IdleForm과 동일한 패턴 재사용)
 
-일관성을 위해 `HomePage`의 "혼자 즐기는 추천 코스" 배너도 `hotFestival.id`를 state로 실어 보내도록
-같이 고쳐야 합니다. 안 그러면 홈에서 들어갈 땐 체크인 여부에만 의존하게 되어 두 진입 경로의 동작이
-달라집니다.
+~~일관성을 위해 `HomePage`의 "혼자 즐기는 추천 코스" 배너도 `hotFestival.id`를 state로 실어 보내도록
+같이 고쳐야 합니다.~~
+
+> **[정정 — `[10-A 후속 11]`]** 이 문단은 같은 문서 9장의 결정("체크인이 전혀 없는 상태로 진입 시
+> 대표 축제로 대체하지 않는다")과 정면으로 충돌했습니다. 홈 배너가 `hotFestival.id`를 넘기면 1순위
+> 조건이 항상 충족돼 **체크인 안내 화면에 도달할 수 없습니다.** 9장 결정을 살리기로 하고 홈 배너에서
+> `state`를 제거했습니다. 두 진입 경로의 동작이 다른 것은 의도된 것입니다 —
+> `FestivalDetailPage`는 사용자가 특정 축제를 보고 있는 화면이라 그 축제를 기준으로 삼아도 되지만,
+> 홈 배너는 "내 주변"을 뜻하므로 체크인이 기준이어야 합니다.
 
 ## 6. 화면 재설계
 
@@ -86,7 +92,8 @@ GET /api/festivals/{id}/nearby-spots?radiusMeters(기본 5000, 100~20000)&limit(
 
 - `frontend/src/data/mock/soloCourses.ts` 삭제
 - `frontend/src/types/index.ts`의 `SoloCourse`, `CourseStop` 타입 삭제
-- `HomePage`, `FestivalDetailPage`의 `/solo-course` 진입 지점에 `festivalId` state 추가
+- ~~`HomePage`~~, `FestivalDetailPage`의 `/solo-course` 진입 지점에 `festivalId` state 추가
+  (`HomePage` 쪽은 위 5장 정정에 따라 `[10-A 후속 11]`에서 되돌렸습니다)
 
 ## 8. 백엔드 변경 필요 여부
 

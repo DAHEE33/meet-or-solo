@@ -38,6 +38,12 @@ export type MapPoint = { mapX: number | null; mapY: number | null };
 
 export type NearestResult<T> = { item: T; distanceMeters: number };
 
+/** 카카오맵 웹 길찾기로 새 탭을 여는 딥링크. 좌표가 없으면 만들 수 없으므로 호출부가
+ * mapX/mapY(또는 latitude/longitude)를 미리 null 체크해야 한다. */
+export function buildKakaoDirectionsUrl(name: string, latitude: number, longitude: number): string {
+  return `https://map.kakao.com/link/to/${encodeURIComponent(name)},${latitude},${longitude}`;
+}
+
 /**
  * 기준 좌표에서 가장 가까운 항목을 고른다. 좌표가 없는 항목은 거리를 계산할 수 없으므로
  * 후보에서 제외하고, 후보가 하나도 없으면 null을 반환해 호출부가 폴백을 쓰게 한다.

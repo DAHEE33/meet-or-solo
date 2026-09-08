@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findNearest, metersBetween } from './geo';
+import { buildKakaoDirectionsUrl, findNearest, metersBetween } from './geo';
 
 describe('metersBetween', () => {
   it('같은 좌표는 0m이다', () => {
@@ -67,5 +67,18 @@ describe('findNearest', () => {
     const second = { id: 2, mapX: 127.74, mapY: 37.8813 };
 
     expect(findNearest(origin, [first, second])?.item).toBe(first);
+  });
+});
+
+describe('buildKakaoDirectionsUrl', () => {
+  it('이름/위도/경도로 카카오맵 길찾기 딥링크를 만든다', () => {
+    expect(buildKakaoDirectionsUrl('춘천시청', 37.8813, 127.73))
+      .toBe('https://map.kakao.com/link/to/%EC%B6%98%EC%B2%9C%EC%8B%9C%EC%B2%AD,37.8813,127.73');
+  });
+
+  it('이름의 쉼표/공백처럼 URL을 깨뜨릴 수 있는 문자를 인코딩한다', () => {
+    const url = buildKakaoDirectionsUrl('a, b', 0, 0);
+
+    expect(url).toBe('https://map.kakao.com/link/to/a%2C%20b,0,0');
   });
 });
