@@ -18,6 +18,7 @@ import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBo
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
+import MapPlaceholder from '../components/common/MapPlaceholder';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
 import ShareSheet from '../components/common/ShareSheet';
 import Spinner, { LoadingState } from '../components/common/Spinner';
@@ -141,7 +142,7 @@ export default function FestivalDetailPage() {
               className="h-60 w-full object-cover"
             />
           ) : (
-            <ImagePlaceholder label={`${festival.title} 대표 사진`} className="h-60 w-full" />
+            <ImagePlaceholder kind="FESTIVAL" seed={festival.title} size="lg" className="h-60 w-full" />
           )}
           <span
             className={`absolute left-5 top-3 rounded-md px-2.5 py-[3px] text-xs font-bold tabular-nums ${getFestivalStatusSolidClass(displayStatus)}`}
@@ -272,7 +273,7 @@ export default function FestivalDetailPage() {
                   meetingPoint={{ name: festival.title, latitude: festival.mapY, longitude: festival.mapX }}
                 />
               ) : (
-                <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+                <MapPlaceholder className="h-32 w-full rounded-xl" />
               )}
               <div className="flex items-center justify-between gap-3 px-1 pb-1">
                 <span className="text-[13px] text-ink/75">{festival.address}</span>

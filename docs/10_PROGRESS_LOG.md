@@ -4021,3 +4021,31 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   (`toFormState`)을 순수 함수로 분리해 유닛 테스트를 추가했다 — 이 저장소 vitest 설정에는
   jsdom이 없어(`MyPage.test.tsx` 주석 참고) 클릭 같은 DOM 상호작용은 직접 테스트하지 못하고,
   로직만 순수 함수로 뽑아 검증했다.
+
+## [10-UI 후속] 이미지 없는 콘텐츠의 기본 이미지 개편
+
+상태: 완료
+
+- 관광공사 API가 이미지를 주지 않는 콘텐츠의 기본 이미지를 빗금 스트라이프 + `사진` 배지에서
+  분류별 아이콘 타일로 바꿨다. 기존 스트라이프는 로딩 스켈레톤 신호와 겹쳐 사용자가 이미지를
+  계속 기다리게 되고, 크기 구분이 없어 56px 썸네일과 240px 히어로가 같은 모습이었다.
+- 계산 로직은 `components/common/imagePlaceholderPresets.ts`(순수 함수), 렌더링은
+  `components/common/ImagePlaceholder.tsx`로 분리했다 — jsdom이 없는 이 저장소 vitest에서
+  검증할 수 있어야 하기 때문이다.
+- 프리셋 6종(`12`/`14`/`28`/`39` + `FESTIVAL` + `DEFAULT`)은 관광지 동기화 대상
+  `contentTypeId`(`TourPlaceSyncProperties.ALLOWED_CONTENT_TYPE_IDS`)를 그대로 따랐다. 배경은
+  프리셋 accent를 `sand`에 옅게 섞은 그라데이션이고 톤 변형은 제목 해시(FNV-1a)로 골라, 같은
+  콘텐츠는 항상 같은 톤이 나오고 같은 분류 카드끼리도 서로 구분된다.
+- 크기 단계 `sm`/`md`/`lg`를 도입해 노출 요소를 다르게 했고, 문구가 사라지는 `sm`에서도 읽히도록
+  `role="img"` + `aria-label`을 항상 붙인다.
+- 좌표가 없어 지도를 못 그리는 자리(축제 상세·관광지 상세 `오시는 길`)는 원인이 달라
+  `components/common/MapPlaceholder.tsx`로 분리하고, `지도 미리보기` 대신 좌표가 없다는 이유를
+  문구로 밝힌다.
+- `TourSpot`에 `contentTypeId`(optional)를 추가하고 `utils/tourSpot.ts`의 mapper 3개가 채우게
+  했다. 관광지 목록/상세/근접 조회 응답이 모두 이미 `contentTypeId`를 내려주므로 backend 변경은
+  없다. mock 데이터에는 값이 없어 `DEFAULT`로 떨어진다.
+- 호출부 11곳(`FestivalHeroCard`, `UpcomingFestivalCard`, `FestivalNearbyPlaceItem`,
+  `FestivalListItem`, `ExploreSpotItem`, `PlaceScrollCard`, `SoloCoursePage`,
+  `FestivalDetailPage` 2곳, `TourSpotDetailPage` 2곳)을 모두 새 규칙으로 교체했다.
+- 신규 테스트는 `imagePlaceholderPresets.test.ts`(13건, 프리셋 매핑·해시 결정성·색 혼합 경계)와
+  `ImagePlaceholder.test.tsx`(5건, 크기 단계별 노출 요소와 접근성 속성)이다.

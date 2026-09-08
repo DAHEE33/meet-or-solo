@@ -8,6 +8,7 @@ import { readNumberFromLocationState } from '../utils/positiveInteger';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
+import { placeholderKindFromContentType } from '../components/common/imagePlaceholderPresets';
 import { LoadingState } from '../components/common/Spinner';
 
 export type SoloCourseFestivalResolution =
@@ -179,7 +180,12 @@ export default function SoloCoursePage() {
                           className="h-14 w-14 shrink-0 rounded-xl object-cover"
                         />
                       ) : (
-                        <ImagePlaceholder label="사진" className="h-14 w-14 shrink-0 rounded-xl" />
+                        <ImagePlaceholder
+                          kind={placeholderKindFromContentType(stop.contentTypeId)}
+                          seed={stop.title}
+                          size="sm"
+                          className="h-14 w-14 shrink-0 rounded-xl"
+                        />
                       )}
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <div className="flex items-center justify-between gap-2">

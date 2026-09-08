@@ -10,6 +10,8 @@ import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBookmark';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
+import { placeholderKindFromContentType } from '../components/common/imagePlaceholderPresets';
+import MapPlaceholder from '../components/common/MapPlaceholder';
 import PlaceScrollCard from '../components/common/PlaceScrollCard';
 import ShareSheet from '../components/common/ShareSheet';
 import BookmarkButton from '../components/common/BookmarkButton';
@@ -135,7 +137,12 @@ export default function TourSpotDetailPage() {
               className="h-60 w-full object-cover"
             />
           ) : (
-            <ImagePlaceholder label={`${spot.name} 사진`} className="h-60 w-full" />
+            <ImagePlaceholder
+              kind={placeholderKindFromContentType(spot.contentTypeId)}
+              seed={spot.name}
+              size="lg"
+              className="h-60 w-full"
+            />
           )}
         </div>
 
@@ -162,7 +169,7 @@ export default function TourSpotDetailPage() {
                 meetingPoint={{ name: spot.name, latitude: detail.mapY, longitude: detail.mapX }}
               />
             ) : (
-              <ImagePlaceholder label="지도 미리보기" className="h-32 w-full rounded-xl" />
+              <MapPlaceholder className="h-32 w-full rounded-xl" />
             )}
             <div className="flex items-center justify-between gap-3 px-1 pb-1">
               <div className="flex min-w-0 flex-col gap-0.5">
@@ -217,6 +224,7 @@ export default function TourSpotDetailPage() {
                   name={other.name}
                   meta={other.address || '관광지'}
                   imageUrl={other.imageUrl}
+                  contentTypeId={other.contentTypeId}
                 />
               ))}
             </div>

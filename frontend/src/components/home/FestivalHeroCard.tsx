@@ -21,7 +21,7 @@ export default function FestivalHeroCard({ festival }: FestivalHeroCardProps) {
           className="h-44 w-full object-cover"
         />
       ) : (
-        <ImagePlaceholder label={`${festival.name} 대표 사진`} className="h-44 w-full" />
+        <ImagePlaceholder kind="FESTIVAL" seed={festival.name} size="lg" className="h-44 w-full" />
       )}
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-center gap-2">

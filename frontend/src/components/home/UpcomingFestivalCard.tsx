@@ -21,7 +21,7 @@ export default function UpcomingFestivalCard({ festival }: UpcomingFestivalCardP
             className="h-24 w-full object-cover"
           />
         ) : (
-          <ImagePlaceholder label="축제 사진" className="h-24 w-full" />
+          <ImagePlaceholder kind="FESTIVAL" seed={festival.name} size="md" className="h-24 w-full" />
         )}
         <span className="absolute left-2 top-2 rounded-md bg-ink px-1.5 py-0.5 text-[11px] font-bold text-white tabular-nums">
           {festival.ddayLabel}
