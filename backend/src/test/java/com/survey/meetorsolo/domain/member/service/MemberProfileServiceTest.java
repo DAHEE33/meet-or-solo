@@ -20,6 +20,7 @@ import com.survey.meetorsolo.domain.member.entity.TravelStyleCode;
 import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberTravelStyleRepository;
+import java.time.Clock;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
@@ -54,7 +55,8 @@ class MemberProfileServiceTest {
                 memberRepository,
                 memberTravelStyleRepository,
                 consentQueryRepository,
-                crypto
+                crypto,
+                accessPolicy()
         );
 
         MemberProfileResponse response = service.completeProfile(
@@ -179,7 +181,13 @@ class MemberProfileServiceTest {
 
     private MemberProfileService service(ProfileFieldCrypto crypto) {
         return new MemberProfileService(
-                memberRepository, memberTravelStyleRepository, consentQueryRepository, crypto);
+                memberRepository, memberTravelStyleRepository, consentQueryRepository, crypto,
+                accessPolicy());
+    }
+
+    /** 프로필 응답에 제재 안내를 채우는 용도로만 쓰인다. 제재가 없는 회원은 null을 받는다. */
+    private MemberAccessPolicy accessPolicy() {
+        return new MemberAccessPolicy(memberRepository, Clock.systemUTC(), "");
     }
 
     /** 최초 가입 완료는 약관·개인정보 동의를 요구하므로 기본적으로 동의된 상태를 stub 한다. */

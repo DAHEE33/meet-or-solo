@@ -1,3 +1,4 @@
+import type { SanctionNotice } from './types';
 import { apiClient, buildApiUrl } from './apiClient';
 
 export type Gender = 'MALE' | 'FEMALE' | 'OTHER';
@@ -18,6 +19,8 @@ export type MemberProfile = {
   gender: Gender | null;
   ageRange: AgeRange | null;
   status: string;
+  /** 제재 중일 때만 채워진다. 화면이 활동 UI를 미리 막는 데 쓴다. */
+  sanction: SanctionNotice | null;
   travelStyles: TravelStyle[];
 };
 
@@ -31,7 +34,8 @@ export type UpdateMemberProfileRequest = {
 };
 
 export const memberProfileApi = {
-  getMine: () => apiClient<MemberProfile>('/api/members/me').then(resolveProfileImageUrl),
+  getMine: (signal?: AbortSignal) =>
+    apiClient<MemberProfile>('/api/members/me', { signal }).then(resolveProfileImageUrl),
   complete: (request: UpdateMemberProfileRequest) =>
     apiClient<MemberProfile>('/api/members/me/profile', {
       method: 'PUT',

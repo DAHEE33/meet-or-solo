@@ -5,11 +5,16 @@ import static org.assertj.core.api.Assertions.*;
 import com.survey.meetorsolo.domain.admin.member.dto.*;
 import com.survey.meetorsolo.domain.admin.member.service.AdminMemberService;
 import com.survey.meetorsolo.domain.admin.member.service.MemberSuspensionExpiryService;
+import com.survey.meetorsolo.domain.member.dto.MemberSanctionNotice;
+import com.survey.meetorsolo.domain.member.dto.UpdateMemberProfileRequest;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.domain.member.service.MemberProfileService;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +37,7 @@ import org.testcontainers.utility.DockerImageName;
         "app.jwt.secret=admin-member-integration-test-secret",
         "app.admin.report.cursor-hmac-secret=admin-member-cursor-test-secret-32-bytes",
         "app.admin.member.suspension-scheduler-enabled=false",
+        "app.support.contact-email=support@example.test",
         "app.matching.scheduler.enabled=false",
         "app.matching.no-show-scheduler.enabled=false"
 })
@@ -51,6 +57,8 @@ class AdminMemberIntegrationTest {
 
     @Autowired AdminMemberService service;
     @Autowired MemberSuspensionExpiryService expiryService;
+    @Autowired MemberAccessPolicy accessPolicy;
+    @Autowired MemberProfileService profileService;
     @Autowired JdbcTemplate jdbc;
 
     @BeforeEach
@@ -106,6 +114,8 @@ class AdminMemberIntegrationTest {
                 NOW.minusDays(1), NOW.minusSeconds(1), USER);
         assertThat(expiryService.restoreBatch(100)).isOne();
         assertThat(status(USER)).isEqualTo("ACTIVE");
+        // batch 복구가 사유 code를 남기면 chk_members_sanction_reason_presence가 update를 거부한다.
+        assertThat(sanctionReasonCode(USER)).isNull();
     }
 
     @Test
@@ -143,6 +153,137 @@ class AdminMemberIntegrationTest {
                                 .isEqualTo(ErrorCode.ADMIN_MEMBER_ACTIVE_MATCH_CONFLICT));
         assertThat(status(USER)).isEqualTo("ACTIVE");
         assertThat(actionCount(USER)).isZero();
+    }
+
+    @Test
+    void 정지는_사용자_노출용_사유_code를_회원에_남긴다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.SUSPEND, AdminMemberStatus.ACTIVE));
+
+        assertThat(sanctionReasonCode(USER)).isEqualTo("COMMUNITY_GUIDELINE");
+
+        MemberSanctionNotice notice = accessPolicy.findSanctionNotice(USER);
+        assertThat(notice.status()).isEqualTo("SUSPENDED");
+        assertThat(notice.reasonCode()).isEqualTo("COMMUNITY_GUIDELINE");
+        assertThat(notice.suspendedUntil()).isEqualTo(NOW.plusDays(7));
+    }
+
+    /**
+     * 신고자 보호. 관리자 자유 입력 note는 신고 건수·신고자를 적을 수 있어 사용자 응답에 실리면
+     * 안 된다. 사용자 노출용(members.sanction_reason_code)과 관리자 내부용(admin_actions.reason)이
+     * 분리되어 있는지 확인한다.
+     */
+    @Test
+    void 관리자_자유_입력_사유는_사용자_안내에_새지_않는다() {
+        String internalNote = "신고 3건 누적, 신고자 진술 확인 완료";
+        service.act(ADMIN, USER, UUID.randomUUID().toString(), new AdminMemberActionRequest(
+                AdminMemberActionType.SUSPEND, AdminMemberActionReasonCode.HARASSMENT,
+                internalNote, AdminSuspensionDuration.SEVEN_DAYS, null, AdminMemberStatus.ACTIVE));
+
+        // 관리자 내부용에는 그대로 남아 있어야 감사 추적이 가능하다.
+        assertThat(jdbc.queryForObject(
+                "SELECT reason FROM admin_actions WHERE target_member_id=?", String.class, USER))
+                .isEqualTo(internalNote);
+
+        MemberSanctionNotice notice = accessPolicy.findSanctionNotice(USER);
+        assertThat(notice.reasonCode()).isEqualTo("HARASSMENT");
+        assertThat(notice.reasonMessage()).doesNotContain("신고").doesNotContain("누적");
+        assertThat(notice.toString()).doesNotContain(internalNote);
+        assertThat(sanctionReasonCode(USER)).isEqualTo("HARASSMENT");
+    }
+
+    /** 제재 시점은 신고 시점을 좁히는 단서라 안내에 담지 않는다. */
+    @Test
+    void 안내는_제재_시작_시각을_담지_않는다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.SUSPEND, AdminMemberStatus.ACTIVE));
+
+        assertThat(jdbc.queryForObject(
+                "SELECT suspended_at IS NOT NULL FROM members WHERE id=?", Boolean.class, USER)).isTrue();
+        assertThat(MemberSanctionNotice.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .doesNotContain("suspendedAt");
+    }
+
+    @Test
+    void 영구차단_안내는_기간이_없다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.BAN, AdminMemberStatus.ACTIVE));
+
+        MemberSanctionNotice notice = accessPolicy.findSanctionNotice(USER);
+        assertThat(notice.status()).isEqualTo("BANNED");
+        assertThat(notice.suspendedUntil()).isNull();
+        assertThat(sanctionReasonCode(USER)).isEqualTo("COMMUNITY_GUIDELINE");
+    }
+
+    @Test
+    void 정지_해제는_사유_code를_지우고_안내를_없앤다() {
+        String key = UUID.randomUUID().toString();
+        service.act(ADMIN, USER, key, request(AdminMemberActionType.SUSPEND, AdminMemberStatus.ACTIVE));
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.UNSUSPEND, AdminMemberStatus.SUSPENDED));
+
+        assertThat(sanctionReasonCode(USER)).isNull();
+        assertThat(accessPolicy.findSanctionNotice(USER)).isNull();
+    }
+
+    /**
+     * 제재가 아닌 상태에 사유가 남아 있으면 안 된다.
+     * 해제 경로에서 사유를 지우는 것을 잊으면 이 제약이 잡아낸다.
+     */
+    @Test
+    void 제재_상태가_아닌_회원에_사유_code를_남길_수_없다() {
+        assertThatThrownBy(() -> jdbc.update(
+                "UPDATE members SET sanction_reason_code='HARASSMENT' WHERE id=?", USER))
+                .hasMessageContaining("chk_members_sanction_reason_presence");
+    }
+
+    @Test
+    void 목록에_없는_사유_code는_저장할_수_없다() {
+        assertThatThrownBy(() -> jdbc.update("""
+                UPDATE members SET status='BANNED', status_before_sanction='ACTIVE',
+                       sanction_reason_code='NOT_A_REASON' WHERE id=?
+                """, USER))
+                .hasMessageContaining("chk_members_sanction_reason_code");
+    }
+
+    private String sanctionReasonCode(long memberId) {
+        return jdbc.queryForObject(
+                "SELECT sanction_reason_code FROM members WHERE id=?", String.class, memberId);
+    }
+
+    /**
+     * 정지 회원의 프로필 수정 회귀.
+     *
+     * <p>{@code completeProfile}이 status를 ACTIVE로 덮으면 제재가 조용히 풀리고,
+     * suspended_until과 사유가 남아 CHECK 제약 위반으로 update 자체가 실패한다.
+     * 실제 PostgreSQL로 저장까지 되는지 확인한다.
+     */
+    @Test
+    void 정지_회원도_프로필을_수정할_수_있고_제재는_유지된다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(), new AdminMemberActionRequest(
+                AdminMemberActionType.SUSPEND, AdminMemberActionReasonCode.HARASSMENT,
+                null, AdminSuspensionDuration.SEVEN_DAYS, null, AdminMemberStatus.ACTIVE));
+
+        profileService.completeProfile(USER, new UpdateMemberProfileRequest(
+                "정지중닉네임", null, null, "MALE", "20S", List.of()));
+
+        assertThat(jdbc.queryForObject("SELECT nickname FROM members WHERE id=?", String.class, USER))
+                .isEqualTo("정지중닉네임");
+        assertThat(status(USER)).isEqualTo("SUSPENDED");
+        assertThat(sanctionReasonCode(USER)).isEqualTo("HARASSMENT");
+        assertThat(jdbc.queryForObject(
+                "SELECT suspended_until IS NOT NULL FROM members WHERE id=?", Boolean.class, USER)).isTrue();
+    }
+
+    /** 문의 경로가 없으면 제재 사용자는 이의를 제기할 방법이 없다. 설정값이 응답까지 오는지 본다. */
+    @Test
+    void 제재_안내에_고객센터_이메일이_실린다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.SUSPEND, AdminMemberStatus.ACTIVE));
+
+        assertThat(accessPolicy.findSanctionNotice(USER).contactEmail())
+                .isEqualTo("support@example.test");
     }
 
     private AdminMemberActionRequest request(AdminMemberActionType action, AdminMemberStatus expected) {

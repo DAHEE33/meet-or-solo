@@ -90,7 +90,8 @@ public class AuthService {
         long memberId = jwtProvider.getMemberIdFromRefreshToken(rawRefreshToken);
         Member member = memberRepository.findByIdForUpdate(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-        accessPolicy.requireAccessible(member);
+        // 정지 회원의 session을 끊으면 조회조차 못 하게 되므로 갱신도 허용한다.
+        accessPolicy.requireSignedIn(member);
         RefreshToken stored = refreshTokenRepository.findByMemberId(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
         if (!stored.isUsable(jwtProvider.hashToken(rawRefreshToken), SeoulDateTime.now())) {
@@ -162,7 +163,8 @@ public class AuthService {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, naverUser.providerUserId())
                 .map(member -> {
                     member.restoreExpiredSuspension(SeoulDateTime.now());
-                    accessPolicy.requireAccessible(member);
+                    // 정지 회원은 로그인해서 조회는 할 수 있어야 한다. 영구 제한만 막는다.
+                    accessPolicy.requireSignedIn(member);
                     member.updateNaverProfile(naverUser.email(), naverUser.nickname(), naverUser.profileImageUrl());
                     return member;
                 })
@@ -178,7 +180,8 @@ public class AuthService {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_KAKAO, kakaoUser.providerUserId())
                 .map(member -> {
                     member.restoreExpiredSuspension(SeoulDateTime.now());
-                    accessPolicy.requireAccessible(member);
+                    // 정지 회원은 로그인해서 조회는 할 수 있어야 한다. 영구 제한만 막는다.
+                    accessPolicy.requireSignedIn(member);
                     member.updateKakaoProfile(kakaoUser.email(), kakaoUser.nickname(), kakaoUser.profileImageUrl());
                     return member;
                 })

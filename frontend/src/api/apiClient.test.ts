@@ -75,6 +75,114 @@ describe('apiClient', () => {
     expect(replace).toHaveBeenCalledWith('/login');
   });
 
+  it('403 정지는 화면을 이동시키지 않고 안내 이벤트를 쏜다', async () => {
+    const replace = vi.fn();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/mypage', replace }, dispatchEvent });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            success: false,
+            data: null,
+            error: {
+              code: 'MEMBER_SUSPENDED',
+              message: '이용이 일시 정지된 계정입니다.',
+              sanction: {
+                status: 'SUSPENDED',
+                suspendedUntil: '2026-09-15T10:00:00+09:00',
+                reasonCode: 'HARASSMENT',
+                reasonMessage: '다른 이용자에 대한 부적절한 언행',
+                contactEmail: null,
+              },
+            },
+          },
+          403,
+        ),
+      ),
+    );
+
+    const error: unknown = await apiClient('/api/festivals/1/checkin', { method: 'POST' })
+      .catch((caught) => caught);
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).sanction)
+      .toMatchObject({ status: 'SUSPENDED', reasonCode: 'HARASSMENT' });
+    // 정지 회원은 로그인 상태로 조회를 계속하므로 로그인 화면으로 보내면 안 된다.
+    expect(replace).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'member-sanction' }),
+    );
+  });
+
+  it('403 영구제한은 로그인 화면의 제재 안내로 보낸다', async () => {
+    const replace = vi.fn();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/mypage', replace }, dispatchEvent });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            success: false,
+            data: null,
+            error: {
+              code: 'MEMBER_BANNED',
+              message: '이용이 영구 제한된 계정입니다.',
+              sanction: {
+                status: 'BANNED',
+                suspendedUntil: null,
+                reasonCode: 'SAFETY_RISK',
+                reasonMessage: '다른 이용자의 안전을 위협하는 행위',
+                contactEmail: null,
+              },
+            },
+          },
+          403,
+        ),
+      ),
+    );
+
+    await expect(apiClient('/api/members/me')).rejects.toMatchObject({ code: 'MEMBER_BANNED' });
+    expect(replace).toHaveBeenCalledWith('/login?oauthError=account_restricted');
+    // 영구제한은 로그인 화면 안내가 맡으므로 앱 안 dialog를 띄우지 않는다.
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it('제재가 아닌 403은 화면을 이동시키지 않는다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/admin', replace } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          { success: false, data: null, error: { code: 'FORBIDDEN', message: '권한이 없습니다.' } },
+          403,
+        ),
+      ),
+    );
+
+    await expect(apiClient('/api/admin/members')).rejects.toMatchObject({ status: 403 });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('이미 로그인 화면이면 영구제한 403으로 다시 이동하지 않는다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/login', replace } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          { success: false, data: null, error: { code: 'MEMBER_BANNED', message: '영구 제한된 계정입니다.' } },
+          403,
+        ),
+      ),
+    );
+
+    await expect(apiClient('/api/members/me')).rejects.toMatchObject({ code: 'MEMBER_BANNED' });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it('AbortError를 일반 API 오류로 변환하지 않는다', async () => {
     const abortError = new DOMException('aborted', 'AbortError');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));

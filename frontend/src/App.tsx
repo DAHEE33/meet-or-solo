@@ -19,6 +19,7 @@ import AdminReportsPage from './pages/AdminReportsPage';
 import AdminRoute from './components/admin/AdminRoute';
 import AdminMembersPage from './pages/AdminMembersPage';
 import AdminMeetingPointsPage from './pages/AdminMeetingPointsPage';
+import SanctionNoticeDialog from './components/common/SanctionNoticeDialog';
 
 export default function App() {
   return (
@@ -44,6 +45,11 @@ export default function App() {
         <Route path="/admin/members" element={<AdminRoute><AdminMembersPage /></AdminRoute>} />
         <Route path="/admin/meeting-points" element={<AdminRoute><AdminMeetingPointsPage /></AdminRoute>} />
       </Routes>
+      {/*
+        정지 회원이 활동(체크인·매칭·댓글)을 시도해 403을 받으면 apiClient가 이벤트를 쏘고
+        여기서 사유·기간 안내를 띄운다. 화면마다 붙이지 않도록 최상단에 한 번만 둔다.
+      */}
+      <SanctionNoticeDialog />
     </BrowserRouter>
   );
 }

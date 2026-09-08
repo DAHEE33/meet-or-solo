@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import MobileLayout from '../components/layout/MobileLayout';
+import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
+import { sanctionNoticeApi } from '../api/sanctionNotice';
+import type { SanctionNotice } from '../api/types';
 import { getOAuthLoginPath, type OAuthProvider } from '../utils/oauth';
+
+/** 제재로 접근이 막혔을 때 서버가 붙이는 값. 사유·기간은 URL이 아니라 notice cookie로 온다. */
+const RESTRICTED_ERROR = 'account_restricted';
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const oauthError = searchParams.get('oauthError');
+  const restricted = oauthError === RESTRICTED_ERROR;
   const [loadingProvider, setLoadingProvider] = useState<OAuthProvider | null>(null);
+  const [sanction, setSanction] = useState<SanctionNotice | null>(null);
 
   useEffect(() => {
     const resetLoadingProvider = () => setLoadingProvider(null);
@@ -14,6 +22,18 @@ export default function LoginPage() {
     window.addEventListener('pageshow', resetLoadingProvider);
     return () => window.removeEventListener('pageshow', resetLoadingProvider);
   }, []);
+
+  // 제재 안내는 서버가 내려준 단기 cookie로만 조회된다. 조회에 실패하면 아래 포괄 안내가 남는다.
+  useEffect(() => {
+    if (!restricted) return;
+    const controller = new AbortController();
+    sanctionNoticeApi.getMine(controller.signal)
+      .then((loaded) => {
+        if (!controller.signal.aborted) setSanction(loaded);
+      })
+      .catch(() => { /* 안내를 못 읽어도 로그인 화면은 그대로 쓸 수 있어야 한다. */ });
+    return () => controller.abort();
+  }, [restricted]);
 
   const handleLogin = (provider: OAuthProvider) => {
     if (loadingProvider) return;
@@ -34,34 +54,54 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-10 flex flex-col gap-3">
-          {oauthError && (
-            <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
-              소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => handleLogin('kakao')}
-            disabled={loadingProvider !== null}
-            aria-label="카카오로 로그인"
-            className="h-14 w-full rounded-2xl bg-[#FEE500] px-5 text-[15px] font-bold text-black transition-transform active:scale-[0.99]"
-          >
-            {loadingProvider === 'kakao' ? '카카오로 이동 중...' : '카카오로 시작하기'}
-          </button>
-          <button
-            type="button"
-            onClick={() => handleLogin('naver')}
-            disabled={loadingProvider !== null}
-            aria-label="네이버로 로그인"
-            className="h-14 w-full rounded-2xl bg-[#03C75A] px-5 text-[15px] font-bold text-white transition-transform active:scale-[0.99] disabled:opacity-70"
-          >
-            {loadingProvider === 'naver' ? '네이버로 이동 중...' : '네이버로 시작하기'}
-          </button>
+          {restricted
+            ? (
+              sanction
+                ? <AccountRestrictionNotice notice={sanction} />
+                : (
+                  <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
+                    계정이 제재되어 로그인할 수 없습니다. 자세한 사유는 고객문의로 확인해 주세요.
+                  </p>
+                )
+            )
+            : (
+              <>
+                {oauthError && (
+                  <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
+                    소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.
+                  </p>
+                )}
+                {/*
+                  제재된 계정은 다시 로그인해도 같은 화면으로 돌아온다. 버튼을 남겨두면 사용자가
+                  재시도만 반복하므로 제재 안내에서는 로그인 버튼을 감춘다.
+                */}
+                <button
+                  type="button"
+                  onClick={() => handleLogin('kakao')}
+                  disabled={loadingProvider !== null}
+                  aria-label="카카오로 로그인"
+                  className="h-14 w-full rounded-2xl bg-[#FEE500] px-5 text-[15px] font-bold text-black transition-transform active:scale-[0.99]"
+                >
+                  {loadingProvider === 'kakao' ? '카카오로 이동 중...' : '카카오로 시작하기'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLogin('naver')}
+                  disabled={loadingProvider !== null}
+                  aria-label="네이버로 로그인"
+                  className="h-14 w-full rounded-2xl bg-[#03C75A] px-5 text-[15px] font-bold text-white transition-transform active:scale-[0.99] disabled:opacity-70"
+                >
+                  {loadingProvider === 'naver' ? '네이버로 이동 중...' : '네이버로 시작하기'}
+                </button>
+              </>
+            )}
         </div>
 
-        <p className="mt-5 text-center text-xs leading-5 text-ink/45">
-          로그인 후 프로필 설정 단계에서 meet·or·solo의 이용약관과 개인정보 수집·이용에 동의하게 됩니다.
-        </p>
+        {!restricted && (
+          <p className="mt-5 text-center text-xs leading-5 text-ink/45">
+            로그인 후 프로필 설정 단계에서 meet·or·solo의 이용약관과 개인정보 수집·이용에 동의하게 됩니다.
+          </p>
+        )}
       </main>
     </MobileLayout>
   );

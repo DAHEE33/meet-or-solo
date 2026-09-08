@@ -2,6 +2,11 @@ package com.survey.meetorsolo.domain.auth.controller;
 
 import com.survey.meetorsolo.domain.auth.dto.AuthTokenResponse;
 import com.survey.meetorsolo.domain.auth.service.AuthService;
+import com.survey.meetorsolo.domain.auth.service.SanctionNoticeCookieService;
+import com.survey.meetorsolo.domain.member.dto.MemberSanctionNotice;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.domain.member.service.MemberSanctionException;
+import com.survey.meetorsolo.global.response.ApiResponse;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -31,15 +36,21 @@ public class AuthController {
     private static final Duration OAUTH_STATE_TTL = Duration.ofMinutes(5);
 
     private final AuthService authService;
+    private final MemberAccessPolicy memberAccessPolicy;
+    private final SanctionNoticeCookieService sanctionNoticeCookies;
     private final String frontendBaseUrl;
     private final boolean secureCookies;
 
     public AuthController(
             AuthService authService,
+            MemberAccessPolicy memberAccessPolicy,
+            SanctionNoticeCookieService sanctionNoticeCookies,
             @Value("${app.frontend.base-url}") String frontendBaseUrl,
             @Value("${app.auth.cookie-secure}") boolean secureCookies
     ) {
         this.authService = authService;
+        this.memberAccessPolicy = memberAccessPolicy;
+        this.sanctionNoticeCookies = sanctionNoticeCookies;
         this.frontendBaseUrl = frontendBaseUrl.replaceAll("/+$", "");
         this.secureCookies = secureCookies;
     }
@@ -84,6 +95,8 @@ public class AuthController {
                     ).toString())
                     .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(KAKAO_STATE_COOKIE, "/api/auth/kakao/callback").toString())
                     .build();
+        } catch (MemberSanctionException exception) {
+            return redirectSanctioned(exception, KAKAO_STATE_COOKIE, "/api/auth/kakao/callback");
         } catch (RuntimeException exception) {
             log.warn("Kakao OAuth callback failed: {}", exception.getClass().getSimpleName());
             return redirectFailure("oauth_failed", KAKAO_STATE_COOKIE, "/api/auth/kakao/callback");
@@ -147,6 +160,8 @@ public class AuthController {
         try {
             return redirectSuccess(authService.loginWithNaver(code, state), NAVER_STATE_COOKIE,
                     "/api/auth/naver/callback");
+        } catch (MemberSanctionException exception) {
+            return redirectSanctioned(exception, NAVER_STATE_COOKIE, "/api/auth/naver/callback");
         } catch (RuntimeException exception) {
             log.warn("Naver OAuth callback failed: {}", exception.getClass().getSimpleName());
             return redirectFailure("oauth_failed", NAVER_STATE_COOKIE, "/api/auth/naver/callback");
@@ -177,6 +192,49 @@ public class AuthController {
                 expectedState.getBytes(StandardCharsets.UTF_8),
                 actualState.getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    /**
+     * 제재 회원의 로그인 시도.
+     *
+     * <p>기존에는 {@code catch (RuntimeException)}이 제재 예외를 삼켜 {@code oauth_failed}로
+     * 보냈고, 로그인 화면은 "잠시 후 다시 시도해 주세요"라는 틀린 안내를 띄웠다. 302에는 body가
+     * 없으므로 사유·기간은 notice cookie로 넘기고 화면이 조회 endpoint로 읽는다.
+     */
+    private ResponseEntity<Void> redirectSanctioned(
+            MemberSanctionException exception,
+            String stateCookieName,
+            String callbackPath
+    ) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity
+                .status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, frontendBaseUrl + "/login?oauthError=account_restricted")
+                .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(stateCookieName, callbackPath).toString());
+        if (exception.getMemberId() != null) {
+            builder.header(HttpHeaders.SET_COOKIE,
+                    sanctionNoticeCookies.issue(exception.getMemberId()).toString());
+        }
+        return builder.build();
+    }
+
+    /**
+     * 제재 사유·기간 조회. notice cookie를 가진 요청만 응답한다.
+     *
+     * <p>session이 아니므로 이 endpoint 외에는 아무것도 열어주지 않는다. 제재가 이미 해제되었거나
+     * 만료된 회원은 {@code data}가 {@code null}로 나가고, 화면은 안내를 띄우지 않는다.
+     */
+    @GetMapping("/api/auth/sanction-notice")
+    public ResponseEntity<ApiResponse<MemberSanctionNotice>> sanctionNotice(
+            @CookieValue(name = SanctionNoticeCookieService.COOKIE_NAME, required = false) String noticeToken
+    ) {
+        if (noticeToken == null || noticeToken.isBlank()) {
+            return ResponseEntity.ok(ApiResponse.<MemberSanctionNotice>success(null));
+        }
+        MemberSanctionNotice notice =
+                memberAccessPolicy.findSanctionNotice(sanctionNoticeCookies.readMemberId(noticeToken));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, sanctionNoticeCookies.expire().toString())
+                .body(ApiResponse.success(notice));
     }
 
     private ResponseEntity<Void> redirectFailure(String reason, String stateCookieName, String callbackPath) {

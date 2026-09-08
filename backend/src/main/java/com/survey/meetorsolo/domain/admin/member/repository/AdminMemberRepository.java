@@ -186,7 +186,8 @@ public class AdminMemberRepository {
                 )
                 UPDATE members m
                 SET status=m.status_before_sanction, status_before_sanction=NULL,
-                    suspended_at=NULL, suspended_until=NULL, updated_at=:now
+                    suspended_at=NULL, suspended_until=NULL, sanction_reason_code=NULL,
+                    updated_at=:now
                 FROM targets WHERE m.id=targets.id
                 """, Map.of("now", now, "batchSize", batchSize));
     }

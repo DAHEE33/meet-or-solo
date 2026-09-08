@@ -72,6 +72,13 @@ app:
     model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
     connect-timeout: ${OPENAI_CONNECT_TIMEOUT:5s}
     read-timeout: ${OPENAI_READ_TIMEOUT:10s}
+  support:
+    # 제재 안내에 표시하는 고객센터 이메일. 문의센터 화면(docs/19 4.5)이 보류 상태라
+    # 이메일이 현재 유일한 문의 경로다.
+    #
+    # 실제 주소는 저장소에 넣지 않는다. 공개 저장소에 남으면 스팸 수집 대상이 된다.
+    # 환경변수 SUPPORT_CONTACT_EMAIL로만 주입하고, 비어 있으면 안내에서 문의 문구를 숨긴다.
+    contact-email: ${SUPPORT_CONTACT_EMAIL:}
   admin:
     report:
       cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}

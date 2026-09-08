@@ -91,6 +91,14 @@ public class Member {
     @Column(name = "status_before_sanction", length = 30)
     private String statusBeforeSanction;
 
+    /**
+     * 사용자에게 노출할 제재 사유 code. 제재 상태에서만 값이 있다.
+     * 관리자 내부용 자유 입력 note({@code admin_actions.reason})와 분리된 값이므로
+     * 신고자 수·시점을 추정할 수 있는 정보는 여기에 담기지 않는다.
+     */
+    @Column(name = "sanction_reason_code", length = 40)
+    private String sanctionReasonCode;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -171,6 +179,14 @@ public class Member {
         this.lastLoginAt = SeoulDateTime.now();
     }
 
+    /**
+     * 프로필 최초 입력과 이후 수정에 모두 쓰인다.
+     *
+     * <p><b>status를 무조건 {@code ACTIVE}로 덮으면 안 된다.</b> 정지 회원도 프로필을 수정할 수
+     * 있으므로(docs/19 4.8), 덮어쓰면 제재가 조용히 풀리고 {@code suspended_until}과 사유는
+     * 남아 {@code chk_members_suspension_period}·{@code chk_members_sanction_reason_presence}
+     * 위반으로 저장 자체가 실패한다. 승격은 {@code PROFILE_REQUIRED}에서만 한다.
+     */
     public void completeProfile(
             String nickname,
             String email,
@@ -183,21 +199,31 @@ public class Member {
         this.intro = intro;
         this.genderEncrypted = genderEncrypted;
         this.ageRangeEncrypted = ageRangeEncrypted;
-        this.status = STATUS_ACTIVE;
+        if (STATUS_PROFILE_REQUIRED.equals(status)) {
+            this.status = STATUS_ACTIVE;
+        } else if (STATUS_PROFILE_REQUIRED.equals(statusBeforeSanction)) {
+            // 정지 중에 프로필을 완성했으면 해제 후 돌아갈 상태도 ACTIVE여야 한다.
+            // 그대로 두면 정지가 풀린 뒤 다시 가입 화면으로 보내진다.
+            this.statusBeforeSanction = STATUS_ACTIVE;
+        }
     }
 
-    public void suspend(OffsetDateTime suspendedAt, OffsetDateTime suspendedUntil) {
+    public void suspend(OffsetDateTime suspendedAt, OffsetDateTime suspendedUntil, String sanctionReasonCode) {
         requireSanctionableStatus();
         if (suspendedAt == null || suspendedUntil == null || !suspendedUntil.isAfter(suspendedAt)) {
             throw new IllegalArgumentException("정지 종료 시각은 시작 시각보다 이후여야 합니다.");
         }
+        requireSanctionReasonCode(sanctionReasonCode);
         this.statusBeforeSanction = this.status;
         this.status = STATUS_SUSPENDED;
         this.suspendedAt = suspendedAt;
         this.suspendedUntil = suspendedUntil;
+        this.sanctionReasonCode = sanctionReasonCode;
     }
 
-    public void ban() {
+    public void ban(String sanctionReasonCode) {
+        // 상태를 바꾸기 전에 검증을 끝낸다. 뒤에서 던지면 statusBeforeSanction만 바뀐 채로 남는다.
+        requireSanctionReasonCode(sanctionReasonCode);
         if (STATUS_ACTIVE.equals(status) || STATUS_PROFILE_REQUIRED.equals(status)) {
             this.statusBeforeSanction = status;
         } else if (!STATUS_SUSPENDED.equals(status)) {
@@ -206,6 +232,7 @@ public class Member {
         this.status = STATUS_BANNED;
         this.suspendedAt = null;
         this.suspendedUntil = null;
+        this.sanctionReasonCode = sanctionReasonCode;
     }
 
     public void unban() {
@@ -273,6 +300,12 @@ public class Member {
         }
     }
 
+    private static void requireSanctionReasonCode(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("제재에는 사용자 노출용 사유 code가 필요합니다.");
+        }
+    }
+
     private void restorePreviousStatus() {
         String restored = statusBeforeSanction;
         if (!isRestorableStatus(restored)) {
@@ -282,6 +315,7 @@ public class Member {
         this.statusBeforeSanction = null;
         this.suspendedAt = null;
         this.suspendedUntil = null;
+        this.sanctionReasonCode = null;
     }
 
     private static boolean isRestorableStatus(String value) {
@@ -362,6 +396,10 @@ public class Member {
 
     public String getStatusBeforeSanction() {
         return statusBeforeSanction;
+    }
+
+    public String getSanctionReasonCode() {
+        return sanctionReasonCode;
     }
 
     public byte[] getGenderEncrypted() {

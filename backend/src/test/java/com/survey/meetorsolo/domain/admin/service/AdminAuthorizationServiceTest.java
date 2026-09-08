@@ -3,6 +3,8 @@ package com.survey.meetorsolo.domain.admin.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.member.entity.Member;
@@ -30,6 +32,31 @@ class AdminAuthorizationServiceTest {
         Member member = member(1L, "회원", Member.ROLE_USER);
         when(members.findById(1L)).thenReturn(Optional.of(member));
         assertError(1L, ErrorCode.FORBIDDEN);
+    }
+
+    /**
+     * 마이페이지가 관리자 메뉴 노출 여부를 판단하려고 이 endpoint를 조회한다. 정지된 일반
+     * 회원에게 제재 예외를 던지면 마이페이지를 열 때마다 제재 안내 팝업이 뜬다.
+     */
+    @Test
+    void 정지된_일반_회원도_제재가_아니라_403이다() {
+        Member member = member(1L, "정지회원", Member.ROLE_USER);
+        when(members.findById(1L)).thenReturn(Optional.of(member));
+
+        assertError(1L, ErrorCode.FORBIDDEN);
+        // 역할 확인에서 끝나므로 제재 판정까지 가지 않는다.
+        verify(accessPolicy, never()).requireAccessible(member);
+    }
+
+    @Test
+    void 관리자_회원은_제재_판정을_거친다() {
+        Member member = member(2L, "관리자", Member.ROLE_ADMIN);
+        when(members.findById(2L)).thenReturn(Optional.of(member));
+
+        service.requireAdmin(2L);
+
+        // 정지된 관리자는 관리자 기능을 쓸 수 없어야 한다.
+        verify(accessPolicy).requireAccessible(member);
     }
 
     @Test
