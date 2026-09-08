@@ -3,7 +3,10 @@
 ## 1. 문서 목적과 상태
 
 - 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 4.2 관리자 회원 조회·제재 완료,
-  4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 완료(PR #50 dev 병합)
+  4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 완료(PR #50 dev 병합),
+  4.6 로그아웃 완료(PR #52 dev 병합), 4.10 만남 종료 후 신고 진입점 완료(PR #53 dev 병합),
+  4.8 회원 제재 사유·기간 통보 구현 완료(수동 검증 대기).
+  남은 항목은 4.4·4.5·4.7·4.9
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -12,7 +15,7 @@
 - 이 문서는 구현 계획입니다. 실제 구현·자동 테스트·수동 검증을 수행하기 전에는
   완료 또는 `PASS`로 표시하지 않습니다.
 - 다음 CLI 세션에서는 이 문서와 `docs/10_PROGRESS_LOG.md`를 함께 읽고
-  미완료 단계(4.3 이후)부터 작업합니다.
+  미완료 단계부터 작업합니다.
 
 ## 2. 기획서 기준 전체 관리자 범위
 
@@ -302,13 +305,43 @@ feature/wbs-10-b-consent-followup
   `cosine_score`, `embedding_applied`, `embedding_pair_count`를 추가해 제안 생성 시점에
   함께 저장합니다. 설계 결정과 저장 정의는 `docs/10_PROGRESS_LOG.md` 4-4절을 참고합니다.
 
-### 4.8 회원 제재 사유·기간 통보 후속 — 미착수
+### 4.8 회원 제재 사유·기간 통보 후속 — 완료
 
-권장 브랜치:
+브랜치:
 
 ```text
 feature/wbs-10-b-member-sanction-notice
 ```
+
+구현 결과와 판단 근거는 `docs/10_PROGRESS_LOG.md`의
+`[10-B 안전 후속] 회원 제재 사유·기간 통보와 제재 범위 정리 (docs/19 4.8)`을 따른다.
+
+**작업 중 사용자 결정으로 제재 범위 자체가 확정되었다.** 원래 구현은 정지 회원을 전면
+차단했는데, 정지는 조회를 막지 않고 활동만 막는 것으로 바꿨다.
+
+| 상태 | 로그인 | 조회 | 활동(체크인·동행 매칭·댓글 작성) |
+| --- | --- | --- | --- |
+| `SUSPENDED` 이용정지 | 가능 | 가능 | 차단 |
+| `BANNED` 영구정지 | 차단 | 차단 | 차단 |
+
+이 서비스는 **로그인 필수**다. 홈(`/`)이 로드 시점에 `GET /api/members/me`를 부르므로
+비로그인 사용자는 홈을 볼 수 없다. 정지 회원의 "조회 가능"은 이 전제 안의 범위다.
+
+활동 판정은 `SuspendedActivityPolicy`의 차단 목록으로 한다. 목록 누락은
+`SuspendedActivityPolicyCoverageTest`가 상태 변경 endpoint 전수 분류 검사로 막는다.
+**신고·차단·동의 철회는 정지 중에도 허용한다.** 정지는 신고 권리를 박탈하는 조치가 아니고,
+만남 종료 후 14일 안에 정지되면 신고 경로 자체가 사라지기 때문이다.
+
+**아래 조사 내용 중 한 가지가 틀렸다.** "`403` 응답에 담는 방식이 유일한 저비용 경로"라고
+적었지만 제재로 막히는 경로는 세 개이고, 그중 **사용자가 가장 먼저 부딪히는 OAuth 로그인은
+302 redirect라 응답 body가 없다.** 게다가 callback의 `catch (RuntimeException)`이 제재
+예외를 삼켜 `oauthError=oauth_failed`로 보내고 있었으므로 로그인 화면은 "잠시 후 다시
+시도해 주세요"라는 **틀린 안내**를 띄웠다.
+
+그래서 실제 구현은 세 경로에 같은 단기 notice cookie를 내려주고 화면이
+`GET /api/auth/sanction-notice` 하나로 사유·기간을 읽는 방식으로 통일했다. 사유·기간을
+query parameter로 넘기지 않은 이유는 URL·access log·브라우저 history에 제재 정보가 남고
+누구나 URL을 위조해 안내 화면을 띄울 수 있기 때문이다.
 
 4.3 정책 확정 과정에서 분리한 항목입니다. **현재는 관리자가 수동으로 정지해도
 사용자가 이유와 기간을 전혀 알 수 없습니다.** 자동 제한 여부와 무관하게 그 자체로
@@ -329,14 +362,29 @@ feature/wbs-10-b-member-sanction-notice
 
 그래서 정지 통보는 **접근 시 응답에 담는 방식**이 유일한 저비용 경로입니다.
 
-필수 범위:
+필수 범위(전부 구현 완료):
 
-- `403` 응답에 `suspendedUntil`과 `reasonCode`를 포함
-- 로그인·차단 화면에 제재 기간과 사유를 표시하는 안내 card
+- `403` 응답에 `suspendedUntil`과 `reasonCode`를 포함 — `ErrorResponse.sanction`에 담는다.
+- 로그인·차단 화면에 제재 기간과 사유를 표시하는 안내 card —
+  `AccountRestrictionNotice`. 제재 안내에서는 로그인 버튼을 감춘다.
+- 문의 경로 — 문의센터 화면(4.5)이 보류라 **고객센터 이메일**을 안내에 표시한다.
+  주소는 환경변수 `SUPPORT_CONTACT_EMAIL`로만 주입하고 저장소에는 넣지 않는다. 영구정지
+  사용자가 이의를 제기할 유일한 경로다.
 - **신고자 보호 제약**: `docs/05_MATCHING_POLICY.md`의 신고 정책과 5장 원칙에 따라
   신고자 identity를 노출하지 않는다. `reasonCode` 수준(`COMMUNITY_GUIDELINE` 등)
   까지만 노출하고 "신고 3건 누적"처럼 신고자 수를 추정할 수 있는 문구는 사용하지
   않는다. 이 제약 설계가 이 항목의 핵심이다.
+
+신고자 보호를 위해 구현에서 추가로 정한 것:
+
+- 사용자 노출 문구는 `MemberSanctionReason` enum 한 곳에만 둔다. 프론트가 code를 문구로
+  바꾸면 노출 심사를 두 곳에서 해야 한다.
+- 관리자 자유 입력 note(`admin_actions.reason`)는 사용자 응답에 담지 않는다. 사용자
+  노출용은 `members.sanction_reason_code`로 컬럼 수준에서 분리했다.
+- 제재 시작 시각(`suspendedAt`)은 노출하지 않는다. 제재 시점이 신고 시점을 좁히는 단서가
+  된다. `suspendedUntil`만 담는다.
+- 위 세 제약은 `MemberSanctionReasonTest`, `AdminMemberIntegrationTest`,
+  `GlobalExceptionHandlerSanctionTest`가 테스트로 고정한다.
 
 Web Push는 이 항목 범위 밖입니다. iOS Safari가 홈화면에 추가한 PWA만 push를
 지원해 축제 현장 사용자 상당수에 도달하지 못하는 문제도 함께 검토해야 합니다.

@@ -129,9 +129,24 @@ V4 이름은 기존 제안의 `safety-admin`에 추천/솔로 코스가 함께 �
 ACTIVE
 PROFILE_REQUIRED
 SUSPENDED
+BANNED
 WITHDRAWN
 DELETED
 ```
+
+`BANNED`는 `V19`에서 추가한 영구 제한 상태다.
+
+### members.sanction_reason_code
+
+`V27`에서 추가한 **사용자 노출용** 제재 사유 code다. 값 목록은
+`admin_actions.reason_code`와 같다(`COMMUNITY_GUIDELINE`, `HARASSMENT`, `NO_SHOW_ABUSE`,
+`FRAUD_OR_SCAM`, `SAFETY_RISK`, `ADMIN_CORRECTION`, `OTHER`).
+
+- `chk_members_sanction_reason_presence`가 `SUSPENDED`/`BANNED`일 때만 값이 있도록 강제한다.
+  정지 해제·만료 복구에서 사유를 지우지 않으면 update가 거부된다.
+- `admin_actions.reason`(관리자 자유 입력 note)과 분리된 값이다. 자유 입력에는 신고 건수처럼
+  신고자를 추정할 수 있는 내용이 들어갈 수 있어 사용자에게 노출하지 않는다. 자세한 내용은
+  `docs/06_SECURITY_POLICY.md`의 제재 안내 조회 token 절과 `docs/19` 4.8을 따른다.
 
 ### members.role
 

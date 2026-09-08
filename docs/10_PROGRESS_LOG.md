@@ -1,5 +1,298 @@
 # 진행 상태 기록
 
+## [10-B 안전 후속] 회원 제재 사유·기간 통보와 제재 범위 정리 (docs/19 4.8)
+
+상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
+
+브랜치는 `feature/wbs-10-b-member-sanction-notice`이며 `dev`(`156c7c8`)에서 분기했고,
+작업 중 `dev`(`b62b1d0`, V26 포함)를 병합했다.
+
+### 사용자 결정으로 확정한 제재 범위
+
+작업 중 사용자가 제재의 의미 자체를 정했다. **원래 구현은 정지 회원을 전면 차단했는데,
+"정지는 조회는 되고 활동만 막힌다"로 바꿨다.**
+
+| 상태 | 로그인 | 조회 | 활동(체크인·동행 매칭·댓글) |
+| --- | --- | --- | --- |
+| `SUSPENDED` 이용정지 | **가능** | **가능** | 차단 |
+| `BANNED` 영구정지 | 차단 | 차단 | 차단 |
+
+이 서비스는 **로그인 필수**다. 홈(`/`)이 로드 시점에 `GET /api/members/me`를 부르므로
+비로그인 사용자는 홈을 볼 수 없고 `/login`으로 보내진다. 공개 열람은 공유 링크로 축제
+상세에 직접 들어오는 경로에만 존재한다. 정지 회원의 "조회 가능"은 이 로그인 필수 전제
+안에서의 범위다.
+
+`MemberAccessPolicy`를 목적이 다른 판정 셋으로 나눴다.
+
+| 메서드 | 쓰이는 곳 | `SUSPENDED` |
+| --- | --- | --- |
+| `requireSignedIn` | 로그인·token 갱신 | 허용 |
+| `requireBrowsable` | 조회 요청 | 허용 |
+| `requireAccessible` | 활동 요청·관리자·WebSocket | 차단 |
+
+관리자 기능과 WebSocket은 `requireAccessible`을 유지했다. 관리자 권한을 정지 중에 유지할
+이유가 없고, STOMP는 매칭 상태 동기화 전용이라 활동에 준한다.
+
+### 활동 판정은 차단 목록 방식, 누락은 테스트로 막았다
+
+사용자 선택에 따라 `SuspendedActivityPolicy`에 **차단할 활동만 등재**한다. 차단 목록은
+새 활동 endpoint를 등재하지 않으면 정지 회원이 그 기능을 조용히 쓸 수 있다는 약점이 있다.
+그래서 `SuspendedActivityPolicyCoverageTest`가 `@RestController`를 훑어 **상태를 바꾸는
+모든 endpoint가 차단 또는 허용으로 분류되어 있는지 전수 검사**한다. 분류를 빠뜨린 endpoint가
+하나라도 있으면 실패한다. scanner가 망가져 빈 목록으로 통과하는 것을 막기 위해 endpoint
+개수 하한(20)도 함께 둔다.
+
+허용 쪽에서 특히 중요한 판단이 있다. **신고·차단은 정지 중에도 허용한다.** 정지는 신고
+권리를 박탈하는 조치가 아니고, `MatchReportWindowPolicy`가 만남 종료 후 14일을 허용하는데
+그 사이 정지되면 신고 경로 자체가 사라진다. 동의 철회도 개인정보 권리라 막지 않는다.
+프로필 수정·찜·취향 임베딩은 사용자 결정에 따라 허용했다.
+
+### 문제
+
+관리자가 회원을 정지해도 **사용자가 사유와 기간을 알 수 없었다.** 그런데 조사해 보니 정도가
+문서에 적힌 것보다 나빴다. `docs/19` 4.8은 `MemberAccessPolicy`가 `403`으로 막고 메시지가
+고정이라는 점만 지적했지만, **정작 사용자가 가장 먼저 부딪히는 로그인 경로는 `403`이 아니었다.**
+
+`AuthController`의 OAuth callback은 `catch (RuntimeException)`으로 모든 예외를 묶어
+`/login?oauthError=oauth_failed`로 보낸다. 제재 예외도 여기 삼켜져 로그인 화면이
+**"소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."** 를 띄웠다. 사유·기간이 없는
+정도가 아니라 틀린 안내를 하고 있었고, 사용자는 재시도만 반복하게 된다.
+
+프론트엔드도 막혀 있었다. `apiClient`의 `redirectToLoginIfUnauthorized`가 401만 처리해서
+`403` 제재는 화면마다 "불러오지 못했어요" 수준으로 흘렀다.
+
+### 문서 전제 수정
+
+`docs/19` 4.8의 **"`403` 응답에 담는 방식이 유일한 저비용 경로"는 틀렸다.** 제재로 막히는
+경로가 세 개이고 그중 하나는 body가 없다.
+
+| 경로 | 응답 | body |
+| --- | --- | --- |
+| OAuth 로그인 (`/api/auth/*/callback`) | 302 redirect | **없음** |
+| 세션 중 API 호출 (`MemberAccessInterceptor`, `/api/**`) | 403 | 있음 |
+| token 갱신 (`AuthService.refresh`) | 403 | 있음 |
+
+### 확정한 정책 3건
+
+| 항목 | 확정값 |
+| --- | --- |
+| 로그인 경로 통보 | 단기 notice cookie + 조회 API. query parameter 방식은 채택하지 않음 |
+| 사용자 노출용 사유 저장 | `members.sanction_reason_code` 컬럼으로 denormalize (`V27`) |
+| `403` body 범위 | `status`, `suspendedUntil`, `reasonCode`, `reasonMessage`, `contactUrl` |
+
+### 구현에서 중요한 판단
+
+**통보 경로를 하나로 합쳤다.** `GlobalExceptionHandler`가 제재 예외를 처리할 때 `403` body와
+notice cookie를 함께 내려주고, OAuth callback도 같은 cookie를 실어
+`/login?oauthError=account_restricted`로 보낸다. 세 경로 모두 로그인 화면이
+`GET /api/auth/sanction-notice` 하나로 안내를 읽는다. **문구와 판정이 한 곳에만 남는다.**
+
+**사유·기간을 query parameter로 넘기지 않았다.** URL·nginx access log·브라우저 history에
+제재 정보가 남고, 누구나 URL을 위조해 안내 화면을 띄울 수 있다. notice cookie는 서버가 서명한
+5분 만료 JWT(`typ: sanction_notice`)이고 path를 조회 endpoint로 좁혔다.
+
+**notice token은 session이 아니다.** 조회 endpoint는 **현재 제재 중인 회원일 때만** 안내를
+반환한다. 유출되어도 "그 회원이 제재 상태인지" 외에는 얻을 수 있는 것이 없다. 안내를 읽은
+뒤에는 cookie를 즉시 만료시킨다.
+
+**사유를 `admin_actions` 조회가 아니라 `members` 컬럼에 뒀다.** `MemberAccessPolicy`는 member
+도메인이라 admin repository를 참조하면 계층이 역전되고, `403` 경로에 추가 query가 붙는다.
+컬럼으로 분리하면 **사용자 노출용(`sanction_reason_code`)과 관리자 내부용
+(`admin_actions.reason` 자유 입력 note)이 컬럼 수준에서 갈라진다.**
+
+**제재 사유 문구를 `MemberSanctionReason` enum 한 곳에만 뒀다.** 프론트가 code를 문구로
+바꾸면 신고자 보호 심사를 두 곳에서 해야 한다. 서버가 `reasonMessage`까지 내려준다.
+
+**제재 시작 시각(`suspendedAt`)은 노출하지 않는다.** 제재 시점이 신고 시점을 좁히는 단서가
+된다. `suspendedUntil`만 담는다.
+
+**제재 안내 화면에서 로그인 버튼을 감췄다.** 제재된 계정은 다시 로그인해도 같은 화면으로
+돌아온다. 버튼을 남겨두면 사용자가 무한히 재시도한다.
+
+**정지와 영구정지의 안내 경로를 분리했다.** 정지 회원은 로그인 상태로 조회를 계속하므로
+`403`을 받았을 때 로그인 화면으로 보내면 안 된다. 그래서 `apiClient`가 두 갈래로 처리한다.
+
+| 응답 | 프론트엔드 동작 |
+| --- | --- |
+| `403 MEMBER_BANNED` | `/login?oauthError=account_restricted`로 이동 → 안내 card |
+| `403 MEMBER_SUSPENDED` | 화면 이동 없음. `member-sanction` 이벤트 → 앱 안 dialog |
+
+**정지 안내를 화면마다 붙이지 않았다.** `apiClient`가 모든 요청의 단일 통로이므로, 여기서
+이벤트를 쏘고 `App` 최상단의 `SanctionNoticeDialog`가 받는다. 체크인·매칭·댓글 어느 화면에서
+403이 나도 안내가 뜨고, 활동 화면이 새로 생겨도 따로 붙일 것이 없다. 상대방이 추가한 댓글
+컴포넌트를 건드리지 않아도 되는 것도 이 방식의 이점이다.
+
+### 구현 중 발견해 함께 고친 것
+
+**만료 복구 batch가 새 CHECK 제약에 걸릴 상태였다.**
+`AdminMemberRepository.restoreExpiredSuspensions`는 bulk `UPDATE`로 상태를 되돌리는데
+`sanction_reason_code`를 지우지 않으면 `chk_members_sanction_reason_presence`가 update를
+거부해 정지 만료 스케줄러가 죽는다. 같은 `UPDATE`에 `sanction_reason_code=NULL`을 추가했다.
+
+**`Member.ban()`의 검증 순서를 바꿨다.** 사유 검증이 `statusBeforeSanction` 변경 뒤에 있어
+검증 실패 시 엔티티가 반쯤 바뀐 채로 남았다. 검증을 앞으로 옮겼다.
+
+### 신고자 보호를 못 박은 테스트
+
+이 항목의 핵심이라 제약을 테스트로 고정했다.
+
+- `MemberSanctionReasonTest` — 사유 문구 전수 검사. "신고"·"누적"·"건수"·"제보"·"고발"·
+  "피해자"가 들어가면 실패하고, 숫자가 들어가면 실패한다. 문구를 "신고 3건 누적"으로 바꾸면
+  여기서 먼저 걸린다. 관리자 조치 사유 code와 값 목록이 갈라지는 것도 함께 잡는다.
+- `AdminMemberIntegrationTest` — 관리자가 `reasonNote`에 `"신고 3건 누적, 신고자 진술 확인
+  완료"`를 넣고 정지시킨 뒤, 그 문자열이 `admin_actions.reason`에는 남고 사용자 안내에는
+  없음을 확인한다.
+- `GlobalExceptionHandlerSanctionTest` — `403` body 직렬화 결과에 `suspendedAt`·"신고"·
+  `reporter`·`reportId`가 없음을 확인한다.
+- `MemberAccessPolicyTest` — 제재가 해제·만료된 회원은 안내를 받지 못한다.
+- 프론트엔드 — 안내 card가 신고 관련 문구를 덧붙이지 않고, 제재 사유를 URL에서 읽지 않는다.
+
+### 건드리지 않은 것
+
+- Web Push·메일 발송 인프라. `docs/19` 4.8 범위 밖이다.
+- 인앱 알림 목록. 정지 회원이 조회를 할 수 있게 되었으니 이제 기술적으로는 가능하지만
+  이번 범위에 넣지 않았다. 영구정지는 여전히 로그인 자체가 막혀 못 쓴다.
+- `MEMBER_SUSPENDED`/`MEMBER_BANNED` error code와 HTTP status. 기존 클라이언트 처리와
+  호환을 유지했다.
+- 문의센터 화면. `inquiries` 테이블이 보류 상태(`docs/19` 4.5)라 화면은 만들지 않고
+  **고객센터 이메일**을 안내에 표시한다. `app.support.contact-email`이 읽고, 값은
+  **환경변수 `SUPPORT_CONTACT_EMAIL`로만** 주입한다. 저장소 기본값은 비어 있고, 비어 있으면
+  문의 문구를 숨긴다. Secret은 아니지만 공개 저장소 이력에 남으면 스팸 수집 대상이 된다.
+  주소는 `mailto:` 링크와 함께 **문구에 그대로 노출**한다. 링크만 걸면 메일 앱이 없는
+  환경에서 주소를 알 수 없다. 영구정지와 이용정지의 안내 문구는 다르게 둔다.
+- 정지 회원의 홈 상단 상시 배너. 활동 시도 시 dialog로 알리므로 필수는 아니다. 필요하면
+  후속으로 추가한다.
+
+### 검증
+
+- Backend `V27` migration 적용과 CHECK 제약 2개 동작을 `AdminMemberIntegrationTest`에서
+  실제 PostgreSQL로 확인했다. 제재가 아닌 상태에 사유를 남기려 하면 DB가 거부한다.
+- `SuspendedActivityPolicyCoverageTest`가 상태 변경 endpoint 전수 분류를 검사한다.
+- Frontend `vitest` 505건, `tsc --noEmit` 통과.
+
+### 남은 것
+
+- 브라우저 수동 검증. 검증 항목과 관리자 버튼 절차는 아래 "수동 검증 절차"를 따른다.
+- `V27` 번호는 다른 브랜치가 `V26`을 먼저 쓰기로 해 `V27`로 잡았다. `dev` 병합 후
+  `dev`(`b62b1d0`)를 이 브랜치로 받아와 번호가 26 → 27로 연속됨을 확인했다.
+
+### 수동 검증 절차
+
+브라우저 2개(일반 + 시크릿)를 쓴다. 하나는 관리자, 하나는 검증 대상 회원(`role=USER`)이다.
+관리자 화면은 `/admin/members` → 회원 행 클릭 → `회원 상세` dialog에 조치 버튼이 뜬다.
+버튼은 대상 상태에 따라 조건부다.
+
+| 버튼 | 내부 action | 나타나는 조건 |
+| --- | --- | --- |
+| 경고 | `WARNING` | `BANNED`가 아닐 때 |
+| 이용정지 | `SUSPEND` | `ACTIVE` 또는 `PROFILE_REQUIRED` |
+| 영구차단 | `BAN` | `ACTIVE`, `PROFILE_REQUIRED`, `SUSPENDED` |
+| 정지 해제 | `UNSUSPEND` | `SUSPENDED` |
+| 차단 해제 | `UNBAN` | `BANNED` |
+
+`이용정지`를 누르면 사유 select와 **정지 기간** select(`ONE_DAY`/`THREE_DAYS`/`SEVEN_DAYS`
+기본/`THIRTY_DAYS`)가 함께 뜬다. 기간 select는 `SUSPEND`에만 나타난다. 메모에
+`password`·`token`·`secret`·`oauth`·`gps`·`위도`·`경도`·`비밀번호`를 넣으면 서버가 거부한다.
+
+1. **정지 회원은 로그인되고 조회가 된다** — 관리자가 `이용정지` 후, 대상이 로그인하면
+   정상 진입하고 축제 목록·상세를 볼 수 있어야 한다. 로그인이 막히면 실패다.
+2. **정지 회원의 활동 화면은 안내로 대체된다** — `/matching`과 `/check-in`은 활동 UI 대신
+   사유·기간 안내 card를 보여야 한다. "매칭 완료" 카드나 체크인 버튼이 뜨면 실패다.
+3. **댓글 작성은 시도 시 dialog로 막힌다** — 축제 상세의 댓글 작성은 화면을 막지 않으므로
+   시도하면 사유·기간 dialog가 뜨고 요청이 실패해야 한다.
+4. **마이페이지** — 상단에 사유·기간 안내 card가 뜨고, **프로필 수정은 정상 동작해야 한다.**
+   수정 후에도 상태가 `SUSPENDED`로 유지되어야 한다.
+5. **영구정지는 로그인 자체가 막힌다** — `영구차단` 후 로그인하면
+   `/login?oauthError=account_restricted`로 이동하고 "영구정지된 계정이에요"가 떠야 한다.
+   **"소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."가 뜨면 실패다** — 이번에
+   고친 기존 버그가 되살아난 것이다.
+6. **notice cookie** — 5번 도중 DevTools에서 `sanction_notice`가 생겼다가 안내 조회 후
+   사라지는지 확인한다(`Path=/api/auth/sanction-notice`, `HttpOnly`).
+7. **해제 후 정상 복귀** — `차단 해제`(사유 select는 `ADMIN_CORRECTION`/`OTHER` 2개만) 후
+   로그인하면 안내 없이 정상 이용된다. 대상 회원 상태가 `ACTIVE`로 돌아온다.
+
+정지 만료 경로는 `suspended_until`을 과거로 바꾸는 dev DB 쓰기가 필요하므로 수동 검증에서
+제외했다. 만료 복구는 `MemberAccessPolicyTest`(lazy 복구)와 `AdminMemberIntegrationTest`
+(batch 복구 시 사유 code 제거)가 덮는다.
+
+### 수동 검증에서 발견해 고친 정지 회원 버그 3건
+
+정지 회원이 로그인·조회를 할 수 있게 되면서 **전에는 도달할 수 없던 경로가 열렸고**,
+거기서 버그 3건이 드러났다. 전부 이번 브랜치에서 고쳤다.
+
+**1. 프로필 수정이 정지 회원을 거부했다.** `MemberProfileService.completeProfile`이
+`PROFILE_REQUIRED`/`ACTIVE`만 허용해 `SUSPENDED`는 `INVALID_INPUT_VALUE`로 막혔다.
+자기 정보 관리는 제재 대상이 아니므로 `SUSPENDED`를 허용 목록에 넣었다.
+
+**2. 프로필 수정이 제재를 조용히 풀 수 있었다.** `Member.completeProfile`이 status를
+**무조건 `ACTIVE`로 덮었다.** 정지 회원이 프로필을 수정하면 제재가 풀리는데
+`suspended_until`과 사유는 남아 `chk_members_suspension_period`·
+`chk_members_sanction_reason_presence` 위반으로 저장이 실패한다. 승격을
+`PROFILE_REQUIRED`일 때만 하도록 좁혔다. **DB CHECK 제약이 없었다면 프로필 수정이 제재
+해제 우회로가 됐을 것이다.** 정지 중 프로필을 완성한 경우 `status_before_sanction`도
+`ACTIVE`로 올려, 해제 후 다시 가입 화면으로 보내지지 않게 했다.
+
+**3. 매칭 화면에서 정지 회원이 빠져나갈 수 없었다.** `deriveMatchingState`는
+`completionLock.groupId`가 있으면 상태를 `COMPLETED`로 만들고, `findLatestCompletedByMemberId`는
+**회원이 새 pool에 들어가기 전까지** 지난 완료 그룹을 계속 반환한다(`NOT EXISTS newer_pool`).
+그래서 과거에 매칭을 완료한 정지 회원은 "매칭 완료" 카드를 계속 보고, 그 카드를 지우는 유일한
+방법인 새 매칭 신청이 `403`으로 막혀 화면에 갇힌다. `MATCH_VALIDITY`가 1시간이라 `active`는
+이미 `false`인데 판정이 `groupId`를 보기 때문이다.
+
+세 번째는 매칭 상태 판정을 바꾸지 않고 **화면이 제재 상태를 미리 알게 해서** 풀었다.
+`GET /api/members/me`가 제재 안내(`sanction`)를 함께 내려주고, 매칭·체크인 화면은 정지
+회원에게 활동 UI 대신 안내 card를 보여준다. 활동을 시도해 `403`을 받은 뒤 dialog로 알리는
+것만으로는 이 막다른 길을 풀 수 없다.
+
+마이페이지에도 같은 안내 card를 넣었다. 상태 이름("이용정지")만 보여서는 사유와 남은 기간을
+알 수 없었다.
+
+`useMemberSanction` 훅이 이 조회를 담당하며, 조회 실패 시 제재가 없는 것으로 본다. 안내를 못
+읽는 것 때문에 정상 회원의 화면이 막히는 편이 더 나쁘다.
+
+### 2차 수동 검증에서 고친 것
+
+**마이페이지에서 제재 팝업이 매번 떴다.** 마이페이지가 관리자 메뉴 노출 여부를 판단하려고
+`GET /api/admin/reports/session`을 조회하는데, `AdminAuthorizationService.requireAdmin`이
+**역할 확인보다 제재 확인을 먼저** 했다. 그래서 정지된 **일반 회원**이 `FORBIDDEN`이 아니라
+`MEMBER_SUSPENDED`를 받아 `apiClient`가 팝업 이벤트를 쐈다. 역할을 먼저 보도록 순서를 바꿨다.
+관리자가 아니면 제재와 무관하게 `FORBIDDEN`이고, 관리자 여부 확인은 활동이 아니라 조회다.
+정지된 관리자는 여전히 관리자 기능을 쓸 수 없다.
+
+**팝업에 `닫기`와 `하루 동안 보지 않기`를 넣었다.** 정지는 조회가 계속 가능한 상태라 팝업을
+강제할 이유가 없다. `하루 동안 보지 않기`는 `localStorage`에 만료 시각만 저장하며, 저장소를
+못 읽는 환경(시크릿 모드·site data 차단)에서는 "설정 없음"으로 본다. 안내를 놓치는 것보다
+한 번 더 보는 편이 낫다.
+
+**마이페이지 안내는 팝업이 아니라 상단 배너다.** `AccountRestrictionNotice`에 `prominent`
+모드를 넣어 coral 테두리와 배경으로 강조한다. 흰 카드로 두면 다른 카드와 섞여 묻힌다.
+
+### 이 작업 중 드러난 별개 문제 (후속 후보, 이번 범위 아님)
+
+작업 중 사용자 질문을 따라가며 확인한 것들이다. 모두 이 브랜치 밖이다.
+
+1. **프론트엔드가 `/api/auth/refresh`를 부르지 않는다.** backend에 endpoint와 refresh token이
+   있는데 호출부가 없다. access token이 30분에 만료되면 `apiClient`가 401을 받아 `/login`으로
+   보내므로 **로그인 사용자가 30분마다 로그아웃된다.** 축제 현장에서 체크인하고 매칭을
+   기다리는 동선과 정면으로 충돌한다. 규모가 작지 않아(동시 401 처리, refresh 실패 시
+   로그아웃 처리) 별도 작업이 필요하다.
+2. **`application-local.yml`만 `refresh-token-expires-minutes: 30`이다.** dev·prod는
+   `20160`(14일)이다. 지금은 refresh를 아무도 부르지 않아 증상이 없지만 1번을 고치는 순간
+   로컬에서만 30분 뒤 갱신이 실패한다. 복붙 잔재로 보인다.
+3. **`MemberAccessInterceptor`가 파싱 불가 `access_token` cookie를 `401`로 막는다.**
+   상대방이 `OptionalMemberResolver.resolveOrNull`로 공개 조회의 만료 cookie를 익명 처리하려
+   했는데, interceptor가 controller 도달 전에 401을 던져 그 코드가 실행되지 않는다.
+   `ContentBookmarkCommentIntegrationTest`의 `만료되거나_위조된_쿠키로도_공개_조회는_200이다`가
+   이것 때문에 실패한다. 상대방 코드 범위라 이 브랜치에서 고치지 않았다.
+4. **`FestivalRepositoryIntegrationTest:94` 실패는 테스트 작성 버그다.** 클래스 레벨과 메서드
+   레벨 `@Sql`이 둘 다 있고 `@SqlMergeMode`가 없어 기본값 `OVERRIDE`로 클래스 fixture가
+   대체된다. 그래서 `repo-fixture-ended`가 insert되지 않는다. `findForAdmin` 쿼리에는 날짜
+   필터도 `ORDER BY`도 없어 프로덕션 코드 문제가 아니다. `@SqlMergeMode(MergeMode.MERGE)`를
+   붙이거나 `ENDED` fixture를 메서드 `@Sql`에 넣으면 된다.
+
+3번과 4번은 `dev`(`b62b1d0`) 병합으로 들어온 실패이며, 이 브랜치의 변경을 stash하고 돌려도
+동일하게 실패함을 확인했다.
+
 ## [10-C 콘텐츠 참여] 찜(북마크)과 공개 댓글·좋아요
 
 상태: 설계·Backend·Frontend 구현 완료. **Backend 통합 테스트 미실행(Docker 없음), 런타임 미검증**
@@ -136,6 +429,7 @@ endpoint는 `GET|PUT /api/{festivals|spots}/{id}/engagement|bookmark`,
 - 회귀 방지 테스트 2건을 `SoloCoursePage.test.ts`에 추가했다(state 없이 체크인 없음 → `festivalId`
   null, state 없이 체크인 있음 → 그 축제).
 - 검증: `tsc -b` 통과, vitest **341개 전부 통과**, `npm run build` 성공. Backend 변경 없음.
+
 
 ## [10-B 안전 후속] 만남 종료 후 신고 진입점 (docs/19 4.10)
 
