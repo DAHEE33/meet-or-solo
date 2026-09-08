@@ -23,17 +23,20 @@ public class MemberProfileService {
     private final MemberTravelStyleRepository memberTravelStyleRepository;
     private final MemberConsentQueryRepository consentQueryRepository;
     private final ProfileFieldCrypto profileFieldCrypto;
+    private final MemberAccessPolicy accessPolicy;
 
     public MemberProfileService(
             MemberRepository memberRepository,
             MemberTravelStyleRepository memberTravelStyleRepository,
             MemberConsentQueryRepository consentQueryRepository,
-            ProfileFieldCrypto profileFieldCrypto
+            ProfileFieldCrypto profileFieldCrypto,
+            MemberAccessPolicy accessPolicy
     ) {
         this.memberRepository = memberRepository;
         this.memberTravelStyleRepository = memberTravelStyleRepository;
         this.consentQueryRepository = consentQueryRepository;
         this.profileFieldCrypto = profileFieldCrypto;
+        this.accessPolicy = accessPolicy;
     }
 
     @Transactional(readOnly = true)
@@ -45,8 +48,11 @@ public class MemberProfileService {
     @Transactional
     public MemberProfileResponse completeProfile(Long memberId, UpdateMemberProfileRequest request) {
         Member member = findMember(memberId);
+        // 정지 회원도 프로필을 수정할 수 있다(docs/19 4.8). 자기 정보 관리는 다른 사용자와의
+        // 상호작용이 아니므로 제재 대상이 아니다. 영구 제한·탈퇴는 애초에 여기 도달하지 못한다.
         if (!Member.STATUS_PROFILE_REQUIRED.equals(member.getStatus())
-                && !Member.STATUS_ACTIVE.equals(member.getStatus())) {
+                && !Member.STATUS_ACTIVE.equals(member.getStatus())
+                && !Member.STATUS_SUSPENDED.equals(member.getStatus())) {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
         requireSignupConsents(member);
@@ -106,6 +112,7 @@ public class MemberProfileService {
                 profileFieldCrypto.decrypt(member.getGenderEncrypted()),
                 profileFieldCrypto.decrypt(member.getAgeRangeEncrypted()),
                 member.getStatus(),
+                accessPolicy.sanctionNoticeOf(member),
                 travelStyles.stream()
                         .map(MemberTravelStyle::getStyleCode)
                         .map(TravelStyleResponse::from)

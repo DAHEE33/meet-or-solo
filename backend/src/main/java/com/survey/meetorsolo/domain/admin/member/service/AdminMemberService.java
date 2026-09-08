@@ -161,8 +161,13 @@ public class AdminMemberService {
         try {
             switch (request.action()) {
                 case WARNING -> validateWarningStatus(member.getStatus());
-                case SUSPEND -> member.suspend(now, now.plus(request.suspensionDuration().duration()));
-                case BAN -> member.ban();
+                // 사용자 노출용 사유는 reasonCode만 넘긴다. 관리자 자유 입력 note(reasonNote)는
+                // 신고 건수 같은 내용이 들어갈 수 있어 회원 record에 담지 않는다.
+                case SUSPEND -> member.suspend(
+                        now,
+                        now.plus(request.suspensionDuration().duration()),
+                        request.reasonCode().name());
+                case BAN -> member.ban(request.reasonCode().name());
                 case UNBAN -> member.unban();
                 case UNSUSPEND -> member.unsuspend();
             }

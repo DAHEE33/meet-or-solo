@@ -260,6 +260,61 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
 시간까지 유효합니다. 즉시 무효화가 필요해지면 회원별 `logout_at`(또는 token version) denylist를
 `MemberAccessInterceptor`에서 검증하는 방식을 별도 단계로 검토합니다.
 
+### 제재별 접근 허용 범위
+
+정지와 영구정지의 허용 범위가 다르다(`docs/19` 4.8).
+
+| 상태 | 로그인·token 갱신 | 조회 | 활동 |
+| --- | --- | --- | --- |
+| `SUSPENDED` | 허용 | 허용 | 차단 |
+| `BANNED` | 차단 | 차단 | 차단 |
+| `WITHDRAWN`·`DELETED` | 차단 | 차단 | 차단 |
+
+- 판정은 `MemberAccessPolicy`의 `requireSignedIn`(로그인), `requireBrowsable`(조회),
+  `requireAccessible`(활동)로 나뉜다.
+- 어떤 요청이 활동인지는 `SuspendedActivityPolicy`의 차단 목록이 정한다. 등재되지 않은
+  요청은 조회로 취급된다. 목록 누락은 `SuspendedActivityPolicyCoverageTest`가 상태 변경
+  endpoint 전수 분류 검사로 막는다. **새 endpoint를 만들면 차단·허용 중 하나로 분류해야 한다.**
+- 관리자 기능(`AdminAuthorizationService`)과 WebSocket 연결
+  (`WebSocketAuthenticationInterceptor`)은 `requireAccessible`을 쓴다. 관리자 권한을 정지
+  중에 유지할 이유가 없고, STOMP는 매칭 상태 동기화 전용이라 활동에 준한다.
+- **자기 정보 관리는 정지 중에도 허용한다.** 프로필 수정·프로필 이미지·찜·취향 등록은 다른
+  사용자와의 상호작용이 아니다. 단 프로필 수정이 `status`를 `ACTIVE`로 덮으면 제재가 조용히
+  풀리므로, `Member.completeProfile`의 승격은 `PROFILE_REQUIRED`일 때만 일어난다.
+  DB의 `chk_members_suspension_period`가 이 실수를 저장 단계에서 한 번 더 막는다.
+- **정지 회원에게는 활동 화면 자체를 내주지 않는다.** `GET /api/members/me`가 제재 안내를
+  함께 내려주고, 매칭·체크인 화면이 활동 UI 대신 안내를 보여준다. `403`을 받은 뒤에만
+  알리면, 지난 완료 매칭 카드에서 새 매칭 신청 외에 빠져나갈 길이 없는 정지 회원이 화면에
+  갇힌다.
+- **신고 접수·상대 차단·동의 철회는 정지 중에도 허용한다.** 정지는 신고 권리를 박탈하는
+  조치가 아니며, 만남 종료 후 14일(`MatchReportWindowPolicy`) 안에 정지되면 신고 경로가
+  사라지는 문제가 생긴다. 개인정보 동의·철회도 제재로 막을 수 없다.
+
+### 제재 안내 조회 token
+
+제재로 접근이 막힌 사용자에게 사유·기간을 알리기 위한 단일 목적 token입니다
+(`docs/19` 4.8).
+
+경로가 두 갈래입니다. **영구정지는 로그인 자체가 막히므로** OAuth callback(302)이 이 cookie를
+내려주고 로그인 화면이 조회해 안내합니다. **정지는 로그인 상태로 조회를 계속하므로** 활동
+시도 시의 `403` body에 담긴 안내를 프론트엔드가 그 자리에서 dialog로 띄웁니다(화면을
+로그인으로 이동시키지 않습니다). `403` 응답에도 같은 cookie가 함께 실리므로, 정지 회원이
+어떤 이유로 로그인 화면에 도달해도 같은 안내를 읽을 수 있습니다.
+
+- `typ: sanction_notice`, 만료 5분 고정. `JwtProvider`가 access/refresh와 같은 secret으로
+  서명하지만 type이 달라 서로 교차 사용할 수 없습니다.
+- `sanction_notice` cookie는 `HttpOnly`, `SameSite=Lax`, `Path=/api/auth/sanction-notice`로
+  조회 endpoint 밖으로 전송되지 않게 좁혔습니다.
+- **session이 아닙니다.** 이 token으로 부를 수 있는 것은 `GET /api/auth/sanction-notice`
+  하나이고, 그 endpoint는 **현재 제재 중인 회원일 때만** 안내를 반환합니다. 유출되어도
+  "그 회원이 제재 상태인지" 외에는 얻을 수 있는 것이 없습니다.
+- 안내를 읽은 뒤 cookie를 `Max-Age=0`으로 즉시 만료시킵니다.
+- 제재 사유·기간을 query parameter로 넘기지 않습니다. URL·nginx access log·브라우저
+  history에 제재 정보가 남고, 누구나 URL을 위조해 안내 화면을 띄울 수 있습니다.
+- 안내에 담는 값은 `status`, `suspendedUntil`, `reasonCode`, `reasonMessage`,
+  `contactEmail`뿐입니다. 신고자 보호를 위해 제재 시작 시각(`suspendedAt`)과 관리자 자유 입력
+  note(`admin_actions.reason`)는 담지 않습니다. 제재 시점은 신고 시점을 좁히는 단서입니다.
+
 회원 탈퇴는 아직 구현되지 않았습니다. 구현 계획은
 [관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.4 회원 본인 탈퇴를 따르며,
 refresh token 폐기와 session 종료는 로그아웃이 만든 `AuthService.revokeSession(memberId)`을

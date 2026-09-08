@@ -13,6 +13,8 @@ import {
 } from '../components/preference/preferenceStatus';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
+import { useMemberSanction } from '../hooks/useMemberSanction';
 import PrimaryButton from '../components/common/PrimaryButton';
 import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
 import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
@@ -130,6 +132,7 @@ export default function MatchingConditionPage() {
     serverOffsetMs,
   } = useMatchingSession();
   const { state: checkinState, cancel: cancelCheckin, isCancelling: isCancellingCheckin } = useCurrentCheckin();
+  const sanction = useMemberSanction();
   const currentCheckin = checkinState.status === 'loaded' ? checkinState.checkin : null;
   const [isCancelCheckinDialogOpen, setIsCancelCheckinDialogOpen] = useState(false);
   const [cancelCheckinFailed, setCancelCheckinFailed] = useState(false);
@@ -253,6 +256,14 @@ export default function MatchingConditionPage() {
             {matchRoomNotice}
           </p>
         )}
+        {/*
+          정지 회원에게 매칭 흐름을 그리지 않는다. 지난 완료 매칭이 남아 있으면 "매칭 완료"
+          카드가 떠서 "다시 매칭하기"밖에 길이 없는데, 새 매칭 신청이 403으로 막혀 화면에서
+          빠져나갈 수 없다. `completionLock.groupId`는 새 pool에 들어가야 비워지기 때문이다.
+        */}
+        {sanction.notice ? (
+          <AccountRestrictionNotice notice={sanction.notice} />
+        ) : (
         <MatchBody
           status={state.status}
           error={state.error}
@@ -294,6 +305,7 @@ export default function MatchingConditionPage() {
           onEnterRoom={() => navigate('/match-room')}
           onRequestCancelCheckin={onRequestCancelCheckin}
         />
+        )}
       </main>
       {isCancelCheckinDialogOpen && currentCheckin && (
         <CancelCheckinDialog

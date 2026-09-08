@@ -24,6 +24,11 @@ public class JwtProvider {
 
     private static final String HMAC_SHA256 = "HmacSHA256";
     private static final Base64.Encoder BASE64_URL_ENCODER = Base64.getUrlEncoder().withoutPadding();
+    /**
+     * 제재 안내 조회 token의 수명. 로그인 화면이 한 번 읽어가는 용도라 짧게 고정한다.
+     * 설정으로 빼지 않는 이유는 운영에서 늘릴 이유가 없기 때문이다.
+     */
+    private static final Duration SANCTION_NOTICE_TOKEN_DURATION = Duration.ofMinutes(5);
 
     private final ObjectMapper objectMapper;
     private final byte[] secret;
@@ -73,6 +78,32 @@ public class JwtProvider {
         claims.put("iat", now.getEpochSecond());
         claims.put("exp", now.plus(refreshTokenDuration).getEpochSecond());
         return createToken(claims);
+    }
+
+    /**
+     * 제재 안내 조회 전용 token.
+     *
+     * <p>session이 아니다. 이 token으로는 {@code /api/auth/sanction-notice}만 부를 수 있고,
+     * 그 endpoint는 현재 제재 중인 회원일 때만 안내를 반환한다. 유출되어도 "그 회원이 제재
+     * 상태인지" 외에는 얻을 수 있는 것이 없다.
+     */
+    public String createSanctionNoticeToken(long memberId) {
+        Instant now = Instant.now();
+        Map<String, Object> claims = new LinkedHashMap<>();
+        claims.put("sub", String.valueOf(memberId));
+        claims.put("typ", "sanction_notice");
+        claims.put("jti", UUID.randomUUID().toString());
+        claims.put("iat", now.getEpochSecond());
+        claims.put("exp", now.plus(SANCTION_NOTICE_TOKEN_DURATION).getEpochSecond());
+        return createToken(claims);
+    }
+
+    public long getSanctionNoticeTokenExpiresInSeconds() {
+        return SANCTION_NOTICE_TOKEN_DURATION.toSeconds();
+    }
+
+    public Long getMemberIdFromSanctionNoticeToken(String token) {
+        return getMemberId(token, "sanction_notice");
     }
 
     public String hashToken(String token) {

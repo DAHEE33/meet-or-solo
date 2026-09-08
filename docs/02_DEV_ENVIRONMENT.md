@@ -208,8 +208,12 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 | `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. dev 서버 기준은 `http://<DEV_SERVER_HOST>:18080` |
 | `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
 | `ADMIN_REPORT_CURSOR_HMAC_SECRET` | 관리자 신고 목록 opaque cursor 전용 HMAC-SHA256 서명 키. UTF-8 기준 32바이트 이상 |
+| `SUPPORT_CONTACT_EMAIL` | 제재 안내에 표시하는 고객센터 이메일(`docs/19` 4.8). 비어 있으면 안내에서 문의 문구를 숨긴다. 실제 주소는 저장소에 기록하지 않는다 |
 
 예시 값에는 실제 IP, 실제 도메인, 실제 계정, 실제 비밀번호를 넣지 않습니다.
+`SUPPORT_CONTACT_EMAIL`도 같은 이유로 저장소에 실제 주소를 넣지 않습니다. Secret은 아니지만
+공개 저장소 이력에 남으면 스팸 수집 대상이 되므로 `.env`와 배포 환경변수로만 주입합니다.
+로컬에서 제재 안내의 문의 문구를 보려면 `.env`에 이 값을 넣고 backend를 재시작해야 합니다.
 `ADMIN_REPORT_CURSOR_HMAC_SECRET`은 JWT 서명 키와 다른 난수 Secret을 dev/prod에 각각
 주입하며 실제 값은 repository와 문서에 기록하지 않습니다. 이 키를 회전하면 기존에 발급한
 관리자 신고 목록 cursor는 무효화될 수 있습니다.

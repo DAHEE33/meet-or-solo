@@ -7,6 +7,8 @@ import { useFestivalCheckin } from '../hooks/useFestivalCheckin';
 import { formatDistanceLabel } from '../utils/tourSpot';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
+import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
+import { useMemberSanction } from '../hooks/useMemberSanction';
 import PrimaryButton from '../components/common/PrimaryButton';
 import GPSPermissionModal from '../components/common/GPSPermissionModal';
 import Spinner, { LoadingState } from '../components/common/Spinner';
@@ -52,6 +54,8 @@ export default function CheckInPage() {
   // festivalId 없이 들어오면(직접 URL, 새로고침 등) 어느 축제로 체크인할지 알 수 없어 이 화면이
   // 할 수 있는 게 없다. 예전에는 "축제를 골라주세요" 안내를 보여줬는데, 결국 사용자가 축제를
   // 고르러 가야 하므로 축제·관광 탐색으로 바로 보낸다. replace로 이동해 뒤로가기가 이 빈
+  const sanction = useMemberSanction();
+
   // 화면으로 돌아오지 않게 한다.
   useEffect(() => {
     if (festivalId === null) navigate('/spots', { replace: true });
@@ -62,6 +66,18 @@ export default function CheckInPage() {
       <MobileLayout showTabBar={false}>
         <PageHeader title="체크인" />
         <LoadingState message="축제 목록으로 이동하고 있어요" />
+      </MobileLayout>
+    );
+  }
+
+  // 정지 회원은 체크인할 수 없다. 버튼을 눌러 403을 받게 두지 않고 미리 안내한다.
+  if (sanction.notice) {
+    return (
+      <MobileLayout showTabBar={false}>
+        <PageHeader title="체크인" />
+        <main className="px-5 pb-10 pt-1">
+          <AccountRestrictionNotice notice={sanction.notice} />
+        </main>
       </MobileLayout>
     );
   }

@@ -4,6 +4,7 @@ import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, Spar
 import { authApi } from '../api/auth';
 import { matchHistoryApi } from '../api/matchHistory';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
+import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
 import { adminReportsApi } from '../api/adminReports';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
 import {
@@ -146,6 +147,11 @@ export default function MyPage() {
     <MobileLayout>
       <PageHeader title="마이페이지" noBack />
       <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
+        {/* 제재 중이면 사유와 기간을 먼저 보여준다. 상태 이름만으로는 이유와 남은 기간을 알 수 없다. */}
+        {profile?.sanction && (
+          <AccountRestrictionNotice notice={profile.sanction} prominent />
+        )}
+
         {/* 프로필 카드 */}
         <section className="relative flex items-center gap-4 rounded-3xl bg-white p-5 pr-12 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <Link
