@@ -4872,3 +4872,67 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   갱신 실패 시 재시도 없이 `/login`, `/api/auth/**`는 갱신 시도 없음, 재시도가 또 401이면 재갱신
   없음, body 없는 204 endpoint도 같은 흐름. jsdom이 없어 `fetch` stub의 호출 URL 순서와 횟수로
   검증했다.
+
+## [10-B 보완] 완료 card 표시 기간과 임베딩 실패 가시화
+
+상태: 코드 구현과 자동 검증 완료, dev 배포 후 수동 재검증 대기
+
+배경은 두 가지 화면 제보다.
+
+1. `/matching` 첫 화면에 이틀 전(`2026-09-08`) 완료 card가 그대로 떠 있었다.
+2. dev 서버에서만 취향 임베딩이 계속 실패했다. 같은 계정 흐름에서 "저장했어요"를 본 뒤
+   매칭 화면에서 "취향 분석에 실패했어요"가 떴고, 다른 계정에서는 새로 작성해도
+   "아직 입력하지 않았어요"로 되돌아갔다. 로컬에서는 정상이었다.
+
+### 완료 card 표시 기간 (Frontend)
+
+- 원인은 backend `findLatestCompletedByMemberId`가 "그 뒤로 새 pool에 들어가지 않은 최신
+  완료 group"을 기간 제한 없이 돌려주고, `deriveMatchingState`가 `completionLock.groupId`만
+  보고 `COMPLETED`로 판정한 것이다. 새 매칭을 신청하기 전까지 카드가 영구히 남았다.
+  `[10-A 후속 2]`에서 과거 terminal pool에 대해 고친 고착과 같은 종류인데 완료 경로에는
+  같은 처리가 없었다.
+- `isCompletedCardVisible(restriction)`을 추가했다. 잠금이 살아 있거나(`active`), 완료
+  시각과 `serverNow`가 서울 기준 같은 날일 때만 카드를 보여준다. 아니면 `IDLE`로 떨어져
+  신청 화면이 된다. 두 조건을 OR로 묶어 자정 직전 완료가 몇 분 만에 사라지지 않게 했다.
+- backend는 바꾸지 않았다. 재매칭 잠금은 그대로 `confirmed_at + 1시간`이고, 이번 변경은
+  화면 표시 기간만 정한다. 판정 기준 시각은 단말 시계가 아니라 restriction의 `serverNow`다.
+- 완료 card에서도 체크인 줄을 보여주도록 `CheckinSummaryCard`를 분리했다. 예전에는 이 줄이
+  `IdleForm` 안에만 있어 완료 상태에서 체크인 만료 시각과 `체크인 취소`가 사라졌다.
+
+### 임베딩 실패 (Backend/Frontend)
+
+- **취향 저장이 통째로 롤백되던 경로를 막았다.** `MemberPreferenceEmbeddingService`가
+  `BusinessException`만 잡고 있어서, 그 밖의 예외가 나면 트랜잭션이 되돌아가 방금 저장한
+  취향 행 자체가 사라졌다. 회원 화면에서는 "입력한 적 없음"으로 보인다. `RuntimeException`
+  전체를 잡아 `FAILED`로 기록한다. "임베딩 실패가 서비스를 막지 않는다"를 저장에도 적용한 것이다.
+- 실패 이유를 `EmbeddingFailureReason`(API_KEY_MISSING / UNAUTHORIZED / RATE_LIMITED /
+  INVALID_REQUEST / UPSTREAM_ERROR / TIMEOUT / CONNECT_FAILED / INVALID_RESPONSE / UNKNOWN)으로
+  분류해 로그와 DB에 남긴다. `V32`로 `member_preference_embeddings.embedding_error_reason`을
+  추가했다. **회원 API 응답에는 노출하지 않는다** — 회원에게는 "분석 실패"로 충분하고 이 값은
+  운영자용이다.
+- `OPENAI_API_KEY`의 앞뒤 공백·줄바꿈을 기동 시 제거하고 경고를 남긴다. Windows에서 편집한
+  `.env`를 서버로 옮기면 값 끝에 `CR`이 남아 `Bearer sk-...`가 되고 헤더 자체가 거절되는데,
+  키를 "제대로 넣었는데 실패하는" 대표 경로다. 키가 비어도 기동은 실패시키지 않는다.
+- 관리자 진단 `GET /api/admin/diagnostics/embedding`을 추가했다. 회원 데이터를 쓰지 않고
+  고정 문장으로 왕복만 시켜 `ok`/`reason`/`apiKeyPresent`/`elapsedMs`를 돌려준다. 실패해도
+  200이다 — 실패 이유가 곧 응답이다. SSH 없이 dev 상태를 확인할 수 있다.
+- 프로필 수정에서 분석이 실패했는데도 초록색 "저장했어요. 이제 더 잘 맞는 사람을 찾을 수
+  있어요"가 뜨던 것을 고쳤다. `preferenceSaveNotice`로 판정을 모으고, 실패면 경고 배너와
+  `다시 분석하기`를 보여준다. 회원가입도 같은 기준(`preferenceSignupNotice`)을 쓴다.
+  매칭 신청 전 안내창 자체는 바꾸지 않았다 — 실패해도 건너뛰고 신청할 수 있어야 한다.
+- 재시도 로직은 넣지 않았다. 원인이 키·차단이면 재시도가 소용없고 저장 응답 대기만 배로
+  늘어난다. 진단으로 `TIMEOUT`이 확인되면 별도로 다룬다.
+
+### 검증
+
+- frontend: `npm test` 67 files / 620 tests, `npx tsc -b`, production build 통과.
+- backend: 임베딩 관련 focused test 통과, 전체 test는 기존 baseline과 대조.
+- dev 수동 재검증 대기: ①이틀 전 완료 계정으로 `/matching` 진입 시 신청 화면, ②당일 완료
+  직후 카드 유지, ③저장 실패 시 실패 배너, ④진단 endpoint의 `reason` 확인, ⑤DB
+  `embedding_error_reason` 확인.
+
+### 이번 범위에서 제외
+
+- `infra/`, `.github/` (다른 브랜치와 충돌)
+- dev 서버 `.env`의 실제 key 값 조정 — 저장소 밖 운영 작업이다.
+- 임베딩 재시도·비동기화, 가중치 조정, 매칭 알고리즘 변경

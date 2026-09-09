@@ -9,6 +9,7 @@ import {
   canBeginRetry,
   deriveMatchingState,
   isAbortError,
+  isCompletedCardVisible,
   observedActivePoolId,
   pollingDelay,
   retrySourceAfterRefresh,
@@ -37,8 +38,15 @@ const restriction = (active = false): MatchingRestriction => ({
   },
 });
 
-const completionRestriction = (active = true): MatchingRestriction => ({
+/**
+ * 완료 제한이 걸린 restriction.
+ *
+ * `serverNow`를 완료 당일로 맞춘다. 완료 card 표시 여부가 "완료한 날과 서버 오늘이 같은가"에
+ * 달려 있어서, 기본 fixture의 다른 날짜를 그대로 쓰면 잠금 만료 사례가 전부 다음 날 취급된다.
+ */
+const completionRestriction = (active = true, serverNow = '2026-08-10T13:30:00+09:00'): MatchingRestriction => ({
   ...restriction(),
+  serverNow,
   completionLock: {
     active,
     reason: 'MATCH_VALIDITY',
@@ -163,9 +171,14 @@ describe('deriveMatchingState', () => {
       .toBe('COMPLETED');
   });
 
-  it('완료 제한이 만료돼도 완료 이력은 CANCELLED로 오인하지 않는다', () => {
+  it('완료 제한이 만료돼도 당일이면 완료 이력을 CANCELLED로 오인하지 않는다', () => {
     expect(state({ pool: pool('MATCHED'), restriction: completionRestriction(false) }).status)
       .toBe('COMPLETED');
+  });
+
+  it('날이 바뀐 완료 이력은 신청 화면으로 되돌린다', () => {
+    const yesterday = completionRestriction(false, '2026-08-11T09:00:00+09:00');
+    expect(state({ pool: pool('MATCHED'), restriction: yesterday }).status).toBe('IDLE');
   });
 
   it('active 서버 상태가 없으면 cooldown, 그마저 없으면 IDLE을 사용한다', () => {
@@ -312,5 +325,39 @@ describe('retry form reconciliation', () => {
     const terminalState = state({ pool: pool('EXPIRED') });
     expect(terminalState.status).toBe('IDLE');
     expect(retrySourceAfterRefresh(null, terminalState)).toBeNull();
+  });
+});
+
+describe('isCompletedCardVisible', () => {
+  it('완료 이력이 없으면 보여주지 않는다', () => {
+    expect(isCompletedCardVisible(restriction())).toBe(false);
+  });
+
+  it('재매칭 잠금이 살아 있으면 항상 보여준다', () => {
+    expect(isCompletedCardVisible(completionRestriction(true))).toBe(true);
+  });
+
+  it('잠금이 풀려도 완료 당일이면 보여준다', () => {
+    expect(isCompletedCardVisible(completionRestriction(false, '2026-08-10T23:59:00+09:00'))).toBe(true);
+  });
+
+  it('날이 바뀌면 보여주지 않는다', () => {
+    expect(isCompletedCardVisible(completionRestriction(false, '2026-08-11T00:01:00+09:00'))).toBe(false);
+  });
+
+  it('자정 직전 완료는 날이 바뀌어도 잠금이 남아 있는 동안 보여준다', () => {
+    const nearMidnight: MatchingRestriction = {
+      ...restriction(),
+      serverNow: '2026-08-11T00:20:00+09:00',
+      completionLock: {
+        active: true,
+        reason: 'MATCH_VALIDITY',
+        groupId: 31,
+        startsAt: '2026-08-10T23:50:00+09:00',
+        expiresAt: '2026-08-11T00:50:00+09:00',
+        remainingSeconds: 1_800,
+      },
+    };
+    expect(isCompletedCardVisible(nearMidnight)).toBe(true);
   });
 });

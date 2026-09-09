@@ -24,6 +24,7 @@ import AiConsentSection, {
 } from '../components/consent/AiConsentSection';
 import PreferenceInputSection from '../components/preference/PreferenceInputSection';
 import {
+  preferenceSaveNotice,
   preferenceStateOf,
   preferenceStatusLabel,
   preferenceStatusTone,
@@ -92,6 +93,8 @@ export default function ProfileEditPage() {
   /** 서버에 기록된 동의 여부. null이면 아직 조회 전이다. */
   const [hasAiConsent, setHasAiConsent] = useState<boolean | null>(null);
   const [aiConsentDraft, setAiConsentDraft] = useState<AiConsentDraft>(EMPTY_AI_CONSENT_DRAFT);
+  /** 저장 직후 안내. 분석 상태에 따라 성공/실패 문구가 갈린다. */
+  const saveNotice = prefStatus !== null ? preferenceSaveNotice(prefStatus) : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -417,13 +420,32 @@ export default function ProfileEditPage() {
                 {prefError && (
                   <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
                 )}
-                {prefSaved && !prefError && (
-                  returnTo ? (
-                    // 매칭하려다 들어온 사람은 저장 후 원래 하려던 일로 돌아갈 수 있어야 한다.
-                    <div className="flex flex-col gap-2.5 rounded-2xl bg-teal/10 px-4 py-3.5">
-                      <p role="status" className="text-sm text-teal">
-                        저장했어요. 이제 더 잘 맞는 사람을 찾을 수 있어요.
-                      </p>
+                {prefSaved && !prefError && saveNotice && (
+                  // 저장 자체는 200이어도 분석이 실패했을 수 있다. 성공 문구로 덮으면 곧바로 매칭
+                  // 화면에서 "취향 분석에 실패했어요" 안내가 떠서 두 화면이 서로 다른 말을 한다.
+                  <div
+                    className={`flex flex-col gap-2.5 rounded-2xl px-4 py-3.5 ${
+                      saveNotice.failed ? 'bg-coral/10' : 'bg-teal/10'
+                    }`}
+                  >
+                    <p role="status" className={`text-sm ${saveNotice.failed ? 'text-coral' : 'text-teal'}`}>
+                      {saveNotice.failed
+                        ? saveNotice.text
+                        : returnTo ? saveNotice.text : '저장했어요. 이 화면에서 계속 고칠 수 있어요.'}
+                    </p>
+                    {saveNotice.failed && (
+                      <button
+                        type="button"
+                        onClick={handlePrefSave}
+                        disabled={prefSaving}
+                        className="rounded-xl border border-coral/40 py-2.5 text-[14px] font-bold text-coral active:bg-coral/10 disabled:opacity-40"
+                      >
+                        {prefSaving ? '다시 분석 중...' : '다시 분석하기'}
+                      </button>
+                    )}
+                    {returnTo && (
+                      // 매칭하려다 들어온 사람은 저장 후 원래 하려던 일로 돌아갈 수 있어야 한다.
+                      // 분석이 실패해도 매칭은 정상 진행되므로 실패해도 이 길을 막지 않는다.
                       <button
                         type="button"
                         onClick={() => navigate(returnTo, { replace: true })}
@@ -431,12 +453,8 @@ export default function ProfileEditPage() {
                       >
                         매칭 신청하러 가기
                       </button>
-                    </div>
-                  ) : (
-                    <p role="status" className="rounded-2xl bg-teal/10 px-4 py-3 text-sm text-teal">
-                      저장했어요. 이 화면에서 계속 고칠 수 있어요.
-                    </p>
-                  )
+                    )}
+                  </div>
                 )}
               </>
             )}

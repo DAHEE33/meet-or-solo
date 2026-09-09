@@ -471,7 +471,9 @@ export function MatchBody(props: MatchBodyProps) {
         expiresAt={props.completionLock.expiresAt}
         active={props.completionLock.active}
         remaining={props.completionRemaining}
+        currentCheckin={props.currentCheckin}
         onRetry={props.onRetry}
+        onRequestCancelCheckin={props.onRequestCancelCheckin}
       />
     );
   }
@@ -522,15 +524,21 @@ function CompletedCard({
   expiresAt,
   active,
   remaining,
+  currentCheckin,
   onRetry,
+  onRequestCancelCheckin,
 }: {
   expiresAt: string | null;
   active: boolean;
   remaining: number;
+  currentCheckin: CurrentCheckinResponse | null;
   onRetry: () => void;
+  onRequestCancelCheckin: () => void;
 }) {
   const remainingMinutes = Math.max(1, Math.ceil(remaining / 60));
   return (
+    <>
+    <CheckinSummaryCard checkin={currentCheckin} onRequestCancel={onRequestCancelCheckin} />
     <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal/10">
         <CheckCircle2 size={30} className="text-teal" />
@@ -554,6 +562,43 @@ function CompletedCard({
         다시 매칭하기
       </PrimaryButton>
     </section>
+    </>
+  );
+}
+
+/**
+ * 현재 체크인 상태 줄. 체크인이 없으면 아무것도 그리지 않는다.
+ *
+ * 신청 화면과 완료 화면이 함께 쓴다. 완료 card만 뜨는 동안에도 체크인이 살아 있을 수 있는데,
+ * 예전에는 이 줄이 `IdleForm` 안에만 있어서 완료 상태에서는 체크인 만료 시각도, 취소 버튼도
+ * 화면에서 사라졌다.
+ */
+function CheckinSummaryCard({
+  checkin,
+  onRequestCancel,
+}: {
+  checkin: CurrentCheckinResponse | null;
+  onRequestCancel: () => void;
+}) {
+  if (!checkin) return null;
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-[13px] font-semibold text-ink">
+          {checkin.festivalName ?? '체크인된 축제'}에 체크인됨
+        </span>
+        <span className="text-[12px] text-ink/50">
+          {formatSeoulDateTime(checkin.expiresAt)} 만료
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onRequestCancel}
+        className="shrink-0 rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink/60"
+      >
+        체크인 취소
+      </button>
+    </div>
   );
 }
 
@@ -597,25 +642,7 @@ function IdleForm({
           </button>
         </div>
       )}
-      {currentCheckin && (
-        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="truncate text-[13px] font-semibold text-ink">
-              {currentCheckin.festivalName ?? '체크인된 축제'}에 체크인됨
-            </span>
-            <span className="text-[12px] text-ink/50">
-              {formatSeoulDateTime(currentCheckin.expiresAt)} 만료
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onRequestCancelCheckin}
-            className="shrink-0 rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink/60"
-          >
-            체크인 취소
-          </button>
-        </div>
-      )}
+      <CheckinSummaryCard checkin={currentCheckin} onRequestCancel={onRequestCancelCheckin} />
       <section className="flex flex-col gap-3">
         <h2 className="text-[17px] font-bold text-ink">희망 인원</h2>
         <div className="grid grid-cols-3 gap-2">

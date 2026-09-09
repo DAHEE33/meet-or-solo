@@ -7,6 +7,8 @@ import com.survey.meetorsolo.domain.member.entity.MemberPreferenceEmbedding;
 import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberPreferenceEmbeddingRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.external.openai.EmbeddingFailedException;
+import com.survey.meetorsolo.external.openai.EmbeddingFailureReason;
 import com.survey.meetorsolo.external.openai.OpenAiEmbeddingClient;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
@@ -55,12 +57,29 @@ public class MemberPreferenceEmbeddingService {
         try {
             float[] vector = openAiEmbeddingClient.embed(preferenceText);
             embedding.markCompleted(vector, openAiEmbeddingClient.getModel());
-        } catch (BusinessException exception) {
-            log.warn("임베딩 생성 실패. memberId={}, error={}", memberId, exception.getMessage());
-            embedding.markFailed();
+        } catch (RuntimeException exception) {
+            // 어떤 예외가 나와도 취향 원문 저장까지 되돌리지 않는다.
+            //
+            // 예전에는 BusinessException만 잡았다. 그래서 그 밖의 예외(잘못된 헤더 값으로 인한
+            // IllegalArgumentException 등)가 나면 트랜잭션이 통째로 롤백돼 방금 저장한 취향 행
+            // 자체가 사라졌고, 회원 화면에서는 "입력한 적 없음"으로 되돌아간 것처럼 보였다.
+            // 임베딩 실패가 서비스를 막지 않는다는 원칙은 저장에도 똑같이 적용된다.
+            EmbeddingFailureReason reason = failureReason(exception);
+            log.warn("임베딩 생성 실패. memberId={}, reason={}, error={}",
+                    memberId, reason, exception.getMessage());
+            embedding.markFailed(reason.name());
         }
 
         return MemberPreferenceEmbeddingResponse.from(embedding);
+    }
+
+    /**
+     * 실패 이유를 뽑는다. 분류되지 않은 예외는 {@code UNKNOWN}으로 남겨 원인 추적 대상으로 둔다.
+     */
+    private EmbeddingFailureReason failureReason(RuntimeException exception) {
+        return exception instanceof EmbeddingFailedException failed
+                ? failed.getReason()
+                : EmbeddingFailureReason.UNKNOWN;
     }
 
     /**

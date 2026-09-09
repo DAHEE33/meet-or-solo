@@ -4,6 +4,9 @@ import {
   isPreferenceStateKnown,
   preferenceActionLabel,
   preferencePromptCopy,
+  preferenceSaveNotice,
+  preferenceSaveOutcome,
+  preferenceSignupNotice,
   preferenceStateOf,
   preferenceStatusDescription,
   preferenceStatusLabel,
@@ -154,5 +157,43 @@ describe('readPreferenceReturnTo', () => {
     expect(readPreferenceReturnTo({ returnTo: '//evil.example.com' })).toBeNull();
     expect(readPreferenceReturnTo({ returnTo: 'matching' })).toBeNull();
     expect(readPreferenceReturnTo({ returnTo: 123 })).toBeNull();
+  });
+});
+
+describe('preferenceSaveOutcome', () => {
+  it('저장 응답의 분석 상태를 그대로 결과로 옮긴다', () => {
+    expect(preferenceSaveOutcome('COMPLETED')).toBe('ANALYZED');
+    expect(preferenceSaveOutcome('FAILED')).toBe('ANALYSIS_FAILED');
+    expect(preferenceSaveOutcome('PENDING')).toBe('ANALYZING');
+  });
+});
+
+describe('preferenceSaveNotice', () => {
+  it('분석까지 끝나야 성공 문구를 쓴다', () => {
+    expect(preferenceSaveNotice('COMPLETED')).toEqual({
+      failed: false,
+      text: '저장했어요. 이제 더 잘 맞는 사람을 찾을 수 있어요.',
+    });
+  });
+
+  it('분석 실패는 성공 문구로 덮지 않는다', () => {
+    // 여기서 성공이라고 말하면 곧바로 매칭 화면이 "취향 분석에 실패했어요"를 띄워 화면끼리
+    // 말이 갈린다. 저장된 것과 실패한 것을 한 문장에서 구분한다.
+    const notice = preferenceSaveNotice('FAILED');
+    expect(notice.failed).toBe(true);
+    expect(notice.text).toContain('저장됐지만');
+    expect(notice.text).toContain('분석에 실패');
+  });
+
+  it('분석 중이면 실패로 취급하지 않는다', () => {
+    expect(preferenceSaveNotice('PENDING').failed).toBe(false);
+  });
+});
+
+describe('preferenceSignupNotice', () => {
+  it('분석 실패만 가입 마지막 단계에서 안내한다', () => {
+    expect(preferenceSignupNotice('FAILED')).toContain('프로필 수정에서 다시 저장');
+    expect(preferenceSignupNotice('COMPLETED')).toBeNull();
+    expect(preferenceSignupNotice('PENDING')).toBeNull();
   });
 });
