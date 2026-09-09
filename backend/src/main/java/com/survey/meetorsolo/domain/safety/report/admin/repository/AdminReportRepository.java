@@ -20,10 +20,14 @@ public class AdminReportRepository {
     private static final String SELECT_COLUMNS = """
             SELECT r.id AS report_id, r.group_id, r.reason_code, r.status AS report_status,
                    r.created_at, r.updated_at, r.resolved_at,
-                   reporter.id AS reporter_id, reporter.nickname AS reporter_nickname,
+                   reporter.id AS reporter_id,
+                   CASE WHEN reporter.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                        ELSE reporter.nickname END AS reporter_nickname,
                    reporter.profile_image_url AS reporter_profile_image_url,
                    reporter.status AS reporter_status,
-                   reported.id AS reported_id, reported.nickname AS reported_nickname,
+                   reported.id AS reported_id,
+                   CASE WHEN reported.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                        ELSE reported.nickname END AS reported_nickname,
                    reported.profile_image_url AS reported_profile_image_url,
                    reported.status AS reported_status,
                    g.status AS group_status, g.confirmed_at AS group_confirmed_at

@@ -56,6 +56,7 @@ public class MemberProfileService {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
         requireSignupConsents(member);
+        requireSelectableNickname(request.nickname().trim());
 
         member.completeProfile(
                 request.nickname().trim(),
@@ -73,6 +74,24 @@ public class MemberProfileService {
         memberTravelStyleRepository.saveAll(travelStyles);
 
         return toResponse(member, travelStyles);
+    }
+
+    /**
+     * 탈퇴 회원의 표시 문구는 닉네임으로 고를 수 없다.
+     *
+     * <p>허용하면 살아 있는 계정이 다른 사용자에게 탈퇴한 회원으로 보인다({@code docs/19} 4.4).
+     *
+     * <p><b>지금은 이 검사에 도달하기 전에 이미 막힌다.</b>
+     * {@code UpdateMemberProfileRequest}의 {@code @Pattern(^[가-힣A-Za-z0-9]+$)}이 공백을
+     * 허용하지 않아 "탈퇴한 회원"은 Bean Validation에서 {@code 400}으로 걸린다. 이 검사와
+     * {@code V30}의 {@code chk_members_nickname_not_withdrawn_label}은 그 패턴이 완화되거나
+     * 이 DTO를 거치지 않는 경로가 생겼을 때를 위한 이중 방어다.
+     */
+    private void requireSelectableNickname(String nickname) {
+        if (Member.WITHDRAWN_NICKNAME.equals(nickname)) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_INPUT_VALUE, "사용할 수 없는 닉네임입니다.");
+        }
     }
 
     /**

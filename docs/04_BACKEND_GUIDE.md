@@ -392,6 +392,35 @@ PostgreSQL은 MVP의 단일 신뢰 원천입니다.
 - Object Storage 장애 응답에는 endpoint, access key, secret key, object key 같은 내부 정보를 노출하지 않습니다.
 - OCI S3 Compatibility API는 `aws-chunked` content encoding을 지원하지 않으므로 S3 client의 `chunkedEncodingEnabled`를 `false`, `requestChecksumCalculation`을 `WHEN_REQUIRED`로 설정합니다.
 
+## 회원 탈퇴
+
+정책과 결정 근거는 [관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md) 4.4를 따릅니다.
+여기에는 구현 위치만 적습니다.
+
+| 진입점 | 서비스 |
+| --- | --- |
+| `DELETE /api/members/me` | `MemberWithdrawalService.withdrawSelf` |
+| `POST /api/admin/members/{memberId}/forced-withdrawal` | `AdminMemberService.forceWithdraw` → `withdrawByAdmin` |
+
+- 두 경로가 `MemberWithdrawalService`의 같은 코어를 공유하지만 진입점을 분리합니다. `BAN`은
+  되돌릴 수 있고 강제 탈퇴는 익명화라 되돌릴 수 없으므로 `AdminMemberActionType`에 넣지 않습니다.
+- 물리 삭제하지 않습니다. `members` 참조 FK 31개가 전부 `ON DELETE RESTRICT`입니다.
+- 진행 중 매칭은 `MemberWithdrawalMatchCleanupService`가 정리합니다.
+  `Propagation.MANDATORY`라 탈퇴 transaction 밖에서는 실행되지 않습니다.
+  기존 `MatchCancellationService`/`MatchPoolCancellationService`는 재사용하지 않습니다.
+  전자는 도착 마감이 지나면 예외를 던지고 후자는 쿨타임·penalty를 매겨, 탈퇴가 실패합니다.
+- 프로필 이미지 실물은 commit 이후 삭제합니다. `ObjectStorageService.delete`가 null과 저장소
+  장애를 모두 무시하므로 삭제 실패로 탈퇴가 되돌아가지 않습니다.
+- 재가입 판정은 `MemberRejoinPolicy`가 `AuthService`의 OAuth upsert 안에서 처리합니다.
+  **프로필 갱신보다 먼저** 판정해야 합니다. 순서가 바뀌면 재가입이 거부된 회원의 익명화된
+  프로필이 OAuth 응답으로 다시 채워집니다.
+- 재가입 거부는 `MemberSanctionException`(`MEMBER_REJOIN_BLOCKED`)으로 던집니다.
+  `GlobalExceptionHandler`가 `ErrorCode`가 아니라 예외 타입에만 걸려 있어, 안내 cookie와
+  `403` body 경로를 수정 없이 재사용합니다.
+- 쿨오프 값은 `MemberRejoinCooldownPolicy.COOLDOWN`(7일) 상수입니다. 환경변수가 아닙니다.
+- 새 활동 endpoint를 만들면 `SuspendedActivityPolicy`에 분류해야 합니다.
+  `DELETE /api/members/me`는 개인정보 권리라 `ALLOWED`에 있습니다.
+
 ### 날짜·시간 저장 및 API 기준
 
 - Flyway의 기존 `TIMESTAMPTZ` 컬럼을 유지합니다.

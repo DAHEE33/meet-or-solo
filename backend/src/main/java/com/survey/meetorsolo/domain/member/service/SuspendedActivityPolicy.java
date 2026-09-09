@@ -52,6 +52,9 @@ public class SuspendedActivityPolicy {
             // 개인정보 권리. 동의와 철회는 제재로 막을 수 없다.
             Rule.of("POST", "/api/members/me/consents"),
             Rule.of("DELETE", "/api/members/me/consents/*"),
+            // 탈퇴도 개인정보 권리다. 정지 중이라고 계정 삭제를 막을 수 없다.
+            // 잔여 정지 기간은 탈퇴로 사라지지 않고 재가입 시 이어진다(Member.rejoin).
+            Rule.of("DELETE", "/api/members/me"),
             // 자기 정보 관리. 다른 사용자와의 상호작용이 아니다.
             Rule.of("PUT", "/api/members/me/profile"),
             Rule.of("POST", "/api/members/me/profile-image"),

@@ -14,6 +14,17 @@ import org.springframework.data.repository.query.Param;
 /**
  * 상태값은 JPQL 리터럴이 아니라 {@code :param}으로 넘긴다 — {@code TourPlaceRepository} 등
  * 기존 repository와 같은 방식이다.
+ *
+ * <p><b>탈퇴 회원 닉네임 치환이 없는 이유</b>: 다른 조회 경로는 탈퇴 회원의 닉네임 컬럼이
+ * {@code NULL}이라 {@code status = 'WITHDRAWN'}일 때 표시 문구를 SQL에서 만들어 낸다
+ * ({@code docs/19} 4.4). 댓글 목록은 그럴 필요가 없다 — 탈퇴가
+ * {@code ContentCommentService.softDeleteAllOnWithdrawal}로 작성 댓글을 {@code VISIBLE} →
+ * {@code DELETED}로 내리고, 아래 목록은 {@code comment.status = :status}로 {@code VISIBLE}만
+ * 조회하므로 탈퇴 회원의 댓글이 애초에 결과에 들어오지 않는다.
+ *
+ * <p>탈퇴 회원 댓글을 계속 보이게 정책이 바뀌면 <b>여기에도 치환을 넣어야 한다.</b> 넣지 않으면
+ * 닉네임이 {@code null}로 내려가고, 프론트가 {@code nickname.slice(0, 1)}로 첫 글자를 뽑으므로
+ * ({@code ContentCommentItem.tsx}) 빈 칸이 아니라 렌더링 자체가 죽는다.
  */
 public interface ContentCommentRepository extends JpaRepository<ContentComment, Long> {
 

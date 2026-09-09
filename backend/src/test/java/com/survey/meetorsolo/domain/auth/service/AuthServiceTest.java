@@ -18,6 +18,7 @@ import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.domain.member.service.MemberRejoinPolicy;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
@@ -39,10 +40,11 @@ class AuthServiceTest {
     private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
     private final JwtProvider jwtProvider = mock(JwtProvider.class);
     private final MemberAccessPolicy accessPolicy = mock(MemberAccessPolicy.class);
+    private final MemberRejoinPolicy rejoinPolicy = mock(MemberRejoinPolicy.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final AuthService authService = new AuthService(
             kakaoClient, naverClient, memberRepository, refreshTokenRepository, jwtProvider, accessPolicy,
-            events);
+            rejoinPolicy, events);
 
     @BeforeEach
     void token정책() {

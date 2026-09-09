@@ -1,5 +1,5 @@
 import type { SanctionNotice } from './types';
-import { apiClient, buildApiUrl } from './apiClient';
+import { apiClient, apiClientVoid, buildApiUrl } from './apiClient';
 
 export type Gender = 'MALE' | 'FEMALE' | 'OTHER';
 export type AgeRange = '10S' | '20S' | '30S' | '40S' | '50S' | '60_PLUS';
@@ -44,6 +44,11 @@ export const memberProfileApi = {
       },
       body: JSON.stringify(request),
     }),
+  /**
+   * 회원 탈퇴(docs/19 4.4). 서버가 세션을 폐기하고 cookie를 만료시킨다.
+   * 응답 본문이 없어 apiClientVoid를 쓴다.
+   */
+  withdraw: () => apiClientVoid('/api/members/me', { method: 'DELETE' }),
   uploadImage: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
