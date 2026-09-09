@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Heart, MapPinCheck, HeartHandshake, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
+import { ChevronRight, Heart, MapPinCheck, HeartHandshake, MessageCircleQuestion, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
 import { authApi } from '../api/auth';
 import { matchHistoryApi } from '../api/matchHistory';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
@@ -19,6 +19,7 @@ import {
 } from '../components/preference/preferenceStatus';
 import { checkInRecords } from '../data/mock/checkIns';
 import { contentBookmarksApi, type BookmarkedContent } from '../api/contentBookmarks';
+import { inquiriesApi } from '../api/inquiries';
 import { bookmarkedContentId, bookmarkedContentTitle } from '../hooks/useContentBookmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
@@ -61,6 +62,21 @@ export default function MyPage() {
   const [withdrawalError, setWithdrawalError] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<{ count: number; hasMore: boolean } | null>(null);
   const [favorites, setFavorites] = useState<BookmarkedContent[] | null>(null);
+  const [unreadInquiryCount, setUnreadInquiryCount] = useState(0);
+
+  // 미확인 답변 수도 부가 정보다. 실패하면 badge를 감추고 진입점은 그대로 둔다.
+  useEffect(() => {
+    const controller = new AbortController();
+    inquiriesApi
+      .getUnreadCount(controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setUnreadInquiryCount(result.count);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setUnreadInquiryCount(0);
+      });
+    return () => controller.abort();
+  }, []);
 
   // 찜 요약은 부가 정보다. 조회에 실패하면 빈 목록으로 두고 마이페이지는 그대로 보여준다.
   useEffect(() => {
@@ -313,6 +329,21 @@ export default function MyPage() {
         <Link to="/mypage/blocks" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
           <ShieldX size={18} className="text-coral" aria-hidden="true" />
           <span className="flex-1 text-[14px] font-semibold text-ink">차단 회원 관리</span>
+          <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
+        </Link>
+
+        {/* 관리자 답변을 밀어줄 채널이 없어 이 badge가 유일한 도달 신호다(docs/28 2.2). */}
+        <Link to="/mypage/inquiries" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
+          <MessageCircleQuestion size={18} className="text-teal" aria-hidden="true" />
+          <span className="flex-1 text-[14px] font-semibold text-ink">1:1 문의</span>
+          {unreadInquiryCount > 0 && (
+            <span
+              className="rounded-full bg-coral px-1.5 py-0.5 text-[11px] font-bold text-white tabular-nums"
+              aria-label={`확인하지 않은 답변 ${unreadInquiryCount}건`}
+            >
+              {unreadInquiryCount}
+            </span>
+          )}
           <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
         </Link>
 

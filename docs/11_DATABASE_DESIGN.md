@@ -66,7 +66,7 @@
 | `member_profile_images` | MVP는 `members.profile_image_url`로 시작한다. 이미지 변경 이력이 필요하면 분리한다. |
 | `match_group_cancellations` | MVP는 `match_events`와 `match_group_members.cancelled_at`로 표현한다. 상세 통계가 필요하면 분리한다. |
 | `web_push_subscriptions` | Web Push 구현 단계에서 추가한다. 이번 DB 설계에는 테이블 후보만 별도 보류한다. |
-| `inquiries` | 1:1 문의 센터 구현 시 추가한다. MVP 안전 기능의 핵심은 `reports`와 `admin_actions`다. |
+| ~~`inquiries`~~ | **보류 해제.** `V31`로 `inquiries`와 `inquiry_messages`를 추가했다. 설계는 `docs/28_MEMBER_INQUIRY_DESIGN.md`. |
 | `api_batch_runs` | 초기에는 `tour_api_call_logs`로 수동/스케줄 호출 기록을 관리한다. 배치 단위 추적이 필요하면 분리한다. |
 
 ### 제외 테이블
@@ -838,6 +838,49 @@ partial unique index 2개가 동시 요청 중복을 DB에서 흡수한다. 설�
 `like_count >= 0` CHECK와 `WHERE like_count > 0` 가드가 음수를 이중으로 막는다. 정합성 복구
 쿼리는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 8.3절에 있다.
 
+### inquiries
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 1:1 문의 스레드 1건의 상태와 목록·badge용 파생값을 담는다. |
+| 주요 컬럼 | `id`, `member_id`, `category`, `title`, `status`, `priority`, `last_message_at`, `last_answered_at`, `member_read_at`, `closed_at`, `anonymized_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id` `ON DELETE RESTRICT` |
+| 상태값 | `status`: `RECEIVED`/`IN_PROGRESS`/`ANSWERED`/`CLOSED`, `priority`: `NORMAL`/`URGENT` |
+| CHECK | `category IN ('SANCTION_APPEAL','ACCOUNT','MATCHING','FESTIVAL_DATA','BUG','ETC')`, `title` 1~100자, `(status = 'CLOSED') = (closed_at IS NOT NULL)`, `status <> 'ANSWERED' OR last_answered_at IS NOT NULL`, `anonymized_at IS NULL OR status = 'CLOSED'` |
+| UNIQUE | 없음. 같은 회원이 같은 제목으로 여러 건 등록할 수 있다 |
+| INDEX | `idx_inquiries_member_created_at`, `idx_inquiries_status_created_at`, `idx_inquiries_open`(partial), `idx_inquiries_retention`(partial) |
+| 개인정보/보안 | 제목에도 개인정보가 들어올 수 있어 보관 정책 대상이다. 관리자와 작성자 본인만 조회한다. |
+| MVP 필수 | 중요 |
+
+`priority`는 **사용자가 지정할 수 없다.** 사용자가 고르게 하면 사실상 전부 `URGENT`로 들어와
+우선순위가 무의미해진다. 등록 요청은 이 필드를 받지 않고 관리자 `PATCH`만 변경한다.
+
+관리자 목록 정렬 키는 `(created_at DESC, id DESC)`이며 **`priority`를 `ORDER BY`에 넣지
+않는다.** 넣으면 cursor payload에도 그 값이 들어가야 하고, 정렬 키와 cursor 키가 어긋나면
+페이지 경계에서 항목이 중복·누락된다(`docs/28` 5.7).
+
+### inquiry_messages
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 문의 스레드의 발화 1건. 사용자 문의와 관리자 답변을 같은 테이블에 담는다. |
+| 주요 컬럼 | `id`, `inquiry_id`, `author_type`, `author_member_id`, `body`, `created_at` |
+| PK | `id` |
+| FK | `inquiry_id -> inquiries.id`, `author_member_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `author_type`: `USER`/`ADMIN` |
+| CHECK | `author_type IN ('USER','ADMIN')`, `body` 1~2000자 |
+| UNIQUE | 없음 |
+| INDEX | `idx_inquiry_messages_inquiry`, `idx_inquiry_messages_author_created_at` |
+| 개인정보/보안 | 본문은 평문이다. 관리자와 작성자 본인만 조회하고 로그에 남기지 않는다. |
+| MVP 필수 | 중요 |
+
+`author_type`을 따로 두는 이유는 `author_member_id != inquiries.member_id`로 관리자를
+유추하면 관리자가 자기 문의에 답할 때 판정이 깨지기 때문이다.
+
+사용자 응답에는 관리자 `memberId`·닉네임을 담지 않는다. 화면은 `author_type`만 보고 "운영팀"으로
+표시하며 관리자 개인을 특정할 이유가 없다.
+
 ## 7. 매칭 흐름과 DB 표현
 
 1. 사용자가 축제 상세 또는 체크인 화면에서 GPS 검증을 통과한다.
@@ -1102,6 +1145,37 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 적용 전 공유 dev DB의 `flyway_schema_history`에서 `V26`이 비어 있는지 확인해야 합니다.
 `ddl-auto: validate`이므로 entity와 migration이 정확히 일치해야 부팅됩니다.
+
+### V31__add_member_inquiries.sql
+
+1:1 문의 센터 테이블 2개를 생성합니다. 설계 근거는 `docs/28_MEMBER_INQUIRY_DESIGN.md`입니다.
+
+- `inquiries` — 스레드 헤더. `status` 상태 머신(`RECEIVED`/`IN_PROGRESS`/`ANSWERED`/`CLOSED`)과
+  목록·badge용 비정규화 값(`last_message_at`, `last_answered_at`, `member_read_at`).
+- `inquiry_messages` — 스레드 발화. 사용자 문의와 관리자 답변을 `author_type`으로 구분.
+
+주요 설계 판단:
+
+- **본문은 평문**입니다(`docs/28` 3.1). 비공개 1:1이지만 암호화하면 관리자 키워드 검색이
+  불가능해지고 이 저장소가 의존하는 `char_length` CHECK 제약도 걸 수 없습니다.
+- **미확인 답변 여부를 컬럼으로 저장하지 않습니다.** `last_answered_at`과 `member_read_at` 비교로
+  조회 시점에 계산합니다. boolean 컬럼을 두면 `content_comments.like_count`와 같은 카운터
+  정합성 문제를 새로 만듭니다.
+- `chk_inquiries_closed_at`은 `content_comments.chk_content_comments_deleted_at`과 같은
+  관용구로 상태와 시점 컬럼을 묶어 고정합니다.
+- `anonymized_at`은 보관 기간(종결 후 1년) 경과 익명화의 재처리를 막는 원인 key입니다.
+- `SAFETY` 카테고리를 두지 않습니다 — 신고자 보호 제약과 충돌하고 구조화 신고 경로가 이미
+  있습니다(`docs/28` 3.4).
+
+기존 테이블과 constraint는 변경하지 않고 신규 생성만 합니다. `admin_actions.action_type`
+CHECK도 건드리지 않았습니다 — 문의 답변은 회원 제재가 아니므로 그 table에 기록하지 않습니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V31`이 비어 있는지 확인해야 합니다.
+
+**번호는 저장소 파일 목록이 아니라 공유 dev DB의 `flyway_schema_history`를 기준으로 정합니다.**
+이 마이그레이션은 처음 `V28`로 만들었는데, 협업자가 저장소에 push하지 않은 채 공유 dev DB에
+`V28`~`V30`을 먼저 적용해 둔 상태여서 Flyway가 checksum 충돌로 부팅을 막았습니다. push되지
+않은 마이그레이션은 저장소에 보이지 않으므로 파일 목록만으로는 다음 번호를 알 수 없습니다.
 
 ## `user_blocks` 조회·해제 접근 규칙
 

@@ -659,3 +659,34 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   밝힙니다. 사진 없음과 같은 얼굴로 보이면 안 됩니다.
 - `TourSpot.contentTypeId`는 `utils/tourSpot.ts`의 세 mapper가 채웁니다. 관광지 목록/상세/근접
   조회 응답이 모두 `contentTypeId`를 내려주므로 backend 변경은 필요하지 않습니다.
+
+## 1:1 문의 화면
+
+설계는 [docs/28_MEMBER_INQUIRY_DESIGN.md](28_MEMBER_INQUIRY_DESIGN.md)를 따릅니다.
+
+- 화면은 `/mypage/inquiries`(목록), `/mypage/inquiries/new`(작성), `/mypage/inquiries/:inquiryId`
+  (스레드) 3개이고, 진입점은 `MyPage`의 "1:1 문의" 행입니다. 목록은 `BlockedMembersPage`의
+  상태 분기 패턴(loading / 빈 상태 / 오류·재시도)을 따릅니다.
+- **미확인 답변 badge는 부가 기능이 아니라 필수입니다.** 관리자 답변을 사용자에게 밀어줄 채널이
+  없습니다 — STOMP는 `/matching`·`/match-room`에서만 연결되고, Web Push는 VAPID 키·구독
+  table·권한 UI가 전무하며, 메일 발송 인프라도 없습니다. badge가 유일한 도달 신호이므로
+  진입점에서 빼면 사용자는 답변이 온 사실을 알 수 없습니다.
+- badge 값은 `GET /api/members/me/inquiries/unread-count`로 읽습니다. 목록 전체를 불러오지
+  않습니다. 조회에 실패하면 badge를 감추고 진입점은 그대로 둡니다(안전 알림 badge와 같은 방식).
+- 스레드 상세를 여는 것만으로 서버가 열람 시각을 갱신해 badge가 꺼집니다. 별도 "읽음" 호출이
+  없습니다.
+- **작성 폼에 개인정보 입력 자제 안내를 반드시 노출합니다.** 본문을 평문으로 저장하기 때문입니다
+  (`docs/28` 3.1). 함께 "동행 중 문제는 신고 기능을 이용해 주세요"도 안내합니다 — 안전 카테고리를
+  두지 않는 결정의 화면 쪽 대응입니다(`docs/28` 3.4).
+- **작성 폼에 긴급 선택 입력을 두지 않습니다.** 긴급 지정은 관리자만 합니다. 사용자가 고르게
+  하면 사실상 전부 긴급으로 들어와 우선순위가 무의미해집니다.
+- 관리자 답변은 작성자를 특정하지 않고 **"운영팀"** 으로만 표시합니다. 응답에 관리자
+  `memberId`·닉네임이 애초에 없습니다.
+- 관리자 화면은 `/admin/inquiries`(`AdminInquiriesPage`)이며 `AdminNav`의 5번째 메뉴입니다.
+  미처리(`RECEIVED`·`IN_PROGRESS`) badge는 `AdminInquiryPageResponse.openCount`를 읽고,
+  `/admin/reports`의 안전 알림 badge와 같은 실패 처리 규칙을 따릅니다. badge 라벨과 숫자는
+  `badgeOf()` 한 곳에서 함께 정해 서로 어긋나지 않게 합니다.
+- 관리자 목록에 **긴급 우선 정렬을 제공하지 않습니다.** 정렬 키와 cursor 키가 어긋나면 페이지
+  경계에서 항목이 중복·누락됩니다. 대신 긴급 filter를 둡니다(`docs/28` 5.7).
+- 문의 유형·상태 라벨과 상태 배지 색은 `api/inquiries.ts`에만 둡니다. 화면마다 code를 문구로
+  바꾸면 노출 심사를 여러 곳에서 해야 합니다.
