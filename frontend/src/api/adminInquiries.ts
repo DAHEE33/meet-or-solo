@@ -1,5 +1,5 @@
 // 관리자 1:1 문의 관리용 데이터 접근 계층.
-// 설계는 docs/28_MEMBER_INQUIRY_DESIGN.md 6장을 따른다.
+// 설계는 docs/29_MEMBER_INQUIRY_DESIGN.md 6장을 따른다.
 
 import { apiClient } from './apiClient';
 import type { InquiryCategory, InquiryMessage, InquiryStatus } from './inquiries';
@@ -11,7 +11,7 @@ export type InquiryPriority = 'NORMAL' | 'URGENT';
 /** 관리자가 직접 지정할 수 있는 상태. `ANSWERED`는 답변 등록으로만 만들어진다. */
 export type AdminInquiryTargetStatus = 'IN_PROGRESS' | 'CLOSED';
 
-/** 제재 이의제기 판단에 회원 상태가 필요하다(docs/28 7절). */
+/** 제재 이의제기 판단에 회원 상태가 필요하다(docs/29 7절). */
 export type AdminInquiryMember = {
   memberId: number;
   nickname: string;

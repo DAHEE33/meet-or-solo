@@ -93,7 +93,7 @@ class InquiryServiceTest {
 
     @Test
     void 답변을_기다리는_문의가_3건이면_등록을_거절한다() {
-        // 도배 완화는 댓글의 N초 규칙이 아니라 미답변 누적으로 막는다(docs/28 확정 8번).
+        // 도배 완화는 댓글의 N초 규칙이 아니라 미답변 누적으로 막는다(docs/29 확정 8번).
         when(inquiries.countOpenByMemberId(MEMBER_ID)).thenReturn(3L);
 
         assertThatThrownBy(() -> service.create(MEMBER_ID, InquiryCategory.ETC, "제목", "본문"))
@@ -127,7 +127,7 @@ class InquiryServiceTest {
 
     @Test
     void 스레드를_열면_열람_시각을_갱신한다() {
-        // 관리자 답변을 밀어줄 채널이 없어 열람 시각이 badge를 끄는 유일한 신호다(docs/28 2.2).
+        // 관리자 답변을 밀어줄 채널이 없어 열람 시각이 badge를 끄는 유일한 신호다(docs/29 2.2).
         Inquiry target = inquiry(MEMBER_ID, InquiryStatus.ANSWERED);
         target.onAdminAnswer(NOW.minusHours(1));
         assertThat(target.hasUnreadAnswer()).isTrue();
@@ -170,7 +170,7 @@ class InquiryServiceTest {
 
     @Test
     void 답변_완료_문의에_추가_질문을_남기면_확인_중으로_되돌린다() {
-        // 되돌리지 않으면 관리자 미처리 목록에 다시 뜨지 않아 재질문이 묻힌다(docs/28 5.4).
+        // 되돌리지 않으면 관리자 미처리 목록에 다시 뜨지 않아 재질문이 묻힌다(docs/29 5.4).
         Inquiry target = inquiry(MEMBER_ID, InquiryStatus.RECEIVED);
         target.onAdminAnswer(NOW.minusHours(2));
         assertThat(target.getStatus()).isEqualTo(InquiryStatus.ANSWERED);

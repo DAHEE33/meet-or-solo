@@ -158,7 +158,7 @@ class AdminInquiryServiceTest {
 
     @Test
     void 우선순위만_바꿀_수_있다() {
-        // 긴급 지정은 관리자 전용이다. 사용자 등록 요청에는 priority 필드가 없다(docs/28 확정 5번).
+        // 긴급 지정은 관리자 전용이다. 사용자 등록 요청에는 priority 필드가 없다(docs/29 확정 5번).
         Inquiry target = inquiry(InquiryStatus.RECEIVED);
         when(inquiries.findByIdForUpdate(INQUIRY_ID)).thenReturn(Optional.of(target));
         stubDetailLookup();

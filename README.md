@@ -152,10 +152,10 @@ POSTGRES_PASSWORD
 DB_HOST
 DB_PORT
 SPRING_PROFILES_ACTIVE
-TOUR_API_KEY
+TOURISM_API_KEY
 ```
 
-기존 local `.env`에 `TOURISM-API-KEY`가 있으면 관광공사 client가 해당 이름도 읽습니다. 신규 dev/prod 환경은 `TOUR_API_KEY`를 사용합니다. 실제 키는 `.env`와 서버 Secret에만 두고 커밋하지 않습니다.
+관광공사 서비스키 환경변수는 `TOURISM_API_KEY` **하나로 통일**합니다. 과거에는 local `.env`의 `TOURISM-API-KEY`와 표준 `TOUR_API_KEY`를 fallback으로 함께 읽었지만, 이름이 두 개면 어느 쪽이 비었는지 추적하기 어렵고 dev/prod에서 조용히 인증 실패로 이어졌습니다. 기존 `.env`를 쓰던 환경은 키 이름을 `TOURISM_API_KEY`로 바꿔야 합니다. 실제 키는 `.env`와 서버 Secret에만 두고 커밋하지 않습니다.
 
 축제 Scheduler는 profile별로 소유권을 고정합니다. `local`과 `prod`에서는 항상 비활성화하고, `dev`에서만 기본 활성화합니다. 따라서 local `.env`에는 `FESTIVAL_SYNC_ENABLED`를 두지 않습니다.
 
@@ -272,7 +272,7 @@ cd backend
 .\gradlew.bat test --tests "com.survey.meetorsolo.external.tourapi.client.KoreaTourApiRestClientTest"
 ```
 
-루트 `.env`의 `TOUR_API_KEY` 또는 `TOURISM-API-KEY`로 실제 강원도 축제 조회를 확인할 때만 live smoke test를 명시적으로 켭니다.
+루트 `.env`의 `TOURISM_API_KEY`로 실제 강원도 축제 조회를 확인할 때만 live smoke test를 명시적으로 켭니다.
 
 ```powershell
 cd backend

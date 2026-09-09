@@ -1,5 +1,58 @@
 # 진행 상태 기록
 
+## [10-공통 환경 정리] 관광공사 서비스키 환경변수 이름 통일 (`TOURISM_API_KEY`)
+
+상태: 완료. 로컬 `.env` 반영까지 마침. **dev/prod 서버 `.env`와 GitHub Secrets는 수동 반영 필요**
+
+### 문제
+
+같은 값을 가리키는 환경변수 이름이 세 개였다.
+
+| 위치 | 이름 |
+| --- | --- |
+| 로컬 루트 `.env` | `TOURISM-API-KEY` |
+| `application.yml` | `TOUR_API_KEY` (없으면 `TOURISM-API-KEY`로 fallback) |
+| `docker-compose.dev.yml`·`.env.dev.example` | `TOUR_API_KEY` |
+
+`docs/28_INTEGRATION_TEST_PLAN.md` 1.1절 항목 6이 이미 이 불일치를 위험으로 올려두었다.
+fallback이 있어 로컬은 조용히 동작하지만, **dev/prod는 어느 이름이 비었는지 추적할 수 없어
+축제 sync가 인증 실패로만 나타난다.**
+
+### 확정
+
+**`TOURISM_API_KEY` 하나로 통일했다.** 사용자 지정 값이다. `application.yml`의 이중 fallback
+(`${TOUR_API_KEY:${TOURISM-API-KEY:}}`)을 제거해 이름이 하나만 남게 했다 — fallback을 남기면
+통일한 의미가 없고, 옛 이름이 남은 환경이 계속 동작해 이름 불일치가 다시 자란다.
+
+`TOUR_API_BASE_URL`·`TOUR_API_MOBILE_OS`·`TOUR_API_MOBILE_APP`·`TOUR_API_CONNECT_TIMEOUT`·
+`TOUR_API_READ_TIMEOUT`은 **그대로 뒀다.** 사용자 요청 범위가 서비스키였고, 이들은 Secret이
+아니라 기본값이 있는 설정값이라 이름 불일치로 인한 조용한 실패가 발생하지 않는다.
+
+### 변경 파일
+
+- `backend/src/main/resources/application.yml` — `service-key: ${TOURISM_API_KEY:}`
+- `backend/.../tourapi/client/KoreaTourApiRestClient.java` — 누락 시 예외 메시지의 변수명
+- `infra/docker/docker-compose.dev.yml`, `infra/env/.env.dev.example`
+- `README.md`, `docs/04_BACKEND_GUIDE.md`, `docs/06_SECURITY_POLICY.md`,
+  `docs/07_DEPLOYMENT.md`, `docs/28_INTEGRATION_TEST_PLAN.md`(항목 6 해소 처리)
+- 로컬 루트 `.env` — 키 이름만 교체(값 보존). `.env`는 `.gitignore` 대상이라 커밋되지 않는다
+
+`docs/10_PROGRESS_LOG.md`의 과거 항목(`TOURISM-API-KEY`와 `TOUR_API_KEY` 지원)은 그 시점의
+기록이므로 고치지 않고 남겨 둔다.
+
+### 검증
+
+- `compileJava` 통과, 관광공사 client 테스트 통과
+- Backend 전체 628건 중 31건 실패 — **전부 `*IntegrationTest`/`MeetOrSoloApplicationTests`이며
+  이 개발 머신에 Docker가 없어 Testcontainers가 뜨지 않은 것이다.** 비통합 테스트 실패 0건
+
+### 남은 수동 작업
+
+- [ ] **dev/prod 서버 `.env`의 키 이름을 `TOURISM_API_KEY`로 변경.** fallback을 없앴으므로
+      옛 이름만 있으면 서비스키가 빈 값이 되고 축제 sync가 인증 실패한다
+- [ ] GitHub Secrets에 `TOUR_API_KEY`가 등록되어 있으면 `TOURISM_API_KEY`로 재등록
+- [ ] 팀원 각자의 로컬 `.env` 키 이름 변경 안내
+
 ## [10-B] 회원 탈퇴와 관리자 강제 탈퇴 (docs/19 4.4)
 
 상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
@@ -464,7 +517,7 @@ action_type='FORCED_WITHDRAWAL';`을 함께 실행한다.
 클릭과 비동기 갱신은 자동 테스트로 재현되지 않는다.
 
 
-## [10-B 문의] 1:1 문의 센터 (docs/19 4.5, docs/28)
+## [10-B 문의] 1:1 문의 센터 (docs/19 4.5, docs/29)
 
 상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
 
@@ -523,7 +576,7 @@ badge가 부가 기능이 아니라 기능의 일부**다.
 통제했다 — 관리자·본인만 조회, 로그에 본문 미기록, 작성 폼에 개인정보 입력 자제 안내.
 
 나머지 6건(2테이블 구조, 스레드 허용, 첨부 제외, 미답변 3건 제한, 안전 카테고리 미도입,
-담당자 지정 미도입)은 권고안대로 확정했다. 근거는 `docs/28` 3절에 있다.
+담당자 지정 미도입)은 권고안대로 확정했다. 근거는 `docs/29` 3절에 있다.
 
 ### DB (`V31__add_member_inquiries.sql`)
 

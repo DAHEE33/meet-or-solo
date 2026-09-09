@@ -59,7 +59,7 @@ type ListState =
  * 관리자 1:1 문의 관리. `AdminReportsPage` 구조(필터 + 목록 + 상세 패널)를 따른다.
  *
  * 긴급 우선 정렬은 제공하지 않는다 — 정렬 키와 cursor 키가 어긋나면 페이지 경계에서 항목이
- * 중복·누락된다. 대신 긴급 filter를 둔다(docs/28 5.7).
+ * 중복·누락된다. 대신 긴급 filter를 둔다(docs/29 5.7).
  */
 export default function AdminInquiriesPage() {
   const [draft, setDraft] = useState(EMPTY_ADMIN_INQUIRY_FILTERS);

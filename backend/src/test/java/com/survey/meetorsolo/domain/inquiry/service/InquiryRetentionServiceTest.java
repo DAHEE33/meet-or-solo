@@ -88,7 +88,7 @@ class InquiryRetentionServiceTest {
 
     @Test
     void 이미_익명화한_문의는_조회_조건에서_빠지므로_다시_처리되지_않는다() {
-        // 재처리를 막는 것은 본문 문구 비교가 아니라 anonymized_at이다(docs/28 5.6).
+        // 재처리를 막는 것은 본문 문구 비교가 아니라 anonymized_at이다(docs/29 5.6).
         Inquiry alreadyDone = closedInquiry(1L, NOW.minusYears(2));
         alreadyDone.anonymize(InquiryRetentionService.ANONYMIZED_TITLE, NOW.minusDays(3));
         assertThat(alreadyDone.getAnonymizedAt()).isEqualTo(NOW.minusDays(3));

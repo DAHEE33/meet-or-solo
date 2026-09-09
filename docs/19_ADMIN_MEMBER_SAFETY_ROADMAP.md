@@ -413,7 +413,7 @@ cookie와 `403` body를 만들어 주므로 **두 파일을 수정하지 않고*
 
 ### 4.5 1:1 문의 센터 후속 — 구현 완료 (수동 검증 대기)
 
-설계와 확정 사항 10건은 `docs/28_MEMBER_INQUIRY_DESIGN.md`, 구현 결과는
+설계와 확정 사항 10건은 `docs/29_MEMBER_INQUIRY_DESIGN.md`, 구현 결과는
 `docs/10_PROGRESS_LOG.md`의 `[10-B 문의] 1:1 문의 센터`를 따릅니다.
 
 권장 브랜치는 `feature/wbs-10-b-inquiry-center`였으나, **사용자 결정에 따라
@@ -435,7 +435,7 @@ cookie와 `403` body를 만들어 주므로 **두 파일을 수정하지 않고*
 `/api/**`에 도달할 수 없고 로그인 자체가 안 되므로, **인앱 이의제기 경로를 쓸 수 없습니다.**
 그 경로는 고객센터 이메일(`SUPPORT_CONTACT_EMAIL`) 안내를 그대로 유지합니다. 정지
 (`SUSPENDED`) 회원은 `SuspendedActivityPolicy` 허용 목록에 등재해 인앱으로 이의를 제기할 수
-있습니다(`docs/28` 2.1, 2.3).
+있습니다(`docs/29` 2.1, 2.3).
 
 ### 4.6 로그아웃 — 완료
 
@@ -581,7 +581,7 @@ query parameter로 넘기지 않은 이유는 URL·access log·브라우저 hist
   - **4.5 구현 후에도 영구정지 사용자에게는 여전히 유일한 경로다.** `BANNED`는
     `MemberAccessPolicy.requireBrowsable`에 막혀 `/api/**`에 도달할 수 없고 로그인 자체가
     안 되므로 인앱 문의 폼을 쓸 수 없다. 정지(`SUSPENDED`) 사용자만 인앱 경로가 열렸다
-    (`docs/28_MEMBER_INQUIRY_DESIGN.md` 2.1).
+    (`docs/29_MEMBER_INQUIRY_DESIGN.md` 2.1).
 - **신고자 보호 제약**: `docs/05_MATCHING_POLICY.md`의 신고 정책과 5장 원칙에 따라
   신고자 identity를 노출하지 않는다. `reasonCode` 수준(`COMMUNITY_GUIDELINE` 등)
   까지만 노출하고 "신고 3건 누적"처럼 신고자 수를 추정할 수 있는 문구는 사용하지

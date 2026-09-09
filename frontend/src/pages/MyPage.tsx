@@ -332,7 +332,7 @@ export default function MyPage() {
           <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
         </Link>
 
-        {/* 관리자 답변을 밀어줄 채널이 없어 이 badge가 유일한 도달 신호다(docs/28 2.2). */}
+        {/* 관리자 답변을 밀어줄 채널이 없어 이 badge가 유일한 도달 신호다(docs/29 2.2). */}
         <Link to="/mypage/inquiries" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
           <MessageCircleQuestion size={18} className="text-teal" aria-hidden="true" />
           <span className="flex-1 text-[14px] font-semibold text-ink">1:1 문의</span>

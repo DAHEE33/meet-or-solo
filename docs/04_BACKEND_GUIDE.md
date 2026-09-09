@@ -92,7 +92,7 @@ external/tourapi
 
 - HTTP client는 기존 Spring MVC 의존성의 `RestClient`를 사용합니다.
 - 공통 파라미터인 `serviceKey`, `MobileOS`, `MobileApp`, `_type=json`은 client가 추가합니다.
-- local에서는 루트 `.env`의 기존 `TOURISM-API-KEY`를 지원하고, 표준 환경변수는 `TOUR_API_KEY`를 사용합니다.
+- 서비스키 환경변수는 `TOURISM_API_KEY` 하나입니다. local·dev·prod가 같은 이름을 씁니다. 과거의 `TOURISM-API-KEY`/`TOUR_API_KEY` 이중 fallback은 제거했습니다 — 이름이 둘이면 어느 쪽이 비었는지 추적할 수 없어 조용한 인증 실패를 만듭니다.
 - 서비스키는 URI에 한 번만 인코딩하며 로그, 예외 메시지, `tour_api_call_logs`에 저장하지 않습니다.
 - 성공 JSON의 `resultCode=0000`을 확인하고, 공공데이터포털이 HTTP 200으로 반환할 수 있는 XML 오류 응답도 구분합니다.
 - `searchFestival2`의 실패를 빈 목록으로 바꾸지 않습니다. 정상 0건만 빈 목록으로 반환하고, 외부 API 실패는 `TourApiClientException`으로 전달합니다.

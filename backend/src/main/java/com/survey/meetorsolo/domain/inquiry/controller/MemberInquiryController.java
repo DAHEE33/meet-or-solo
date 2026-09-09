@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>등록·추가 질문은 {@code SuspendedActivityPolicy}의 허용 목록에 등재되어 정지 회원도
  * 사용할 수 있다. 새 endpoint를 추가하면 그 목록에 반드시 분류해야
- * {@code SuspendedActivityPolicyCoverageTest}가 통과한다(docs/28 2.3).
+ * {@code SuspendedActivityPolicyCoverageTest}가 통과한다(docs/29 2.3).
  */
 @RestController
 @RequestMapping("/api/members/me/inquiries")
@@ -64,7 +64,7 @@ public class MemberInquiryController {
                 inquiries.getMyInquiries(memberId(accessToken), page(page), size(size)));
     }
 
-    /** {@code MyPage} badge용. 목록 전체를 불러오지 않고 숫자만 읽는다(docs/28 2.2). */
+    /** {@code MyPage} badge용. 목록 전체를 불러오지 않고 숫자만 읽는다(docs/29 2.2). */
     @GetMapping("/unread-count")
     public ApiResponse<InquiryUnreadCountResponse> unreadCount(
             @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken

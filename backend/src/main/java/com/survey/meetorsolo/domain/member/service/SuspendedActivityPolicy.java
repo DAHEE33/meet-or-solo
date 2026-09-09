@@ -51,7 +51,7 @@ public class SuspendedActivityPolicy {
             Rule.of("DELETE", "/api/members/me/blocks/*"),
             // 이의제기 경로. 제재 사유를 다툴 수 없으면 제재가 일방적이 된다. 영구제한 회원은
             // requireBrowsable에 막혀 이 경로에 도달조차 못 하므로(고객센터 이메일 안내 유지),
-            // 정지 회원에게도 막으면 인앱 이의제기 경로가 아예 사라진다(docs/28 2.1, 2.3).
+            // 정지 회원에게도 막으면 인앱 이의제기 경로가 아예 사라진다(docs/29 2.1, 2.3).
             Rule.of("POST", "/api/members/me/inquiries"),
             Rule.of("POST", "/api/members/me/inquiries/*/messages"),
             // 개인정보 권리. 동의와 철회는 제재로 막을 수 없다.

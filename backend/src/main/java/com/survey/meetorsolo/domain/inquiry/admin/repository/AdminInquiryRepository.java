@@ -48,7 +48,7 @@ public class AdminInquiryRepository {
      *
      * <p><b>긴급 우선 정렬을 넣지 않았다.</b> {@code ORDER BY}에 {@code priority}를 넣으면
      * cursor에도 그 값이 들어가야 하고, 정렬 키와 cursor 키가 어긋나면 페이지 경계에서 항목이
-     * 중복·누락된다. 대신 {@code priority} filter를 제공한다(docs/28 5.7).
+     * 중복·누락된다. 대신 {@code priority} filter를 제공한다(docs/29 5.7).
      */
     public List<AdminInquiryListItemResponse> findPage(
             AdminInquiryFilter filter, Cursor cursor, int fetchSize) {

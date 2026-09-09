@@ -36,8 +36,8 @@ export function inquiryCreateErrorMessage(error: unknown): string {
 /**
  * 문의 작성 폼.
  *
- * 본문을 평문으로 저장하므로(docs/28 3.1) 개인정보 입력 자제 안내를 화면에 노출한다.
- * 긴급 여부는 입력받지 않는다 — 관리자만 지정한다(docs/28 확정 5번).
+ * 본문을 평문으로 저장하므로(docs/29 3.1) 개인정보 입력 자제 안내를 화면에 노출한다.
+ * 긴급 여부는 입력받지 않는다 — 관리자만 지정한다(docs/29 확정 5번).
  */
 export default function InquiryNewPage() {
   const navigate = useNavigate();

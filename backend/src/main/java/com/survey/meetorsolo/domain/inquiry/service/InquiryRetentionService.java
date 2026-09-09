@@ -17,14 +17,14 @@ import org.springframework.transaction.annotation.Transactional;
  * 보관 기간이 지난 종결 문의의 본문을 익명화한다.
  *
  * <p>보관 기간은 <b>종결 후 1년</b>이다. 개인정보 최소보관 원칙과 제재 이의제기 분쟁 대비를
- * 함께 만족시키는 값으로 확정했다(docs/28_MEMBER_INQUIRY_DESIGN.md 확정 7번).
+ * 함께 만족시키는 값으로 확정했다(docs/29_MEMBER_INQUIRY_DESIGN.md 확정 7번).
  *
  * <p>행을 지우지 않고 제목·본문만 고정 문구로 덮는다. FK가 모두
  * {@code ON DELETE RESTRICT}이고, {@code category}·{@code status}·{@code created_at}은 통계와
  * 감사 목적으로 남겨야 한다.
  *
  * <p>재처리는 {@code anonymized_at}이 막는다. 본문 문구를 비교해 판정하면 사용자가 우연히 같은
- * 문구를 입력한 경우와 구분되지 않는다(docs/28 5.6).
+ * 문구를 입력한 경우와 구분되지 않는다(docs/29 5.6).
  */
 @Service
 public class InquiryRetentionService {

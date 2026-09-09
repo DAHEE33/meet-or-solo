@@ -36,19 +36,19 @@ describe('MyInquiriesPage', () => {
 
 describe('InquiryNewPage', () => {
   it('본문을 평문 저장하므로 개인정보 입력 자제를 안내한다', () => {
-    // docs/28 3.1 — 암호화하지 않는 대신 입력 단계에서 안내한다.
+    // docs/29 3.1 — 암호화하지 않는 대신 입력 단계에서 안내한다.
     const html = render(<InquiryNewPage />);
     expect(html).toContain('개인정보는 적지 말아 주세요');
   });
 
   it('동행 중 문제는 신고 기능으로 안내한다', () => {
-    // 안전 카테고리를 두지 않는 결정의 화면 쪽 대응이다(docs/28 3.4).
+    // 안전 카테고리를 두지 않는 결정의 화면 쪽 대응이다(docs/29 3.4).
     const html = render(<InquiryNewPage />);
     expect(html).toContain('신고 기능을 이용해 주세요');
   });
 
   it('긴급 선택 입력을 노출하지 않는다', () => {
-    // 긴급 지정은 관리자만 한다(docs/28 확정 5번).
+    // 긴급 지정은 관리자만 한다(docs/29 확정 5번).
     const html = render(<InquiryNewPage />);
     expect(html).not.toContain('긴급');
   });

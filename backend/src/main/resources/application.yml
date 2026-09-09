@@ -28,7 +28,10 @@ server:
 app:
   tour-api:
     base-url: ${TOUR_API_BASE_URL:https://apis.data.go.kr/B551011/KorService2}
-    service-key: ${TOUR_API_KEY:${TOURISM-API-KEY:}}
+    # 환경변수 이름은 TOURISM_API_KEY 하나로 통일한다. 과거에는 local .env의
+    # TOURISM-API-KEY와 표준 TOUR_API_KEY를 fallback으로 함께 읽었는데, 이름이 두 개면
+    # 어느 쪽이 비었는지 추적하기 어렵고 dev/prod에서 조용히 인증 실패로 이어졌다.
+    service-key: ${TOURISM_API_KEY:}
     mobile-os: ${TOUR_API_MOBILE_OS:ETC}
     mobile-app: ${TOUR_API_MOBILE_APP:SoloIn}
     connect-timeout: ${TOUR_API_CONNECT_TIMEOUT:3s}
@@ -86,7 +89,7 @@ app:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
       suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
   inquiry:
-    # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화 스케줄러(docs/28 5.6).
+    # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화 스케줄러(docs/29 5.6).
     # 보관 기간 자체는 정책 값이라 설정으로 빼지 않고 InquiryRetentionService.RETENTION_PERIOD에
     # 고정한다. 여기서는 실행 여부와 주기만 다룬다.
     retention-scheduler-enabled: ${INQUIRY_RETENTION_SCHEDULER_ENABLED:false}
