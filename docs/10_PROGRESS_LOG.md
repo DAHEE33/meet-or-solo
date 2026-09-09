@@ -4111,3 +4111,39 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   `/api/members/me`가 2번 불리는데, 없애려면 프로필 Context를 만들어 호출부를 모두 바꿔야
   해서 남겨뒀다. 프로필 미완성 회원을 스플래시가 `/signup`으로 보내는 처리도 넣지 않았다 —
   현재 OAuth 복귀 시점에만 backend가 처리하는 동작이다.
+
+## [10-B 안전 후속] 프론트엔드 token refresh 흐름
+
+상태: 완료
+
+- 배경: 프론트엔드가 `POST /api/auth/refresh`를 한 번도 부르지 않았다(`grep -rn "auth/refresh"
+  frontend/src` 0건). `apiClient`는 401을 받으면 곧바로 `/login`으로 보내므로 access token
+  30분이 지나면 로그인 사용자가 그대로 로그아웃됐다. 축제 현장에서 체크인하고 매칭을 기다리는
+  동선에서는 30분이 짧다. backend endpoint와 refresh token 발급·저장은 이미 있었다.
+- `fetchWithRefresh`를 추가해 `request`와 `apiClientVoid`가 같은 fetch 경로를 쓰게 했다. 401이면
+  갱신을 한 번 시도하고 원래 요청을 한 번만 재시도한다. 재시도는 요청당 1회다.
+- 동시 401에서 갱신이 중복 호출되지 않도록 모듈 스코프의 단일 in-flight promise
+  (`refreshInFlight`)로 묶었다. 편의가 아니라 정확성 문제다 — `AuthService.refresh`가 refresh
+  token을 회전시킨 뒤 저장된 hash와 대조하므로, 동시에 두 번 부르면 두 번째 호출이 이미 교체된
+  token을 들고 와 401이 되고 session 자체가 끊긴다.
+- `/api/auth/**`는 갱신 대상에서 접두로 제외했다. 로그인·로그아웃·갱신·제재 안내가 모두 이
+  아래에 있어, 갱신 자체의 401이 다시 갱신을 부르는 무한 재귀를 구조적으로 막는다.
+- 갱신 실패와 재시도 후 재차 401은 원래 401 응답을 그대로 흘려 기존
+  `redirectToLoginIfUnauthorized`가 `/login`으로 보낸다. 그 사이 대기 중이던 다른 요청도 각자
+  `ApiClientError(401)`로 실패한다(사용자 결정). 화면 코드는 바꾸지 않았다.
+- 갱신 호출은 `authApi`를 거치지 않고 `apiClient.ts` 내부 raw fetch로 한다. `auth.ts`가
+  `apiClient`를 import하므로 순환 import가 되고, 갱신 실패가 401 처리 흐름을 다시 타면 재귀가
+  된다.
+- 정지(`SUSPENDED`) 회원도 갱신된다. `AuthService.refresh`가 `requireSignedIn`을 쓰므로 의도된
+  동작이고, 활동 차단은 403 제재 응답과 `SANCTION_EVENT`가 그대로 담당한다.
+- 만료 전 선제 갱신은 넣지 않았다(401 반응형만). access token이 httpOnly cookie라 프론트가 만료
+  시각을 알 수 없어, 하려면 만료 시각을 응답에 싣는 backend 변경이 선행돼야 한다.
+- `application-local.yml`의 `refresh-token-expires-minutes` 기본값을 30분에서 `20160`(14일)으로
+  올렸다. dev/prod는 이미 `20160`이었다. 루트 `.env`도 같이 `20160`으로 맞췄다(커밋 대상 아님)
+  — yml만 고치면 `.env`가 덮어써서 로컬은 여전히 30분이었다.
+- WebSocket은 변경하지 않았다. `matchingWebSocket`이 `reconnectDelay: 5000`으로 cookie 기반
+  재접속을 반복하므로, 갱신으로 cookie가 되살아나면 자동 복구된다.
+- 테스트: `apiClient.test.ts`에 6건을 추가했다 — 401→갱신→재시도 성공, 동시 3요청에서 갱신 1회,
+  갱신 실패 시 재시도 없이 `/login`, `/api/auth/**`는 갱신 시도 없음, 재시도가 또 401이면 재갱신
+  없음, body 없는 204 endpoint도 같은 흐름. jsdom이 없어 `fetch` stub의 호출 URL 순서와 횟수로
+  검증했다.

@@ -35,6 +35,26 @@ export const SANCTION_LOGIN_PATH = '/login?oauthError=account_restricted';
  */
 export const SANCTION_EVENT = 'member-sanction';
 
+/** access token을 다시 발급받는 endpoint. 204와 갱신된 cookie만 돌려준다. */
+export const REFRESH_PATH = '/api/auth/refresh';
+
+/**
+ * 401에서 갱신을 시도하지 않는 경로의 접두.
+ *
+ * 로그인·로그아웃·갱신·제재 안내가 모두 `/api/auth/` 아래에 있다. 갱신 자체의 401에서 다시
+ * 갱신을 시도하면 무한 재귀가 되므로 접두로 한 번에 제외한다.
+ */
+const AUTH_PATH_PREFIX = '/api/auth/';
+
+/**
+ * 진행 중인 갱신 요청. 동시에 여러 요청이 401을 받아도 갱신은 한 번만 부른다.
+ *
+ * 편의가 아니라 정확성 문제다. `AuthService.refresh`는 refresh token을 회전시킨 뒤 저장된
+ * hash와 대조하므로, 동시에 두 번 부르면 두 번째 호출은 이미 교체된 token을 들고 와 401이
+ * 되고 session 자체가 끊긴다.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
 function announceSuspension(sanction: SanctionNotice): void {
   // 테스트는 window를 최소 객체로 stub하므로 존재 여부를 확인한다.
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
@@ -53,15 +73,70 @@ function getErrorMessage(response: ApiResponse<unknown>, fallbackMessage: string
   return response.error?.message || fallbackMessage;
 }
 
-async function request<T>(path: string, options: ApiClientOptions): Promise<T | null> {
-  const response = await fetch(buildApiUrl(path), {
+function isAuthPath(path: string): boolean {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return normalizedPath.startsWith(AUTH_PATH_PREFIX);
+}
+
+/**
+ * access token을 갱신한다. 갱신 성공 여부만 돌려주고 실패를 던지지 않는다.
+ *
+ * `authApi`를 거치지 않고 여기서 직접 fetch하는 이유가 두 가지다. `auth.ts`가 이 모듈을
+ * import하므로 순환 import가 되고, 갱신 실패가 다시 401 처리 흐름을 타면 재귀가 된다.
+ */
+async function refreshSession(): Promise<boolean> {
+  try {
+    const response = await fetch(buildApiUrl(REFRESH_PATH), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+    return response.ok;
+  } catch {
+    // 네트워크 오류는 갱신 실패로만 취급하고 원래 요청의 401을 그대로 흘린다.
+    return false;
+  }
+}
+
+/** 갱신이 이미 진행 중이면 그 결과를 함께 기다린다. */
+function ensureRefreshed(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshSession().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+/**
+ * 요청을 보내고, 401이면 access token을 한 번 갱신한 뒤 같은 요청을 한 번만 재시도한다.
+ *
+ * 재시도는 요청당 1회다. 갱신에 실패하거나 재시도가 또 401이면 그 응답을 그대로 반환해서
+ * 기존 401 처리(`redirectToLoginIfUnauthorized`)가 로그인 화면으로 보낸다.
+ *
+ * 정지 회원도 갱신된다. `AuthService.refresh`가 `requireSignedIn`을 쓰므로 의도된 동작이고,
+ * 활동 차단은 403 제재 응답과 `SANCTION_EVENT`가 따로 처리한다.
+ */
+async function fetchWithRefresh(path: string, options: ApiClientOptions): Promise<Response> {
+  // body는 이 저장소에서 항상 문자열이라 같은 init으로 재시도해도 안전하다.
+  const init: RequestInit = {
     credentials: 'include',
     ...options,
     headers: {
       Accept: 'application/json',
       ...options.headers,
     },
-  });
+  };
+
+  const response = await fetch(buildApiUrl(path), init);
+  if (response.status !== 401 || isAuthPath(path)) return response;
+  if (!(await ensureRefreshed())) return response;
+
+  return fetch(buildApiUrl(path), init);
+}
+
+async function request<T>(path: string, options: ApiClientOptions): Promise<T | null> {
+  const response = await fetchWithRefresh(path, options);
 
   let body: ApiResponse<T> | null = null;
 
@@ -120,11 +195,7 @@ export async function apiClientVoid(
   path: string,
   options: ApiClientOptions = {},
 ): Promise<void> {
-  const response = await fetch(buildApiUrl(path), {
-    credentials: 'include',
-    ...options,
-    headers: { Accept: 'application/json', ...options.headers },
-  });
+  const response = await fetchWithRefresh(path, options);
   if (response.ok && response.status === 204) return;
 
   let body: ApiResponse<unknown> | null = null;
@@ -154,9 +225,9 @@ export async function apiClientVoid(
 /**
  * 인증이 끊기거나 제재로 막힌 응답을 로그인 화면으로 보낸다.
  *
- * 401은 session이 없어진 경우다. 403 제재는 화면마다 "불러오지 못했습니다"로 흘리면
- * 사용자가 이유를 알 수 없으므로 안내 화면으로 보낸다. 이때 서버가 같은 응답에 실어준
- * notice cookie로 로그인 화면이 사유·기간을 다시 조회한다.
+ * 401은 갱신까지 실패해 session을 되살릴 수 없는 경우다. 403 제재는 화면마다 "불러오지
+ * 못했습니다"로 흘리면 사용자가 이유를 알 수 없으므로 안내 화면으로 보낸다. 이때 서버가 같은
+ * 응답에 실어준 notice cookie로 로그인 화면이 사유·기간을 다시 조회한다.
  */
 function redirectToLoginIfUnauthorized(status: number, code?: string | null): void {
   // 영구 제한은 로그인 자체가 막히는 상태이므로 로그인 화면의 안내로 보낸다.

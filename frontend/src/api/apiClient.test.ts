@@ -1,11 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiClient, apiClientNullable, apiClientVoid, ApiClientError } from './apiClient';
+import {
+  apiClient,
+  apiClientNullable,
+  apiClientVoid,
+  ApiClientError,
+  REFRESH_PATH,
+} from './apiClient';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+
+const unauthorizedResponse = () =>
+  jsonResponse(
+    { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '인증이 필요합니다.' } },
+    401,
+  );
+
+/** fetch stub이 갱신 endpoint를 몇 번 불렀는지 센다. */
+const refreshCallCount = (fetchMock: { mock: { calls: unknown[][] } }) =>
+  fetchMock.mock.calls.filter((call) => call[0] === REFRESH_PATH).length;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -192,5 +208,116 @@ describe('apiClient', () => {
   it('body 없는 HTTP 204를 성공으로 처리한다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     await expect(apiClientVoid('/api/members/me/blocks/27', { method: 'DELETE' })).resolves.toBeUndefined();
+  });
+  it('401을 받으면 token을 갱신하고 원래 요청을 한 번 재시도한다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/matching', replace } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthorizedResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { id: 27 }, error: null }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiClient('/api/members/me')).resolves.toEqual({ id: 27 });
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/members/me',
+      REFRESH_PATH,
+      '/api/members/me',
+    ]);
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST', credentials: 'include' });
+    // 갱신으로 복구된 401은 로그인 화면으로 보내지 않는다.
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('동시에 401이 나도 갱신은 한 번만 부르고 모든 요청을 재시도한다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/matching', replace } });
+    const attempts = new Map<string, number>();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === REFRESH_PATH) return new Response(null, { status: 204 });
+      const attempt = (attempts.get(url) ?? 0) + 1;
+      attempts.set(url, attempt);
+      return attempt === 1
+        ? unauthorizedResponse()
+        : jsonResponse({ success: true, data: url, error: null });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      Promise.all([
+        apiClient('/api/members/me'),
+        apiClient('/api/matching/pools/me/current'),
+        apiClient('/api/festivals'),
+      ]),
+    ).resolves.toEqual(['/api/members/me', '/api/matching/pools/me/current', '/api/festivals']);
+
+    // refresh token은 회전되므로 둘 이상 부르면 session이 끊긴다.
+    expect(refreshCallCount(fetchMock)).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('갱신이 실패하면 재시도하지 않고 401을 그대로 흘려 로그인 화면으로 보낸다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/matching', replace } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthorizedResponse())
+      .mockResolvedValueOnce(unauthorizedResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiClient('/api/members/me')).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('/api/auth 경로의 401은 갱신을 시도하지 않는다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/login', replace } });
+    const fetchMock = vi.fn().mockResolvedValue(unauthorizedResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiClient('/api/auth/sanction-notice')).rejects.toMatchObject({ status: 401 });
+    // 갱신 자체의 401에서 다시 갱신하면 무한 재귀가 된다.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(refreshCallCount(fetchMock)).toBe(0);
+  });
+
+  it('재시도가 또 401이면 갱신을 다시 부르지 않는다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/matching', replace } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthorizedResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(unauthorizedResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiClient('/api/members/me')).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(refreshCallCount(fetchMock)).toBe(1);
+    expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('body 없는 204 endpoint도 갱신 후 재시도를 한다', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('window', { location: { pathname: '/mypage', replace } });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthorizedResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      apiClientVoid('/api/members/me/blocks/27', { method: 'DELETE' }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/members/me/blocks/27',
+      REFRESH_PATH,
+      '/api/members/me/blocks/27',
+    ]);
+    expect(replace).not.toHaveBeenCalled();
   });
 });
