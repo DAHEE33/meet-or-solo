@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { TourSpot } from '../../types';
 import ImagePlaceholder from '../common/ImagePlaceholder';
+import { placeholderKindFromContentType } from '../common/imagePlaceholderPresets';
 
 interface ExploreSpotItemProps {
   spot: TourSpot;
@@ -20,7 +21,12 @@ export default function ExploreSpotItem({ spot }: ExploreSpotItemProps) {
           className="h-16 w-16 shrink-0 rounded-xl object-cover"
         />
       ) : (
-        <ImagePlaceholder label="사진" className="h-16 w-16 shrink-0 rounded-xl" />
+        <ImagePlaceholder
+          kind={placeholderKindFromContentType(spot.contentTypeId)}
+          seed={spot.name}
+          size="sm"
+          className="h-16 w-16 shrink-0 rounded-xl"
+        />
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[15px] font-semibold text-ink">{spot.name}</span>

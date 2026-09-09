@@ -15,6 +15,8 @@ export interface TourSpot {
   name: string;
   /** 관광공사 동기화 데이터에는 아직 세부 카테고리가 없어 mock 전용으로 optional */
   category?: SpotCategory;
+  /** 관광공사 contentTypeId(12/14/28/39). 기본 이미지 프리셋 선택에 쓴다. mock 데이터에는 없다 */
+  contentTypeId?: string;
   address: string;
   /** GPS 체크인 기능 도입 전까지는 실 API에서 제공하지 않는 optional 값 */
   distanceKm?: number;

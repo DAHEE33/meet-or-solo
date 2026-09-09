@@ -85,6 +85,12 @@ app:
     member:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
       suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
+  inquiry:
+    # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화 스케줄러(docs/28 5.6).
+    # 보관 기간 자체는 정책 값이라 설정으로 빼지 않고 InquiryRetentionService.RETENTION_PERIOD에
+    # 고정한다. 여기서는 실행 여부와 주기만 다룬다.
+    retention-scheduler-enabled: ${INQUIRY_RETENTION_SCHEDULER_ENABLED:false}
+    retention-scheduler-fixed-delay: ${INQUIRY_RETENTION_SCHEDULER_FIXED_DELAY:3600000}
   matching:
     scoring:
       # 태그 Jaccard 대 임베딩 코사인 유사도 가중치. 두 값의 합은 1이어야 한다.

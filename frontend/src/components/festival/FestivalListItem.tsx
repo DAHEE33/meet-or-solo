@@ -30,7 +30,12 @@ export default function FestivalListItem({ festival, distanceLabel }: FestivalLi
           className="h-[72px] w-[72px] shrink-0 rounded-xl object-cover"
         />
       ) : (
-        <ImagePlaceholder label="사진" className="h-[72px] w-[72px] shrink-0 rounded-xl" />
+        <ImagePlaceholder
+          kind="FESTIVAL"
+          seed={festival.name}
+          size="sm"
+          className="h-[72px] w-[72px] shrink-0 rounded-xl"
+        />
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
         <span

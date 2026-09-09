@@ -29,7 +29,9 @@
       "Bash(git -C /c/meet-or-solo log --oneline -5)",
       "Bash(./gradlew compileJava compileTestJava --console=plain -q)",
       "Bash(/c/Users/jyp48/AppData/Local/Programs/IntelliJ IDEA/jbr/bin/java.exe *)",
-      "Bash(npm -v)"
+      "Bash(npm -v)",
+      "Bash(node -e ' *)",
+      "Bash(node *)"
     ]
   }
 }

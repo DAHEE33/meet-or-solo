@@ -6,6 +6,7 @@ export function mapTourPlaceListItemToTourSpot(item: TourPlaceListItem): TourSpo
   return {
     id: item.id,
     name: item.title,
+    contentTypeId: item.contentTypeId,
     address: item.address ?? '',
     imageUrl: item.imageUrl,
   };
@@ -15,6 +16,7 @@ export function mapTourPlaceDetailToTourSpot(item: TourPlaceDetail): TourSpot {
   return {
     id: item.id,
     name: item.title,
+    contentTypeId: item.contentTypeId,
     address: item.address ?? '',
     imageUrl: item.imageUrl,
   };
@@ -24,6 +26,7 @@ export function mapNearbyTourPlaceToTourSpot(item: NearbyTourPlaceItem): TourSpo
   return {
     id: item.id,
     name: item.title,
+    contentTypeId: item.contentTypeId,
     address: item.address ?? '',
     imageUrl: item.imageUrl,
     distanceKm: Math.round((item.distanceMeters / 1000) * 10) / 10,

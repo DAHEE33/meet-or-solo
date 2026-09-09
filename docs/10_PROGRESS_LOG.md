@@ -464,6 +464,154 @@ action_type='FORCED_WITHDRAWAL';`을 함께 실행한다.
 클릭과 비동기 갱신은 자동 테스트로 재현되지 않는다.
 
 
+## [10-B 문의] 1:1 문의 센터 (docs/19 4.5, docs/28)
+
+상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
+
+**브랜치는 `feature/wbs-10-a-festival-course`다.** `docs/19` 7절 권장 브랜치는
+`feature/wbs-10-b-inquiry-center`였지만, 사용자가 "지금 브랜치에서 그냥 구현하면 된다"고
+결정해 그대로 진행했다. 브랜치 규칙(`docs/12`)의 예외임을 여기 남긴다.
+
+### 무엇을 메웠나
+
+`docs/19` 4.5는 "미착수, 별도 설계 후 구현"으로 예약돼 있었고 `inquiries`는 `docs/11`에서
+보류 table이었다. 그런데 이 기능의 실제 1순위 사용자는 "궁금한 게 있는 사람"이 아니다.
+4.8(제재 사유·기간 통보)이 이렇게 끝나 있었다.
+
+> 문의 경로 — 문의센터 화면(4.5)이 보류라 고객센터 이메일을 안내에 표시한다. (…)
+> **영구정지 사용자가 이의를 제기할 유일한 경로다.**
+
+즉 이 기능은 제재 이의제기 창구다. 이 전제가 아래 제약으로 이어졌다.
+
+### 설계를 지배한 제약 3개
+
+**1. 영구정지(`BANNED`)는 인앱 문의를 쓸 수 없다.** `MemberAccessInterceptor`가 `/api/**`
+전체에서 활동이 아닌 요청에도 `requireBrowsable`을 걸고, 그 판정이 `BANNED`를 차단한다.
+애초에 `requireSignedIn`도 `BANNED`를 막아 access token 자체가 발급되지 않는다. 제외 경로는
+`/api/auth/**` 하나뿐이다.
+
+제재 안내 cookie를 자격증명으로 재사용하는 방안도 검토했지만 채택하지 않았다.
+`SanctionNoticeCookieService`의 cookie는 path가 `/api/auth/sanction-notice`로 좁혀져 있고,
+읽는 즉시 `expire()`되는 1회용이며, TTL이 5분이다. 문의 작성에 쓰려면 4.8이 의도적으로 좁혀둔
+세 가지를 모두 되돌려야 한다.
+
+**사용자 결정: 이메일 안내 유지.** 인앱 문의는 `ACTIVE`/`PROFILE_REQUIRED`/`SUSPENDED`까지다.
+제재 판정을 우회하는 경로를 만들지 않는 쪽을 택했다. **이 기능으로도 영구정지 사용자의
+이의제기 UX는 개선되지 않았다** — 남은 과제로 명시해 둔다.
+
+**2. 관리자 답변을 밀어줄 채널이 없다.** 4.8이 이미 조사한 사실이다. STOMP는 `/matching`·
+`/match-room`에서만 연결되고, Web Push는 VAPID 키·구독 table·권한 UI가 전무하며
+(`vite-plugin-pwa`가 `generateSW` 전략이라 custom service worker 파일 자체가 없다), 메일 발송
+인프라도 없다. 그래서 답변 도달은 사용자가 목록을 다시 여는 pull 방식뿐이고, **미확인 답변
+badge가 부가 기능이 아니라 기능의 일부**다.
+
+**3. `SuspendedActivityPolicy`에 등재해야 한다.** `SuspendedActivityPolicyCoverageTest`가
+상태를 바꾸는 모든 endpoint의 분류를 전수 검사한다. 문의 등록·추가 질문을 `ALLOWED`에 넣었다 —
+근거는 기존 신고 허용 근거와 같다. 제재 사유를 다툴 수 없으면 제재가 일방적이 된다.
+
+### 사용자 결정 4건
+
+| 항목 | 확정값 | 대가 |
+| --- | --- | --- |
+| `BANNED` 이의제기 | 이메일 유지 | 영구정지 UX는 그대로 |
+| 본문 저장 | 평문 | 비공개 1:1인데 암호화하지 않음 |
+| 긴급 지정 | 관리자만 | 사용자가 급한 건을 표시할 수 없음 |
+| 보관 기간 | 종결 후 1년 | 익명화 스케줄러가 새로 필요 |
+
+암호화를 포기한 이유는 세 가지다. 관리자 키워드 검색이 불가능해지고, 이 저장소가 의존하는
+`char_length` CHECK 제약을 `BYTEA`에는 걸 수 없고, 키 분실 시 복구가 안 된다. 대신 노출을
+통제했다 — 관리자·본인만 조회, 로그에 본문 미기록, 작성 폼에 개인정보 입력 자제 안내.
+
+나머지 6건(2테이블 구조, 스레드 허용, 첨부 제외, 미답변 3건 제한, 안전 카테고리 미도입,
+담당자 지정 미도입)은 권고안대로 확정했다. 근거는 `docs/28` 3절에 있다.
+
+### DB (`V31__add_member_inquiries.sql`)
+
+`inquiries`(헤더) + `inquiry_messages`(발화) 2개다. 1테이블로 하면 답변 재작성 시 이전 답변이
+`UPDATE`로 사라지고, 사용자 추가 질문이 새 문의로 쪼개져 관리자가 같은 건을 두 번 본다.
+
+- 미확인 답변 여부를 **컬럼으로 저장하지 않는다.** `last_answered_at`과 `member_read_at`
+  비교로 계산한다. boolean 컬럼은 `content_comments.like_count`와 같은 카운터 정합성 문제를
+  새로 만든다.
+- `chk_inquiries_closed_at`은 `content_comments.chk_content_comments_deleted_at`과 같은
+  관용구로 상태와 시점 컬럼을 묶어 고정한다. **이 CHECK 때문에 잠금이 필요했다** — 관리자
+  답변(`status = ANSWERED`)과 다른 관리자의 종결(`CLOSED` + `closed_at`)이 겹치면
+  `ANSWERED`인데 `closed_at`이 남은 위반 조합이 만들어진다. 그래서 상태를 바꾸는 모든 경로가
+  `findByIdForUpdate`로 헤더를 먼저 잠근다.
+- `anonymized_at`이 보관 기간 익명화의 재처리를 막는 원인 key다. 본문 문구 비교로 판정하면
+  사용자가 우연히 같은 문구를 입력한 경우와 구분되지 않는다.
+- `admin_actions`는 건드리지 않았다. 그 table의 `action_type` CHECK는 제재·신고 처리 값으로
+  고정돼 있고 문의 답변은 회원 제재가 아니다.
+
+### Backend
+
+`domain/inquiry`와 `domain/inquiry/admin`으로 나눴다 — `safety/report`와 `safety/report/admin`
+구조를 그대로 따랐다.
+
+- 사용자: `InquiryService`, `MemberInquiryController`
+  (`POST`/`GET` 목록/`GET` unread-count/`GET` 상세/`POST` messages)
+- 관리자: `AdminInquiryService`, `AdminInquiryController`, `AdminInquiryRepository`(JDBC 목록),
+  `AdminInquiryCursorCodec`, `AdminInquiryFilter`
+- 보관: `InquiryRetentionService`, `InquiryRetentionScheduler`
+  (`@ConditionalOnProperty`로 기본 비활성 — `MemberSuspensionExpiryScheduler`와 같은 형태)
+- `ErrorCode` 8건 추가, `SuspendedActivityPolicy.ALLOWED`에 2건 등재
+
+cursor codec은 `AdminSafetyAlertCursorCodec` 선례대로 `app.admin.report.cursor-hmac-secret`을
+공유하고 payload prefix(`inquiry:v1:`)로 도메인을 분리했다. **새 환경변수를 요구하지 않는다.**
+
+관리자 목록 정렬 키는 `(created_at DESC, id DESC)`이고 **긴급 우선 정렬을 넣지 않았다.**
+`ORDER BY`에 `priority`를 넣으면 cursor payload에도 들어가야 하고, 정렬 키와 cursor 키가
+어긋나면 페이지 경계에서 항목이 중복·누락된다. 대신 `priority` filter를 제공한다.
+
+`AdminInquiryTargetStatus`는 `IN_PROGRESS`·`CLOSED` 2개다. `ANSWERED`는 답변 등록으로만
+만들어진다 — 답변 없이 상태만 바꾸면 사용자 badge가 답변이 온 것처럼 켜진다.
+
+### Frontend
+
+- 사용자: `/mypage/inquiries`, `/mypage/inquiries/new`, `/mypage/inquiries/:inquiryId`
+  (`MyInquiriesPage`, `InquiryNewPage`, `InquiryDetailPage`)
+- 관리자: `/admin/inquiries`(`AdminInquiriesPage`), `AdminNav` 5번째 메뉴 + 미처리 badge
+- `MyPage`에 "1:1 문의" 진입점 + 미확인 답변 badge
+- `api/inquiries.ts`, `api/adminInquiries.ts`. 라벨·배지 색을 한 곳에 모아 화면마다 code를
+  문구로 바꾸지 않게 했다.
+
+`AdminNav`의 badge 라벨과 숫자를 `badgeOf()` 한 곳에서 함께 정하도록 리팩터링했다. 기존에는
+안전 알림 badge만 있어 `showBadge` 불리언이었는데, 두 번째 badge가 붙으면 count와 라벨이
+어긋날 자리가 생긴다.
+
+### 검증
+
+- Backend 신규 23건 통과: `InquiryServiceTest` 10, `AdminInquiryServiceTest` 9,
+  `InquiryRetentionServiceTest` 4. `SuspendedActivityPolicyCoverageTest` 7건도 통과 —
+  신규 endpoint 분류 누락이 없다.
+- Backend 전체 586건 중 43건 실패. **전부 `*IntegrationTest`와 `MeetOrSoloApplicationTests`이며
+  이 개발 머신에 Docker가 없어 Testcontainers가 뜨지 않은 것이다**(`docs/19` 인수인계 노트의
+  기존 이슈). 비통합 테스트 실패는 0건이다. 내 변경 탓으로 오판하지 말 것.
+- Frontend 65 files / 578 tests 통과(신규 `InquiryPages.test.tsx` 22건, `AdminNav.test.ts`
+  3건 추가). `npx tsc -b`와 `npm run build` 통과.
+- 기존 `AdminNav.test.ts`가 메뉴 4개를 고정하고 있어 5개로 갱신했다 — 의도한 동작 변경이다.
+
+### 남은 것
+
+- **브라우저 수동 검증 미실시.** 실제 화면에서 등록→답변→badge 소거 흐름을 확인해야 한다.
+- **`V31` 미적용.** `ddl-auto: validate`이므로 적용 전에는 부팅되지 않는다.
+- **마이그레이션 번호 충돌을 겪었다.** 처음 `V28`로 만들었는데 협업자가 저장소에 push하지 않은
+  채 공유 dev DB에 `V28`~`V30`을 먼저 적용해 둔 상태였다. Flyway가
+  `Migration checksum mismatch for migration version 28`로 부팅을 막았고 `V31`로 옮겨 해결했다.
+  `flyway repair`는 쓰지 않았다 — 협업자의 `V28`을 내 파일로 위장하게 되고 그쪽 스키마 변경이
+  기록에서 사라진다.
+  - **번호는 저장소 파일 목록이 아니라 공유 dev DB의 `flyway_schema_history`를 기준으로
+    정해야 한다.** push되지 않은 마이그레이션은 저장소에 보이지 않는다.
+  - **협업자가 `V28`~`V30`을 push하기 전까지는 이 브랜치도 부팅되지 않는다.** Flyway는 DB에
+    적용됐는데 로컬에 파일이 없는 버전을 `Detected applied migration not resolved locally`로
+    막는다. 번호를 옮긴 것과 별개인 문제이며, 협업자 push를 기다리는 것이 정상 경로다.
+- **영구정지 회원의 인앱 이의제기 경로 없음**(위 제약 1). 이메일 안내 유지가 사용자 결정이다.
+- **4.4 회원 탈퇴와의 연결.** 탈퇴 시 `inquiry_messages.body`에 개인정보가 남을 수 있어 4.4의
+  익명화 범위가 이 컬럼을 포함해야 한다. `ContentCommentService.softDeleteAllOnWithdrawal`과
+  같은 TODO 위치다.
+- `INQUIRY_RETENTION_SCHEDULER_ENABLED`는 기본 `false`다. dev/prod에서 켜야 보관 정책이 실제로
+  동작한다.
+
 ## [10-B 안전 후속] 회원 제재 사유·기간 통보와 제재 범위 정리 (docs/19 4.8)
 
 상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
@@ -4485,6 +4633,96 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   (`toFormState`)을 순수 함수로 분리해 유닛 테스트를 추가했다 — 이 저장소 vitest 설정에는
   jsdom이 없어(`MyPage.test.tsx` 주석 참고) 클릭 같은 DOM 상호작용은 직접 테스트하지 못하고,
   로직만 순수 함수로 뽑아 검증했다.
+
+## [10-UI 후속] 이미지 없는 콘텐츠의 기본 이미지 개편
+
+상태: 완료
+
+- 관광공사 API가 이미지를 주지 않는 콘텐츠의 기본 이미지를 빗금 스트라이프 + `사진` 배지에서
+  분류별 아이콘 타일로 바꿨다. 기존 스트라이프는 로딩 스켈레톤 신호와 겹쳐 사용자가 이미지를
+  계속 기다리게 되고, 크기 구분이 없어 56px 썸네일과 240px 히어로가 같은 모습이었다.
+- 계산 로직은 `components/common/imagePlaceholderPresets.ts`(순수 함수), 렌더링은
+  `components/common/ImagePlaceholder.tsx`로 분리했다 — jsdom이 없는 이 저장소 vitest에서
+  검증할 수 있어야 하기 때문이다.
+- 프리셋 6종(`12`/`14`/`28`/`39` + `FESTIVAL` + `DEFAULT`)은 관광지 동기화 대상
+  `contentTypeId`(`TourPlaceSyncProperties.ALLOWED_CONTENT_TYPE_IDS`)를 그대로 따랐다. 배경은
+  프리셋 accent를 `sand`에 옅게 섞은 그라데이션이고 톤 변형은 제목 해시(FNV-1a)로 골라, 같은
+  콘텐츠는 항상 같은 톤이 나오고 같은 분류 카드끼리도 서로 구분된다.
+- 크기 단계 `sm`/`md`/`lg`를 도입해 노출 요소를 다르게 했고, 문구가 사라지는 `sm`에서도 읽히도록
+  `role="img"` + `aria-label`을 항상 붙인다.
+- 좌표가 없어 지도를 못 그리는 자리(축제 상세·관광지 상세 `오시는 길`)는 원인이 달라
+  `components/common/MapPlaceholder.tsx`로 분리하고, `지도 미리보기` 대신 좌표가 없다는 이유를
+  문구로 밝힌다.
+- `TourSpot`에 `contentTypeId`(optional)를 추가하고 `utils/tourSpot.ts`의 mapper 3개가 채우게
+  했다. 관광지 목록/상세/근접 조회 응답이 모두 이미 `contentTypeId`를 내려주므로 backend 변경은
+  없다. mock 데이터에는 값이 없어 `DEFAULT`로 떨어진다.
+- 호출부 11곳(`FestivalHeroCard`, `UpcomingFestivalCard`, `FestivalNearbyPlaceItem`,
+  `FestivalListItem`, `ExploreSpotItem`, `PlaceScrollCard`, `SoloCoursePage`,
+  `FestivalDetailPage` 2곳, `TourSpotDetailPage` 2곳)을 모두 새 규칙으로 교체했다.
+- 신규 테스트는 `imagePlaceholderPresets.test.ts`(13건, 프리셋 매핑·해시 결정성·색 혼합 경계)와
+  `ImagePlaceholder.test.tsx`(5건, 크기 단계별 노출 요소와 접근성 속성)이다.
+
+## [10-UI 후속 2] 앱 진입 스플래시 화면(로고 애니메이션)과 세션 bootstrap
+
+상태: 완료
+
+- 앱을 열면 로고가 애니메이션과 함께 약 1.2초 보이고, 미로그인이면 SSO 로그인 화면으로,
+  로그인 상태면 원래 목적지로 넘어가는 진입 첫 화면을 추가했다. 흔히 스플래시 화면
+  (splash screen), PWA 문맥에서는 런치 스크린(launch screen)이라 부르는 화면이다.
+  `docs/03_FRONTEND_GUIDE.md` 라우팅 표에 `SplashPage`로만 적혀 있고 구현이 없던 항목이다.
+- 장식만이 아니라 세션 bootstrap을 겸한다. 기존에는 미로그인 사용자가 `/`에 들어오면
+  `HomePage`가 먼저 마운트되고 `memberProfileApi.getMine()`이 401을 받은 뒤 `apiClient`가
+  `/login`으로 튕겨, 홈 화면이 잠깐 보이고 로그인으로 점프하는 깜빡임이 있었다. 이제
+  스플래시가 그 구간을 덮는다.
+- `components/splash/SplashGate.tsx`가 `App`의 `Routes`를 감싼다. 재생 구간(`PLAYING`)에서는
+  children을 마운트하지 않는다 — 마운트하면 `HomePage`가 오버레이 뒤에서 GPS 권한 팝업을
+  띄우고 축제·체크인 API를 쏘기 시작한다. 목적지가 정해진 `FADING` 구간에서 children과
+  오버레이를 함께 렌더해 260ms 크로스페이드로 넘긴다.
+- "2초 고정 대기"로 두지 않았다. 이미 로그인된 회원이 진입마다 2초를 기다리게 되기 때문이다.
+  최소 노출 1.2초(`SPLASH_MIN_VISIBLE_MS`)와 세션 확인을 `Promise.all`로 병렬 실행하고 둘 다
+  끝나면 해제한다. 로고는 항상 한 번 온전히 보이고, 느린 네트워크에서만 그보다 오래 머문다.
+- 탭 세션당 1회만 재생한다(`sessionStorage`). OAuth는 같은 탭에서 카카오/네이버를 다녀오고
+  `AuthController`가 `/` 또는 `/signup`으로 돌려보내므로, 플래그가 살아 있어 로그인 직후
+  스플래시가 다시 뜨지 않는다. `/login`과 `/admin/*`은 건너뛴다 — 전자는 미로그인 회원의
+  목적지이고, 후자는 `AdminRoute`가 자체 권한 확인 화면을 갖고 있어 안내가 겹친다.
+- 세션 확인은 `api/session.ts`의 `probeSession()`으로 한다. `apiClient`를 쓰지 않은 이유는
+  `apiClient`가 401·영구제한에서 `window.location.replace('/login')`을 호출해 전체 페이지
+  리로드가 끼고 애니메이션이 끊기기 때문이다. 공유 클라이언트를 고치는 대신 부트스트랩
+  시점에만 쓰는 조회를 따로 뒀고, 영구제한 code를 공유하려고 `apiClient`의 `BANNED_CODE`만
+  export로 바꿨다.
+- 목적지 판정(`resolveSplashTarget`)은 401과 영구제한 403만 로그인 화면으로 보낸다.
+  네트워크 실패나 5xx에서는 이동하지 않는다 — 로그인된 회원을 일시 장애로 로그인 화면에
+  떨어뜨리면 안 되고, 각 화면이 이미 자기 오류 상태를 갖고 있다. 이용정지
+  (`MEMBER_SUSPENDED`)도 로그인 상태이므로 이동하지 않고 `SanctionNoticeDialog`가 맡는다.
+- 로고 자산은 하이브리드로 처리했다. 핀 심볼은 `components/splash/BrandPin.tsx`에 SVG로 다시
+  그렸고, 워드마크는 이미지 없이 `LoginPage`와 같은 텍스트 구성으로 렌더한다. `frontend/logo.png`
+  (1448x1086, alpha 없음, 852KB)를 그대로 쓰면 핀·광선·워드마크가 한 장에 픽셀로 녹아 있어
+  조각별 애니메이션이 불가능하고, `frontend/` 루트는 Vite `publicDir` 밖이라 `vite build` 시
+  `dist`에 복사되지도 않는다. 결과적으로 스플래시는 새 이미지 파일 없이 동작하고 `logo.png`는
+  브랜드 원본으로만 남는다.
+- 핀 SVG 좌표는 눈대중이 아니라 원본 PNG를 격자로 스캔해 옮겼다. 두 사람은 좌우 대칭이므로
+  한 경로(`FIGURE_BODY`)를 `scale(-1 1)`로 반전해 재사용하고, 몸통이 원 아래에서 잘리는
+  원본 특징은 안쪽 원 `clipPath`로 재현했다. 색은 원본 오렌지(`#F65F27`)가 아니라 팔레트
+  `coral`(`#E8593A`)을 쓴다 — 워드마크가 `coral` 텍스트라서 핀만 원본색이면 같은 화면에서
+  오렌지 두 개가 어긋난다.
+- 애니메이션은 라이브러리 없이 `tailwind.config.ts`의 `keyframes`/`animation`으로만 만들었다.
+  핀 낙하(0~460ms) → 바닥 그림자 확장(300~620ms) → 광선 3줄 stagger 팝(520~900ms) →
+  워드마크 페이드업(760~1140ms) 순서다. 광선은 지연을 별도 utility로 덧붙이면 `animation`
+  축약형이 delay를 0으로 되돌릴 수 있어, 지연까지 포함한 utility 3개(`ray-pop-1..3`)로 나눴다.
+  `prefers-reduced-motion`에서는 전부 정적 표시로 대체한다(`motion-reduce:animate-none`).
+- 파일명 주의: 순수 함수 모듈을 `splashGate.ts`로 두면 `SplashGate.tsx`와 대소문자만 달라
+  Windows에서 TypeScript가 거부한다(TS1149/TS1261). `splashPolicy.ts`로 분리했다.
+- 테스트는 이 저장소 vitest에 jsdom이 없어(`MyPage.test.tsx` 주석 참고) 순수 함수와 정적
+  마크업만 검증한다. `splashPolicy.test.ts`(12건, skip 조건과 상태코드별 목적지 매핑),
+  `SplashScreen.test.tsx`(6건, 워드마크 구성·접근성·광선 3줄·페이드아웃 상태)를 추가했다.
+- 검증은 `npm test`(64 files / 547 tests), `npx tsc -b`, `npm run build`를 통과했고, 핀 SVG는
+  headless 렌더 결과를 원본 PNG와 같은 배율로 겹쳐 비교했다.
+- 이번 범위에서 뺀 것: `favicon`·PWA `manifest` 아이콘·`theme_color`/`background_color`
+  정리(여전히 `icons/placeholder.svg`), iOS `apple-touch-startup-image`, 첫 방문자 온보딩
+  카드(`OnboardingPage`). `HomePage`도 `getMine()`을 호출하므로 진입 시
+  `/api/members/me`가 2번 불리는데, 없애려면 프로필 Context를 만들어 호출부를 모두 바꿔야
+  해서 남겨뒀다. 프로필 미완성 회원을 스플래시가 `/signup`으로 보내는 처리도 넣지 않았다 —
+  현재 OAuth 복귀 시점에만 backend가 처리하는 동작이다.
 
 ## [10-B 안전 후속] 프론트엔드 token refresh 흐름
 

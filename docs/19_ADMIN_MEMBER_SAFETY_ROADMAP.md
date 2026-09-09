@@ -5,8 +5,9 @@
 - 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 4.2 관리자 회원 조회·제재 완료,
   4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 완료(PR #50 dev 병합),
   4.6 로그아웃 완료(PR #52 dev 병합), 4.10 만남 종료 후 신고 진입점 완료(PR #53 dev 병합),
-  4.8 회원 제재 사유·기간 통보 구현 완료(수동 검증 대기).
-  남은 항목은 4.4·4.5·4.7·4.9
+  4.8 회원 제재 사유·기간 통보 구현 완료(수동 검증 대기),
+  4.5 1:1 문의 센터 구현 완료(수동 검증 대기).
+  남은 항목은 4.4·4.7·4.9
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -30,7 +31,7 @@
 | 회원 관리 | blacklist 관리 | 필수 | B | 완료 (4.2) |
 | 축제 데이터 관리 | 관광 API 데이터 활성·비활성 및 수동 등록 | 필수 | A | A 담당 |
 | 배치 작업 관리 | 관광 API 갱신 수동 실행과 로그 확인 | 필수 | A | A 담당 |
-| 1:1 문의 센터 | 문의 목록·답변·긴급 신고 처리 | 중요 | B 후속, 별도 설계 | 미착수 (4.5) |
+| 1:1 문의 센터 | 문의 목록·답변·긴급 신고 처리 | 중요 | B 후속, 별도 설계 | 구현 완료, 수동 검증 대기 (4.5) |
 | 기본 통계 | 일별 체크인·매칭·신고와 축제별 활성 사용자 | 중요 | 공통 또는 담당 분리 | 미착수 |
 
 축제 데이터와 관광 API 배치는 풀스택 A의 데이터와 service에 의존하므로 B가 임의로
@@ -410,17 +411,31 @@ cookie와 `403` body를 만들어 주므로 **두 파일을 수정하지 않고*
 `SuspendedActivityPolicy.ALLOWED`에 `DELETE /api/members/me`를 등재했습니다. 탈퇴는 개인정보
 권리이고, 정지 중이라고 계정 삭제를 막을 수 없습니다. 잔여 정지 기간은 4.4.3대로 이어집니다.
 
-### 4.5 1:1 문의 센터 후속 — 미착수
+### 4.5 1:1 문의 센터 후속 — 구현 완료 (수동 검증 대기)
 
-권장 브랜치:
+설계와 확정 사항 10건은 `docs/28_MEMBER_INQUIRY_DESIGN.md`, 구현 결과는
+`docs/10_PROGRESS_LOG.md`의 `[10-B 문의] 1:1 문의 센터`를 따릅니다.
 
-```text
-feature/wbs-10-b-inquiry-center
-```
+권장 브랜치는 `feature/wbs-10-b-inquiry-center`였으나, **사용자 결정에 따라
+`feature/wbs-10-a-festival-course`에서 구현했습니다.** 7절의 브랜치 규칙과는 다른 예외입니다.
 
-현재 DB 설계에서 `inquiries`는 보류된 table입니다. 사용자 문의 생성, 긴급 문의 표시,
-관리자 답변, 공개 범위, 암호화, 첨부파일과 보관 정책을 먼저 확정하고 신규 migration으로
-별도 구현합니다. 신고·회원 관리 브랜치에 함께 넣지 않습니다.
+보류 항목으로 남겨두었던 결정은 모두 확정됐습니다.
+
+| 항목 | 확정값 |
+| --- | --- |
+| 사용자 문의 생성 | `POST /api/members/me/inquiries`. `priority`를 받지 않는다 |
+| 긴급 문의 표시 | 관리자만 지정한다 |
+| 관리자 답변 | `POST /api/admin/inquiries/{id}/messages`. 스레드형(추가 질문 허용) |
+| 공개 범위 | 관리자와 작성자 본인만. 관리자 개인은 "운영팀"으로만 노출 |
+| 암호화 | 하지 않는다. 관리자 검색과 `char_length` CHECK를 잃는 대가가 크다 |
+| 첨부파일 | 제외. 타인이 남의 파일을 보는 중계 경로가 새로 필요하다 |
+| 보관 정책 | 종결 후 1년, 제목·본문만 익명화. `InquiryRetentionScheduler` |
+
+**4.8이 남긴 구멍 중 일부만 메웠습니다.** 영구정지(`BANNED`) 회원은 `requireBrowsable`에 막혀
+`/api/**`에 도달할 수 없고 로그인 자체가 안 되므로, **인앱 이의제기 경로를 쓸 수 없습니다.**
+그 경로는 고객센터 이메일(`SUPPORT_CONTACT_EMAIL`) 안내를 그대로 유지합니다. 정지
+(`SUSPENDED`) 회원은 `SuspendedActivityPolicy` 허용 목록에 등재해 인앱으로 이의를 제기할 수
+있습니다(`docs/28` 2.1, 2.3).
 
 ### 4.6 로그아웃 — 완료
 
@@ -563,6 +578,10 @@ query parameter로 넘기지 않은 이유는 URL·access log·브라우저 hist
 - 문의 경로 — 문의센터 화면(4.5)이 보류라 **고객센터 이메일**을 안내에 표시한다.
   주소는 환경변수 `SUPPORT_CONTACT_EMAIL`로만 주입하고 저장소에는 넣지 않는다. 영구정지
   사용자가 이의를 제기할 유일한 경로다.
+  - **4.5 구현 후에도 영구정지 사용자에게는 여전히 유일한 경로다.** `BANNED`는
+    `MemberAccessPolicy.requireBrowsable`에 막혀 `/api/**`에 도달할 수 없고 로그인 자체가
+    안 되므로 인앱 문의 폼을 쓸 수 없다. 정지(`SUSPENDED`) 사용자만 인앱 경로가 열렸다
+    (`docs/28_MEMBER_INQUIRY_DESIGN.md` 2.1).
 - **신고자 보호 제약**: `docs/05_MATCHING_POLICY.md`의 신고 정책과 5장 원칙에 따라
   신고자 identity를 노출하지 않는다. `reasonCode` 수준(`COMMUNITY_GUIDELINE` 등)
   까지만 노출하고 "신고 3건 누적"처럼 신고자 수를 추정할 수 있는 문구는 사용하지
@@ -708,6 +727,8 @@ feature/wbs-10-b-admin-report-review          — 완료 (PR #34)
 feature/wbs-10-b-admin-member-sanctions       — 완료 (PR #35)
 feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
 feature/wbs-10-b-report-safety-automation     — 완료 (PR #50)
+feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
+feature/wbs-10-b-inquiry-center               — 미사용 (4.5는 10-a 브랜치에서 구현)
 feature/wbs-10-b-member-sanction-notice       — 완료 (PR #56, 4.8)
 feature/wbs-10-b-token-refresh                — 완료 (PR #57, 프론트엔드 token 갱신)
 feature/wbs-10-b-member-withdrawal            — 완료 (4.4, 본인 탈퇴 + 관리자 강제 탈퇴)

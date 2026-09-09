@@ -280,7 +280,7 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 
 | Page | 목적 |
 | --- | --- |
-| `SplashPage` | 초기 로딩과 세션 bootstrap |
+| `SplashGate` | 진입 첫 화면(로고 스플래시)과 세션 bootstrap. route가 아니라 `Routes`를 감싸는 gate로 구현했다 |
 | `OnboardingPage` | 서비스 안내와 권한 요청 맥락 설명 |
 | `LoginPage` | OAuth 로그인 진입 |
 | `TermsPage` | 약관, 개인정보, 위치정보 동의 |
@@ -629,3 +629,64 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
 - 목록에서 찜을 해제할 때도 낙관적으로 제거하지 않고, 서버 성공 후 해당 항목만 제거합니다.
 - `HIDDEN` 대상은 서버가 목록에서 제외합니다. `INACTIVE`와 종료된 축제는 목록에 남기고 배지로만
   구분합니다 — 사용자가 명시적으로 저장한 항목이 동기화 사정으로 사라지면 안 됩니다.
+
+## 이미지 없는 콘텐츠의 기본 이미지
+
+관광공사 동기화 데이터는 `firstimage`가 비어 있는 콘텐츠가 적지 않습니다. 이때 쓰는 기본
+이미지 규칙입니다.
+
+- 프리셋 계산은 `components/common/imagePlaceholderPresets.ts`(순수 함수), 렌더링은
+  `components/common/ImagePlaceholder.tsx`가 담당합니다. 이 저장소 vitest는 node 환경이고
+  jsdom이 없어 계산 로직을 렌더링 없이 검증할 수 있어야 하기 때문입니다.
+- 프리셋은 관광지 동기화 대상 `contentTypeId` 4종(`12` 관광지 / `14` 문화시설 / `28` 액티비티 /
+  `39` 맛집)에 축제(`FESTIVAL`)와 중립 fallback(`DEFAULT`)을 더한 6종입니다. 관광지 호출부는
+  `placeholderKindFromContentType(spot.contentTypeId)`로 프리셋을 구하고, 축제 호출부는
+  `kind="FESTIVAL"`을 직접 넘깁니다. 동기화 대상이 늘거나 값이 없으면 `DEFAULT`로 떨어집니다.
+- 분류 문구는 `utils/tourSpot.ts`의 `contentTypeLabel`과 같은 어휘(관광지/문화시설/액티비티/맛집)를
+  씁니다. 두 곳을 함께 바꿔야 화면 어휘가 어긋나지 않습니다.
+- 배경색은 프리셋 accent를 앱 배경(`sand`)에 옅게 섞은 그라데이션이고, 톤 변형은 `seed`
+  문자열(보통 콘텐츠 제목) 해시로 고릅니다. **같은 콘텐츠는 항상 같은 톤**이라 목록을 다시
+  열어도 색이 바뀌지 않고, 같은 분류 카드가 여러 개 나와도 서로 구분됩니다.
+- 스트라이프·펄스처럼 "곧 채워질 것"으로 읽히는 패턴은 쓰지 않습니다. 로딩 스켈레톤과
+  혼동되면 사용자가 이미지를 계속 기다리게 됩니다.
+- 크기 단계를 반드시 넘깁니다. `sm`(약 80px 이하)은 아이콘만, `md`(약 80~150px)는 아이콘과 분류
+  문구, `lg`(약 150px 이상)는 능선 라인아트까지 그립니다. 56px 썸네일에 문구를 넣으면 답답하고
+  240px 히어로에 아이콘만 두면 미완성처럼 보입니다.
+- 문구가 없는 `sm`에서도 읽히도록 `role="img"`과 `aria-label`("{분류} 사진 준비 중")을 항상
+  붙입니다.
+- 좌표(`mapX`/`mapY`)가 없어 지도를 못 그리는 경우는 원인이 달라 `MapPlaceholder`를 씁니다.
+  격자 배경으로 지도 자리임을 알리고 `좌표 정보가 없어 지도를 표시할 수 없어요`로 이유를
+  밝힙니다. 사진 없음과 같은 얼굴로 보이면 안 됩니다.
+- `TourSpot.contentTypeId`는 `utils/tourSpot.ts`의 세 mapper가 채웁니다. 관광지 목록/상세/근접
+  조회 응답이 모두 `contentTypeId`를 내려주므로 backend 변경은 필요하지 않습니다.
+
+## 1:1 문의 화면
+
+설계는 [docs/28_MEMBER_INQUIRY_DESIGN.md](28_MEMBER_INQUIRY_DESIGN.md)를 따릅니다.
+
+- 화면은 `/mypage/inquiries`(목록), `/mypage/inquiries/new`(작성), `/mypage/inquiries/:inquiryId`
+  (스레드) 3개이고, 진입점은 `MyPage`의 "1:1 문의" 행입니다. 목록은 `BlockedMembersPage`의
+  상태 분기 패턴(loading / 빈 상태 / 오류·재시도)을 따릅니다.
+- **미확인 답변 badge는 부가 기능이 아니라 필수입니다.** 관리자 답변을 사용자에게 밀어줄 채널이
+  없습니다 — STOMP는 `/matching`·`/match-room`에서만 연결되고, Web Push는 VAPID 키·구독
+  table·권한 UI가 전무하며, 메일 발송 인프라도 없습니다. badge가 유일한 도달 신호이므로
+  진입점에서 빼면 사용자는 답변이 온 사실을 알 수 없습니다.
+- badge 값은 `GET /api/members/me/inquiries/unread-count`로 읽습니다. 목록 전체를 불러오지
+  않습니다. 조회에 실패하면 badge를 감추고 진입점은 그대로 둡니다(안전 알림 badge와 같은 방식).
+- 스레드 상세를 여는 것만으로 서버가 열람 시각을 갱신해 badge가 꺼집니다. 별도 "읽음" 호출이
+  없습니다.
+- **작성 폼에 개인정보 입력 자제 안내를 반드시 노출합니다.** 본문을 평문으로 저장하기 때문입니다
+  (`docs/28` 3.1). 함께 "동행 중 문제는 신고 기능을 이용해 주세요"도 안내합니다 — 안전 카테고리를
+  두지 않는 결정의 화면 쪽 대응입니다(`docs/28` 3.4).
+- **작성 폼에 긴급 선택 입력을 두지 않습니다.** 긴급 지정은 관리자만 합니다. 사용자가 고르게
+  하면 사실상 전부 긴급으로 들어와 우선순위가 무의미해집니다.
+- 관리자 답변은 작성자를 특정하지 않고 **"운영팀"** 으로만 표시합니다. 응답에 관리자
+  `memberId`·닉네임이 애초에 없습니다.
+- 관리자 화면은 `/admin/inquiries`(`AdminInquiriesPage`)이며 `AdminNav`의 5번째 메뉴입니다.
+  미처리(`RECEIVED`·`IN_PROGRESS`) badge는 `AdminInquiryPageResponse.openCount`를 읽고,
+  `/admin/reports`의 안전 알림 badge와 같은 실패 처리 규칙을 따릅니다. badge 라벨과 숫자는
+  `badgeOf()` 한 곳에서 함께 정해 서로 어긋나지 않게 합니다.
+- 관리자 목록에 **긴급 우선 정렬을 제공하지 않습니다.** 정렬 키와 cursor 키가 어긋나면 페이지
+  경계에서 항목이 중복·누락됩니다. 대신 긴급 filter를 둡니다(`docs/28` 5.7).
+- 문의 유형·상태 라벨과 상태 배지 색은 `api/inquiries.ts`에만 둡니다. 화면마다 code를 문구로
+  바꾸면 노출 심사를 여러 곳에서 해야 합니다.
