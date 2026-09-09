@@ -97,7 +97,7 @@ class MemberInquiryControllerTest {
     @Test
     void 등록_요청의_priority는_무시된다() throws Exception {
         // 긴급 지정은 관리자만 한다. 요청 record에 필드가 없어 값이 흘러들 자리가 없다
-        // (docs/28 확정 5번).
+        // (docs/29 확정 5번).
         when(inquiries.create(MEMBER_ID, InquiryCategory.ETC, "제목", "본문")).thenReturn(detail());
 
         mockMvc.perform(post("/api/members/me/inquiries")

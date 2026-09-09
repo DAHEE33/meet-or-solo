@@ -23,12 +23,12 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
      *
      * <p>잠그지 않으면 관리자 답변({@code status = ANSWERED})과 종결({@code status = CLOSED},
      * {@code closed_at = now})이 겹칠 때 {@code chk_inquiries_closed_at}을 위반하는 조합
-     * ({@code ANSWERED}인데 {@code closed_at}이 남은 상태)이 만들어질 수 있다(docs/28 5.9).
+     * ({@code ANSWERED}인데 {@code closed_at}이 남은 상태)이 만들어질 수 있다(docs/29 5.9).
      */
     @Query(value = "SELECT * FROM inquiries WHERE id = :inquiryId FOR UPDATE", nativeQuery = true)
     Optional<Inquiry> findByIdForUpdate(@Param("inquiryId") long inquiryId);
 
-    /** 내 문의 목록. {@code idx_inquiries_member_created_at}을 탄다(docs/28 5.2). */
+    /** 내 문의 목록. {@code idx_inquiries_member_created_at}을 탄다(docs/29 5.2). */
     @Query(value = """
             select inquiry
             from Inquiry inquiry
@@ -44,7 +44,7 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
 
     /**
      * 미답변 문의 수. 등록 제한(3건)이 쓴다.
-     * {@code idx_inquiries_open} partial index를 탄다(docs/28 5.1).
+     * {@code idx_inquiries_open} partial index를 탄다(docs/29 5.1).
      */
     @Query("""
             select count(inquiry.id)
@@ -74,7 +74,7 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
 
     /**
      * 보관 기간이 지난 종결 문의. {@code idx_inquiries_retention} partial index를 탄다.
-     * 오래 방치된 것부터 처리하도록 {@code closedAt} 오름차순이다(docs/28 5.6).
+     * 오래 방치된 것부터 처리하도록 {@code closedAt} 오름차순이다(docs/29 5.6).
      */
     @Query("""
             select inquiry

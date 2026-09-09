@@ -18,14 +18,14 @@ import java.util.Objects;
  * 1:1 문의 스레드 1건의 헤더.
  *
  * <p>본문은 {@link InquiryMessage}에 있다. 헤더와 발화를 나눈 이유는
- * docs/28_MEMBER_INQUIRY_DESIGN.md 3.2절이다.
+ * docs/29_MEMBER_INQUIRY_DESIGN.md 3.2절이다.
  *
  * <p>{@code lastMessageAt}, {@code lastAnsweredAt}은 목록 정렬과 미확인 badge용 비정규화
  * 값이다. 발화 INSERT와 <b>같은 transaction</b>에서 갱신해야 한다. 어긋나면 badge가 틀린다.
  *
  * <p>미확인 답변 여부는 컬럼으로 저장하지 않는다. {@link #hasUnreadAnswer()}처럼 조회 시점에
  * 계산한다 — boolean 컬럼을 두면 {@code content_comments.like_count}와 같은 카운터 정합성
- * 문제를 새로 만든다(docs/28 4.2).
+ * 문제를 새로 만든다(docs/29 4.2).
  */
 @Entity
 @Table(name = "inquiries")
@@ -101,7 +101,7 @@ public class Inquiry {
 
     /**
      * 사용자가 발화를 추가했다. 답변 완료였으면 확인 중으로 되돌린다 — 그러지 않으면 관리자
-     * 미처리 목록에 다시 뜨지 않아 재질문이 묻힌다(docs/28 5.4).
+     * 미처리 목록에 다시 뜨지 않아 재질문이 묻힌다(docs/29 5.4).
      */
     public void onUserMessage(OffsetDateTime now) {
         lastMessageAt = now;
@@ -118,7 +118,7 @@ public class Inquiry {
     }
 
     /**
-     * 사용자가 스레드를 열었다. 뒤로 가는 갱신은 하지 않아 반복 호출이 멱등하다(docs/28 5.3).
+     * 사용자가 스레드를 열었다. 뒤로 가는 갱신은 하지 않아 반복 호출이 멱등하다(docs/29 5.3).
      *
      * @return 실제로 갱신했으면 {@code true}
      */
@@ -139,7 +139,7 @@ public class Inquiry {
         priority = Objects.requireNonNull(target, "target");
     }
 
-    /** 보관 기간 경과 처리. 제목을 고정 문구로 덮고 재처리를 막는다(docs/28 5.6). */
+    /** 보관 기간 경과 처리. 제목을 고정 문구로 덮고 재처리를 막는다(docs/29 5.6). */
     public void anonymize(String placeholderTitle, OffsetDateTime now) {
         title = placeholderTitle;
         anonymizedAt = now;

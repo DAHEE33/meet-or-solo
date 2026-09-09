@@ -22,7 +22,7 @@ type ListState =
  * 내 1:1 문의 목록.
  *
  * `BlockedMembersPage`의 상태 분기 패턴(loading / 빈 상태 / 오류·재시도)을 따른다.
- * 답변을 밀어줄 채널이 없으므로 `hasUnreadAnswer` 배지가 유일한 도달 신호다(docs/28 2.2).
+ * 답변을 밀어줄 채널이 없으므로 `hasUnreadAnswer` 배지가 유일한 도달 신호다(docs/29 2.2).
  */
 export default function MyInquiriesPage() {
   const [state, setState] = useState<ListState>({ status: 'LOADING' });

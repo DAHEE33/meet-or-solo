@@ -66,7 +66,7 @@
 | `member_profile_images` | MVP는 `members.profile_image_url`로 시작한다. 이미지 변경 이력이 필요하면 분리한다. |
 | `match_group_cancellations` | MVP는 `match_events`와 `match_group_members.cancelled_at`로 표현한다. 상세 통계가 필요하면 분리한다. |
 | `web_push_subscriptions` | Web Push 구현 단계에서 추가한다. 이번 DB 설계에는 테이블 후보만 별도 보류한다. |
-| ~~`inquiries`~~ | **보류 해제.** `V31`로 `inquiries`와 `inquiry_messages`를 추가했다. 설계는 `docs/28_MEMBER_INQUIRY_DESIGN.md`. |
+| ~~`inquiries`~~ | **보류 해제.** `V31`로 `inquiries`와 `inquiry_messages`를 추가했다. 설계는 `docs/29_MEMBER_INQUIRY_DESIGN.md`. |
 | `api_batch_runs` | 초기에는 `tour_api_call_logs`로 수동/스케줄 호출 기록을 관리한다. 배치 단위 추적이 필요하면 분리한다. |
 
 ### 제외 테이블
@@ -858,7 +858,7 @@ partial unique index 2개가 동시 요청 중복을 DB에서 흡수한다. 설�
 
 관리자 목록 정렬 키는 `(created_at DESC, id DESC)`이며 **`priority`를 `ORDER BY`에 넣지
 않는다.** 넣으면 cursor payload에도 그 값이 들어가야 하고, 정렬 키와 cursor 키가 어긋나면
-페이지 경계에서 항목이 중복·누락된다(`docs/28` 5.7).
+페이지 경계에서 항목이 중복·누락된다(`docs/29` 5.7).
 
 ### inquiry_messages
 
@@ -1148,7 +1148,7 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 ### V31__add_member_inquiries.sql
 
-1:1 문의 센터 테이블 2개를 생성합니다. 설계 근거는 `docs/28_MEMBER_INQUIRY_DESIGN.md`입니다.
+1:1 문의 센터 테이블 2개를 생성합니다. 설계 근거는 `docs/29_MEMBER_INQUIRY_DESIGN.md`입니다.
 
 - `inquiries` — 스레드 헤더. `status` 상태 머신(`RECEIVED`/`IN_PROGRESS`/`ANSWERED`/`CLOSED`)과
   목록·badge용 비정규화 값(`last_message_at`, `last_answered_at`, `member_read_at`).
@@ -1156,7 +1156,7 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 
 주요 설계 판단:
 
-- **본문은 평문**입니다(`docs/28` 3.1). 비공개 1:1이지만 암호화하면 관리자 키워드 검색이
+- **본문은 평문**입니다(`docs/29` 3.1). 비공개 1:1이지만 암호화하면 관리자 키워드 검색이
   불가능해지고 이 저장소가 의존하는 `char_length` CHECK 제약도 걸 수 없습니다.
 - **미확인 답변 여부를 컬럼으로 저장하지 않습니다.** `last_answered_at`과 `member_read_at` 비교로
   조회 시점에 계산합니다. boolean 컬럼을 두면 `content_comments.like_count`와 같은 카운터
@@ -1165,7 +1165,7 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
   관용구로 상태와 시점 컬럼을 묶어 고정합니다.
 - `anonymized_at`은 보관 기간(종결 후 1년) 경과 익명화의 재처리를 막는 원인 key입니다.
 - `SAFETY` 카테고리를 두지 않습니다 — 신고자 보호 제약과 충돌하고 구조화 신고 경로가 이미
-  있습니다(`docs/28` 3.4).
+  있습니다(`docs/29` 3.4).
 
 기존 테이블과 constraint는 변경하지 않고 신규 생성만 합니다. `admin_actions.action_type`
 CHECK도 건드리지 않았습니다 — 문의 답변은 회원 제재가 아니므로 그 table에 기록하지 않습니다.

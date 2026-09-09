@@ -199,6 +199,29 @@ GitHub 원격 저장소는 아직 미연결 상태입니다.
 - 요청된 파일만 수정한다.
 - 사용자가 문서만 요청했다면 backend, frontend, Docker, nginx, GitHub Actions 파일을 수정하지 않는다.
 
+## Flyway migration 수정 금지
+
+**한 번이라도 DB에 적용된 migration 파일은 주석 한 줄도 수정하지 않는다.**
+
+- Flyway 체크섬은 **주석까지 포함**해 계산한다. 문서 번호 참조 하나만 바꿔도
+  `Migration checksum mismatch`로 애플리케이션이 부팅되지 않는다.
+- **저장소 전체 일괄 치환(sed·정규식 replace) 대상에서 `backend/src/main/resources/db/migration/`을
+  반드시 제외한다.** 이 사고는 문서 번호를 `docs/28` → `docs/29`로 일괄 치환하다가 이미 적용된
+  `V31`의 주석 11줄이 함께 바뀌어 발생했다.
+- 이미 적용된 migration의 내용을 고쳐야 하면 파일을 수정하는 대신 **새 번호의 migration을
+  추가한다.**
+- 주석만 바뀌어 DDL이 동일한 것이 확인된 경우에만 `flyway repair`(또는
+  `flyway_schema_history`의 `checksum` 갱신)로 복구한다. DDL이 다르면 repair는 스키마와 기록을
+  어긋나게 만들므로 쓰지 않는다.
+
+## Migration 번호 결정 규칙
+
+**번호는 저장소 파일 목록이 아니라 공유 dev DB의 `flyway_schema_history`를 기준으로 정한다.**
+
+협업자가 저장소에 push하지 않은 채 공유 DB에 먼저 적용해 둔 migration은 저장소에 보이지
+않는다. 파일 목록만 보고 다음 번호를 고르면 checksum 충돌이 난다. 실제 사례는
+`docs/10_PROGRESS_LOG.md`의 1:1 문의 센터 항목을 참고한다.
+
 ## 단계별 작업 경계
 
 현재 완료된 개발환경 세팅 범위:

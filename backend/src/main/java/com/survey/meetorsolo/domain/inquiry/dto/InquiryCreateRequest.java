@@ -10,7 +10,7 @@ import jakarta.validation.constraints.Size;
  *
  * <p><b>{@code priority}를 받지 않는다.</b> 사용자가 긴급을 고르게 하면 사실상 전부 긴급으로
  * 들어와 우선순위가 무의미해진다. 긴급 지정은 관리자 {@code PATCH}만 한다
- * (docs/28_MEMBER_INQUIRY_DESIGN.md 확정 5번).
+ * (docs/29_MEMBER_INQUIRY_DESIGN.md 확정 5번).
  */
 public record InquiryCreateRequest(
         @NotNull InquiryCategory category,

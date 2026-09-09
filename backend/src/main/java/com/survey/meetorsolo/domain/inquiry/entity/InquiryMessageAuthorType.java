@@ -5,7 +5,7 @@ package com.survey.meetorsolo.domain.inquiry.entity;
  *
  * <p>{@code author_member_id != inquiries.member_id}로 관리자를 유추하지 않고 컬럼으로 남기는
  * 이유는 관리자가 자기 문의에 답할 때 그 판정이 깨지기 때문이다
- * (docs/28_MEMBER_INQUIRY_DESIGN.md 4.3).
+ * (docs/29_MEMBER_INQUIRY_DESIGN.md 4.3).
  */
 public enum InquiryMessageAuthorType {
 

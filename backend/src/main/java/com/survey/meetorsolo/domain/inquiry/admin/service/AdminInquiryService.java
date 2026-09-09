@@ -35,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>{@code admin_actions}에는 기록하지 않는다. 그 table의 {@code action_type} CHECK는 제재·신고
  * 처리 값으로 고정되어 있고 문의 답변은 회원 제재가 아니다. 새 값을 넣으려면 기존 CHECK를
- * 수정하는 migration이 필요하다(docs/28 5.5).
+ * 수정하는 migration이 필요하다(docs/29 5.5).
  */
 @Service
 public class AdminInquiryService {
@@ -108,7 +108,7 @@ public class AdminInquiryService {
      * 관리자 답변. 종결된 문의에는 남길 수 없다.
      *
      * <p>헤더를 먼저 잠근다. 잠그지 않으면 다른 관리자의 종결({@code CLOSED} + {@code closed_at})과
-     * 겹칠 때 {@code chk_inquiries_closed_at}을 위반하는 조합이 만들어진다(docs/28 5.9).
+     * 겹칠 때 {@code chk_inquiries_closed_at}을 위반하는 조합이 만들어진다(docs/29 5.9).
      */
     @Transactional
     public AdminInquiryDetailResponse answer(long adminMemberId, long inquiryId, String rawBody) {
@@ -161,7 +161,7 @@ public class AdminInquiryService {
         return toDetail(inquiry);
     }
 
-    /** {@code CLOSED}는 종단이다. 재개하려면 새 문의를 등록한다(docs/28 5.8). */
+    /** {@code CLOSED}는 종단이다. 재개하려면 새 문의를 등록한다(docs/29 5.8). */
     private void validateTransition(InquiryStatus current, InquiryStatus target) {
         boolean allowed = switch (current) {
             case RECEIVED, IN_PROGRESS, ANSWERED ->

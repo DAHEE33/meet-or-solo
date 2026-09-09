@@ -41,8 +41,8 @@ export function inquiryReplyErrorMessage(error: unknown): string {
 /**
  * 문의 스레드.
  *
- * 이 화면을 여는 것만으로 서버가 열람 시각을 갱신해 미확인 배지가 꺼진다(docs/28 5.3).
- * 관리자 발화는 작성자를 특정하지 않고 "운영팀"으로만 표시한다(docs/28 7절).
+ * 이 화면을 여는 것만으로 서버가 열람 시각을 갱신해 미확인 배지가 꺼진다(docs/29 5.3).
+ * 관리자 발화는 작성자를 특정하지 않고 "운영팀"으로만 표시한다(docs/29 7절).
  */
 export default function InquiryDetailPage() {
   const { inquiryId } = useParams<{ inquiryId: string }>();

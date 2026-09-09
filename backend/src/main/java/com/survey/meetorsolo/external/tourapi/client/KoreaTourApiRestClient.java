@@ -456,7 +456,7 @@ public class KoreaTourApiRestClient implements TourApiClient {
     }
 
     private String encodedServiceKey(String value) {
-        String serviceKey = required(value, "TOUR_API_KEY 또는 TOURISM-API-KEY");
+        String serviceKey = required(value, "TOURISM_API_KEY");
         if (PERCENT_ENCODED.matcher(serviceKey).find()) {
             serviceKey = UriUtils.decode(serviceKey, StandardCharsets.UTF_8);
         }

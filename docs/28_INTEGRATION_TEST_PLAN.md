@@ -57,7 +57,7 @@ WBS 10-B까지 구현된 기능을 dev 환경에서 처음부터 끝까지 검�
 | 3 | **nginx `client_max_body_size` 미설정** | 기본 1MB | backend는 프로필 이미지 5MB 허용인데 nginx가 1MB 초과를 413 HTML로 거절 |
 | 4 | **frontend build에 Kakao Maps key 미주입** | `deploy-dev.yml`에 없었음 | 만남 지점 지도, 관리자 좌표 선택 미표시 |
 | 5 | **CI가 테스트를 돌리지 않음** | `build -x test`, frontend `npm test` 없음 | 통테 중 회귀를 PR에서 못 잡음 |
-| 6 | **`TOUR_API_KEY` 이름 불일치** | 로컬 `.env`는 `TOURISM-API-KEY`(Spring이 직접 읽어 fallback 동작). dev는 compose가 `TOUR_API_KEY`만 전달 | 서버 `.env`에 `TOUR_API_KEY`가 없으면 축제 sync 인증 실패 |
+| 6 | ~~**`TOUR_API_KEY` 이름 불일치**~~ **해소** | 환경변수 이름을 `TOURISM_API_KEY` 하나로 통일했다. `application.yml`의 `TOUR_API_KEY`/`TOURISM-API-KEY` 이중 fallback을 제거하고 compose·example·문서를 모두 맞췄다 | **로컬 `.env`와 서버 `.env`의 키 이름을 `TOURISM_API_KEY`로 바꿔야 한다.** 옛 이름만 있으면 이제 fallback이 없어 축제 sync 인증이 실패한다 |
 | 7 | **dev 체크인 GPS 검증 기본 우회** | `FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK` dev 기본 `true` | 의도된 설정이나 **반경 검증 자체가 검증 대상에서 빠진다** |
 
 ### 1.1.1 항목 1을 왜 먼저 해야 하는가
@@ -87,13 +87,14 @@ Scheduler가 꺼져 있으면:
 **남은 수동 작업**
 
 - [ ] GitHub Secrets에 `VITE_KAKAO_MAPS_APP_KEY` 등록
-- [ ] 서버 `.env`에 `TOUR_API_KEY`, `OPENAI_API_KEY`, `SUPPORT_CONTACT_EMAIL` 추가
+- [ ] 서버 `.env`에 `TOURISM_API_KEY`, `OPENAI_API_KEY`, `SUPPORT_CONTACT_EMAIL` 추가
+      (옛 이름 `TOUR_API_KEY`/`TOURISM-API-KEY`가 있으면 `TOURISM_API_KEY`로 바꾼다 — fallback이 제거됐다)
 - [ ] 위 3개 파일을 `dev`에 병합해 재배포
 
 ## 1.3 서버 `.env` 검증
 
 **서버 `.env`는 로컬 `.env` 복사가 아니라 `infra/env/.env.dev.example` 기준으로 만든다.**
-로컬에는 `DB_URL`·`DB_USERNAME`·`DB_PASSWORD`·`TOUR_API_KEY`가 없고, 그 값들이 없으면
+로컬에는 `DB_URL`·`DB_USERNAME`·`DB_PASSWORD`가 없고, 그 값들이 없으면
 backend가 기동조차 하지 못한다.
 
 ```bash
@@ -101,7 +102,7 @@ cd <DEV_DEPLOY_PATH>
 for k in SPRING_PROFILES_ACTIVE DB_URL DB_USERNAME DB_PASSWORD \
          POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
          JWT_SECRET ADMIN_REPORT_CURSOR_HMAC_SECRET PROFILE_ENCRYPTION_KEY \
-         TOUR_API_KEY FRONTEND_BASE_URL CORS_ALLOWED_ORIGINS \
+         TOURISM_API_KEY FRONTEND_BASE_URL CORS_ALLOWED_ORIGINS \
          KAKAO_CLIENT_ID KAKAO_CLIENT_SECRET KAKAO_REDIRECT_URI \
          NAVER_CLIENT_ID NAVER_CLIENT_SECRET NAVER_REDIRECT_URI \
          OCI_OBJECT_STORAGE_ENDPOINT SERVER_PORT OPENAI_API_KEY; do
