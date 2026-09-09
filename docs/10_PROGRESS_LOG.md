@@ -4049,3 +4049,65 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   `FestivalDetailPage` 2곳, `TourSpotDetailPage` 2곳)을 모두 새 규칙으로 교체했다.
 - 신규 테스트는 `imagePlaceholderPresets.test.ts`(13건, 프리셋 매핑·해시 결정성·색 혼합 경계)와
   `ImagePlaceholder.test.tsx`(5건, 크기 단계별 노출 요소와 접근성 속성)이다.
+
+## [10-UI 후속 2] 앱 진입 스플래시 화면(로고 애니메이션)과 세션 bootstrap
+
+상태: 완료
+
+- 앱을 열면 로고가 애니메이션과 함께 약 1.2초 보이고, 미로그인이면 SSO 로그인 화면으로,
+  로그인 상태면 원래 목적지로 넘어가는 진입 첫 화면을 추가했다. 흔히 스플래시 화면
+  (splash screen), PWA 문맥에서는 런치 스크린(launch screen)이라 부르는 화면이다.
+  `docs/03_FRONTEND_GUIDE.md` 라우팅 표에 `SplashPage`로만 적혀 있고 구현이 없던 항목이다.
+- 장식만이 아니라 세션 bootstrap을 겸한다. 기존에는 미로그인 사용자가 `/`에 들어오면
+  `HomePage`가 먼저 마운트되고 `memberProfileApi.getMine()`이 401을 받은 뒤 `apiClient`가
+  `/login`으로 튕겨, 홈 화면이 잠깐 보이고 로그인으로 점프하는 깜빡임이 있었다. 이제
+  스플래시가 그 구간을 덮는다.
+- `components/splash/SplashGate.tsx`가 `App`의 `Routes`를 감싼다. 재생 구간(`PLAYING`)에서는
+  children을 마운트하지 않는다 — 마운트하면 `HomePage`가 오버레이 뒤에서 GPS 권한 팝업을
+  띄우고 축제·체크인 API를 쏘기 시작한다. 목적지가 정해진 `FADING` 구간에서 children과
+  오버레이를 함께 렌더해 260ms 크로스페이드로 넘긴다.
+- "2초 고정 대기"로 두지 않았다. 이미 로그인된 회원이 진입마다 2초를 기다리게 되기 때문이다.
+  최소 노출 1.2초(`SPLASH_MIN_VISIBLE_MS`)와 세션 확인을 `Promise.all`로 병렬 실행하고 둘 다
+  끝나면 해제한다. 로고는 항상 한 번 온전히 보이고, 느린 네트워크에서만 그보다 오래 머문다.
+- 탭 세션당 1회만 재생한다(`sessionStorage`). OAuth는 같은 탭에서 카카오/네이버를 다녀오고
+  `AuthController`가 `/` 또는 `/signup`으로 돌려보내므로, 플래그가 살아 있어 로그인 직후
+  스플래시가 다시 뜨지 않는다. `/login`과 `/admin/*`은 건너뛴다 — 전자는 미로그인 회원의
+  목적지이고, 후자는 `AdminRoute`가 자체 권한 확인 화면을 갖고 있어 안내가 겹친다.
+- 세션 확인은 `api/session.ts`의 `probeSession()`으로 한다. `apiClient`를 쓰지 않은 이유는
+  `apiClient`가 401·영구제한에서 `window.location.replace('/login')`을 호출해 전체 페이지
+  리로드가 끼고 애니메이션이 끊기기 때문이다. 공유 클라이언트를 고치는 대신 부트스트랩
+  시점에만 쓰는 조회를 따로 뒀고, 영구제한 code를 공유하려고 `apiClient`의 `BANNED_CODE`만
+  export로 바꿨다.
+- 목적지 판정(`resolveSplashTarget`)은 401과 영구제한 403만 로그인 화면으로 보낸다.
+  네트워크 실패나 5xx에서는 이동하지 않는다 — 로그인된 회원을 일시 장애로 로그인 화면에
+  떨어뜨리면 안 되고, 각 화면이 이미 자기 오류 상태를 갖고 있다. 이용정지
+  (`MEMBER_SUSPENDED`)도 로그인 상태이므로 이동하지 않고 `SanctionNoticeDialog`가 맡는다.
+- 로고 자산은 하이브리드로 처리했다. 핀 심볼은 `components/splash/BrandPin.tsx`에 SVG로 다시
+  그렸고, 워드마크는 이미지 없이 `LoginPage`와 같은 텍스트 구성으로 렌더한다. `frontend/logo.png`
+  (1448x1086, alpha 없음, 852KB)를 그대로 쓰면 핀·광선·워드마크가 한 장에 픽셀로 녹아 있어
+  조각별 애니메이션이 불가능하고, `frontend/` 루트는 Vite `publicDir` 밖이라 `vite build` 시
+  `dist`에 복사되지도 않는다. 결과적으로 스플래시는 새 이미지 파일 없이 동작하고 `logo.png`는
+  브랜드 원본으로만 남는다.
+- 핀 SVG 좌표는 눈대중이 아니라 원본 PNG를 격자로 스캔해 옮겼다. 두 사람은 좌우 대칭이므로
+  한 경로(`FIGURE_BODY`)를 `scale(-1 1)`로 반전해 재사용하고, 몸통이 원 아래에서 잘리는
+  원본 특징은 안쪽 원 `clipPath`로 재현했다. 색은 원본 오렌지(`#F65F27`)가 아니라 팔레트
+  `coral`(`#E8593A`)을 쓴다 — 워드마크가 `coral` 텍스트라서 핀만 원본색이면 같은 화면에서
+  오렌지 두 개가 어긋난다.
+- 애니메이션은 라이브러리 없이 `tailwind.config.ts`의 `keyframes`/`animation`으로만 만들었다.
+  핀 낙하(0~460ms) → 바닥 그림자 확장(300~620ms) → 광선 3줄 stagger 팝(520~900ms) →
+  워드마크 페이드업(760~1140ms) 순서다. 광선은 지연을 별도 utility로 덧붙이면 `animation`
+  축약형이 delay를 0으로 되돌릴 수 있어, 지연까지 포함한 utility 3개(`ray-pop-1..3`)로 나눴다.
+  `prefers-reduced-motion`에서는 전부 정적 표시로 대체한다(`motion-reduce:animate-none`).
+- 파일명 주의: 순수 함수 모듈을 `splashGate.ts`로 두면 `SplashGate.tsx`와 대소문자만 달라
+  Windows에서 TypeScript가 거부한다(TS1149/TS1261). `splashPolicy.ts`로 분리했다.
+- 테스트는 이 저장소 vitest에 jsdom이 없어(`MyPage.test.tsx` 주석 참고) 순수 함수와 정적
+  마크업만 검증한다. `splashPolicy.test.ts`(12건, skip 조건과 상태코드별 목적지 매핑),
+  `SplashScreen.test.tsx`(6건, 워드마크 구성·접근성·광선 3줄·페이드아웃 상태)를 추가했다.
+- 검증은 `npm test`(64 files / 547 tests), `npx tsc -b`, `npm run build`를 통과했고, 핀 SVG는
+  headless 렌더 결과를 원본 PNG와 같은 배율로 겹쳐 비교했다.
+- 이번 범위에서 뺀 것: `favicon`·PWA `manifest` 아이콘·`theme_color`/`background_color`
+  정리(여전히 `icons/placeholder.svg`), iOS `apple-touch-startup-image`, 첫 방문자 온보딩
+  카드(`OnboardingPage`). `HomePage`도 `getMine()`을 호출하므로 진입 시
+  `/api/members/me`가 2번 불리는데, 없애려면 프로필 Context를 만들어 호출부를 모두 바꿔야
+  해서 남겨뒀다. 프로필 미완성 회원을 스플래시가 `/signup`으로 보내는 처리도 넣지 않았다 —
+  현재 OAuth 복귀 시점에만 backend가 처리하는 동작이다.

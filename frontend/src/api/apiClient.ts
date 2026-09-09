@@ -21,7 +21,8 @@ export class ApiClientError extends Error {
 
 /** 제재로 접근이 막힌 응답의 error code. */
 const SUSPENDED_CODE = 'MEMBER_SUSPENDED';
-const BANNED_CODE = 'MEMBER_BANNED';
+/** 영구제한 error code. 스플래시의 세션 판정(`splashPolicy.ts`)도 같은 값을 쓴다. */
+export const BANNED_CODE = 'MEMBER_BANNED';
 
 export const SANCTION_LOGIN_PATH = '/login?oauthError=account_restricted';
 

@@ -280,7 +280,7 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 
 | Page | 목적 |
 | --- | --- |
-| `SplashPage` | 초기 로딩과 세션 bootstrap |
+| `SplashGate` | 진입 첫 화면(로고 스플래시)과 세션 bootstrap. route가 아니라 `Routes`를 감싸는 gate로 구현했다 |
 | `OnboardingPage` | 서비스 안내와 권한 요청 맥락 설명 |
 | `LoginPage` | OAuth 로그인 진입 |
 | `TermsPage` | 약관, 개인정보, 위치정보 동의 |
