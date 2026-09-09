@@ -1,5 +1,65 @@
 # 진행 상태 기록
 
+## [사고 기록] 적용된 migration 수정으로 인한 checksum 충돌 2건
+
+상태: 원인 확정. 1건 해결(V28 → V31 번호 이동), 1건은 `flyway repair` 대기(V31)
+
+같은 뿌리에서 나온 두 사고를 함께 남긴다. 둘 다 **Flyway 체크섬은 주석까지 포함한다**는 점과
+**공유 DB의 이력이 저장소보다 앞서 있을 수 있다**는 점을 놓쳐 발생했다.
+
+### 사고 1 — 번호 충돌 (`V28`)
+
+저장소 파일 목록상 마지막이 `V27`이라 새 migration을 `V28`로 만들었다. 그런데 협업자가
+저장소에 push하지 않은 채 공유 dev DB에 `V28`~`V30`을 먼저 적용해 둔 상태였다.
+
+```text
+Migration checksum mismatch for migration version 28
+```
+
+`flyway repair`를 쓰지 않았다 — 협업자의 `V28`을 내 파일로 위장하게 되고 그쪽 스키마 변경이
+기록에서 사라진다. **번호를 `V31`로 옮겨 해결했다.**
+
+교훈: **번호는 저장소 파일 목록이 아니라 공유 dev DB의 `flyway_schema_history`를 기준으로
+정한다.** push되지 않은 migration은 저장소에 보이지 않는다.
+
+### 사고 2 — 적용된 migration 수정 (`V31`)
+
+`V31`이 DB에 적용된 뒤, 문서 번호 충돌을 정리하려고 저장소 전체에서 `docs/28` → `docs/29`를
+일괄 치환했다. **그 치환이 이미 적용된 `V31`의 주석 11줄을 함께 바꿨다.**
+
+```text
+Migration checksum mismatch for migration version 31
+-> Applied to database : -1125150006
+-> Resolved locally    : -769530868
+```
+
+Flyway 체크섬은 **주석을 포함**해 계산하므로, 문서 번호 참조만 바뀌어도 부팅이 막힌다.
+
+이 건은 DDL이 완전히 동일함을 확인했다(달라진 11줄 전부 `--` 주석, 주석 제외 DDL 문자열 일치).
+따라서 DB 스키마는 이미 현재 파일과 정확히 일치하고, **기록된 체크섬만 갱신하면 된다.**
+
+```sql
+UPDATE flyway_schema_history
+SET checksum = -769530868
+WHERE version = '31' AND script = 'V31__add_member_inquiries.sql';
+```
+
+번호를 또 옮기는 방식은 쓰지 않는다. `V31`은 이미 정상 적용되어 테이블이 만들어져 있으므로
+새 번호로 옮기면 같은 테이블을 두 번 만들게 된다.
+
+### 재발 방지
+
+`docs/08_AI_WORKING_RULES.md`에 두 규칙을 추가했다.
+
+- **Flyway migration 수정 금지** — 적용된 migration은 주석 한 줄도 고치지 않는다. 저장소 전체
+  일괄 치환 대상에서 `backend/src/main/resources/db/migration/`을 제외한다.
+- **Migration 번호 결정 규칙** — 공유 dev DB의 `flyway_schema_history`를 기준으로 정한다.
+
+### 남은 수동 작업
+
+- [ ] 위 `UPDATE` 실행(또는 `flyway repair`). 그 뒤 `V31`은 **동결**이며 어떤 이유로도 수정하지 않는다
+- [ ] 공유 dev DB라면 협업자도 같은 오류를 겪는다. `V31` 파일을 push한 뒤 repair를 함께 안내한다
+
 ## [10-공통 환경 정리] 관광공사 서비스키 환경변수 이름 통일 (`TOURISM_API_KEY`)
 
 상태: 완료. 로컬 `.env` 반영까지 마침. **dev/prod 서버 `.env`와 GitHub Secrets는 수동 반영 필요**
