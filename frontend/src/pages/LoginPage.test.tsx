@@ -16,6 +16,7 @@ function notice(overrides: Partial<SanctionNotice> = {}): SanctionNotice {
     reasonCode: 'HARASSMENT',
     reasonMessage: '다른 이용자에 대한 부적절한 언행',
     contactEmail: null,
+    rejoinAvailableAt: null,
     ...overrides,
   };
 }
@@ -41,7 +42,9 @@ describe('LoginPage', () => {
   it('제재 안내에서는 재시도 안내와 로그인 버튼을 감춘다', () => {
     // useEffect가 돌지 않는 SSR 마크업이라 안내 조회 전 포괄 문구가 나온다.
     const html = page('?oauthError=account_restricted');
-    expect(html).toContain('계정이 제재되어 로그인할 수 없습니다');
+    expect(html).toContain('이 계정으로는 지금 로그인할 수 없습니다');
+    // 탈퇴도 이 화면으로 오므로 포괄 문구가 "제재"라고 단정하면 틀린 안내가 된다.
+    expect(html).not.toContain('제재되어');
     expect(html).not.toContain('잠시 후 다시 시도해 주세요');
     expect(html).not.toContain('카카오로 시작하기');
     expect(html).not.toContain('네이버로 시작하기');
@@ -50,7 +53,7 @@ describe('LoginPage', () => {
   it('영구정지 안내만 로그인 화면에 뜬다', () => {
     // 정지 회원은 로그인이 되므로 이 화면을 보지 않는다. 정지 안내는 앱 안 dialog가 맡는다.
     const html = page('?oauthError=account_restricted');
-    expect(html).toContain('계정이 제재되어 로그인할 수 없습니다');
+    expect(html).toContain('이 계정으로는 지금 로그인할 수 없습니다');
   });
 
   it('제재 사유를 URL에서 읽지 않는다', () => {

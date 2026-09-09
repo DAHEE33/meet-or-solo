@@ -330,4 +330,23 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             FOR UPDATE
             """, nativeQuery = true)
     Optional<MatchPool> findActiveCancellablePoolForUpdate(@Param("memberId") long memberId);
+
+    /**
+     * 탈퇴 시 활성 pool을 한 번에 취소한다.
+     *
+     * <p>{@code MatchPoolCancellationService.cancel}을 쓰지 않는다. 그쪽은 쿨타임과 penalty를
+     * 매기고 {@code PROPOSED} pool을 거부하는데, 탈퇴는 부과 대상이 익명화되므로 penalty가
+     * 의미가 없고 어떤 상태에서도 실패하지 않아야 한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+               SET status = 'CANCELLED', updated_at = :now
+             WHERE member_id = :memberId
+               AND status IN ('WAITING', 'LOCKED', 'PROPOSED')
+            """, nativeQuery = true)
+    int cancelActivePoolsOnWithdrawal(
+            @Param("memberId") long memberId,
+            @Param("now") OffsetDateTime now
+    );
 }

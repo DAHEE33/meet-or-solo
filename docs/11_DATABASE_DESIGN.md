@@ -933,13 +933,73 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - Refresh Token은 원문이 아니라 hash만 저장한다.
 - API Key, OAuth secret, DB password, SSH Key는 DB와 문서에 저장하지 않는다.
 - `match_events.payload`, `admin_actions.metadata`, `tour_api_call_logs`에는 Secret과 원본 GPS 좌표를 넣지 않는다.
-- 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN` 또는 `DELETED`로 변경한다.
+- 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN`으로 변경한다.
+  `nickname`도 `NULL`로 지운다(`V30`). 표시 문구(`탈퇴한 회원`)는 `members`를 join하는 조회
+  SQL이 `status = 'WITHDRAWN'`일 때 만들어 낸다. 문구를 컬럼에 두면 재가입한 계정이 그 값을
+  들고 살아나고, 표시 문구가 곧 익명화 여부를 뜻하는 상태 flag가 된다.
+  익명화 누락은 `V28`의 `chk_members_withdrawn_anonymized`(`V30`이 `nickname`을 검사 대상에
+  추가)가 DB 수준에서 거부하고, `V30`의 `chk_members_nickname_not_withdrawn_label`이 어떤
+  상태에서도 그 문구가 컬럼에 저장되는 것을 막는다.
+- `provider_user_id`는 탈퇴 시에도 익명화하지 않는다. 7일 재가입 쿨오프 판정에 필요하다.
+- 탈퇴 시점의 제재 상태는 `withdrawn_*` 스냅샷 컬럼에 남긴다. `V19`의
+  `chk_members_suspension_period`와 `V27`의 `chk_members_sanction_reason_presence`가 제재
+  상태가 아닌 회원에게 그 값이 남는 것을 금지하므로 기존 제재 컬럼을 재사용할 수 없다.
+- `member_consents`는 탈퇴 시에도 row를 남기고 `revoked_at`만 기록한다. 동의를 받았다는 사실이
+  개인정보 처리 근거의 증빙이다.
 - 패널티/매칭 이벤트 등 운영 로그는 30일 보관 후 삭제 또는 집계 전환 정책을 별도 구현한다.
 - `preference_text`를 외부 임베딩 API로 보내기 전에 `AI_PROCESSING`, `OVERSEAS_TRANSFER` 동의와 고지 요건을 확인한다.
 - 임베딩 요청에는 취향 문장 외의 OAuth 식별자, 닉네임, 성별, 연령대 등 불필요한 개인정보를 포함하지 않는다.
-- 회원 탈퇴 또는 취향 삭제 시 `preference_text`와 `embedding`도 삭제 또는 정책에 따라 익명화한다.
+- 회원 탈퇴 또는 취향 삭제 시 `preference_text`와 `embedding`도 삭제한다. 탈퇴는
+  `MemberWithdrawalService`가 `member_preference_embeddings` row를 물리 삭제한다.
 
 ## 10. Flyway migration 이력
+
+### V30__store_null_nickname_for_withdrawn_member.sql
+
+탈퇴 회원의 `nickname`을 컬럼에 저장하지 않는다.
+
+`V28`이 넣은 표시 문구를 `NULL`로 되돌리고, 살아 있는 회원에 남은 문구도 함께 지운다(재가입은
+했지만 OAuth 닉네임이 없어 문구가 남은 계정). 표시 문구는 조회 SQL이 `status`로 만든다.
+
+- `chk_members_withdrawn_anonymized`를 재생성해 `nickname IS NULL`을 검사 대상에 추가한다.
+  `V28`은 "표시용 고정 문구로 덮으므로 NULL 검사 대상이 아니다"라며 예외로 뒀다.
+- `chk_members_nickname_not_withdrawn_label` 신규 — 어떤 상태에서도 `탈퇴한 회원`을 닉네임
+  컬럼에 저장할 수 없다. 탈퇴 회원의 문구 회귀와, 살아 있는 회원이 그 문구로 위장하는 것을
+  동시에 막는다.
+
+`V28`을 고치지 않고 새 번호로 분리한 이유는 `V28`이 이미 공유 dev DB에 적용되어 수정하면
+Flyway checksum 검증이 깨지기 때문이다(`V29`와 같은 사정).
+
+### V29__allow_withdrawn_cancel_reason.sql
+
+`match_group_members.cancel_reason`에 `WITHDRAWN`을 허용한다.
+
+`V14`의 `chk_match_group_members_cancel_reason`은 사용자가 직접 고르는 취소 사유
+(`MatchCancellationReason`: `SCHEDULE_CHANGED`/`TRANSPORTATION_ISSUE`/`OTHER`)만 허용했다.
+탈퇴는 사용자가 고른 사유가 아니라 계정 삭제의 부수 효과라 목록에 없었고, **그룹에 속한
+회원이 탈퇴하면 이 제약 위반으로 탈퇴 자체가 실패했다.** 통합 테스트로 발견했다.
+
+`OTHER`로 뭉개지 않고 별도 값을 둔다. 감사 이력에서 "본인이 사정상 취소"와 "계정이 사라져
+이탈"을 구분할 수 없으면 노쇼·패널티 분석이 흐려진다.
+
+`V28`에 넣지 않고 새 번호로 분리한 이유는 `V28`이 이미 공유 dev DB에 적용되어 수정하면
+Flyway checksum 검증이 깨지기 때문이다.
+
+### V28__add_member_withdrawal.sql
+
+회원 탈퇴와 관리자 강제 탈퇴(`docs/19` 4.4).
+
+- `members`에 탈퇴 스냅샷 5개 추가: `withdrawn_from_status`, `withdrawn_by_admin`,
+  `withdrawn_rejoin_blocked`, `withdrawn_suspended_until`, `withdrawn_sanction_reason_code`
+- `chk_members_withdrawal_snapshot` — 탈퇴가 아니면 스냅샷이 하나도 남을 수 없다
+- `chk_members_withdrawn_anonymized` — 탈퇴 회원에게 개인정보가 남으면 거부한다
+- `chk_members_withdrawn_from_status`, `chk_members_withdrawn_sanction_reason_code` — 값 목록
+- `chk_members_withdrawn_suspension_snapshot` — 잔여 정지 기간은 정지 중 탈퇴에서만 생긴다
+- `chk_admin_actions_type`에 `FORCED_WITHDRAWAL` 추가(`V20`과 같은 방식)
+
+기존 `chk_members_suspension_period`와 `chk_members_sanction_reason_presence`는 건드리지
+않았다. 완화하면 정지 해제와 만료 복구의 버그를 잡아온 불변식이 함께 헐거워진다.
+
 
 ### V18__add_match_opponent_exclusions.sql
 

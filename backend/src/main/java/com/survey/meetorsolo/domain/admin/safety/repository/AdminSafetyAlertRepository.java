@@ -20,7 +20,9 @@ public class AdminSafetyAlertRepository {
     private static final String SELECT_COLUMNS = """
             SELECT a.id AS alert_id, a.alert_type, a.status, a.trigger_report_id,
                    a.valid_report_count, a.handled_at, a.created_at,
-                   m.id AS reported_member_id, m.nickname AS reported_nickname,
+                   m.id AS reported_member_id,
+                   CASE WHEN m.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                        ELSE m.nickname END AS reported_nickname,
                    m.profile_image_url AS reported_profile_image_url,
                    m.status AS reported_member_status
             FROM admin_safety_alerts a

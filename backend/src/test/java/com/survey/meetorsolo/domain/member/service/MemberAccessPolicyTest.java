@@ -22,8 +22,9 @@ class MemberAccessPolicyTest {
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-08-16T03:00:00Z");
     private static final String CONTACT_EMAIL = "support@example.test";
     private final MemberRepository members = mock(MemberRepository.class);
+    private final Clock clock = Clock.fixed(NOW.toInstant(), ZoneOffset.UTC);
     private final MemberAccessPolicy policy = new MemberAccessPolicy(
-            members, Clock.fixed(NOW.toInstant(), ZoneOffset.UTC), CONTACT_EMAIL);
+            members, new MemberRejoinPolicy(clock, CONTACT_EMAIL), clock, CONTACT_EMAIL);
 
     @Test
     void 만료되지_않은_정지는_접근을_거절한다() {
@@ -93,10 +94,31 @@ class MemberAccessPolicyTest {
                 });
     }
 
+    /**
+     * <b>회귀 방지</b>: {@code sanctionNoticeOf}가 {@code SUSPENDED}/{@code BANNED}만 보고
+     * {@code WITHDRAWN}에 {@code null}을 주면, 로그인 화면이 탈퇴한 사용자에게
+     * "계정이 제재되어 로그인할 수 없습니다"를 띄우고 고객센터 이메일도 사라진다.
+     * 실제로 그 버그가 있었다.
+     */
+    @Test
+    void 탈퇴_회원의_안내는_재가입_안내로_위임된다() {
+        Member member = Member.createNaverMember("withdrawn", "member", null);
+        member.completeProfile("member", null, null, null, null);
+        member.withdraw(NOW.minusDays(1), false, false);
+
+        MemberSanctionNotice notice = policy.sanctionNoticeOf(member);
+
+        assertThat(notice).isNotNull();
+        assertThat(notice.status()).isEqualTo(Member.STATUS_WITHDRAWN);
+        assertThat(notice.rejoinAvailableAt()).isEqualTo(NOW.minusDays(1).plusDays(7));
+        assertThat(notice.contactEmail()).isEqualTo(CONTACT_EMAIL);
+        assertThat(notice.reasonMessage()).doesNotContain("제재");
+    }
+
     @Test
     void 고객센터_이메일이_설정되지_않으면_안내에서_생략한다() {
         MemberAccessPolicy noContact = new MemberAccessPolicy(
-                members, Clock.fixed(NOW.toInstant(), ZoneOffset.UTC), "");
+                members, new MemberRejoinPolicy(clock, ""), clock, "");
         Member member = Member.createNaverMember("banned", "member", null);
         member.ban(MemberSanctionReason.OTHER.name());
 

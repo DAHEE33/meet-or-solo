@@ -5,6 +5,7 @@ import { authApi } from '../api/auth';
 import { matchHistoryApi } from '../api/matchHistory';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
+import WithdrawalConfirmDialog from '../components/member/WithdrawalConfirmDialog';
 import { adminReportsApi } from '../api/adminReports';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
 import {
@@ -55,6 +56,9 @@ export default function MyPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isWithdrawalOpen, setIsWithdrawalOpen] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawalError, setWithdrawalError] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<{ count: number; hasMore: boolean } | null>(null);
   const [favorites, setFavorites] = useState<BookmarkedContent[] | null>(null);
 
@@ -140,6 +144,24 @@ export default function MyPage() {
     } finally {
       setIsLoggingOut(false);
       navigate('/login', { replace: true });
+    }
+  };
+
+  /**
+   * 탈퇴는 서버가 익명화와 세션 폐기를 끝내야 완료된다.
+   * 실패하면 계정이 그대로 남으므로 dialog를 닫지 않고 사유를 알린다.
+   */
+  const handleWithdraw = async () => {
+    if (isWithdrawing) return;
+    setIsWithdrawing(true);
+    setWithdrawalError(null);
+    try {
+      await memberProfileApi.withdraw();
+      navigate('/login', { replace: true });
+    } catch {
+      setWithdrawalError('탈퇴 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setIsWithdrawing(false);
     }
   };
 
@@ -308,7 +330,26 @@ export default function MyPage() {
         >
           {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
         </button>
+
+        {/* 탈퇴는 되돌릴 수 없어 로그아웃보다 약하게 두고, 실행은 확인 dialog를 거친다. */}
+        <button
+          type="button"
+          onClick={() => { setWithdrawalError(null); setIsWithdrawalOpen(true); }}
+          className="pb-2 text-[13px] font-semibold text-ink/40 underline"
+        >
+          회원 탈퇴
+        </button>
       </main>
+
+      {isWithdrawalOpen && (
+        <WithdrawalConfirmDialog
+          sanction={profile?.sanction ?? null}
+          submitting={isWithdrawing}
+          errorMessage={withdrawalError}
+          onClose={() => setIsWithdrawalOpen(false)}
+          onConfirm={handleWithdraw}
+        />
+      )}
     </MobileLayout>
   );
 }

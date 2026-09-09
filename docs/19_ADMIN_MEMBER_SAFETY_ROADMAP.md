@@ -185,37 +185,230 @@ feature/wbs-10-b-report-safety-automation
 - 관리자 회원 상세에 30일 누적 유효 신고 수와 "제한 검토 대상" 표시
 - `AdminNav` 미확인 알림 badge와 `/admin/reports` 내 알림 목록·확인 UI
 
-### 4.4 회원 본인 탈퇴 4차 — 미착수
+### 4.4 회원 탈퇴와 관리자 강제 탈퇴 4차 — 완료
 
-권장 브랜치:
+브랜치:
 
 ```text
 feature/wbs-10-b-member-withdrawal
 ```
 
-회원 탈퇴는 관리자 회원 관리가 아니라 인증·회원 요구사항 `AUTH-04`입니다.
-
-예상 계약:
+회원 탈퇴는 관리자 회원 관리가 아니라 인증·회원 요구사항 `AUTH-04`입니다. 본인 탈퇴와
+관리자 강제 탈퇴를 한 브랜치에서 구현했습니다. 코어를 공유하지만 진입점을 분리합니다.
 
 ```http
-DELETE /api/members/me
+DELETE /api/members/me                                 본인 탈퇴
+POST   /api/admin/members/{memberId}/forced-withdrawal  관리자 강제 탈퇴
 ```
 
-필수 범위:
-
-- 본인 인증과 필요 시 재확인 정책
-- soft delete와 `WITHDRAWN` 상태
-- nickname, email, profile image, 성별, 연령대, intro 등 개인정보 즉시 익명화·제거
-- provider identifier의 재가입·unique constraint 대응 방식
-- refresh token 전체 폐기와 이후 access/refresh 차단
-- Object Storage profile image 삭제 또는 실패 시 안전한 재시도·정리 정책
-- active pool·proposal·group이 있을 때의 탈퇴 허용 시점과 상태 정리 정책
-- 신고·penalty·matching 감사 이력 FK 보존
-- 반복·동시 탈퇴 요청 멱등성
-- 탈퇴 이후 다른 사용자 화면에서 개인정보가 복원되지 않는지 검증
-
 관리자 `BAN`과 회원 `WITHDRAWN`은 목적과 복구 가능성이 다르므로 같은 상태 전이나 API로
-처리하지 않습니다.
+처리하지 않습니다. 그래서 강제 탈퇴를 `AdminMemberActionType`에 넣지 않고 별도 endpoint로
+뒀습니다. **`BAN`은 계정이 남아 되돌릴 수 있고 강제 탈퇴는 익명화라 되돌릴 수 없습니다.**
+
+#### 4.4.1 물리 삭제하지 않는다
+
+`members`를 참조하는 FK 31개가 전부 `ON DELETE RESTRICT`입니다. 신고·제재 감사 이력과 매칭
+이력이 탈퇴 회원을 참조하므로 개인정보만 익명화하고 이력은 남깁니다.
+
+| 대상 | 처리 |
+| --- | --- |
+| `nickname` | `NULL`. 표시 문구는 조회 SQL이 만든다(아래) |
+| `email`, `intro`, `profile_image_url`, `profile_image_object_key` | `NULL` |
+| `gender_encrypted`, `age_range_encrypted` | `NULL` |
+| Object Storage 프로필 이미지 실물 | commit 이후 삭제. 실패는 로그만 남기고 탈퇴를 되돌리지 않는다 |
+| `member_travel_styles`, `member_preference_embeddings`, `content_bookmarks` | 물리 삭제 |
+| `content_comments` | `VISIBLE` → `DELETED` |
+| `content_comment_likes` | 유지. 댓글이 목록에서 빠져 노출되지 않는다 |
+| `member_consents` | row 유지 + `revoked_at` 기록 |
+| `refresh_tokens` | `AuthService.revokeSession` 재사용 |
+| `reports`, `admin_actions`, `match_penalty_events`, `admin_safety_alerts`, `user_blocks`, `match_opponent_exclusions`, 매칭 이력 | 보존 |
+
+##### 닉네임은 컬럼에 저장하지 않고 조회 시점에 만든다 (`V30`)
+
+`V28`은 `nickname`을 표시용 고정 문구(`탈퇴한 회원`)로 덮었습니다. 조회 경로를 건드리지 않고
+표시가 맞아떨어진다는 이유였지만, 문구를 컬럼에 두면 두 가지가 깨집니다.
+
+1. **재가입한 계정이 그 문구를 그대로 들고 살아납니다.** `Member.updateSocialProfile`이 소셜
+   로그인 때 닉네임을 채우지만, OAuth가 닉네임을 주지 않으면(카카오는 닉네임 제공이 선택
+   동의입니다) 채울 값이 없어 문구가 남습니다. 살아 있는 계정이 댓글·매칭 기록·차단 목록에서
+   탈퇴한 것처럼 보입니다.
+2. **표시 문구가 곧 "익명화됐는지"를 뜻하는 상태 flag가 됩니다.** 문구를 바꾸는 순간 기존 행이
+   판정에서 빠져 영구히 복구되지 않습니다.
+
+그래서 `V30`부터 컬럼에는 `NULL`을 저장하고, 표시 문구는 `members`를 join하는 조회 SQL이
+`status = 'WITHDRAWN'`일 때 만들어 냅니다.
+
+| 조회 경로 | 쿼리 |
+| --- | --- |
+| 매칭방 활성 멤버, 완료 멤버, 매칭 기록 | `MatchGroupMemberRepository` 3개 |
+| 매칭방 이벤트 actor | `MatchEventRepository` |
+| 차단 목록 | `MemberBlockRepository` |
+| 관리자 신고 목록·상세(신고자/피신고자) | `AdminReportRepository` 2개 |
+| 관리자 안전 알림 | `AdminSafetyAlertRepository` |
+| 관리자 회원 목록·상세 | `AdminMemberRepository` |
+
+축제·관광지 댓글(`ContentCommentRepository`)은 치환하지 않습니다. 탈퇴가
+`softDeleteAllOnWithdrawal`로 작성 댓글을 `VISIBLE` → `DELETED`로 내리고 목록은 `VISIBLE`만
+조회하므로 탈퇴 회원이 애초에 결과에 들어오지 않습니다.
+
+**응답 DTO와 프론트엔드는 바꾸지 않았습니다.** 프론트 4곳이 `nickname.slice(0, 1)`로 첫 글자를
+뽑으므로(`ContentCommentItem`, `BlockedMembersPage`, `MatchHistoryPage`, `MatchingConditionPage`)
+`null`을 내려보내면 빈 칸이 아니라 렌더링 자체가 죽습니다. 치환은 서버에서 끝냅니다.
+
+문구가 SQL 리터럴로 흩어져 있어 `Member.WITHDRAWN_NICKNAME`만 바꾸면 화면이 조용히 옛 문구를
+계속 보여줍니다. `WithdrawnNicknameLabelConsistencyTest`가 상수와 SQL 8곳, `V30`의 일치를
+고정합니다.
+
+관리자 회원 검색(`m.nickname ILIKE`)은 그대로 뒀습니다. 컬럼이 `NULL`이 되어 `탈퇴한 회원`으로
+검색해도 탈퇴 회원이 나오지 않지만, 상태 filter(`status=WITHDRAWN`)가 이미 있어 대체 수단이
+있습니다.
+
+`festival_checkins`에는 GPS 좌표 컬럼이 없습니다(`distance_meters`만). 파기할 위치정보가
+따로 없습니다.
+
+#### 4.4.2 탈퇴 스냅샷 컬럼을 따로 둔다 (`V28`)
+
+`V19`의 `chk_members_suspension_period`는 `status <> 'SUSPENDED'`이면 `suspended_at`과
+`suspended_until`을 `NULL`로 강제하고, `V27`의 `chk_members_sanction_reason_presence`도 제재
+상태가 아니면 사유를 금지합니다. **그래서 정지 회원이 탈퇴하면 잔여 정지 기간을 기존 제재
+컬럼에 그대로 둘 수 없습니다.**
+
+두 제약을 `WITHDRAWN`까지 허용하도록 완화하는 대신 스냅샷 컬럼을 분리했습니다. 완화하면 정지
+해제와 만료 복구의 버그를 잡아온 불변식 두 개가 동시에 헐거워집니다. `V27`이 사용자 노출용
+사유와 관리자 내부용 사유를 컬럼 수준에서 나눈 것과 같은 방식입니다.
+
+| 컬럼 | 역할 |
+| --- | --- |
+| `withdrawn_from_status` | 탈퇴 시점 상태 |
+| `withdrawn_by_admin` | 관리자 강제 탈퇴인지(사실) |
+| `withdrawn_rejoin_blocked` | 재가입 영구 거부 여부(관리자 선택). 로그인 경로가 읽는 유일한 값 |
+| `withdrawn_suspended_until` | 잔여 정지 종료 시각 |
+| `withdrawn_sanction_reason_code` | 재가입 시 `SUSPENDED` 복원에 필요한 사유 code |
+
+CHECK 제약 4개를 함께 둡니다.
+
+- `chk_members_withdrawal_snapshot` — 탈퇴가 아니면 스냅샷이 하나도 남아 있으면 안 된다.
+  재가입에서 스냅샷을 지우는 것을 잊으면 여기서 걸린다
+- `chk_members_withdrawn_anonymized` — 탈퇴 회원에게 개인정보가 남아 있으면 거부한다
+- `chk_members_withdrawn_from_status`, `chk_members_withdrawn_sanction_reason_code` — 값 목록
+
+`chk_admin_actions_type`에는 `FORCED_WITHDRAWAL`을 추가했습니다(`V20`과 같은 방식).
+
+#### 4.4.3 재가입 정책 — 7일 쿨오프
+
+`provider_user_id`는 **익명화하지 않습니다.** 지우면 누가 돌아왔는지 알 수 없어 쿨오프 판정
+자체가 불가능합니다.
+
+| 탈퇴 경로 | 7일 이내 | 7일 경과 후 |
+| --- | --- | --- |
+| 본인 탈퇴 (`ACTIVE`/`PROFILE_REQUIRED`) | 거부 + 재가입 가능 시각 안내 | 허용. 계정 부활 → `PROFILE_REQUIRED` |
+| 본인 탈퇴 (`SUSPENDED`) | 거부 | 허용. **잔여 정지 기간을 이어받는다** |
+| 강제 탈퇴 `blockRejoin=true` (기본) | 거부 | **영구 거부** |
+| 강제 탈퇴 `blockRejoin=false` (탈퇴 대행) | 거부 | 허용. 계정 부활 |
+
+쿨오프 값은 `MemberRejoinCooldownPolicy.COOLDOWN`(7일) 상수입니다. 환경변수로 빼지 않습니다.
+정책값이고 환경별로 달라야 할 이유가 없습니다.
+
+**잔여 정지 기간 이어받기가 핵심입니다.** 없으면 30일 정지가 "탈퇴하고 7일 뒤 재가입"으로
+23일 세탁됩니다. 재가입 시 `status_before_sanction`은 `PROFILE_REQUIRED`로 둡니다. 프로필이
+익명화되어 비어 있으므로 정지 해제 후 돌아갈 곳이 가입 화면인 것이 맞습니다.
+
+이용정지 회원의 탈퇴 확인 dialog는 **"남은 이용정지 기간은 탈퇴로 사라지지 않고 재가입 시
+이어진다"** 를 종료 시각과 함께 먼저 보여줍니다. 이 안내가 없으면 사용자가 탈퇴를 제재 해제
+수단으로 오해하고 누릅니다.
+
+이 조치가 완벽한 차단은 아닙니다. 새 소셜 계정을 만들면 서버는 다른 사람으로 봅니다. 소셜
+로그인만 쓰는 서비스에서는 근본적으로 막을 수 없고, **"탈퇴 버튼 누르고 일주일 기다리기"라는
+가장 쉬운 우회 경로**를 닫는 것이 목적입니다.
+
+#### 4.4.4 영구차단 회원은 본인 탈퇴를 할 수 없다
+
+`MemberAccessInterceptor`가 모든 `/api/**` 요청을 `requireAccessible` 또는 `requireBrowsable`로
+통과시키는데 둘 다 `BANNED`를 던집니다. 로그인도 OAuth callback에서 막힙니다. 그래서 영구차단
+회원은 `DELETE /api/members/me`에 도달할 수 없고, **자기 개인정보를 지울 방법이 없습니다.**
+
+관리자 강제 탈퇴가 그 경로입니다. 4.8에서 제재 안내 화면에 고객센터 이메일을 이미 노출하고
+있으므로 흐름이 이어집니다.
+
+```text
+영구차단 회원이 안내 화면의 고객센터 이메일로 삭제 요청
+  → 관리자가 /admin/members에서 강제 탈퇴
+  → 개인정보 익명화 완료, 재가입은 계속 차단
+```
+
+`withdrawn_from_status = 'BANNED'`는 이 경우에만 생깁니다.
+
+#### 4.4.5 강제 탈퇴의 두 용도와 `blockRejoin`
+
+같은 endpoint가 성격이 다른 두 용도로 쓰입니다.
+
+| 용도 | `blockRejoin` |
+| --- | --- |
+| 제재성 강제 탈퇴(영구차단 회원 정리, 악성 회원) | `true` |
+| 탈퇴 대행(로그인이 막힌 정상 회원의 고객센터 요청 처리) | `false` |
+
+서버가 사유 code로 추측하지 않습니다. 되돌릴 수 없는 조치라 관리자가 체크박스로 의식적으로
+고르게 하고, 값이 없으면 `true`(차단)로 둡니다.
+
+#### 4.4.6 진행 중 매칭은 거부하지 않고 정리한다
+
+제재(`SUSPEND`/`BAN`)는 활성 매칭이 있으면 `ADMIN_MEMBER_ACTIVE_MATCH_CONFLICT`로 거부하지만,
+탈퇴는 정리하고 진행합니다. 거부하면 "만남이 확정된 사람은 탈퇴할 수 없다"가 되어 개인정보
+삭제 요구와 충돌합니다.
+
+`MemberWithdrawalMatchCleanupService`가 처리합니다.
+
+| 대상 | 처리 |
+| --- | --- |
+| `match_pools` (`WAITING`/`LOCKED`/`PROPOSED`) | `CANCELLED` |
+| `match_proposals` (`SENT`) | `EXPIRED`. 미응답 timeout 경로를 타지 않게 |
+| `match_group_members` (활성) | `cancel("WITHDRAWN")`. `V29`가 이 사유 값을 허용한다 |
+| 그룹 계속·취소 판정 | 기존 `MatchGroupContinuationPolicy` |
+| 남은 그룹원 통보 | 기존 `MEMBER_CANCELLED`/`MATCH_CANCELLED` 이벤트 |
+| 활성 체크인 | `CANCELLED` |
+
+**penalty와 cooldown은 부과하지 않습니다.** 부과 대상이 익명화되므로 의미가 없습니다. "탈퇴로
+노쇼 penalty를 피한다"는 우회는 penalty가 아니라 4.4.3의 재가입 정책이 막습니다.
+
+`MatchCancellationService.cancel`과 `MatchPoolCancellationService.cancel`은 재사용하지 않습니다.
+전자는 도착 마감이 지나면 예외를 던지고 후자는 쿨타임·penalty를 매깁니다. 그대로 쓰면 탈퇴가
+그 시점에 실패해 회원이 탈퇴할 수 없게 됩니다.
+
+새 이벤트 타입을 만들지 않은 것은 `MatchRoomPage`가 이미 처리하는 값을 쓰면 프론트엔드를
+건드릴 필요가 없기 때문입니다.
+
+#### 4.4.7 재가입 거부 안내는 4.8 인프라를 재사용한다
+
+OAuth callback은 302 redirect라 body가 없습니다. 여기서 새 경로를 만들면 4.8이 고친
+"소셜 로그인에 실패했습니다" 오안내가 재발합니다.
+
+그래서 재가입 거부도 `MemberSanctionException`(`MEMBER_REJOIN_BLOCKED`)으로 던집니다.
+`AuthController`의 `catch (MemberSanctionException)`과 `GlobalExceptionHandler`가 이미 안내
+cookie와 `403` body를 만들어 주므로 **두 파일을 수정하지 않고** 302 경로와 403 경로가 모두
+동작합니다. `MemberSanctionNotice`에 `rejoinAvailableAt`을 추가해 제재 안내와 구분합니다.
+
+사유 문구는 `MemberSanctionReason` enum에 넣지 않습니다. 그 enum은 신고자 보호 전수 검사
+(`MemberSanctionReasonTest`)의 대상이고 탈퇴는 제재 사유가 아닙니다.
+
+클래스 이름이 `MemberSanctionException`인데 제재가 아닌 상황에 쓰이는 부조화는 남습니다.
+`MemberLoginRestriction*`으로 rename하면 정확해지지만 8개 파일과 프론트엔드 타입, 테스트가
+함께 흔들려 이번에는 javadoc으로 범위를 명시하는 선택을 했습니다.
+
+#### 4.4.8 멱등성
+
+`findByIdForUpdate`의 row lock으로 동시 요청을 직렬화합니다.
+
+- 본인 탈퇴는 이미 `WITHDRAWN`이면 조용히 성공합니다. 다만 첫 호출로 상태가 바뀌면
+  `MemberAccessInterceptor`가 다음 요청을 먼저 막으므로, 실제로 재도달하는 경우는 같은 access
+  token으로 동시에 들어온 요청뿐입니다.
+- 관리자 강제 탈퇴는 이미 탈퇴한 회원이면 `ADMIN_MEMBER_STATUS_CONFLICT`로 알립니다. 관리자는
+  조치가 실제로 적용됐는지 알아야 합니다. 같은 `Idempotency-Key` 재요청은 기존 조치 API와 같은
+  규약으로 한 번만 적용됩니다.
+
+#### 4.4.9 정지 회원의 탈퇴는 허용한다
+
+`SuspendedActivityPolicy.ALLOWED`에 `DELETE /api/members/me`를 등재했습니다. 탈퇴는 개인정보
+권리이고, 정지 중이라고 계정 삭제를 막을 수 없습니다. 잔여 정지 기간은 4.4.3대로 이어집니다.
 
 ### 4.5 1:1 문의 센터 후속 — 미착수
 
@@ -410,6 +603,11 @@ feature/wbs-10-b-manner-temperature-recovery
 - 4.3에서 확인한 비대칭도 함께 정리한다. 누적 유효 신고 카운트는 30일 window로
   자동 감소하지만 `manner_temperature`는 영구 하강이다.
 
+**관리자 온도 수동 조정을 이 절에 함께 넣는다.** 2026-09-09 사용자 확인 사항이다. 현재
+`manner_temperature`는 신고 확정으로만 내려가는 하강 전용 지표라 복구 수단이 아예 없다.
+`AdminMemberService`에 조정 진입점과 `admin_actions` 감사 로그를 추가하면 후기 기능이 없어도
+복구 경로가 생긴다. 후기 기반 상승과 함께 구현한다.
+
 ### 4.10 만남 종료 후 신고 진입점 후속 — 완료
 
 브랜치: `feature/wbs-10-b-match-report-entry`
@@ -510,17 +708,18 @@ feature/wbs-10-b-admin-report-review          — 완료 (PR #34)
 feature/wbs-10-b-admin-member-sanctions       — 완료 (PR #35)
 feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
 feature/wbs-10-b-report-safety-automation     — 완료 (PR #50)
-feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
-feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
+feature/wbs-10-b-member-sanction-notice       — 완료 (PR #56, 4.8)
+feature/wbs-10-b-token-refresh                — 완료 (PR #57, 프론트엔드 token 갱신)
+feature/wbs-10-b-member-withdrawal            — 완료 (4.4, 본인 탈퇴 + 관리자 강제 탈퇴)
 feature/wbs-10-b-logout                       — 완료 (4.6)
-feature/wbs-10-b-consent-followup             — 미착수 (4.7)
-feature/wbs-10-b-member-sanction-notice       — 미착수 (4.8)
-feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9)
 feature/wbs-10-b-match-report-entry           — 완료 (4.10)
+feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
+feature/wbs-10-b-consent-followup             — 미착수 (4.7)
+feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9, 온도 수동 조정 포함)
 ```
 
 4.6 로그아웃이 먼저 끝났으므로 4.4 회원 탈퇴는 `AuthService.revokeSession(memberId)`을 그대로
-재사용합니다.
+재사용했습니다. 남은 항목은 4.5, 4.7, 4.9입니다.
 
 각 브랜치는 `dev`에서 분기하고 작업 완료 후 PR로 `dev`에 병합합니다. 앞 단계 PR이
 병합되기 전에 다음 단계를 같은 작업 트리에 누적하지 않습니다.

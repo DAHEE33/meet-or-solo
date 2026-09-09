@@ -236,7 +236,7 @@ CORS는 profile별로 분리합니다.
 - Refresh Token: DB 저장
 - Refresh Token 만료와 폐기 지원
 - logout 시 Refresh Token 무효화 (구현 완료)
-- 회원 탈퇴 시 개인정보 삭제 또는 익명화 (미구현)
+- 회원 탈퇴 시 개인정보 삭제 또는 익명화 (구현 완료)
 
 cookie/header 전략은 인증 구현 단계에서 확정합니다.
 
@@ -315,10 +315,23 @@ cookie/header 전략은 인증 구현 단계에서 확정합니다.
   `contactEmail`뿐입니다. 신고자 보호를 위해 제재 시작 시각(`suspendedAt`)과 관리자 자유 입력
   note(`admin_actions.reason`)는 담지 않습니다. 제재 시점은 신고 시점을 좁히는 단서입니다.
 
-회원 탈퇴는 아직 구현되지 않았습니다. 구현 계획은
-[관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.4 회원 본인 탈퇴를 따르며,
+회원 탈퇴는 구현 완료입니다. 정책은
+[관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)의 4.4를 따릅니다.
 refresh token 폐기와 session 종료는 로그아웃이 만든 `AuthService.revokeSession(memberId)`을
 재사용합니다.
+
+- 물리 삭제하지 않습니다. `members`를 참조하는 FK 31개가 전부 `ON DELETE RESTRICT`이고
+  신고·제재 감사 이력이 탈퇴 회원을 참조합니다. 개인정보만 익명화하고 이력은 보존합니다.
+- 익명화 누락은 `V28`의 `chk_members_withdrawn_anonymized`가 DB 수준에서 거부합니다.
+- 동의(`member_consents`) row는 남기고 `revoked_at`만 기록합니다. "동의를 받았다"는 사실이
+  개인정보 처리 근거의 증빙이므로 지우지 않고, 근거 종료만 남깁니다.
+- 탈퇴 후 **7일간 같은 소셜 계정으로 재가입할 수 없습니다**(`MemberRejoinCooldownPolicy`).
+  쿨오프가 지나면 계정을 되살려 프로필을 다시 입력받습니다.
+- 재가입은 제재 면제 수단이 아닙니다. 정지 중 탈퇴한 회원은 잔여 정지 기간을 이어받습니다.
+- 관리자 강제 탈퇴는 재가입을 영구 거부할 수 있습니다. 영구차단 회원은 로그인이 막혀 본인
+  탈퇴 경로에 닿을 수 없으므로, 그 회원의 개인정보 삭제 요청은 고객센터를 통해 이 경로로
+  처리합니다.
+- `provider_user_id`는 익명화하지 않습니다. 지우면 재가입 쿨오프 판정 자체가 불가능합니다.
 
 ## WebSocket 인증과 권한
 

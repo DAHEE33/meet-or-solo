@@ -16,7 +16,8 @@ public interface MatchEventRepository extends JpaRepository<MatchEvent, Long> {
                 event.payload::text AS payload,
                 event.created_at AS createdAt,
                 visible_member.id AS actorMemberId,
-                visible_member.nickname AS actorNickname
+                CASE WHEN visible_member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                     ELSE visible_member.nickname END AS actorNickname
             FROM match_events event
             LEFT JOIN match_group_members active_group_member
               ON active_group_member.group_id = event.group_id

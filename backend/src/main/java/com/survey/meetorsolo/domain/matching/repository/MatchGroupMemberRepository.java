@@ -25,7 +25,8 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             SELECT
                 group_member.id AS groupMemberId,
                 member.id AS memberId,
-                member.nickname AS nickname,
+                CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                     ELSE member.nickname END AS nickname,
                 member.profile_image_url AS profileImageUrl,
                 group_member.status AS status,
                 group_member.arrival_minutes AS arrivalMinutes,
@@ -45,7 +46,8 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             SELECT
                 group_member.id AS groupMemberId,
                 member.id AS memberId,
-                member.nickname AS nickname,
+                CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                     ELSE member.nickname END AS nickname,
                 member.profile_image_url AS profileImageUrl,
                 group_member.status AS status,
                 group_member.arrival_minutes AS arrivalMinutes,
@@ -116,7 +118,8 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             SELECT
                 group_member.group_id AS groupId,
                 member.id AS memberId,
-                member.nickname AS nickname,
+                CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                     ELSE member.nickname END AS nickname,
                 member.profile_image_url AS profileImageUrl
             FROM match_group_members group_member
             JOIN members member ON member.id = group_member.member_id

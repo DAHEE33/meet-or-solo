@@ -314,12 +314,13 @@ UPDATE content_comments
 | 정지(`SUSPENDED`) | 유지, 신규 작성만 차단 | 유지 | 일시 조치다. 기존 공개 글을 지우면 다른 사용자의 대화 맥락이 깨진다. 신규 차단은 `MemberAccessInterceptor`가 자동 처리 |
 | 탈퇴(`WITHDRAWN`/`DELETED`) | `VISIBLE` → `DELETED` 일괄 전환 | 물리 삭제 | 탈퇴 시 닉네임·이미지를 익명화하는 기존 정책(`docs/11_DATABASE_DESIGN.md` 개인정보 보관)과 일관. 공개 콘텐츠로 남기면 개인정보 삭제 요구와 충돌 |
 
-**탈퇴 연동은 아직 호출되지 않는다.** `ContentCommentService.softDeleteAllOnWithdrawal`과
-`ContentBookmarkService.deleteAllOnWithdrawal`은 구현·단위 테스트까지 되어 있지만, 이 저장소에는
-**회원 탈퇴 서비스 자체가 없다** — `members.withdrawn_at` 컬럼만 있고 회원 controller에 탈퇴
-endpoint가 없다(문서에 등장하는 `DELETE /api/members/me`는 아직 구현되지 않았다). 탈퇴 기능을
-만드는 담당자가 같은 transaction에서 두 메서드를 호출해야 하며,
-`ContentCommentService`에 그 취지의 TODO 주석을 남겼다.
+**탈퇴 연동 완료.** `DELETE /api/members/me`(docs/19 4.4)가 구현되면서
+`MemberWithdrawalService`가 `ContentCommentService.softDeleteAllOnWithdrawal`과
+`ContentBookmarkService.deleteAllOnWithdrawal`을 같은 transaction에서 호출한다.
+`ContentCommentService`에 남겨둔 TODO 주석은 제거했다.
+
+좋아요(`content_comment_likes`) row는 탈퇴 시에도 남긴다. 댓글이 목록에서 빠지므로 노출되지
+않고, FK가 `ON DELETE RESTRICT`라 물리 삭제가 애초에 막혀 있다.
 
 ## 6. 개인정보와 보안
 

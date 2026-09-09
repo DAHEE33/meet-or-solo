@@ -14,7 +14,10 @@ import org.springframework.stereotype.Repository;
 public class AdminMemberRepository {
 
     private static final String MEMBER_COLUMNS = """
-            SELECT m.id, m.nickname, m.profile_image_url, m.role, m.status,
+            SELECT m.id,
+                   CASE WHEN m.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                        ELSE m.nickname END AS nickname,
+                   m.profile_image_url, m.role, m.status,
                    m.penalty_score, m.manner_temperature, m.suspended_at,
                    m.suspended_until, m.created_at, m.last_login_at
             FROM members m
@@ -221,5 +224,49 @@ public class AdminMemberRepository {
     }
 
     public record ExistingAction(long actionId, long targetMemberId, String actionType, String fingerprint) {
+    }
+
+    /**
+     * 관리자 강제 탈퇴를 감사 로그에 남긴다({@code action_type = FORCED_WITHDRAWAL}).
+     *
+     * <p>{@link #insertAction}과 분리한 이유는 강제 탈퇴가 {@code AdminMemberActionRequest}를
+     * 쓰지 않기 때문이다. 되돌릴 수 없는 조치라 재가입 차단 여부를 metadata에 함께 남긴다.
+     */
+    public long insertForcedWithdrawalAction(
+            long adminMemberId,
+            long targetMemberId,
+            AdminMemberForcedWithdrawalRequest request,
+            UUID idempotencyKey,
+            String fingerprint,
+            OffsetDateTime now,
+            String beforeStatus
+    ) {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("adminMemberId", adminMemberId);
+        parameters.put("targetMemberId", targetMemberId);
+        parameters.put("actionType", "FORCED_WITHDRAWAL");
+        parameters.put("reasonCode", request.reasonCode().name());
+        parameters.put("reason", normalize(request.reasonNote()));
+        parameters.put("idempotencyKey", idempotencyKey);
+        parameters.put("fingerprint", fingerprint);
+        parameters.put("beforeStatus", beforeStatus);
+        parameters.put("blockRejoin", request.blocksRejoin());
+        parameters.put("createdAt", now);
+        Long id = jdbc.queryForObject("""
+                INSERT INTO admin_actions(
+                    admin_member_id, target_member_id, report_id, action_type, reason,
+                    reason_code, idempotency_key, metadata, created_at
+                ) VALUES (
+                    :adminMemberId, :targetMemberId, NULL, :actionType, :reason,
+                    :reasonCode, :idempotencyKey,
+                    jsonb_build_object(
+                        'requestFingerprint', :fingerprint,
+                        'beforeStatus', :beforeStatus,
+                        'afterStatus', 'WITHDRAWN',
+                        'blockRejoin', :blockRejoin
+                    ), :createdAt
+                ) RETURNING id
+                """, parameters, Long.class);
+        return id == null ? 0L : id;
     }
 }

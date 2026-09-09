@@ -225,10 +225,8 @@ public class ContentCommentService {
      * <p>좋아요 row는 남긴다 — 댓글이 목록에서 빠지므로 노출되지 않고, FK가
      * {@code ON DELETE RESTRICT}라 물리 삭제가 애초에 막혀 있다.
      *
-     * <p>TODO(docs/27 5.7): 실제 탈퇴 흐름에서 이 메서드를 호출해야 한다. 현재 회원 탈퇴를
-     * 처리하는 서비스가 저장소에 없어(DELETE /api/members/me 구현 시점) 연결하지 못했다.
-     * 탈퇴 서비스를 만들 때 이 메서드와
-     * {@code ContentBookmarkService.deleteAllOnWithdrawal}을 같은 트랜잭션에서 함께 호출한다.
+     * <p>{@code MemberWithdrawalService}가 탈퇴 transaction 안에서
+     * {@code ContentBookmarkService.deleteAllOnWithdrawal}과 함께 호출한다(docs/19 4.4).
      *
      * @return 숨김으로 전환된 댓글 수
      */
