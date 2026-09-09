@@ -54,4 +54,22 @@ public class MemberConsentCommandRepository {
                 """;
         return jdbcTemplate.update(sql, revokedAt, memberId, type.name()) > 0;
     }
+
+    /**
+     * 탈퇴 시 유효한 동의를 모두 철회한다.
+     *
+     * <p>row를 지우지 않는다. "동의를 받았다"는 사실은 개인정보 처리 근거의 증빙이므로
+     * 남기고, {@code revoked_at}으로 근거가 종료되었음만 기록한다. {@code agreed}를 FALSE로
+     * 바꾸지 않는 이유는 {@link #revoke}와 같다.
+     *
+     * @return 철회된 동의 수
+     */
+    public int revokeAllOnWithdrawal(Long memberId, OffsetDateTime revokedAt) {
+        String sql = """
+                UPDATE member_consents
+                SET revoked_at = ?
+                WHERE member_id = ? AND agreed = TRUE AND revoked_at IS NULL
+                """;
+        return jdbcTemplate.update(sql, revokedAt, memberId);
+    }
 }

@@ -8,6 +8,7 @@ import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.domain.member.service.MemberRejoinPolicy;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import com.survey.meetorsolo.external.kakao.KakaoOAuthClient;
 import com.survey.meetorsolo.external.kakao.dto.KakaoTokenResponse;
@@ -32,6 +33,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtProvider jwtProvider;
     private final MemberAccessPolicy accessPolicy;
+    private final MemberRejoinPolicy rejoinPolicy;
     private final ApplicationEventPublisher events;
 
     public AuthService(
@@ -41,6 +43,7 @@ public class AuthService {
             RefreshTokenRepository refreshTokenRepository,
             JwtProvider jwtProvider,
             MemberAccessPolicy accessPolicy,
+            MemberRejoinPolicy rejoinPolicy,
             ApplicationEventPublisher events
     ) {
         this.kakaoOAuthClient = kakaoOAuthClient;
@@ -49,6 +52,7 @@ public class AuthService {
         this.refreshTokenRepository = refreshTokenRepository;
         this.jwtProvider = jwtProvider;
         this.accessPolicy = accessPolicy;
+        this.rejoinPolicy = rejoinPolicy;
         this.events = events;
     }
 
@@ -162,6 +166,9 @@ public class AuthService {
     private Member upsertNaverMember(NaverUserResponse naverUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_NAVER, naverUser.providerUserId())
                 .map(member -> {
+                    // 탈퇴 회원 판정을 프로필 갱신보다 먼저 끝낸다. 순서가 바뀌면 재가입이
+                    // 거부된 회원의 익명화된 프로필이 OAuth 응답으로 다시 채워진다.
+                    rejoinPolicy.rejoinIfWithdrawn(member);
                     member.restoreExpiredSuspension(SeoulDateTime.now());
                     // 정지 회원은 로그인해서 조회는 할 수 있어야 한다. 영구 제한만 막는다.
                     accessPolicy.requireSignedIn(member);
@@ -179,6 +186,9 @@ public class AuthService {
     private Member upsertKakaoMember(KakaoUserResponse kakaoUser) {
         return memberRepository.findByProviderAndProviderUserId(Member.PROVIDER_KAKAO, kakaoUser.providerUserId())
                 .map(member -> {
+                    // 탈퇴 회원 판정을 프로필 갱신보다 먼저 끝낸다. 순서가 바뀌면 재가입이
+                    // 거부된 회원의 익명화된 프로필이 OAuth 응답으로 다시 채워진다.
+                    rejoinPolicy.rejoinIfWithdrawn(member);
                     member.restoreExpiredSuspension(SeoulDateTime.now());
                     // 정지 회원은 로그인해서 조회는 할 수 있어야 한다. 영구 제한만 막는다.
                     accessPolicy.requireSignedIn(member);

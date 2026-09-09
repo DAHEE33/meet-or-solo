@@ -45,6 +45,8 @@ public enum ErrorCode {
     MEMBER_SUSPENDED(HttpStatus.FORBIDDEN, "MEMBER_SUSPENDED", "이용이 일시 정지된 계정입니다."),
     MEMBER_BANNED(HttpStatus.FORBIDDEN, "MEMBER_BANNED", "이용이 영구 제한된 계정입니다."),
     MEMBER_INACTIVE(HttpStatus.FORBIDDEN, "MEMBER_INACTIVE", "현재 이용할 수 없는 계정입니다."),
+    MEMBER_ALREADY_WITHDRAWN(HttpStatus.CONFLICT, "MEMBER_ALREADY_WITHDRAWN", "이미 탈퇴한 계정입니다."),
+    MEMBER_REJOIN_BLOCKED(HttpStatus.FORBIDDEN, "MEMBER_REJOIN_BLOCKED", "탈퇴한 계정은 아직 다시 가입할 수 없습니다."),
     BLOCK_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "BLOCK_INVALID_REQUEST", "차단 요청이 올바르지 않습니다."),
     BLOCK_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "BLOCK_RESOURCE_NOT_FOUND", "차단할 매칭 정보를 찾을 수 없습니다."),
     BLOCK_WINDOW_EXPIRED(HttpStatus.CONFLICT, "BLOCK_WINDOW_EXPIRED", "차단 가능한 기간이 지났습니다."),

@@ -33,6 +33,20 @@ public class Member {
     public static final String STATUS_WITHDRAWN = "WITHDRAWN";
     public static final String STATUS_DELETED = "DELETED";
 
+    /**
+     * 탈퇴 회원의 표시용 닉네임. <b>컬럼에 저장하는 값이 아니다.</b>
+     *
+     * <p>{@code withdraw()}는 닉네임을 {@code NULL}로 지우고, 이 문구는 조회 SQL이
+     * {@code status = 'WITHDRAWN'}일 때 만들어 낸다({@code V30}의 CHECK가 컬럼에 저장되는
+     * 것을 거부한다). 문구를 컬럼에 넣으면 재가입한 계정이 그 값을 그대로 들고 살아나고,
+     * 문구가 곧 "익명화됐는지"를 뜻하는 상태 flag가 되어 문구를 바꾸는 순간 기존 행이
+     * 판정에서 빠진다.
+     *
+     * <p>이 상수가 쓰이는 곳은 두 군데다 — 조회 SQL 리터럴과의 일치 검증, 그리고 살아 있는
+     * 회원이 이 문구를 닉네임으로 고르지 못하게 막는 {@code MemberProfileService}다.
+     */
+    public static final String WITHDRAWN_NICKNAME = "탈퇴한 회원";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -98,6 +112,34 @@ public class Member {
      */
     @Column(name = "sanction_reason_code", length = 40)
     private String sanctionReasonCode;
+
+    /**
+     * 탈퇴 시점의 상태. {@code WITHDRAWN}일 때만 값이 있다.
+     *
+     * <p>아래 스냅샷 컬럼들은 제재 컬럼({@code suspended_until},
+     * {@code sanction_reason_code})을 재사용하지 않는다. {@code V19}의
+     * {@code chk_members_suspension_period}와 {@code V27}의
+     * {@code chk_members_sanction_reason_presence}가 제재 상태가 아닌 회원에게
+     * 그 값이 남는 것을 금지하기 때문이다. 자세한 이유는 {@code V28} 주석에 있다.
+     */
+    @Column(name = "withdrawn_from_status", length = 30)
+    private String withdrawnFromStatus;
+
+    /** 관리자 강제 탈퇴인지. 정책이 아니라 사실을 기록한다. */
+    @Column(name = "withdrawn_by_admin")
+    private Boolean withdrawnByAdmin;
+
+    /** 재가입 영구 거부 여부. 로그인 경로가 읽는 유일한 값이다. */
+    @Column(name = "withdrawn_rejoin_blocked")
+    private Boolean withdrawnRejoinBlocked;
+
+    /** 탈퇴 시점의 잔여 정지 종료 시각. 재가입 시 정지를 이어받는 데 쓴다. */
+    @Column(name = "withdrawn_suspended_until")
+    private OffsetDateTime withdrawnSuspendedUntil;
+
+    /** 탈퇴 시점의 사용자 노출용 제재 사유 code. 재가입 시 정지 복원에 필요하다. */
+    @Column(name = "withdrawn_sanction_reason_code", length = 40)
+    private String withdrawnSanctionReasonCode;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -166,7 +208,19 @@ public class Member {
         if (email != null && !email.isBlank()) {
             this.email = email;
         }
-        if (STATUS_PROFILE_REQUIRED.equals(status) && nickname != null && !nickname.isBlank()) {
+        // 평소에는 사용자가 직접 고친 닉네임을 OAuth 값으로 덮지 않는다.
+        //
+        // 예외는 닉네임이 비어 있는 경우다. 탈퇴가 닉네임을 NULL로 지우므로(withdraw) 재가입한
+        // 계정은 여기서 채워지지 않으면 닉네임 없이 살아난다. 정지 중 탈퇴한 회원은 재가입하면
+        // PROFILE_REQUIRED가 아니라 SUSPENDED로 부활하므로(잔여 정지 이어받기, docs/19 4.4)
+        // status 조건만으로는 걸리지 않는다.
+        //
+        // 익명화 문구를 sentinel로 쓰지 않는다. 표시 문구를 상태 판정에 쓰면 문구를 바꾸는 순간
+        // 기존 행이 판정에서 빠지고, OAuth가 닉네임을 주지 않으면(카카오는 닉네임 제공이 선택
+        // 동의다) 문구가 살아 있는 계정에 그대로 남는다.
+        boolean nicknameMissing = this.nickname == null || this.nickname.isBlank();
+        if ((STATUS_PROFILE_REQUIRED.equals(status) || nicknameMissing)
+                && nickname != null && !nickname.isBlank()) {
             this.nickname = nickname;
         }
         if (profileImageUrl != null && !profileImageUrl.isBlank()) {
@@ -247,6 +301,100 @@ public class Member {
             throw new IllegalStateException("현재 회원 상태에서는 정지를 해제할 수 없습니다.");
         }
         restorePreviousStatus();
+    }
+
+    /**
+     * 탈퇴 처리. 개인정보를 익명화하고 제재 상태를 스냅샷으로 옮긴다.
+     *
+     * <p>물리 삭제는 하지 않는다. {@code members}를 참조하는 FK 31개가 전부
+     * {@code ON DELETE RESTRICT}이고, 신고와 제재 감사 이력이 탈퇴 회원을 참조한다.
+     *
+     * @param byAdmin     관리자 강제 탈퇴 여부
+     * @param blockRejoin 재가입을 영구 거부할지. 본인 탈퇴는 항상 {@code false}
+     */
+    public void withdraw(OffsetDateTime now, boolean byAdmin, boolean blockRejoin) {
+        // 상태를 바꾸기 전에 검증을 끝낸다. 뒤에서 던지면 엔티티가 반쯤 바뀐 채로 남는다.
+        if (now == null) {
+            throw new IllegalArgumentException("탈퇴 시각이 필요합니다.");
+        }
+        if (STATUS_WITHDRAWN.equals(status) || STATUS_DELETED.equals(status)) {
+            throw new IllegalStateException("이미 탈퇴한 회원입니다.");
+        }
+        if (!byAdmin && STATUS_BANNED.equals(status)) {
+            // 영구차단 회원은 로그인과 /api/** 요청이 모두 막혀 이 경로에 도달할 수 없다.
+            // 도달했다면 접근 판정이 뚫린 것이므로 여기서 막는다.
+            throw new IllegalStateException("영구차단 회원은 본인 탈퇴 경로를 쓸 수 없습니다.");
+        }
+        if (!byAdmin && blockRejoin) {
+            throw new IllegalArgumentException("본인 탈퇴는 재가입을 차단하지 않습니다.");
+        }
+
+        this.withdrawnFromStatus = status;
+        if (STATUS_SUSPENDED.equals(status) && suspendedUntil != null && suspendedUntil.isAfter(now)) {
+            // 잔여 정지 기간을 남긴다. 이걸 버리면 정지 회원이 탈퇴 후 재가입으로 제재를 씻는다.
+            this.withdrawnSuspendedUntil = suspendedUntil;
+            this.withdrawnSanctionReasonCode = sanctionReasonCode;
+        } else if (STATUS_BANNED.equals(status)) {
+            this.withdrawnSanctionReasonCode = sanctionReasonCode;
+        }
+        this.withdrawnByAdmin = byAdmin;
+        this.withdrawnRejoinBlocked = blockRejoin;
+        this.withdrawnAt = now;
+        this.status = STATUS_WITHDRAWN;
+
+        // 제재 컬럼은 비운다. WITHDRAWN에 남으면 V19·V27 제약이 저장을 거부한다.
+        this.statusBeforeSanction = null;
+        this.suspendedAt = null;
+        this.suspendedUntil = null;
+        this.sanctionReasonCode = null;
+
+        // 닉네임은 문구로 덮지 않고 지운다. '탈퇴한 회원' 표시는 조회 SQL이 status로 만든다.
+        // 컬럼에 문구를 넣으면 재가입한 계정이 그 값을 들고 살아나고 문구가 상태 flag가 된다.
+        this.nickname = null;
+        this.email = null;
+        this.intro = null;
+        this.profileImageUrl = null;
+        this.profileImageObjectKey = null;
+        this.genderEncrypted = null;
+        this.ageRangeEncrypted = null;
+    }
+
+    /**
+     * 탈퇴 후 재가입. 스냅샷을 비우고 프로필 재입력 상태로 되살린다.
+     *
+     * <p>쿨오프 경과와 재가입 차단 판정은 호출부({@code MemberRejoinPolicy})가 끝낸 뒤에
+     * 호출한다. 잔여 정지 기간이 남아 있으면 정지를 이어받는다.
+     */
+    public void rejoin(OffsetDateTime now) {
+        if (!STATUS_WITHDRAWN.equals(status)) {
+            throw new IllegalStateException("탈퇴 상태의 회원만 재가입할 수 있습니다.");
+        }
+        if (now == null) {
+            throw new IllegalArgumentException("재가입 시각이 필요합니다.");
+        }
+        boolean suspensionRemains =
+                withdrawnSuspendedUntil != null && withdrawnSuspendedUntil.isAfter(now);
+        OffsetDateTime remainingUntil = withdrawnSuspendedUntil;
+        String remainingReasonCode = withdrawnSanctionReasonCode;
+
+        this.withdrawnAt = null;
+        this.withdrawnFromStatus = null;
+        this.withdrawnByAdmin = null;
+        this.withdrawnRejoinBlocked = null;
+        this.withdrawnSuspendedUntil = null;
+        this.withdrawnSanctionReasonCode = null;
+
+        if (suspensionRemains) {
+            // 프로필이 익명화되어 비어 있으므로 정지 해제 후 돌아갈 상태는 PROFILE_REQUIRED다.
+            // completeProfile이 정지 중 프로필 완성 시 이 값을 ACTIVE로 올려준다.
+            this.statusBeforeSanction = STATUS_PROFILE_REQUIRED;
+            this.status = STATUS_SUSPENDED;
+            this.suspendedAt = now;
+            this.suspendedUntil = remainingUntil;
+            this.sanctionReasonCode = remainingReasonCode;
+        } else {
+            this.status = STATUS_PROFILE_REQUIRED;
+        }
     }
 
     /**
@@ -412,6 +560,30 @@ public class Member {
 
     public OffsetDateTime getLastLoginAt() {
         return lastLoginAt;
+    }
+
+    public OffsetDateTime getWithdrawnAt() {
+        return withdrawnAt;
+    }
+
+    public String getWithdrawnFromStatus() {
+        return withdrawnFromStatus;
+    }
+
+    public boolean isWithdrawnByAdmin() {
+        return Boolean.TRUE.equals(withdrawnByAdmin);
+    }
+
+    public boolean isRejoinBlocked() {
+        return Boolean.TRUE.equals(withdrawnRejoinBlocked);
+    }
+
+    public OffsetDateTime getWithdrawnSuspendedUntil() {
+        return withdrawnSuspendedUntil;
+    }
+
+    public String getWithdrawnSanctionReasonCode() {
+        return withdrawnSanctionReasonCode;
     }
 
     public OffsetDateTime getCreatedAt() {

@@ -113,6 +113,7 @@ class GlobalExceptionHandlerSanctionTest {
                 suspendedUntil,
                 MemberSanctionReason.HARASSMENT.name(),
                 MemberSanctionReason.HARASSMENT.getUserMessage(),
+                null,
                 null);
     }
 

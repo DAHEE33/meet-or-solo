@@ -15,7 +15,10 @@ public class MemberBlockRepository {
 
     public List<MemberBlockSnapshot> findAllByBlockerMemberId(long blockerMemberId) {
         return jdbc.query("""
-                SELECT block.blocked_member_id, blocked.nickname, blocked.profile_image_url,
+                SELECT block.blocked_member_id,
+                       CASE WHEN blocked.status = 'WITHDRAWN' THEN '탈퇴한 회원'
+                            ELSE blocked.nickname END AS nickname,
+                       blocked.profile_image_url,
                        block.created_at
                 FROM user_blocks block
                 JOIN members blocked ON blocked.id = block.blocked_member_id

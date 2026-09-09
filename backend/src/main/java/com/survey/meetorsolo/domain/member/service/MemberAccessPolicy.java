@@ -33,15 +33,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class MemberAccessPolicy {
 
     private final MemberRepository members;
+    private final MemberRejoinPolicy rejoinPolicy;
     private final Clock clock;
     private final String supportContactEmail;
 
     public MemberAccessPolicy(
             MemberRepository members,
+            MemberRejoinPolicy rejoinPolicy,
             Clock clock,
             @Value("${app.support.contact-email:}") String supportContactEmail
     ) {
         this.members = members;
+        this.rejoinPolicy = rejoinPolicy;
         this.clock = clock;
         this.supportContactEmail = supportContactEmail;
     }
@@ -100,8 +103,12 @@ public class MemberAccessPolicy {
     }
 
     /**
-     * 제재 중인 회원의 사유·기간 안내를 만든다.
-     * 제재 상태가 아니면 {@code null}을 반환하므로 notice 조회 API가 그대로 "안내 없음"으로 응답한다.
+     * 로그인·활동이 막힌 회원의 안내를 만든다.
+     * 해당 상태가 아니면 {@code null}을 반환하므로 notice 조회 API가 "안내 없음"으로 응답한다.
+     *
+     * <p>제재({@code SUSPENDED}/{@code BANNED})와 탈퇴({@code WITHDRAWN}) 둘 다 담는다.
+     * notice token이 유출되면 "그 회원이 제재 중인지"에 더해 "탈퇴했는지"도 드러나지만,
+     * 탈퇴 사용자에게 올바른 안내를 주려면 이 경로가 필요하다.
      */
     @Transactional
     public MemberSanctionNotice findSanctionNotice(long memberId) {
@@ -115,6 +122,11 @@ public class MemberAccessPolicy {
      * {@code 403}을 받기 전에 미리 제재 상태를 알고 UI를 막을 수 있다.
      */
     public MemberSanctionNotice sanctionNoticeOf(Member member) {
+        if (Member.STATUS_WITHDRAWN.equals(member.getStatus())) {
+            // 탈퇴는 제재가 아니지만 로그인이 막힌다는 점과 안내를 읽는 경로가 같다(docs/19 4.4).
+            // 이 분기가 없으면 로그인 화면이 탈퇴한 사용자에게 "계정이 제재되어"를 띄운다.
+            return rejoinPolicy.noticeFor(member);
+        }
         if (!Member.STATUS_SUSPENDED.equals(member.getStatus())
                 && !Member.STATUS_BANNED.equals(member.getStatus())) {
             return null;

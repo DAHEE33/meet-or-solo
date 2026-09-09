@@ -229,6 +229,7 @@ class AuthControllerTest {
                 SUSPENDED_UNTIL,
                 MemberSanctionReason.HARASSMENT.name(),
                 MemberSanctionReason.HARASSMENT.getUserMessage(),
+                null,
                 null);
     }
 }

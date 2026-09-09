@@ -26,6 +26,19 @@ export type AdminMemberActionRequest = {
   suspensionDuration: AdminSuspensionDuration | null; reportId: number | null; expectedStatus: AdminMemberStatus;
 };
 
+/**
+ * 관리자 강제 탈퇴 요청(docs/19 4.4).
+ *
+ * 제재 조치(AdminMemberActionRequest)와 타입을 분리한다. 영구차단은 되돌릴 수 있고
+ * 강제 탈퇴는 익명화라 되돌릴 수 없어서, 같은 요청 타입으로 섞으면 화면에서 구분이 흐려진다.
+ */
+export type AdminMemberForcedWithdrawalRequest = {
+  reasonCode: AdminMemberActionReasonCode; reasonNote: string | null;
+  expectedStatus: AdminMemberStatus;
+  /** 재가입 영구 거부 여부. 제재성 강제 탈퇴는 true, 로그인 못 하는 회원의 탈퇴 대행은 false. */
+  blockRejoin: boolean;
+};
+
 function query(filters: AdminMemberFilters, cursor: string | null, size: number) {
   const value = new URLSearchParams();
   if (filters.query) value.set('query', filters.query);
@@ -43,6 +56,14 @@ export const adminMembersApi = {
     apiClient<AdminMemberDetail>(`/api/admin/members/${memberId}`, { signal }),
   act: (memberId: number, request: AdminMemberActionRequest, idempotencyKey: string, signal?: AbortSignal) =>
     apiClient<AdminMemberDetail>(`/api/admin/members/${memberId}/actions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(request), signal,
+    }),
+  forceWithdraw: (
+    memberId: number, request: AdminMemberForcedWithdrawalRequest,
+    idempotencyKey: string, signal?: AbortSignal,
+  ) =>
+    apiClient<AdminMemberDetail>(`/api/admin/members/${memberId}/forced-withdrawal`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify(request), signal,
     }),

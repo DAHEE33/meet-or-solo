@@ -1,5 +1,469 @@
 # 진행 상태 기록
 
+## [10-B] 회원 탈퇴와 관리자 강제 탈퇴 (docs/19 4.4)
+
+상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
+
+브랜치는 `feature/wbs-10-b-member-withdrawal`이며 `dev`(`a491761`)에서 분기했다.
+
+### 사용자 결정으로 확정한 것
+
+작업 전 4건을 제안하고 결정을 받았다. 그중 재가입 정책은 사용자가 값을 직접 정했다.
+
+| 항목 | 확정값 |
+| --- | --- |
+| 삭제 방식 | soft delete + 익명화. 물리 삭제 없음 |
+| 진행 중 매칭 | 탈퇴를 거부하지 않고 정리. penalty 미부과 |
+| 재가입 | **탈퇴 후 7일 이내 불가, 이후 같은 소셜 계정으로도 가능** |
+| 강제 탈퇴 | 재가입 영구 거부. 단 탈퇴 대행은 예외(`blockRejoin=false`) |
+| 범위 | 본인 탈퇴 ①과 관리자 강제 탈퇴 ②를 한 브랜치에. 온도 수동 조정 ③과 후기 회복 ④는 다음 브랜치에 함께 |
+
+### 계획 단계에서 사용자가 잡아낸 오류
+
+내가 "영구차단 회원이 스스로 탈퇴한 뒤 7일 후 재가입하는 시나리오"를 걱정했는데,
+사용자가 **"관리자가 영구차단하면 아예 로그인을 못하는데 어떻게 회원 탈퇴를 눌러?"** 라고
+지적했다. 확인해 보니 맞았다. `MemberAccessInterceptor`가 모든 `/api/**`를
+`requireAccessible` 또는 `requireBrowsable`로 통과시키고 **둘 다 `BANNED`를 던진다.** 로그인도
+OAuth callback에서 막힌다. 그 시나리오는 발생할 수 없다.
+
+이 지적으로 설계가 단순해지고 **실제 빈틈이 드러났다. 영구차단 회원은 자기 개인정보를 지울
+방법이 없다.** 그래서 관리자 강제 탈퇴가 ①과 같은 브랜치에 있어야 했다. ①만 했다면 영구차단
+회원의 삭제 요청을 처리할 수단이 아예 없었다.
+
+```text
+영구차단 회원이 안내 화면의 고객센터 이메일로 삭제 요청
+  → 관리자가 /admin/members에서 강제 탈퇴 → 익명화 완료, 재가입은 계속 차단
+```
+
+컬럼 이름도 이 지적을 반영해 `withdrawn_rejoin_blocked`(정책)와
+`withdrawn_by_admin`(사실)로 나눴다. 정책이 바뀌어도 사실은 안 바뀐다.
+
+### 조사 단계에서 발견해 설계를 바꾼 것
+
+**기존 제재 컬럼을 재사용할 수 없었다.** `V19`의 `chk_members_suspension_period`가
+`status <> 'SUSPENDED'`이면 `suspended_at`·`suspended_until`을 `NULL`로 강제하고, `V27`의
+`chk_members_sanction_reason_presence`도 제재 상태가 아니면 사유를 금지한다. **정지 회원이
+탈퇴하면 잔여 정지 기간을 그 컬럼에 둘 수 없다.**
+
+두 제약을 완화하는 대신 **탈퇴 스냅샷 컬럼 5개를 따로 뒀다.** 완화하면 정지 해제와 만료 복구의
+버그를 잡아온 불변식 두 개가 동시에 헐거워진다. `V27`이 사용자 노출용 사유와 관리자 내부용
+사유를 컬럼 수준에서 나눈 것과 같은 방식이다.
+
+`chk_admin_actions_type`에 `FORCED_WITHDRAWAL`이 없어 감사 로그를 남길 수 없었던 것도 조사에서
+발견했다(`V20`이 같은 이유로 `UNSUSPEND`를 추가한 선례가 있다).
+
+### 구현에서 중요한 판단
+
+**닉네임은 `NULL`로 지우고 표시 문구는 조회 SQL이 만든다(`V30`).** 처음에는 `V28`에서
+고정 문구(`탈퇴한 회원`)를 컬럼에 덮었다 — 닉네임을 읽는 경로가 `members`를 join하는 SQL
+여러 곳이라 컬럼을 덮으면 그 경로를 건드리지 않아도 된다는 이유였다. **사용자 검증에서
+재가입한 계정에 그 문구가 그대로 뜨는 것이 확인되어 뒤집었다.** 자세한 경위는 아래
+"닉네임 문구를 컬럼에서 뺀 이유" 절에 있다.
+
+**재가입 거부 안내에 4.8 인프라를 그대로 썼다.** OAuth callback은 302라 body가 없다. 새 경로를
+만들면 4.8이 고친 "소셜 로그인에 실패했습니다" 오안내가 재발한다. 그래서 재가입 거부도
+`MemberSanctionException`(`MEMBER_REJOIN_BLOCKED`)으로 던진다. `GlobalExceptionHandler:43`이
+**`ErrorCode`가 아니라 예외 타입에만 걸려 있어** `AuthController`와 `GlobalExceptionHandler`를
+한 줄도 고치지 않고 302 경로와 403 경로가 모두 동작한다.
+
+**잔여 정지 기간을 재가입 시 이어받는다.** 없으면 30일 정지가 "탈퇴 후 7일 재가입"으로 23일
+세탁된다. 재가입 시 `status_before_sanction`은 `PROFILE_REQUIRED`로 둔다. 프로필이 익명화되어
+비어 있으므로 정지 해제 후 돌아갈 곳이 가입 화면인 게 맞고, `completeProfile`이 정지 중 프로필
+완성 시 이 값을 `ACTIVE`로 올려주는 기존 동작과 맞물린다.
+
+**정지 회원의 탈퇴 dialog에 잔여 기간 안내를 넣었다**(사용자 요청). 이 안내가 없으면 사용자가
+탈퇴를 제재 해제 수단으로 오해하고 누른다. 종료 시각을 함께 보여준다.
+
+**기존 취소 서비스를 재사용하지 않았다.** `MatchCancellationService.cancel`은 도착 마감이
+지나면 예외를 던지고 `MatchPoolCancellationService.cancel`은 쿨타임·penalty를 매긴다. 그대로
+쓰면 **탈퇴가 그 시점에 실패해 회원이 탈퇴할 수 없다.** 별도
+`MemberWithdrawalMatchCleanupService`를 만들고 `Propagation.MANDATORY`로 묶어 탈퇴 transaction
+밖에서 실행되지 않게 했다.
+
+**새 매칭 이벤트 타입을 만들지 않았다.** 남은 그룹원에게 기존
+`MEMBER_CANCELLED`/`MATCH_CANCELLED`를 보낸다. `MatchRoomPage`가 이미 처리하는 값이라 프론트를
+건드릴 필요가 없다.
+
+**동의는 row를 남기고 `revoked_at`만 기록했다.** "동의를 받았다"는 사실이 개인정보 처리 근거의
+증빙이다. `revoked_at` 컬럼이 이미 있어 migration이 필요 없었다.
+
+**`provider_user_id`를 익명화하지 않았다.** 지우면 누가 돌아왔는지 알 수 없어 7일 쿨오프 판정
+자체가 불가능하다.
+
+**강제 탈퇴를 `AdminMemberActionType`에 넣지 않았다.** `docs/19` 4.4의 "관리자 `BAN`과 회원
+`WITHDRAWN`을 같은 상태 전이나 API로 처리하지 않는다" 원칙을 지켰다. `BAN`은 되돌릴 수 있고
+강제 탈퇴는 익명화라 되돌릴 수 없다. 관리자 dialog 문구에도 이 차이를 명시했다.
+
+### 테스트가 잡아낸 실제 버그 1건
+
+**그룹에 속한 회원이 탈퇴하면 탈퇴 자체가 실패했다.** `V14`의
+`chk_match_group_members_cancel_reason`이 사용자가 직접 고르는 취소 사유
+(`MatchCancellationReason`: `SCHEDULE_CHANGED`/`TRANSPORTATION_ISSUE`/`OTHER`)만 허용하는데,
+정리 코드가 `cancel_reason='WITHDRAWN'`을 쓰므로 DB가 UPDATE를 거부한다. 만남이 확정된 회원의
+탈퇴가 500으로 죽는 경로였다.
+
+`V29`로 `WITHDRAWN`을 허용했다. `OTHER`로 뭉개지 않은 이유는 감사 이력에서 "본인이 사정상
+취소"와 "계정이 사라져 이탈"을 구분할 수 없으면 노쇼·패널티 분석이 흐려지기 때문이다.
+
+**`V28`을 고치지 않고 `V29`로 분리한 이유**: 전체 테스트를 한 번 돌린 시점에 `V28`이 **이미
+공유 dev DB에 적용됐다**(`flyway_schema_history`에서 2026-09-09 15:35 적용 확인). Testcontainers를
+쓰지 않는 통합 테스트 3개가 `.env`의 터널로 공유 dev DB에 붙기 때문이다. `V28`을 수정하면 그
+DB에서 checksum 검증이 깨진다.
+
+이 버그는 **계획에 넣었지만 처음에 빠뜨렸던 테스트**를 뒤늦게 채우면서 발견했다. 그룹 정리는
+이 작업에서 가장 복잡한 코드였는데 테스트가 0건이었다. 계획한 테스트를 실제로 다 썼는지
+대조하는 단계가 필요하다.
+
+### 처음에 빠뜨렸다가 채운 테스트 2건
+
+- 진행 중 그룹 탈퇴 → 그룹 취소·남은 사람 정리·이벤트 발행. `leaveActiveGroups`가 무검증이었다
+- 탈퇴 판정이 프로필 갱신보다 먼저 실행되는지. **"순서가 바뀌면 익명화된 프로필이 OAuth
+  응답으로 다시 채워진다"고 직접 위험하다고 적어놓고 그것을 지키는 테스트가 없었다.**
+  `AuthServiceRejoinTest`가 `InOrder`로 고정한다
+
+### 제재 세탁 방지를 못 박은 테스트
+
+- `MemberWithdrawalTest` — 정지 중 탈퇴가 제재 컬럼을 비우고 잔여 기간을 스냅샷으로 옮기는지,
+  재가입이 그 기간을 이어받는지. 영구차단 회원의 본인 탈퇴 거부
+- `MemberRejoinPolicyTest` — **6일 23시간 거부 / 정확히 7일 허용 / 7일 1분 허용** 경계.
+  재가입 차단된 강제 탈퇴는 3년이 지나도 영구 거부. 재가입 안내에 신고 관련 문구 없음
+- `MemberWithdrawalIntegrationTest` — 실제 PostgreSQL. `V28` CHECK 3개가 익명화 누락과 스냅샷
+  잔존을 거부하는지, 차단 목록에서 닉네임이 복원되지 않는지, 반복 탈퇴 멱등, 동의 철회,
+  강제 탈퇴 감사 로그와 `blockRejoin` metadata, 관리자 메모가 회원 record로 새지 않는지.
+  2인 그룹 탈퇴 시 그룹 취소·남은 사람 `LEFT` 처리·이벤트 발행, 도착 마감이 지난 그룹에서도
+  탈퇴 성공(기존 취소 서비스를 재사용하지 않은 이유)
+- `AuthServiceRejoinTest` — 탈퇴 판정이 프로필 갱신·접근 검사보다 먼저 실행되는지
+- Frontend — 정지 회원 dialog의 잔여 기간 안내, 강제 탈퇴 dialog의 "되돌릴 수 없다" 문구,
+  `blockRejoin` 기본 체크, 이중 제출 1회 호출
+
+### 건드리지 않은 것
+
+- 관리자 온도 수동 조정과 후기 기반 회복(4.9). 다음 브랜치에서 **함께** 한다
+- `member_reviews`. 테이블만 있고 코드가 0줄이다
+- 4.5 문의센터, 4.7 동의 후속
+- 본인 탈퇴 이력 보존용 별도 테이블. 재가입 시 `withdrawn_at`을 지우므로 본인 탈퇴 이력은
+  남지 않는다. 관리자 강제 탈퇴는 `admin_actions`에 남는다
+- `MemberSanctionException` rename. 제재가 아닌 재가입 거부에도 쓰여 이름이 부정확하지만,
+  8개 파일과 프론트 타입·테스트가 함께 흔들려 javadoc으로 범위를 명시하는 선택을 했다
+
+### 검증
+
+- Backend baseline을 **실측으로 확인**했다. 구현 전 `build/test-results`의 2026-09-08 실행분이
+  **871건 / 실패 2 / skip 1**이고 실패 2건은 문서에 적힌 상대방 유래 그대로였다
+  (`ContentBookmarkCommentIntegrationTest`, `FestivalRepositoryIntegrationTest`)
+- Backend 최종 **916건 / 실패 2 / skip 1.** 실패 2건은 baseline과 동일한 상대방 유래다
+- Frontend `vitest` 534건 통과(baseline 517 + 신규 17), `tsc --noEmit` 통과
+
+### 닉네임 문구를 컬럼에서 뺀 이유 (`V30`)
+
+**사용자가 재가입 후 닉네임이 `탈퇴한 회원`으로 뜨는 것을 발견해 설계를 뒤집었다.**
+
+`V28`은 탈퇴 시 `nickname`을 고정 문구로 덮었다. 조사해 보니 구조적 결함이 두 개였다.
+
+1. **표시 문구를 상태 flag로 쓰고 있었다.** `Member.updateSocialProfile`이
+   `WITHDRAWN_NICKNAME.equals(nickname)`으로 "익명화됐는지"를 판정했다. 그래서 OAuth가 닉네임을
+   주지 않으면(카카오는 닉네임 제공이 선택 동의다) 덮어쓰기 조건에 걸리지 않아 **살아 있는
+   계정에 문구가 남았다.** 문구를 바꾸면 기존 행이 판정에서 빠져 영구히 복구되지 않는 문제도
+   같이 있었다.
+2. **이미 박힌 행은 재로그인 전까지 남았다.** 그동안 댓글·매칭 기록·차단 목록에 노출된다.
+
+컬럼에 `NULL`을 저장하고 표시 문구는 `members`를 join하는 조회 SQL이 `status = 'WITHDRAWN'`일
+때 만들도록 바꿨다. 치환 지점은 8개 쿼리(`MatchGroupMemberRepository` 3, `MatchEventRepository`,
+`MemberBlockRepository`, `AdminReportRepository` 2, `AdminSafetyAlertRepository`,
+`AdminMemberRepository`)다.
+
+**`ContentCommentRepository`는 제외했다.** 탈퇴가 `softDeleteAllOnWithdrawal`로 작성 댓글을
+`VISIBLE` → `DELETED`로 내리고 목록은 `VISIBLE`만 조회하므로 탈퇴 회원이 결과에 들어오지 않는다.
+정책이 바뀌면 여기에도 넣어야 한다는 근거를 그 파일 javadoc에 남겼다.
+
+**DTO와 프론트엔드는 한 줄도 바꾸지 않았다.** 원래 계획은 "읽는 쪽에서 status로 판정"이었는데
+조사 중에 프론트 4곳이 `nickname.slice(0, 1)`로 첫 글자를 뽑는 것을 발견했다
+(`ContentCommentItem.tsx:38`, `BlockedMembersPage.tsx:34`, `MatchHistoryPage.tsx:196`,
+`MatchingConditionPage.tsx:842`). **`null`을 내려보내면 빈 칸이 아니라 `TypeError`로 렌더링이
+죽는다.** 그래서 치환을 서버에서 끝냈다. 진행 로그가 "누락 시 빈 칸"이라고 적어둔 것보다
+위험한 조건이었다.
+
+**문구가 SQL 리터럴로 8곳에 흩어지는 것이 이 방식의 비용이다.**
+`WithdrawnNicknameLabelConsistencyTest`가 `Member.WITHDRAWN_NICKNAME`과 SQL 8곳, `V30`의
+일치를 고정한다. 상수만 바꾸면 화면이 조용히 옛 문구를 계속 보여주기 때문이다. 치환이
+`status = 'WITHDRAWN'` 조건과 함께 있는지도 같은 테스트가 센다 — 조건 없이 문구만 넣으면 살아
+있는 회원의 닉네임까지 덮인다.
+
+**`V30`이 기존 잘못된 행을 정리한다.** 살아 있는 회원 중 문구가 남은 행을 `NULL`로 되돌리므로
+dev DB의 그 계정은 재로그인 없이 정상화된다. `chk_members_withdrawn_anonymized`에 `nickname`을
+추가하고, 신규 `chk_members_nickname_not_withdrawn_label`로 어떤 상태에서도 그 문구를 컬럼에
+저장할 수 없게 했다.
+
+**관리자 회원 검색은 그대로 뒀다.** `m.nickname ILIKE`로 `탈퇴한 회원`을 검색하면 탈퇴 회원이
+다 나오던 동작이 사라진다. 상태 filter(`status=WITHDRAWN`)가 이미 있어 대체 수단이 있다.
+
+**살아 있는 계정의 위장은 이미 `@Pattern`이 막고 있었다.**
+`UpdateMemberProfileRequest`의 `^[가-힣A-Za-z0-9]+$`가 공백을 허용하지 않아 `탈퇴한 회원`은
+Bean Validation에서 `400`이다. `MemberProfileService.requireSelectableNickname`과 `V30`의
+CHECK는 그 패턴이 완화되거나 이 DTO를 거치지 않는 경로가 생겼을 때를 위한 이중 방어다.
+
+### 남은 것
+
+- 브라우저 수동 검증. 특히 정지 회원 탈퇴 dialog의 잔여 기간 안내와 7일 쿨오프 안내 화면
+- `V28`, `V29`는 로컬 최고 번호 `V27` 다음이고 원격 브랜치 선점이 없음을 확인했다
+  (`origin/dev` `V27`, 나머지 브랜치는 그 이하)
+- **`V28`은 이미 공유 dev DB에 적용됐다.** 수정하면 checksum 검증이 깨지므로 추가 변경은
+  `V29` 이후 번호로 넣어야 한다. `V29`는 다음 전체 테스트 실행 때 dev DB에 적용된다
+
+### 수동 검증 절차
+
+브라우저 2개(일반 + 시크릿)를 쓴다. 하나는 관리자, 하나는 검증 대상 회원(`role=USER`)이다.
+
+**주의: 탈퇴는 되돌릴 수 없다.** 닉네임·이메일·프로필이 실제로 지워지므로 아끼는 계정으로
+검증하지 말고, 아래 "원상 복구"로 되살리더라도 개인정보는 OAuth 재로그인으로만 다시 채워진다.
+
+#### 0. dev DB 접속 (호스트에 psql이 없어 컨테이너로 붙는다)
+
+SSH 터널(`127.0.0.1:15432`)이 열려 있어야 한다. 접속 정보는 저장소 루트 `.env`에서 읽고
+명령에 직접 쓰지 않는다. 저장소 루트에서 실행한다.
+
+```bash
+set -a; . ./.env; set +a
+alias devdb='docker run --rm -i -e PGPASSWORD="$POSTGRES_PASSWORD" pgvector/pgvector:pg16 \
+  psql -h host.docker.internal -p 15432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Docker Desktop for Windows에서는 `--network host`가 호스트 loopback을 공유하지 않으므로
+`host.docker.internal`을 써야 한다.
+
+대상 회원 id를 먼저 찾아둔다.
+
+```sql
+SELECT id, nickname, role, status FROM members ORDER BY id;
+```
+
+#### 1. 본인 탈퇴
+
+마이페이지 최하단 `회원 탈퇴` → dialog에 삭제 대상과 **7일 재가입 제한**이 보이고, 실행하면
+`/login`으로 이동한다.
+
+```sql
+SELECT status, nickname, email, intro, profile_image_url,
+       gender_encrypted IS NULL AS 성별지움, age_range_encrypted IS NULL AS 연령대지움,
+       withdrawn_at, withdrawn_from_status, withdrawn_by_admin, withdrawn_rejoin_blocked
+  FROM members WHERE id = :회원id;
+```
+
+`status='WITHDRAWN'`이고 `nickname`을 포함한 개인정보가 전부 `NULL`이어야 한다. 화면에
+보이는 `탈퇴한 회원`은 컬럼 값이 아니라 조회 SQL이 만든 표시 문구다(`V30`).
+
+부수 데이터도 함께 본다.
+
+```sql
+SELECT (SELECT count(*) FROM member_travel_styles       WHERE member_id = :회원id) AS 취향,
+       (SELECT count(*) FROM member_preference_embeddings WHERE member_id = :회원id) AS 임베딩,
+       (SELECT count(*) FROM content_bookmarks          WHERE member_id = :회원id) AS 찜,
+       (SELECT count(*) FROM content_comments WHERE member_id = :회원id AND status='VISIBLE') AS 보이는댓글,
+       (SELECT count(*) FROM member_consents WHERE member_id = :회원id AND revoked_at IS NULL AND agreed) AS 유효동의,
+       (SELECT count(*) FROM refresh_tokens  WHERE member_id = :회원id AND revoked_at IS NULL) AS 유효세션;
+```
+
+앞의 다섯 개가 모두 `0`이어야 한다. `member_consents` row 자체는 남아 있어야 한다
+(동의를 받았다는 증빙).
+
+#### 2. 프로필 이미지 실물 삭제 (OCI Object Storage)
+
+로컬에도 stub이 없고 `.env`의 OCI endpoint로 실제 붙으므로 실물 삭제를 확인할 수 있다.
+
+1. 탈퇴 **전에** 마이페이지에서 프로필 사진을 업로드한다.
+2. object key를 미리 적어둔다. 탈퇴 후에는 컬럼이 `NULL`이 되어 읽을 수 없다.
+
+```sql
+SELECT profile_image_object_key FROM members WHERE id = :회원id;
+```
+
+3. 탈퇴한다.
+4. OCI 콘솔에서 bucket(`OCI_OBJECT_STORAGE_BUCKET`)의 그 key가 사라졌는지 본다. 경로는
+   `{OCI_OBJECT_STORAGE_PROFILE_PREFIX}/{회원id}/{uuid}.{확장자}` 형식이다.
+
+삭제는 transaction commit 이후에 일어나고 **실패해도 탈퇴를 되돌리지 않는다.** 키가 남아 있으면
+저장소 장애이지 탈퇴 실패가 아니므로, DB가 위 1번을 만족하면 탈퇴 자체는 정상이다.
+
+#### 3. 7일 쿨오프
+
+탈퇴 직후 같은 소셜 계정으로 로그인하면 `/login?oauthError=account_restricted`로 가고
+**"탈퇴한 계정이에요"** 와 재가입 가능 시각이 뜬다.
+**"소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요."가 뜨면 실패다** — 4.8에서 고친
+버그가 되살아난 것이다.
+
+DevTools에서 `sanction_notice` cookie가 생겼다가 안내 조회 후 사라지는지도 함께 본다
+(`Path=/api/auth/sanction-notice`, `HttpOnly`).
+
+쿨오프를 지나게 만들려면 탈퇴 시각을 과거로 옮긴다.
+
+```sql
+UPDATE members SET withdrawn_at = withdrawn_at - INTERVAL '8 days' WHERE id = :회원id;
+```
+
+다시 로그인하면 가입 화면(`PROFILE_REQUIRED`)으로 들어가고 프로필을 새로 입력하게 된다.
+
+```sql
+SELECT status, nickname, email, withdrawn_at FROM members WHERE id = :회원id;
+```
+
+`status='PROFILE_REQUIRED'`, `withdrawn_at IS NULL`, 닉네임·이메일이 OAuth 값으로 다시
+채워져 있어야 한다.
+
+#### 4. 정지 중 탈퇴와 잔여 기간 이어받기 (제재 세탁 방지)
+
+1. 관리자가 `/admin/members`에서 대상을 `이용정지` `THIRTY_DAYS`로 정지시킨다.
+2. 대상이 마이페이지에서 `회원 탈퇴`를 누르면 dialog에
+   **"남은 이용정지 기간은 탈퇴로 사라지지 않아요"** 와 종료 시각이 보여야 한다.
+3. 탈퇴 후 스냅샷을 확인한다.
+
+```sql
+SELECT status, withdrawn_from_status, withdrawn_suspended_until, withdrawn_sanction_reason_code,
+       suspended_at, suspended_until, sanction_reason_code
+  FROM members WHERE id = :회원id;
+```
+
+`withdrawn_from_status='SUSPENDED'`이고 `withdrawn_suspended_until`에 원래 종료 시각이 있어야
+한다. **제재 컬럼 3개(`suspended_at`, `suspended_until`, `sanction_reason_code`)는 `NULL`이어야
+한다** — 남아 있으면 `V19`·`V27` 제약이 저장을 거부했을 것이다.
+
+4. 쿨오프를 지나게 하고 재로그인한다.
+
+```sql
+UPDATE members SET withdrawn_at = withdrawn_at - INTERVAL '8 days' WHERE id = :회원id;
+```
+
+가입 화면이 아니라 **정지 안내**가 떠야 한다.
+
+```sql
+SELECT status, suspended_at, suspended_until, sanction_reason_code, status_before_sanction
+  FROM members WHERE id = :회원id;
+```
+
+`status='SUSPENDED'`, `suspended_until`이 원래 종료 시각, `status_before_sanction='PROFILE_REQUIRED'`
+여야 한다. 여기서 `ACTIVE`나 `PROFILE_REQUIRED`가 나오면 **30일 정지가 세탁된 것이므로 실패다.**
+
+#### 5. 관리자 강제 탈퇴
+
+`/admin/members` → 회원 행 클릭 → `회원 상세` dialog 하단의 `강제 탈퇴`(점선 테두리).
+
+dialog에 **"영구차단은 되돌릴 수 있지만 강제 탈퇴는 되돌릴 수 없습니다"** 가 보이고
+`재가입 영구 차단`이 **기본 체크**여야 한다.
+
+```sql
+SELECT m.status, m.withdrawn_by_admin, m.withdrawn_rejoin_blocked,
+       a.action_type, a.reason, a.reason_code,
+       a.metadata->>'beforeStatus' AS 이전상태, a.metadata->>'blockRejoin' AS 재가입차단
+  FROM members m
+  LEFT JOIN admin_actions a ON a.target_member_id = m.id AND a.action_type = 'FORCED_WITHDRAWAL'
+ WHERE m.id = :회원id;
+```
+
+`action_type='FORCED_WITHDRAWAL'`, `withdrawn_by_admin=t`, `withdrawn_rejoin_blocked=t`.
+메모를 남겼다면 `reason`에만 있고 회원 record에는 없어야 한다.
+
+쿨오프를 지나게 해도 **로그인이 계속 거부**되어야 한다.
+
+```sql
+UPDATE members SET withdrawn_at = withdrawn_at - INTERVAL '8 days' WHERE id = :회원id;
+```
+
+`재가입 영구 차단`이므로 7일이 지나도 `/login`에서 안내가 뜨고 들어갈 수 없어야 한다.
+들어가지면 실패다.
+
+#### 6. 영구차단 회원의 강제 탈퇴 (삭제 요청 처리 경로)
+
+관리자가 `영구차단`한 뒤에도 `강제 탈퇴` 버튼이 보이고 동작해야 한다. **영구차단 회원은
+로그인이 막혀 본인 탈퇴를 할 수 없으므로 이것이 개인정보 삭제 요청을 처리하는 유일한
+경로다.**
+
+```sql
+SELECT status, withdrawn_from_status, email, nickname FROM members WHERE id = :회원id;
+```
+
+`withdrawn_from_status='BANNED'`, `email IS NULL`, `nickname IS NULL`.
+
+#### 7. 탈퇴 대행 (재가입 차단 해제)
+
+`재가입 영구 차단` 체크를 **해제**하고 강제 탈퇴한 뒤 쿨오프를 지나게 하면 정상 재가입이
+되어야 한다.
+
+```sql
+SELECT withdrawn_by_admin, withdrawn_rejoin_blocked FROM members WHERE id = :회원id;
+```
+
+`withdrawn_by_admin=t`, `withdrawn_rejoin_blocked=f`. 재로그인하면 가입 화면으로 들어간다.
+
+#### 8. 진행 중 매칭 정리
+
+2인 그룹을 확정시킨 뒤 한 명이 탈퇴한다. 남은 사람의 `MatchRoomPage`에 매칭 취소가 반영되어야
+한다.
+
+```sql
+SELECT g.id AS 그룹, g.status AS 그룹상태, g.cancel_reason,
+       m.member_id, m.status AS 멤버상태, m.cancel_reason AS 멤버사유
+  FROM match_groups g JOIN match_group_members m ON m.group_id = g.id
+ WHERE g.id = :그룹id ORDER BY m.member_id;
+```
+
+그룹은 `CANCELLED` + `INSUFFICIENT_ACTIVE_MEMBERS`, 탈퇴자는 `CANCELLED` + `WITHDRAWN`,
+남은 사람은 `LEFT`여야 한다. **탈퇴자의 `cancel_reason`이 `WITHDRAWN`으로 저장되는지가
+중요하다** — `V29` 없이는 이 UPDATE가 CHECK 위반으로 실패한다.
+
+이벤트와 penalty도 확인한다.
+
+```sql
+SELECT event_type, member_id FROM match_events WHERE group_id = :그룹id ORDER BY id;
+
+SELECT (SELECT count(*) FROM match_penalty_events WHERE member_id = :회원id) AS penalty,
+       (SELECT count(*) FROM match_cooldowns      WHERE member_id = :회원id) AS 쿨타임,
+       (SELECT penalty_score FROM members         WHERE id = :회원id)        AS 점수;
+```
+
+`MEMBER_CANCELLED` → `MATCH_CANCELLED` 순서로 남고, penalty·쿨타임·점수는 모두 `0`이어야
+한다. 탈퇴에는 penalty를 부과하지 않는다.
+
+#### 9. 정지 회원도 탈퇴할 수 있는지
+
+정지 중에도 `회원 탈퇴`가 `403`으로 막히지 않아야 한다. 개인정보 권리라
+`SuspendedActivityPolicy.ALLOWED`에 등재했다. 정지 안내 dialog가 뜨고 탈퇴가 실패하면 실패다.
+
+#### 원상 복구 (재검증용)
+
+개인정보는 되살아나지 않지만 상태는 되돌릴 수 있다. **스냅샷 6개를 같은 UPDATE에서 모두
+지워야 한다** — 하나라도 남으면 `chk_members_withdrawal_snapshot`이 거부한다.
+
+```sql
+UPDATE members
+   SET status = 'PROFILE_REQUIRED',
+       nickname = '검증복구',
+       withdrawn_at = NULL,
+       withdrawn_from_status = NULL,
+       withdrawn_by_admin = NULL,
+       withdrawn_rejoin_blocked = NULL,
+       withdrawn_suspended_until = NULL,
+       withdrawn_sanction_reason_code = NULL,
+       suspended_at = NULL,
+       suspended_until = NULL,
+       sanction_reason_code = NULL,
+       status_before_sanction = NULL
+ WHERE id = :회원id;
+```
+
+이후 소셜 재로그인하면 OAuth가 닉네임·이메일·프로필 이미지를 다시 채운다. 강제 탈퇴
+감사 로그를 지우려면 `DELETE FROM admin_actions WHERE target_member_id = :회원id AND
+action_type='FORCED_WITHDRAWAL';`을 함께 실행한다.
+
+#### 자동 테스트가 이미 덮는 것 (수동으로 다시 하지 않아도 된다)
+
+- 7일 경계 자체(6일 23시간 / 정확히 7일 / 7일 1분) — `MemberRejoinPolicyTest`가 `Clock` 고정
+- `V28`·`V29` CHECK 제약의 거부 동작 — `MemberWithdrawalIntegrationTest`
+- 재가입 판정이 프로필 갱신보다 먼저 실행되는 순서 — `AuthServiceRejoinTest`
+- 반복 탈퇴 멱등, 강제 탈퇴 `Idempotency-Key` 재요청
+
+수동 검증의 목적은 **화면 흐름과 실제 브라우저·OCI 왕복**이다. 프론트엔드에 jsdom이 없어
+클릭과 비동기 갱신은 자동 테스트로 재현되지 않는다.
+
+
 ## [10-B 안전 후속] 회원 제재 사유·기간 통보와 제재 범위 정리 (docs/19 4.8)
 
 상태: Backend/Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기

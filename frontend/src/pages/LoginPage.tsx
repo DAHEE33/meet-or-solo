@@ -59,8 +59,13 @@ export default function LoginPage() {
               sanction
                 ? <AccountRestrictionNotice notice={sanction} />
                 : (
+                  /*
+                    안내 조회 전이거나 notice cookie가 만료된 경우의 포괄 문구.
+                    제재와 탈퇴가 모두 이 화면으로 오므로 "제재"라고 단정하지 않는다.
+                    탈퇴한 사용자에게 "계정이 제재되어"가 뜨는 것은 틀린 안내다.
+                  */
                   <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
-                    계정이 제재되어 로그인할 수 없습니다. 자세한 사유는 고객문의로 확인해 주세요.
+                    이 계정으로는 지금 로그인할 수 없습니다. 자세한 사유는 고객센터로 문의해 주세요.
                   </p>
                 )
             )

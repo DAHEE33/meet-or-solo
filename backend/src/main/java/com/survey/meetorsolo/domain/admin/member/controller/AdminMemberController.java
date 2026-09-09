@@ -53,6 +53,23 @@ public class AdminMemberController {
                 memberId(accessToken), memberId, idempotencyKey, request));
     }
 
+    /**
+     * 관리자 강제 탈퇴({@code docs/19} 4.4).
+     *
+     * <p>제재 조치({@code /actions})와 endpoint를 분리한다. {@code BAN}은 되돌릴 수 있고
+     * 강제 탈퇴는 익명화라 되돌릴 수 없다.
+     */
+    @PostMapping("/{memberId}/forced-withdrawal")
+    public ApiResponse<AdminMemberDetailResponse> forceWithdraw(
+            @CookieValue(name = "access_token", required = false) String accessToken,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable long memberId,
+            @Valid @RequestBody AdminMemberForcedWithdrawalRequest request
+    ) {
+        return ApiResponse.success(members.forceWithdraw(
+                memberId(accessToken), memberId, idempotencyKey, request));
+    }
+
     private long memberId(String accessToken) {
         if (accessToken == null || accessToken.isBlank()) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);

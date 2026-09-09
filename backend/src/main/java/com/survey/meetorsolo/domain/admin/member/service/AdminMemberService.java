@@ -9,6 +9,7 @@ import com.survey.meetorsolo.domain.safety.report.admin.service.ReportConfirmati
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.domain.member.service.MemberWithdrawalService;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +33,7 @@ public class AdminMemberService {
     private final RefreshTokenRepository refreshTokens;
     private final AdminSafetyAlertRepository safetyAlerts;
     private final ReportConfirmationService reportConfirmation;
+    private final MemberWithdrawalService memberWithdrawal;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
@@ -43,6 +45,7 @@ public class AdminMemberService {
             RefreshTokenRepository refreshTokens,
             AdminSafetyAlertRepository safetyAlerts,
             ReportConfirmationService reportConfirmation,
+            MemberWithdrawalService memberWithdrawal,
             ApplicationEventPublisher events,
             Clock clock
     ) {
@@ -53,6 +56,7 @@ public class AdminMemberService {
         this.refreshTokens = refreshTokens;
         this.safetyAlerts = safetyAlerts;
         this.reportConfirmation = reportConfirmation;
+        this.memberWithdrawal = memberWithdrawal;
         this.events = events;
         this.clock = clock;
     }
@@ -140,6 +144,79 @@ public class AdminMemberService {
         }
         members.flush();
         return detail(memberId);
+    }
+
+    /**
+     * 관리자 강제 탈퇴({@code docs/19} 4.4).
+     *
+     * <p><b>{@code act}와 합치지 않는다.</b> 제재는 계정을 남겨 되돌릴 수 있고 강제 탈퇴는
+     * 익명화라 되돌릴 수 없다. 같은 상태 전이나 API로 처리하지 않는다.
+     *
+     * <p><b>활성 매칭을 이유로 거부하지 않는다.</b> 제재({@code SUSPEND}/{@code BAN})는
+     * {@code ADMIN_MEMBER_ACTIVE_MATCH_CONFLICT}로 막지만, 탈퇴는 진행 중 매칭을 정리하고
+     * 진행한다. 그러지 않으면 만남이 확정된 회원의 개인정보 삭제 요청을 처리할 수 없다.
+     *
+     * <p>영구차단 회원은 로그인이 막혀 본인 탈퇴 경로에 닿을 수 없다. 그 회원의 개인정보
+     * 삭제 요청은 고객센터를 통해 이 경로로 처리된다.
+     */
+    @Transactional
+    public AdminMemberDetailResponse forceWithdraw(
+            long adminMemberId, long memberId, String idempotencyKeyValue,
+            AdminMemberForcedWithdrawalRequest request) {
+        var admin = authorization.requireAdmin(adminMemberId);
+        UUID idempotencyKey = idempotencyKey(idempotencyKeyValue);
+        if (request.reasonNote() != null && containsSensitiveLabel(request.reasonNote())) {
+            throw invalid("관리자 사유에는 인증정보나 위치정보를 입력할 수 없습니다.");
+        }
+        adminMembers.lockIdempotencyKey(idempotencyKey);
+
+        Member member = members.findByIdForUpdate(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
+        String fingerprint = forcedWithdrawalFingerprint(memberId, request);
+        Optional<AdminMemberRepository.ExistingAction> existing =
+                adminMembers.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            AdminMemberRepository.ExistingAction action = existing.get();
+            if (action.targetMemberId() == memberId
+                    && "FORCED_WITHDRAWAL".equals(action.actionType())
+                    && fingerprint.equals(action.fingerprint())) {
+                return detail(memberId);
+            }
+            throw new BusinessException(ErrorCode.ADMIN_ACTION_IDEMPOTENCY_CONFLICT);
+        }
+
+        if (admin.memberId() == memberId || Member.ROLE_ADMIN.equals(member.getRole())) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT,
+                    "관리자 계정은 이 API로 탈퇴시킬 수 없습니다.");
+        }
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        member.restoreExpiredSuspension(now);
+        if (!member.getStatus().equals(request.expectedStatus().name())) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT);
+        }
+        String beforeStatus = member.getStatus();
+
+        // 감사 로그를 먼저 남긴다. 익명화 뒤에는 어떤 상태에서 탈퇴시켰는지 읽을 수 없다.
+        adminMembers.insertForcedWithdrawalAction(
+                adminMemberId, memberId, request, idempotencyKey, fingerprint, now, beforeStatus);
+        memberWithdrawal.withdrawByAdmin(memberId, request.blocksRejoin());
+        // 대응이 끝난 안전 알림을 같은 transaction에서 종료해 중복 대응을 막는다.
+        safetyAlerts.closeByMemberId(memberId, adminMemberId, now);
+        members.flush();
+        return detail(memberId);
+    }
+
+    private String forcedWithdrawalFingerprint(
+            long memberId, AdminMemberForcedWithdrawalRequest request) {
+        String canonical = memberId + "|FORCED_WITHDRAWAL|" + request.reasonCode() + "|"
+                + normalize(request.reasonNote()) + "|" + request.blocksRejoin() + "|"
+                + request.expectedStatus();
+        try {
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new IllegalStateException("요청 fingerprint 생성에 실패했습니다.", exception);
+        }
     }
 
     private AdminMemberRepository.LockedReport lockReport(

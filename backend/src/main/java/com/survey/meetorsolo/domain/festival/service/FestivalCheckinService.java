@@ -136,6 +136,18 @@ public class FestivalCheckinService {
     }
 
     /**
+     * 탈퇴 시 활성 체크인을 정리한다.
+     *
+     * <p>{@link #cancelCurrentCheckin}과 달리 활성 체크인이 없어도 예외를 던지지 않는다.
+     * 탈퇴는 어떤 상태에서도 실패하지 않아야 하고 반복 호출이 멱등해야 한다.
+     */
+    @Transactional
+    public void cancelAllOnWithdrawal(Long memberId) {
+        cancelAndPublish(memberId, festivalCheckinRepository.findAllByMemberIdAndStatus(
+                memberId, FestivalCheckinStatus.ACTIVE));
+    }
+
+    /**
      * 취소 UPDATE를 반영하고 matching 도메인이 WAITING pool을 정리할 수 있도록
      * 축제별로 {@link FestivalCheckinCancelledEvent}를 발행한다. 같은 축제로 재체크인하는
      * 경우 취소 UPDATE가 새 ACTIVE INSERT보다 먼저 DB에 반영돼야
