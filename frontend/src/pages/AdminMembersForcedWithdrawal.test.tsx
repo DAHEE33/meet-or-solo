@@ -54,6 +54,25 @@ describe('관리자 강제 탈퇴 UI', () => {
   });
 
   /**
+   * 경고는 backend의 validateWarningStatus가 ACTIVE·PROFILE_REQUIRED·SUSPENDED만 허용한다.
+   * 화면 조건을 그 목록과 맞추지 않으면 누르면 무조건 ADMIN_MEMBER_STATUS_CONFLICT가 나는
+   * 버튼이 노출된다. 익명화된 회원에게는 통보할 대상 자체가 없다.
+   */
+  it.each(['ACTIVE', 'PROFILE_REQUIRED', 'SUSPENDED'] as const)(
+    '%s 회원 상세에는 경고 버튼이 있다',
+    (status) => {
+      expect(detailDialog(status)).toContain('경고');
+    },
+  );
+
+  it.each(['BANNED', 'WITHDRAWN', 'DELETED'] as const)(
+    '%s 회원 상세에는 경고 버튼을 노출하지 않는다',
+    (status) => {
+      expect(detailDialog(status)).not.toContain('경고');
+    },
+  );
+
+  /**
    * 관리자가 영구차단과 강제 탈퇴를 같은 조치로 오해하면 되돌릴 수 없는 처리를 가볍게 누른다.
    * 차이를 dialog 문구로 못 박는다.
    */
