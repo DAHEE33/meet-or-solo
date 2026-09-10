@@ -9,6 +9,7 @@ import {
   handleCancelCheckinDialogKeyDown,
   MatchBody,
   PreferenceGuideDialog,
+  poolEntryErrorMessage,
   readMatchRoomNotice,
   resolveFestivalId,
   submitPoolEntry,
@@ -643,5 +644,63 @@ describe('매칭 신청 전 취향 안내', () => {
     );
     expect(applyButton).toBeDefined();
     expect(applyButton?.props.disabled).toBe(false);
+  });
+});
+
+describe('poolEntryErrorMessage', () => {
+  it('backend가 돌려준 거절 사유를 그대로 전달한다', () => {
+    const error = new ApiClientError(
+      '해당 축제의 유효한 체크인이 필요합니다.',
+      400,
+      'MATCHING_INVALID_REQUEST',
+      undefined,
+    );
+    expect(poolEntryErrorMessage(error)).toBe('해당 축제의 유효한 체크인이 필요합니다.');
+  });
+
+  it('네트워크 오류는 다시 눌러보라고 안내한다', () => {
+    expect(poolEntryErrorMessage(new Error('network'))).toContain('다시 눌러주세요');
+  });
+
+  it('오류가 없으면 아무것도 표시하지 않는다', () => {
+    expect(poolEntryErrorMessage(null)).toBeNull();
+  });
+});
+
+describe('재신청 폼의 신청 실패 안내', () => {
+  it('재신청 흐름에서 신청이 거절되면 폼을 유지한 채 사유를 함께 보여준다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'EXPIRED',
+      isRetryFormOpen: true,
+      error: new ApiClientError(
+        'cooldown 중에는 매칭을 신청할 수 없습니다.',
+        409,
+        'MATCHING_CONFLICT',
+        undefined,
+      ),
+    })));
+
+    expect(text(tree)).toContain('cooldown 중에는 매칭을 신청할 수 없습니다.');
+    // 폼을 오류 화면으로 갈아끼우지 않는다. 사용자는 그대로 다시 누를 수 있어야 한다.
+    expect(text(tree)).toContain('자동 매칭 신청');
+  });
+
+  it('재신청 폼이 아닌 IDLE 화면에는 지난 오류를 끌고 오지 않는다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE', error: new Error('network') })));
+    expect(text(tree)).not.toContain('다시 눌러주세요');
+  });
+});
+
+describe('2명 진행 옵션 문구', () => {
+  /**
+   * 이 옵션은 그룹 구성 단계에서 쓰이지 않는다(`MatchGroupComposer`는 희망 인원 그대로만
+   * 조합한다). "2명만 모여도 매칭된다"고 읽히는 문구는 실제 동작과 어긋난다.
+   */
+  it('2명이 모이면 바로 매칭된다고 읽히지 않게 안내한다', () => {
+    const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE' })));
+
+    expect(text(tree)).toContain('2명만 남아도 계속 진행');
+    expect(text(tree)).toContain('인원이 모인 뒤 일부가 빠져도 2명이면 시작해요');
+    expect(text(tree)).not.toContain('목표 인원이 다 안 모여도 매칭을 시작해요');
   });
 });
