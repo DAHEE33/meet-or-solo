@@ -4,6 +4,7 @@ import com.survey.meetorsolo.domain.admin.safety.repository.AdminSafetyAlertRepo
 import com.survey.meetorsolo.domain.matching.entity.MatchPenaltyEvent;
 import com.survey.meetorsolo.domain.matching.repository.MatchPenaltyEventRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.safety.report.admin.repository.AdminReportRepository;
 import java.math.BigDecimal;
@@ -27,8 +28,12 @@ public class ReportConfirmationService {
     static final int PENALTY_SCORE_DELTA = 5;
     /** 유효 판정 1건당 매너온도 차감량. */
     static final BigDecimal MANNER_TEMPERATURE_DELTA = new BigDecimal("5.00");
-    /** 매너온도 하한. 후기 기능이 없어 상승 경로가 없으므로 무한 하강을 막는다. */
-    static final BigDecimal MANNER_TEMPERATURE_FLOOR = new BigDecimal("20.00");
+    /**
+     * 매너온도 하한. 허용 범위는 {@link MannerTemperaturePolicy}가 단독으로 정의한다.
+     *
+     * <p>여기에 값을 다시 적으면 관리자 수동 조정의 범위와 자동 하강의 하한이 갈라진다.
+     */
+    static final BigDecimal MANNER_TEMPERATURE_FLOOR = MannerTemperaturePolicy.FLOOR;
     /** 관리자 알림을 생성하는 누적 유효 신고 임계. */
     static final int ALERT_THRESHOLD = 3;
     /** 누적 집계 window. */

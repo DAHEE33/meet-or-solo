@@ -57,7 +57,9 @@ WHERE version = '31' AND script = 'V31__add_member_inquiries.sql';
 
 ### 남은 수동 작업
 
-- [ ] 위 `UPDATE` 실행(또는 `flyway repair`). 그 뒤 `V31`은 **동결**이며 어떤 이유로도 수정하지 않는다
+- [x] 위 `UPDATE` 실행(또는 `flyway repair`). **2026-09-10 확인 완료** — 공유 dev DB의
+      `flyway_schema_history`에서 `version='31'`의 checksum이 `-769530868`(= 저장소 파일 기준
+      값)이다. 그 뒤 `V31`은 **동결**이며 어떤 이유로도 수정하지 않는다
 - [ ] 공유 dev DB라면 협업자도 같은 오류를 겪는다. `V31` 파일을 push한 뒤 repair를 함께 안내한다
 
 ## [10-공통 환경 정리] 관광공사 서비스키 환경변수 이름 통일 (`TOURISM_API_KEY`)
@@ -4946,8 +4948,7 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
   추가했다. **회원 API 응답에는 노출하지 않는다** — 회원에게는 "분석 실패"로 충분하고 이 값은
   운영자용이다.
 - `OPENAI_API_KEY`의 앞뒤 공백·줄바꿈을 기동 시 제거하고 경고를 남긴다. Windows에서 편집한
-  `.env`를 서버로 옮기면 값 끝에 `CR`이 남아 `Bearer sk-...
-`가 되고 헤더 자체가 거절되는데,
+  `.env`를 서버로 옮기면 값 끝에 `CR`이 남아 `Bearer sk-...`가 되고 헤더 자체가 거절되는데,
   키를 "제대로 넣었는데 실패하는" 대표 경로다. 키가 비어도 기동은 실패시키지 않는다.
 - 관리자 진단 `GET /api/admin/diagnostics/embedding`을 추가했다. 회원 데이터를 쓰지 않고
   고정 문장으로 왕복만 시켜 `ok`/`reason`/`apiKeyPresent`/`elapsedMs`를 돌려준다. 실패해도
@@ -4972,3 +4973,128 @@ AI 임베딩의 외부 API 전송 동의, 개인정보 고지, 실패 fallback�
 - `infra/`, `.github/` (다른 브랜치와 충돌)
 - dev 서버 `.env`의 실제 key 값 조정 — 저장소 밖 운영 작업이다.
 - 임베딩 재시도·비동기화, 가중치 조정, 매칭 알고리즘 변경
+
+## [10-B] 관리자 매너온도 수동 조정 (docs/19 4.9 · PR A)
+
+상태: Backend/Frontend 구현·자동 테스트 완료. dev 브라우저 수동 검증 대기
+
+브랜치는 `feature/wbs-10-b-admin-manner-temperature-adjust`이며 `dev`(`066256b`)에서 분기했다.
+4.9는 덩치가 커서 3개 PR로 쪼갰고 이번은 그 중 **PR A**다.
+
+| PR | 범위 | 상태 |
+| --- | --- | --- |
+| A | 관리자 온도 수동 조정 | 이번 작업 |
+| B | 후기 작성 기능(`member_reviews`) | 미착수 |
+| C | 온도 반영 공식 + 30도 매칭 제한 | 미착수 |
+
+### 왜 이걸 먼저 했나
+
+`manner_temperature`는 신고 확정으로만 내려가는 **하강 전용 지표**였다. 상승 경로가 코드에
+아예 없어서, 관리자가 신고를 잘못 판정했다는 것을 나중에 알아도 되돌릴 방법이 없었다.
+후기 기능(PR B)은 `member_reviews` 테이블만 `V4`에 있고 코드가 0줄이라 새로 만들어야 하는
+큰 덩어리인데, 복구 경로는 그것을 기다릴 이유가 없다.
+
+### 착수 전에 확정한 것
+
+- **온도 하강폭 `5.00` → `2.00` 변경은 이번 범위가 아니다(PR C).** 현재 값으로는 신고 확정
+  2건에 `26.50`이 되어 30도 아래로 떨어지는데, 관리자 안전 알림 임계는 3건이다. 즉 30도
+  매칭 제한을 지금 도입하면 **관리자 알림보다 자동 제한이 먼저 발동**해 4.3에서 확정한
+  "자동 제한은 회원 status를 바꾸지 않고 관리자 알림까지만" 원칙을 우회한다. 하강폭만 먼저
+  낮추면 제한 없이 제재만 약해지므로 30도 제한과 같은 PR에서 함께 바꾼다.
+- **이미 깎인 회원은 재계산하지 않는다.** 과거 신고 판정 이력을 되짚어 일괄 재계산하면 그
+  사이 관리자가 손댄 값과 충돌한다. 이 수동 조정으로 개별 복구한다.
+
+### 상한을 새로 도입했다
+
+`MannerTemperaturePolicy`를 만들어 허용 범위를 한곳에 뒀다. 하한 `20.00`은
+`ReportConfirmationService`에 있던 값을 옮긴 것이고 **상한 `42.00`은 이번에 새로 생겼다.**
+지금까지는 하강 전용이라 상한이 필요 없었지만, 상승 경로가 생기면 온도가 무한히 올라가
+지표로서 의미를 잃는다. `ReportConfirmationService.MANNER_TEMPERATURE_FLOOR`는 상수를 다시
+적지 않고 policy를 참조한다 — 두 곳에 적으면 자동 하강의 하한과 수동 조정의 범위가 갈라진다.
+
+시작값 `36.50` 기준으로 하한까지 `-16.50`, 상한까지 `+5.50`으로 비대칭인데 의도한 것이다.
+신뢰를 잃는 것은 빠르고 되찾는 것은 느리다. 상한을 더 낮추면 상위 구간에서 후기가 온도에
+아무 영향을 주지 못해 후기를 쓸 이유가 사라진다.
+
+### 목표값을 받는다, 차감량이 아니라
+
+`Member.adjustMannerTemperature(target, floor, ceiling)`은 조정 후 값을 받고 변경 전 값을
+반환한다. 관리자는 "36.5로 되돌린다"를 직관적으로 다루고, 감사 로그에 변경 전후를 함께
+남기므로 delta 방식과 추적력이 같다.
+
+**범위를 벗어난 값은 clamp하지 않고 거절한다.** 자동 하강(`decreaseMannerTemperature`)이
+하한으로 clamp하는 것과 의도적으로 다르다. 자동 경로는 거절할 상대가 없지만, 수동 조정에서
+clamp하면 관리자가 입력한 값과 저장된 값이 조용히 달라져 감사 로그를 읽는 사람이 관리자의
+의도를 알 수 없다.
+
+### 제재와 같은 API로 처리하지 않는다
+
+`POST /api/admin/members/{id}/manner-temperature`를 별도로 뒀다. `/actions`에 넣지 않은 이유는
+제재가 **상태 전이**이고 온도 조정은 상태를 전혀 바꾸지 않기 때문이다. 낙관적 잠금 대상도
+다르다 — 제재는 `expectedStatus`, 온도 조정은 `expectedTemperature`다. 두 관리자가 같은
+상세 화면을 열어 두고 각자 조정하면 나중 요청이 앞 조정을 조용히 덮으므로, 화면에서 본 값을
+함께 보내 다르면 `409 ADMIN_MEMBER_MANNER_TEMPERATURE_CONFLICT`로 거절한다.
+
+**세션을 끊지 않고 안전 알림도 닫지 않는다.** `SUSPEND`/`BAN`은 refresh token을 폐기하고
+WebSocket을 끊지만 온도 조정은 접근 권한을 바꾸지 않는다. 안전 알림을 닫지 않는 이유는 온도를
+올려도 누적 유효 신고 건수는 그대로이기 때문이다 — 알림은 신고 누적에 대한 대응 요구이고,
+온도 복구로 알림이 사라지면 제재 검토가 조용히 취소된다.
+
+### 상태 판정은 허용 목록으로
+
+`ACTIVE`·`PROFILE_REQUIRED`·`SUSPENDED`·`BANNED`만 조정할 수 있다. `BANNED`를 포함한 이유는
+차단 해제 후에도 온도가 그대로면 복구가 의미 없어져, 해제 전에 미리 조정할 수 있어야 하기
+때문이다. 탈퇴·삭제 회원은 익명화됐고 다시 매칭에 들어올 일이 없으므로 제외한다.
+
+**부정 조건(`status !== 'WITHDRAWN'`)으로 쓰지 않았다.** 직전 커밋(`c4c3324`)에서 관리자
+회원 상세의 경고 버튼이 그 형태여서 탈퇴 회원에게 노출되던 것을 고쳤다. 같은 결함을 새로
+만들지 않도록 backend `validateMannerTemperatureStatus`와 frontend
+`MANNER_TEMPERATURE_ADJUSTABLE_STATUSES`를 모두 허용 목록으로 썼고, 상태별 노출 테스트 6건이
+고정한다.
+
+### 감사 로그
+
+`V33`으로 `admin_actions.action_type`에 `MANNER_TEMPERATURE_ADJUST`를 추가했다(`V20`·`V28`과
+같은 CHECK 교체 방식). `MANUAL_PENALTY`와 합치지 않는다 — 그쪽은 `penalty_score`를 올리는
+제재이고 온도 조정은 올리는 쪽이 주 용도인 복구 수단이라, 섞으면 감사 로그에서 "관리자가
+제재했다"와 "관리자가 복구했다"를 구분할 수 없다. `metadata`에 `beforeTemperature`와
+`afterTemperature`를 남긴다.
+
+**제재 이력 목록(`findActions`)에 섞지 않고 조회를 분리했다.** 그쪽은 `action_type`을
+`AdminMemberActionType`으로 변환하는데, 그 enum은 조치 **요청** 타입이다. 온도 조정을 넣으면
+요청할 수 없는 값이 요청 enum에 섞이고, 변환에서 터지면 회원 상세 조회 전체가 실패한다.
+응답에는 `mannerTemperatureAdjustments`를 따로 담고 화면도 구역을 나눠 보여준다 — 값만 보고는
+그것이 자동 하강의 결과인지 누가 손댄 결과인지 알 수 없어 두 관리자가 중복 조정한다.
+
+### Migration 번호
+
+`V33`은 저장소 파일 목록과 **공유 dev DB의 `flyway_schema_history` 양쪽에서** 비어 있음을
+확인하고 잡았다(둘 다 최고 번호가 `V32`). 확인 과정에서 `V31` checksum repair가 이미
+실행되어 있다는 것도 함께 확인했다(위 `[사고 기록]` 절 갱신).
+
+### 테스트
+
+- Backend: `MemberMannerTemperatureAdjustTest` 6건(경계값, clamp하지 않고 거절, scale,
+  자동 하강 경로와 하한 공유), `AdminMemberIntegrationTest`에 7건 추가(감사 로그 전후 값,
+  멱등성, `expectedTemperature` 충돌, 범위 밖 거절, 탈퇴 거절·영구차단 허용, 세션·신고 집계
+  불변, 관리자 계정 거절).
+- Frontend: `AdminMembersMannerTemperature.test.tsx` 14건(상태별 버튼 노출 6건, 이력 렌더,
+  범위 밖 경고와 제출 차단, 세션 성공·이중 제출·실패 유지).
+- 전체 회귀: backend 986건 중 실패 2건(둘 다 `dev` 유래 기존 실패), frontend 640건 전체 통과,
+  `tsc --noEmit`과 production build 통과.
+
+**테스트에서 밟은 함정 2건.**
+
+- `members`를 SQL로 직접 `BANNED`/`WITHDRAWN`으로 바꾸면 `chk_members_banned_previous_status`와
+  `chk_members_withdrawal_snapshot`에 걸린다. 상태 fixture는 SQL이 아니라 실제 서비스 경로
+  (`act(BAN)`, `forceWithdraw`)로 만들어야 한다.
+- 화면 테스트에서 버튼 라벨(`매너온도 조정`)과 이력 구역 제목(`매너온도 조정 이력`)이 앞부분이
+  같다. 문자열 포함만 보면 **버튼이 숨어 있어도 제목 때문에 통과**하므로 닫는 태그까지 붙여
+  (`>매너온도 조정</button>`) 버튼만 집는다.
+
+### 이번 범위에서 제외
+
+- 온도 하강폭 조정과 30도 매칭 제한(PR C)
+- 후기 작성 기능과 `member_reviews`(PR B)
+- 시간 경과에 따른 온도 자동 회복 — 근거가 부족해 PR C에서 별도 판단한다
+- 회원 화면의 매너온도 노출 방식 변경

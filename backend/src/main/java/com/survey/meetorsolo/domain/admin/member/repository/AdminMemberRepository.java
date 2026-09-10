@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.admin.member.repository;
 import com.survey.meetorsolo.domain.admin.member.dto.*;
 import com.survey.meetorsolo.domain.admin.member.service.AdminMemberCursorCodec.Cursor;
 import com.survey.meetorsolo.domain.admin.member.service.AdminMemberFilter;
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
@@ -224,6 +225,83 @@ public class AdminMemberRepository {
     }
 
     public record ExistingAction(long actionId, long targetMemberId, String actionType, String fingerprint) {
+    }
+
+    /**
+     * 관리자 매너온도 수동 조정을 감사 로그에 남긴다({@code action_type = MANNER_TEMPERATURE_ADJUST}).
+     *
+     * <p>{@link #insertAction}과 분리한 이유는 온도 조정이 {@code AdminMemberActionRequest}를
+     * 쓰지 않기 때문이다. 상태를 바꾸지 않으므로 {@code beforeStatus}/{@code afterStatus} 대신
+     * 변경 전후 온도를 metadata에 남긴다.
+     */
+    public long insertMannerTemperatureAction(
+            long adminMemberId,
+            long targetMemberId,
+            AdminMemberMannerTemperatureRequest request,
+            BigDecimal beforeTemperature,
+            BigDecimal afterTemperature,
+            UUID idempotencyKey,
+            String fingerprint,
+            OffsetDateTime now
+    ) {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("adminMemberId", adminMemberId);
+        parameters.put("targetMemberId", targetMemberId);
+        parameters.put("actionType", "MANNER_TEMPERATURE_ADJUST");
+        parameters.put("reasonCode", request.reasonCode().name());
+        parameters.put("reason", normalize(request.reasonNote()));
+        parameters.put("idempotencyKey", idempotencyKey);
+        parameters.put("fingerprint", fingerprint);
+        parameters.put("beforeTemperature", beforeTemperature.toPlainString());
+        parameters.put("afterTemperature", afterTemperature.toPlainString());
+        parameters.put("createdAt", now);
+        Long id = jdbc.queryForObject("""
+                INSERT INTO admin_actions(
+                    admin_member_id, target_member_id, report_id, action_type, reason,
+                    reason_code, idempotency_key, metadata, created_at
+                ) VALUES (
+                    :adminMemberId, :targetMemberId, NULL, :actionType, :reason,
+                    :reasonCode, :idempotencyKey,
+                    jsonb_build_object(
+                        'requestFingerprint', :fingerprint,
+                        'beforeTemperature', CAST(:beforeTemperature AS text),
+                        'afterTemperature', CAST(:afterTemperature AS text)
+                    ), :createdAt
+                ) RETURNING id
+                """, parameters, Long.class);
+        return id == null ? 0L : id;
+    }
+
+    /**
+     * 매너온도 조정 이력을 최신순으로 조회한다.
+     *
+     * <p>{@link #findActions}에 합치지 않는다. 그쪽은 {@code action_type}을
+     * {@code AdminMemberActionType}으로 변환하므로 조치 요청 enum에 없는 값이 들어오면
+     * {@code IllegalArgumentException}으로 상세 조회 전체가 실패한다.
+     */
+    public List<AdminMemberMannerTemperatureHistoryResponse> findMannerTemperatureAdjustments(long memberId) {
+        return jdbc.query("""
+                SELECT id, reason_code, reason,
+                       metadata->>'beforeTemperature' AS before_temperature,
+                       metadata->>'afterTemperature' AS after_temperature,
+                       created_at
+                FROM admin_actions
+                WHERE target_member_id=:memberId AND action_type='MANNER_TEMPERATURE_ADJUST'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 50
+                """, Map.of("memberId", memberId),
+                (rs, rowNum) -> new AdminMemberMannerTemperatureHistoryResponse(
+                        rs.getLong("id"),
+                        decimal(rs, "before_temperature"),
+                        decimal(rs, "after_temperature"),
+                        AdminMemberActionReasonCode.valueOf(rs.getString("reason_code")),
+                        rs.getString("reason"),
+                        dateTime(rs, "created_at")));
+    }
+
+    private static BigDecimal decimal(ResultSet rs, String column) throws SQLException {
+        String value = rs.getString(column);
+        return value == null ? null : new BigDecimal(value);
     }
 
     /**

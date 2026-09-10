@@ -8,10 +8,12 @@ import com.survey.meetorsolo.domain.admin.service.AdminAuthorizationService;
 import com.survey.meetorsolo.domain.safety.report.admin.service.ReportConfirmationService;
 import com.survey.meetorsolo.domain.auth.repository.RefreshTokenRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.domain.member.service.MemberWithdrawalService;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
@@ -206,17 +208,110 @@ public class AdminMemberService {
         return detail(memberId);
     }
 
+    /**
+     * 관리자 매너온도 수동 조정({@code docs/19} 4.9).
+     *
+     * <p><b>{@code act}와 합치지 않는다.</b> 제재는 회원 상태를 바꾸는 상태 전이이고 온도
+     * 조정은 상태를 전혀 바꾸지 않는다. 낙관적 잠금도 {@code expectedStatus}가 아니라
+     * {@code expectedTemperature}로 걸어야 의미가 있다.
+     *
+     * <p><b>세션을 끊지 않는다.</b> {@code SUSPEND}/{@code BAN}은 refresh token을 폐기하고
+     * WebSocket을 끊지만, 온도 조정은 접근 권한을 바꾸지 않으므로 로그인 중인 회원을
+     * 튕겨낼 이유가 없다.
+     *
+     * <p><b>안전 알림을 종료하지 않는다.</b> 온도를 올려도 누적 유효 신고 건수는 그대로이고,
+     * 알림은 신고 누적에 대한 대응 요구다. 온도 복구로 알림이 사라지면 제재 검토가 조용히
+     * 취소된다.
+     */
+    @Transactional
+    public AdminMemberDetailResponse adjustMannerTemperature(
+            long adminMemberId, long memberId, String idempotencyKeyValue,
+            AdminMemberMannerTemperatureRequest request) {
+        var admin = authorization.requireAdmin(adminMemberId);
+        UUID idempotencyKey = idempotencyKey(idempotencyKeyValue);
+        if (request.reasonNote() != null && containsSensitiveLabel(request.reasonNote())) {
+            throw invalid("관리자 사유에는 인증정보나 위치정보를 입력할 수 없습니다.");
+        }
+        adminMembers.lockIdempotencyKey(idempotencyKey);
+
+        Member member = members.findByIdForUpdate(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
+        String fingerprint = mannerTemperatureFingerprint(memberId, request);
+        Optional<AdminMemberRepository.ExistingAction> existing =
+                adminMembers.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            AdminMemberRepository.ExistingAction action = existing.get();
+            if (action.targetMemberId() == memberId
+                    && "MANNER_TEMPERATURE_ADJUST".equals(action.actionType())
+                    && fingerprint.equals(action.fingerprint())) {
+                return detail(memberId);
+            }
+            throw new BusinessException(ErrorCode.ADMIN_ACTION_IDEMPOTENCY_CONFLICT);
+        }
+
+        if (admin.memberId() == memberId || Member.ROLE_ADMIN.equals(member.getRole())) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT,
+                    "관리자 계정은 이 API로 조정할 수 없습니다.");
+        }
+        validateMannerTemperatureStatus(member.getStatus());
+        // 관리자가 화면에서 본 값과 다르면 거절한다. 두 관리자가 같은 회원을 동시에 조정하면
+        // 나중 요청이 앞 조정을 조용히 덮는다.
+        if (member.getMannerTemperature().compareTo(request.expectedTemperature()) != 0) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_MANNER_TEMPERATURE_CONFLICT);
+        }
+
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        BigDecimal before;
+        try {
+            before = member.adjustMannerTemperature(
+                    request.targetTemperature(),
+                    MannerTemperaturePolicy.FLOOR,
+                    MannerTemperaturePolicy.CEILING);
+        } catch (IllegalArgumentException exception) {
+            throw invalid("매너온도는 " + MannerTemperaturePolicy.FLOOR.toPlainString()
+                    + " 이상 " + MannerTemperaturePolicy.CEILING.toPlainString() + " 이하여야 합니다.");
+        }
+        adminMembers.insertMannerTemperatureAction(
+                adminMemberId, memberId, request, before, member.getMannerTemperature(),
+                idempotencyKey, fingerprint, now);
+        members.flush();
+        return detail(memberId);
+    }
+
+    /**
+     * 온도를 조정할 수 있는 상태인지 확인한다.
+     *
+     * <p>허용 목록으로 쓴다. {@code status != 'WITHDRAWN'} 같은 부정 조건으로 쓰면 새 상태가
+     * 추가될 때마다 조용히 새어 나간다({@code validateWarningStatus}와 같은 이유).
+     *
+     * <p>{@code BANNED}도 허용한다. 차단 해제 후에 온도가 그대로면 복구가 의미 없어지므로
+     * 해제 전에 미리 조정할 수 있어야 한다. 탈퇴·삭제 회원은 익명화됐고 다시 매칭에 들어올
+     * 일이 없으므로 제외한다.
+     */
+    private void validateMannerTemperatureStatus(String status) {
+        if (!Member.STATUS_ACTIVE.equals(status)
+                && !Member.STATUS_PROFILE_REQUIRED.equals(status)
+                && !Member.STATUS_SUSPENDED.equals(status)
+                && !Member.STATUS_BANNED.equals(status)) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT);
+        }
+    }
+
+    private String mannerTemperatureFingerprint(
+            long memberId, AdminMemberMannerTemperatureRequest request) {
+        String canonical = memberId + "|MANNER_TEMPERATURE_ADJUST|"
+                + request.targetTemperature().stripTrailingZeros().toPlainString() + "|"
+                + request.expectedTemperature().stripTrailingZeros().toPlainString() + "|"
+                + request.reasonCode() + "|" + normalize(request.reasonNote());
+        return sha256(canonical);
+    }
+
     private String forcedWithdrawalFingerprint(
             long memberId, AdminMemberForcedWithdrawalRequest request) {
         String canonical = memberId + "|FORCED_WITHDRAWAL|" + request.reasonCode() + "|"
                 + normalize(request.reasonNote()) + "|" + request.blocksRejoin() + "|"
                 + request.expectedStatus();
-        try {
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                    MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception exception) {
-            throw new IllegalStateException("요청 fingerprint 생성에 실패했습니다.", exception);
-        }
+        return sha256(canonical);
     }
 
     private AdminMemberRepository.LockedReport lockReport(
@@ -286,7 +381,8 @@ public class AdminMemberService {
                 entity.getSuspendedAt(), member.suspendedUntil(), member.createdAt(),
                 entity.getLastLoginAt(), validReportCount,
                 reportConfirmation.isSafetyReviewRequired(validReportCount),
-                adminMembers.findReports(memberId), adminMembers.findActions(memberId));
+                adminMembers.findReports(memberId), adminMembers.findActions(memberId),
+                adminMembers.findMannerTemperatureAdjustments(memberId));
     }
 
     private AdminMemberFilter filter(String query, String status, String role) {
@@ -327,6 +423,11 @@ public class AdminMemberService {
         String canonical = memberId + "|" + request.action() + "|" + request.reasonCode() + "|"
                 + normalize(request.reasonNote()) + "|" + request.suspensionDuration() + "|"
                 + request.reportId() + "|" + request.expectedStatus();
+        return sha256(canonical);
+    }
+
+    /** 요청 fingerprint. 같은 Idempotency-Key로 다른 내용을 보냈는지 판정하는 데만 쓴다. */
+    private static String sha256(String canonical) {
         try {
             return Base64.getUrlEncoder().withoutPadding().encodeToString(
                     MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));

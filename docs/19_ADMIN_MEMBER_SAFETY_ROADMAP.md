@@ -4,10 +4,12 @@
 
 - 상태: `IN_PROGRESS` — 4.1 관리자 신고 검토 완료, 4.2 관리자 회원 조회·제재 완료,
   4.2 후속 UNSUSPEND 완료, 4.3 신고 누적·안전 자동화 완료(PR #50 dev 병합),
+  4.4 회원 탈퇴·관리자 강제 탈퇴 완료(PR #63·#64 dev 병합, dev 수동 검증 완료),
   4.6 로그아웃 완료(PR #52 dev 병합), 4.10 만남 종료 후 신고 진입점 완료(PR #53 dev 병합),
   4.8 회원 제재 사유·기간 통보 구현 완료(수동 검증 대기),
-  4.5 1:1 문의 센터 구현 완료(수동 검증 대기).
-  남은 항목은 4.4·4.7·4.9
+  4.5 1:1 문의 센터 구현 완료(수동 검증 대기),
+  4.9 관리자 온도 수동 조정(PR A) 구현 완료(수동 검증 대기).
+  **남은 항목은 4.7과 4.9의 PR B·C뿐이다.**
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -643,7 +645,55 @@ query parameter로 넘기지 않은 이유는 URL·access log·브라우저 hist
 Web Push는 이 항목 범위 밖입니다. iOS Safari가 홈화면에 추가한 PWA만 push를
 지원해 축제 현장 사용자 상당수에 도달하지 못하는 문제도 함께 검토해야 합니다.
 
-### 4.9 manner temperature 회복과 매칭 제한 후속 — 미착수
+### 4.9 manner temperature 회복과 매칭 제한 후속 — PR A 완료, PR B·C 미착수
+
+덩치가 커서 3개 PR로 쪼갭니다.
+
+| PR | 범위 | 브랜치 | 상태 |
+| --- | --- | --- | --- |
+| A | 관리자 온도 수동 조정 | `feature/wbs-10-b-admin-manner-temperature-adjust` | **완료**(수동 검증 대기) |
+| B | 후기 작성 기능(`member_reviews`) | `feature/wbs-10-b-member-review` | 미착수 |
+| C | 온도 반영 공식 + 30도 매칭 제한 | `feature/wbs-10-b-manner-temperature-recovery` | 미착수 |
+
+#### PR A에서 확정한 것 (완료)
+
+구현 결과와 판단 근거는 `docs/10_PROGRESS_LOG.md`의
+`[10-B] 관리자 매너온도 수동 조정 (docs/19 4.9 · PR A)`을 따릅니다.
+
+| 항목 | 확정값 |
+| --- | --- |
+| 허용 범위 | `MannerTemperaturePolicy`에 단독 정의. 하한 `20.00`, **상한 `42.00`(신규)** |
+| 입력 방식 | 차감량이 아니라 **목표값**. 범위 밖은 clamp하지 않고 거절 |
+| 낙관적 잠금 | `expectedTemperature`. 제재의 `expectedStatus`와 같은 역할 |
+| API | `POST /api/admin/members/{id}/manner-temperature`. `/actions`와 분리 |
+| 감사 로그 | `action_type = MANNER_TEMPERATURE_ADJUST`(`V33`). `MANUAL_PENALTY`와 합치지 않음 |
+| 조정 가능 상태 | `ACTIVE`·`PROFILE_REQUIRED`·`SUSPENDED`·`BANNED`. **허용 목록으로 판정** |
+| 부수 효과 | 세션을 끊지 않고 안전 알림도 닫지 않는다 |
+
+#### PR C 착수 전 반드시 볼 것 — 현재 숫자로는 30도 제한이 성립하지 않는다
+
+`ReportConfirmationService`의 실제 상수는 시작 `36.50`, 신고 확정 1건당 **`-5.00`**,
+관리자 안전 알림 임계 **3건**입니다. 계산하면 신고 확정 **2건에 `26.50`**으로 이미 30도
+아래입니다. 즉 30도 제한을 지금 도입하면 **관리자 알림보다 자동 제한이 먼저 발동**합니다.
+
+status는 안 바뀌지만 매칭이 막히면 사용자에게는 사실상 정지이므로, 이는 4.3에서 확정한
+"자동 제한은 회원 status를 바꾸지 않고 관리자 알림까지만"을 우회합니다.
+
+**확정: 차감량을 `5.00` → `2.00`으로 낮춘다.** 그러면 30도 아래가 되려면 신고 4건
+(`36.5 - 8 = 28.5`)이 필요해 알림(3건)이 먼저 뜨고 그다음 제한이 걸립니다. 하강폭만 먼저
+낮추면 제한 없이 제재만 약해지므로 **30도 제한과 같은 PR에서 함께** 바꿉니다. 이미 깎인
+회원은 일괄 재계산하지 않고 PR A의 수동 조정으로 개별 복구합니다.
+
+#### PR B 착수 전 정할 것
+
+| 항목 | 권장 |
+| --- | --- |
+| 대상 그룹 | `COMPLETED`만. `CANCELLED`는 실제로 만나지 않았고 노쇼는 penalty 경로가 따로 있다 |
+| 작성 기간 | 14일. 신고와 같은 값이되 `MatchReviewWindowPolicy`로 분리 |
+| 진입점 | `MatchHistoryService`/`MatchHistoryPage` 재사용(4.10이 만든 자리). 새 화면 안 만든다 |
+| 당사자 노출 | **개별 후기를 노출하지 않는다.** 2~4인이라 작성자가 즉시 특정된다 |
+| 자유 입력 | 받지 않는다. 신고의 `detail_encrypted`도 실제로 쓰이지 않는다 |
+| 정지 회원 | 작성 차단. 신고는 권리라 허용했지만 후기는 타인의 지표를 움직이는 활동이다 |
 
 권장 브랜치:
 
@@ -769,20 +819,24 @@ feature/wbs-10-b-admin-report-review          — 완료 (PR #34)
 feature/wbs-10-b-admin-member-sanctions       — 완료 (PR #35)
 feature/wbs-10-b-admin-unsuspend              — 완료 (PR #36)
 feature/wbs-10-b-report-safety-automation     — 완료 (PR #50)
-feature/wbs-10-b-member-withdrawal            — 미착수 (4.4)
-feature/wbs-10-b-inquiry-center               — 미사용 (4.5는 10-a 브랜치에서 구현)
 feature/wbs-10-b-member-sanction-notice       — 완료 (PR #56, 4.8)
 feature/wbs-10-b-token-refresh                — 완료 (PR #57, 프론트엔드 token 갱신)
 feature/wbs-10-b-member-withdrawal            — 완료 (4.4, 본인 탈퇴 + 관리자 강제 탈퇴)
 feature/wbs-10-b-logout                       — 완료 (4.6)
 feature/wbs-10-b-match-report-entry           — 완료 (4.10)
-feature/wbs-10-b-inquiry-center               — 미착수 (4.5)
-feature/wbs-10-b-consent-followup             — 미착수 (4.7)
-feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9, 온도 수동 조정 포함)
+feature/wbs-10-b-inquiry-center               — 미사용 (4.5는 10-a 브랜치에서 구현)
+feature/wbs-10-b-admin-manner-temperature-adjust — 완료 (4.9 PR A, 관리자 온도 수동 조정)
+feature/wbs-10-b-consent-followup             — 진행 중 (4.7)
+feature/wbs-10-b-member-review                — 미착수 (4.9 PR B, 후기 작성)
+feature/wbs-10-b-manner-temperature-recovery  — 미착수 (4.9 PR C, 온도 반영 + 30도 제한)
 ```
 
 4.6 로그아웃이 먼저 끝났으므로 4.4 회원 탈퇴는 `AuthService.revokeSession(memberId)`을 그대로
-재사용했습니다. 남은 항목은 4.5, 4.7, 4.9입니다.
+재사용했습니다. 남은 항목은 4.7과 4.9의 PR B·C입니다.
+
+4.7과 4.9는 건드리는 파일이 겹치지 않아 병렬로 진행합니다. 다만 **두 작업 모두 새 migration을
+만들 수 있으므로 번호를 잡기 전에 공유 dev DB의 `flyway_schema_history`를 확인하고 서로
+알려야 합니다.** `docs/19` 1절 상태줄과 7절 브랜치 목록은 4.9 쪽에서 갱신합니다.
 
 각 브랜치는 `dev`에서 분기하고 작업 완료 후 PR로 `dev`에 병합합니다. 앞 단계 PR이
 병합되기 전에 다음 단계를 같은 작업 트리에 누적하지 않습니다.

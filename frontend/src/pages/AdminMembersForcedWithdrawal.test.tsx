@@ -10,13 +10,14 @@ const detail = (
   memberId: id, nickname: `회원${id}`, profileImageUrl: null, role: 'USER', status,
   penaltyScore: 0, mannerTemperature: 36.5, suspendedAt: null, suspendedUntil: null,
   createdAt: '2026-09-01T09:00:00+09:00', lastLoginAt: null, recentValidReportCount: 0,
-  safetyReviewRequired: false, reports: [], actions: [],
+  safetyReviewRequired: false, reports: [], actions: [], mannerTemperatureAdjustments: [],
 });
 
 const detailDialog = (status: AdminMemberDetail['status']) => renderToStaticMarkup(
   <AdminMemberDetailDialog
     detail={detail(status)} loading={false} error={null}
     onClose={() => undefined} onAction={() => undefined} onForceWithdraw={() => undefined}
+    onAdjustTemperature={() => undefined}
   />,
 );
 
@@ -116,6 +117,7 @@ describe('createAdminMembersSession 강제 탈퇴', () => {
       detail: vi.fn().mockResolvedValue(detail()),
       act: vi.fn(),
       forceWithdraw,
+      adjustMannerTemperature: vi.fn(),
     }, (next) => { state = next; });
     await session.load();
     await session.openDetail(1);
@@ -137,6 +139,7 @@ describe('createAdminMembersSession 강제 탈퇴', () => {
       detail: vi.fn().mockResolvedValue(detail()),
       act: vi.fn(),
       forceWithdraw,
+      adjustMannerTemperature: vi.fn(),
     }, () => undefined);
     await session.load();
     await session.openDetail(1);
@@ -156,7 +159,7 @@ describe('createAdminMembersSession 강제 탈퇴', () => {
       list: vi.fn().mockResolvedValue(page()),
       detail: vi.fn().mockResolvedValue(detail()),
       act: vi.fn(),
-      forceWithdraw: vi.fn().mockRejectedValue(new Error('fail')),
+      forceWithdraw: vi.fn().mockRejectedValue(new Error('fail')), adjustMannerTemperature: vi.fn(),
     }, (next) => { state = next; });
     await session.load();
     await session.openDetail(1);

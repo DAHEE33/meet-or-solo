@@ -429,6 +429,31 @@ public class Member {
         return current.subtract(target);
     }
 
+    /**
+     * 매너온도를 지정한 값으로 바꾸고 변경 전 값을 반환한다(관리자 수동 조정, {@code docs/19} 4.9).
+     *
+     * <p>{@link #decreaseMannerTemperature}와 달리 <b>차감량이 아니라 목표값을 받는다.</b>
+     * 관리자는 "36.5로 되돌린다"를 직관적으로 다루고, 감사 로그에는 어차피 변경 전후 값을
+     * 함께 남기므로 delta 방식과 추적력이 같다.
+     *
+     * <p>범위를 벗어난 값은 clamp하지 않고 거절한다. clamp하면 관리자가 입력한 값과 실제
+     * 저장된 값이 조용히 달라져, 감사 로그를 읽는 사람이 관리자의 의도를 알 수 없다.
+     */
+    public BigDecimal adjustMannerTemperature(BigDecimal target, BigDecimal floor, BigDecimal ceiling) {
+        if (target == null) {
+            throw new IllegalArgumentException("매너온도 목표값이 필요합니다.");
+        }
+        if (floor == null || ceiling == null || floor.compareTo(ceiling) > 0) {
+            throw new IllegalArgumentException("매너온도 허용 범위가 올바르지 않습니다.");
+        }
+        if (target.compareTo(floor) < 0 || target.compareTo(ceiling) > 0) {
+            throw new IllegalArgumentException("매너온도는 허용 범위 안의 값이어야 합니다.");
+        }
+        BigDecimal before = this.mannerTemperature;
+        this.mannerTemperature = target.setScale(before.scale(), java.math.RoundingMode.HALF_UP);
+        return before;
+    }
+
     public boolean restoreExpiredSuspension(OffsetDateTime now) {
         if (!STATUS_SUSPENDED.equals(status) || suspendedUntil == null || suspendedUntil.isAfter(now)) {
             return false;

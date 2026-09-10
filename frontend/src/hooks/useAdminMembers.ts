@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminMembersApi, type AdminMemberActionRequest, type AdminMemberDetail, type AdminMemberFilters, type AdminMemberForcedWithdrawalRequest, type AdminMemberListItem, type AdminMemberPage } from '../api/adminMembers';
+import { adminMembersApi, type AdminMemberActionRequest, type AdminMemberDetail, type AdminMemberFilters, type AdminMemberForcedWithdrawalRequest, type AdminMemberListItem, type AdminMemberMannerTemperatureRequest, type AdminMemberPage } from '../api/adminMembers';
 
 export const EMPTY_ADMIN_MEMBER_FILTERS: AdminMemberFilters = { query: '', status: '', role: 'USER' };
 export type AdminMembersState = {
@@ -8,18 +8,21 @@ export type AdminMembersState = {
   detailLoading: boolean; detailError: Error | null; pendingAction: AdminMemberActionRequest | null;
   /** 강제 탈퇴는 제재와 되돌릴 수 있는지가 달라 pendingAction과 분리해 둔다. */
   pendingWithdrawal: AdminMemberForcedWithdrawalRequest | null;
+  /** 매너온도 조정은 상태를 바꾸지 않아 제재와 낙관적 잠금 대상이 다르다(docs/19 4.9). */
+  pendingTemperature: AdminMemberMannerTemperatureRequest | null;
   submitting: boolean; actionError: Error | null; successMessage: string | null;
 };
 export const INITIAL_ADMIN_MEMBERS_STATE: AdminMembersState = {
   status: 'LOADING', items: [], filters: EMPTY_ADMIN_MEMBER_FILTERS, pageIndex: 0, hasNext: false,
   detail: null, selectedMemberId: null, detailLoading: false, detailError: null, pendingAction: null,
-  pendingWithdrawal: null, submitting: false, actionError: null, successMessage: null,
+  pendingWithdrawal: null, pendingTemperature: null, submitting: false, actionError: null, successMessage: null,
 };
 type Dependencies = {
   list: (filters: AdminMemberFilters, cursor: string | null, size: number, signal: AbortSignal) => Promise<AdminMemberPage>;
   detail: (memberId: number, signal: AbortSignal) => Promise<AdminMemberDetail>;
   act: (memberId: number, request: AdminMemberActionRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
   forceWithdraw: (memberId: number, request: AdminMemberForcedWithdrawalRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
+  adjustMannerTemperature: (memberId: number, request: AdminMemberMannerTemperatureRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
 };
 
 export function createAdminMembersSession(dependencies: Dependencies, onState: (state: AdminMembersState) => void) {
@@ -40,7 +43,7 @@ export function createAdminMembersSession(dependencies: Dependencies, onState: (
   };
   const openDetail = async (memberId: number) => {
     detailController?.abort(); const controller = new AbortController(); detailController = controller; const requestId = ++detailId;
-    publish({ ...state, selectedMemberId: memberId, detail: null, detailLoading: true, detailError: null, pendingAction: null, pendingWithdrawal: null });
+    publish({ ...state, selectedMemberId: memberId, detail: null, detailLoading: true, detailError: null, pendingAction: null, pendingWithdrawal: null, pendingTemperature: null });
     try {
       const detail = await dependencies.detail(memberId, controller.signal);
       if (!stopped && !controller.signal.aborted && requestId === detailId) publish({ ...state, detail, detailLoading: false });
@@ -51,7 +54,7 @@ export function createAdminMembersSession(dependencies: Dependencies, onState: (
     applyFilters: (filters: AdminMemberFilters) => { cursors = [null]; nextCursor = null; publish({ ...state, filters, pageIndex: 0, hasNext: false, detail: null, selectedMemberId: null }); return load(0); },
     next: () => { if (!state.hasNext || !nextCursor) return Promise.resolve(); const index = state.pageIndex + 1; cursors = [...cursors.slice(0, index), nextCursor]; return load(index); },
     previous: () => state.pageIndex > 0 ? load(state.pageIndex - 1) : Promise.resolve(), openDetail,
-    closeDetail: () => { if (!state.submitting) { detailId++; detailController?.abort(); publish({ ...state, detail: null, selectedMemberId: null, pendingAction: null, pendingWithdrawal: null, actionError: null }); } },
+    closeDetail: () => { if (!state.submitting) { detailId++; detailController?.abort(); publish({ ...state, detail: null, selectedMemberId: null, pendingAction: null, pendingWithdrawal: null, pendingTemperature: null, actionError: null }); } },
     requestAction: (request: AdminMemberActionRequest) => publish({ ...state, pendingAction: request, actionError: null }),
     cancelAction: () => { if (!state.submitting) publish({ ...state, pendingAction: null, actionError: null }); },
     submitAction: () => {
@@ -78,6 +81,19 @@ export function createAdminMembersSession(dependencies: Dependencies, onState: (
       }).catch((error: unknown) => { if (stopped || controller.signal.aborted || requestId !== actionId) return false; publish({ ...state, submitting: false, actionError: error instanceof Error ? error : new Error('강제 탈퇴 실패') }); return false; }).finally(() => { if (actionController === controller) actionController = null; if (inFlight === operation) inFlight = null; });
       inFlight = operation; return operation;
     },
+    requestTemperature: (request: AdminMemberMannerTemperatureRequest) => publish({ ...state, pendingTemperature: request, actionError: null }),
+    cancelTemperature: () => { if (!state.submitting) publish({ ...state, pendingTemperature: null, actionError: null }); },
+    submitTemperature: () => {
+      if (inFlight) return inFlight;
+      if (!state.detail || !state.pendingTemperature || stopped) return Promise.resolve(false);
+      const memberId = state.detail.memberId; const request = state.pendingTemperature; const controller = new AbortController(); actionController = controller; const requestId = ++actionId;
+      publish({ ...state, submitting: true, actionError: null });
+      const operation = dependencies.adjustMannerTemperature(memberId, request, crypto.randomUUID(), controller.signal).then((detail) => {
+        if (stopped || controller.signal.aborted || requestId !== actionId) return false;
+        publish({ ...state, detail, items: state.items.map((item) => item.memberId === memberId ? detail : item), pendingTemperature: null, submitting: false, successMessage: '매너온도를 조정했습니다.' }); return true;
+      }).catch((error: unknown) => { if (stopped || controller.signal.aborted || requestId !== actionId) return false; publish({ ...state, submitting: false, actionError: error instanceof Error ? error : new Error('매너온도 조정 실패') }); return false; }).finally(() => { if (actionController === controller) actionController = null; if (inFlight === operation) inFlight = null; });
+      inFlight = operation; return operation;
+    },
     stop: () => { stopped = true; listId++; detailId++; actionId++; listController?.abort(); detailController?.abort(); actionController?.abort(); inFlight = null; },
   };
 }
@@ -93,5 +109,8 @@ export function useAdminMembers() {
     requestWithdrawal: useCallback((request: AdminMemberForcedWithdrawalRequest) => sessionRef.current?.requestWithdrawal(request), []),
     cancelWithdrawal: useCallback(() => sessionRef.current?.cancelWithdrawal(), []),
     submitWithdrawal: useCallback(() => sessionRef.current?.submitWithdrawal() ?? Promise.resolve(false), []),
+    requestTemperature: useCallback((request: AdminMemberMannerTemperatureRequest) => sessionRef.current?.requestTemperature(request), []),
+    cancelTemperature: useCallback(() => sessionRef.current?.cancelTemperature(), []),
+    submitTemperature: useCallback(() => sessionRef.current?.submitTemperature() ?? Promise.resolve(false), []),
   };
 }
