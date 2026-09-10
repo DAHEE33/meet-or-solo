@@ -144,6 +144,7 @@ class MatchingControllerTest {
         when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(20L);
         when(queries.restrictions(20L)).thenReturn(new MatchingRestrictionResponse(
                 0,
+                new java.math.BigDecimal("36.50"),
                 new MatchingRestrictionResponse.CooldownResponse(false, null, null, null, 0),
                 new MatchingRestrictionResponse.CompletionLockResponse(
                         true, "MATCH_VALIDITY", 24L, startsAt, startsAt.plusHours(1), 1_200),

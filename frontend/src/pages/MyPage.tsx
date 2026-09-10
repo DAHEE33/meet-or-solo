@@ -24,6 +24,7 @@ import { bookmarkedContentId, bookmarkedContentTitle } from '../hooks/useContent
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import Spinner from '../components/common/Spinner';
+import MannerTemperatureBadge from '../components/member/MannerTemperatureBadge';
 
 /** 마이페이지 요약에 보여줄 찜 항목 수. 전체는 /mypage/favorites에서 본다. */
 const FAVORITE_PREVIEW_LIMIT = 6;
@@ -222,6 +223,12 @@ export default function MyPage() {
             </span>
           </div>
         </section>
+
+        {/*
+          매너온도(docs/19 4.9). 본인 것만 보여준다 — 다른 회원의 온도는 응답에도 없다.
+          패널티 점수는 표시하지 않는다. 노쇼 쿨타임을 거는 내부 운영 값이다.
+        */}
+        <MannerTemperatureBadge temperature={profile?.mannerTemperature} />
 
         {/* 나의 여행 스타일 */}
         <section className="flex flex-col gap-2">

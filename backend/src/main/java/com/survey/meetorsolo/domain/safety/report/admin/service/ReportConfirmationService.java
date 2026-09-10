@@ -26,8 +26,13 @@ public class ReportConfirmationService {
 
     /** 유효 판정 1건당 penalty score 증가량. NO_SHOW의 +3보다 무겁게 둔다. */
     static final int PENALTY_SCORE_DELTA = 5;
-    /** 유효 판정 1건당 매너온도 차감량. */
-    static final BigDecimal MANNER_TEMPERATURE_DELTA = new BigDecimal("5.00");
+    /**
+     * 유효 판정 1건당 매너온도 차감량. 값은 {@link MannerTemperaturePolicy}가 단독으로 정의한다.
+     *
+     * <p>5.00에서 2.00으로 낮췄다. 이유는 policy의 상수 주석을 따른다 — 예전 값이면 신고 2건에
+     * 30도 아래로 떨어져, 30도 매칭 제한이 관리자 안전 알림(3건)보다 먼저 발동한다.
+     */
+    static final BigDecimal MANNER_TEMPERATURE_DELTA = MannerTemperaturePolicy.REPORT_CONFIRMED_DELTA;
     /**
      * 매너온도 하한. 허용 범위는 {@link MannerTemperaturePolicy}가 단독으로 정의한다.
      *

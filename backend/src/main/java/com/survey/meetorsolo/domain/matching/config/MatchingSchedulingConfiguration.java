@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
                 "'${app.matching.scheduler.enabled:false}' == 'true'"
                 + " || '${app.matching.no-show-scheduler.enabled:false}' == 'true'"
                 + " || '${app.admin.member.suspension-scheduler-enabled:false}' == 'true'"
+                + " || '${app.member.manner-temperature-recovery-scheduler-enabled:false}' == 'true'"
 )
 public class MatchingSchedulingConfiguration {
 }

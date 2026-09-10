@@ -430,6 +430,33 @@ public class Member {
     }
 
     /**
+     * 매너온도를 상한까지만 올리고 실제로 적용된 상승량을 반환한다({@code docs/19} 4.9).
+     *
+     * <p>이미 상한이면 {@code 0.00}을 반환한다. {@link #decreaseMannerTemperature}와 대칭이며
+     * 호출자는 반환값이 0이면 이력을 남기지 않는다 — 아무 일도 일어나지 않은 사건을 기록하면
+     * "완료 보상을 몇 번 받았나"를 셀 수 없다.
+     *
+     * <p>상한을 인자로 받는 이유는 <b>경로마다 상한이 다르기 때문</b>이다. 시간 경과 회복은
+     * 시작값까지만 올리고, 만남 완료 보상은 상한까지 올린다
+     * ({@code MannerTemperaturePolicy.timeRecoveryCeiling}).
+     */
+    public BigDecimal increaseMannerTemperature(BigDecimal amount, BigDecimal ceiling) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("매너온도 상승량은 양수여야 합니다.");
+        }
+        if (ceiling == null) {
+            throw new IllegalArgumentException("매너온도 상한이 필요합니다.");
+        }
+        BigDecimal current = this.mannerTemperature;
+        if (current.compareTo(ceiling) >= 0) {
+            return BigDecimal.ZERO.setScale(current.scale());
+        }
+        BigDecimal target = current.add(amount).min(ceiling);
+        this.mannerTemperature = target;
+        return target.subtract(current);
+    }
+
+    /**
      * 매너온도를 지정한 값으로 바꾸고 변경 전 값을 반환한다(관리자 수동 조정, {@code docs/19} 4.9).
      *
      * <p>{@link #decreaseMannerTemperature}와 달리 <b>차감량이 아니라 목표값을 받는다.</b>

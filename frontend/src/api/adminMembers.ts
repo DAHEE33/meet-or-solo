@@ -1,4 +1,6 @@
 import { apiClient } from './apiClient';
+// 정책 값은 회원 화면과 공유하므로 mannerTemperature 모듈이 단독으로 정의한다.
+export { MANNER_TEMPERATURE_CEILING, MANNER_TEMPERATURE_FLOOR, MANNER_TEMPERATURE_INITIAL } from './mannerTemperature';
 
 export type AdminMemberStatus = 'ACTIVE' | 'PROFILE_REQUIRED' | 'SUSPENDED' | 'BANNED' | 'WITHDRAWN' | 'DELETED';
 export type AdminMemberActionType = 'WARNING' | 'SUSPEND' | 'BAN' | 'UNBAN' | 'UNSUSPEND';
@@ -55,10 +57,6 @@ export type AdminMemberMannerTemperatureRequest = {
   reasonCode: AdminMemberActionReasonCode; reasonNote: string | null;
 };
 
-/** 매너온도 허용 범위. backend MannerTemperaturePolicy와 같은 값이어야 한다. */
-export const MANNER_TEMPERATURE_FLOOR = 20;
-export const MANNER_TEMPERATURE_CEILING = 42;
-export const MANNER_TEMPERATURE_INITIAL = 36.5;
 
 function query(filters: AdminMemberFilters, cursor: string | null, size: number) {
   const value = new URLSearchParams();
