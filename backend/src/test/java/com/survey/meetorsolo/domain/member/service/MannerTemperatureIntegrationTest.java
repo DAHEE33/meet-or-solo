@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.member.service;
 import static com.survey.meetorsolo.domain.matching.fixture.MatchingScenarioFixture.NOW;
 import static org.assertj.core.api.Assertions.*;
 
+import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -61,6 +62,7 @@ class MannerTemperatureIntegrationTest {
     );
 
     @Autowired MannerTemperatureRewardService rewards;
+    @Autowired MatchArrivalService arrivals;
     @Autowired MannerTemperatureRecoveryService recovery;
     @Autowired JdbcTemplate jdbc;
 
@@ -106,6 +108,56 @@ class MannerTemperatureIntegrationTest {
 
         assertThat(temperature(ME)).isEqualByComparingTo(MannerTemperaturePolicy.CEILING);
         assertThat(eventCount(ME, "MATCH_COMPLETED")).isZero();
+    }
+
+    /**
+     * 도착 API에서 보상까지 실제로 이어지는지 확인한다.
+     *
+     * <p>보상 서비스를 직접 부르는 다른 테스트와 목적이 다르다. 여기서 보는 것은
+     * {@code MatchArrivalService}가 {@code MatchCompletedEvent}를 발행하고 AFTER_COMMIT
+     * handler가 그걸 받아 별도 transaction으로 지급하는 <b>연결</b>이다. 이벤트 발행 한 줄이
+     * 빠져도 다른 테스트는 전부 통과하므로 이 경로가 조용히 끊길 수 있다.
+     *
+     * <p>이 테스트 클래스에 {@code @Transactional}을 붙이면 안 된다. 붙이면 테스트 종료 시
+     * 롤백되어 AFTER_COMMIT이 아예 발화하지 않고, 검증하려는 연결이 통째로 사라진다.
+     */
+    @Test
+    void 도착_API로_전원_도착하면_보상까지_이어진다() {
+        insertConfirmedGroup();
+        setTemperature(ME, "34.50");
+        setTemperature(PARTNER, "34.50");
+
+        // 첫 도착만으로는 완료가 아니므로 보상도 없다.
+        arrivals.arrive(ME);
+        assertThat(temperature(ME)).isEqualByComparingTo("34.50");
+        assertThat(eventCount(ME, "MATCH_COMPLETED")).isZero();
+
+        // 마지막 도착에서 그룹이 완료되고 참여자 전원이 보상을 받는다.
+        arrivals.arrive(PARTNER);
+        assertThat(temperature(ME)).isEqualByComparingTo("35.00");
+        assertThat(temperature(PARTNER)).isEqualByComparingTo("35.00");
+        assertThat(eventCount(ME, "MATCH_COMPLETED")).isOne();
+        assertThat(eventCount(PARTNER, "MATCH_COMPLETED")).isOne();
+    }
+
+    /**
+     * 완료 API는 반복 호출되는 것이 정상 흐름이다. 마지막 도착자 외의 회원이 화면을
+     * 새로고침하면 같은 요청이 다시 들어온다.
+     */
+    @Test
+    void 완료_후_도착_API를_다시_불러도_보상이_늘지_않는다() {
+        insertConfirmedGroup();
+        setTemperature(ME, "34.50");
+        setTemperature(PARTNER, "34.50");
+
+        arrivals.arrive(ME);
+        arrivals.arrive(PARTNER);
+        arrivals.arrive(ME);
+        arrivals.arrive(PARTNER);
+
+        assertThat(temperature(ME)).isEqualByComparingTo("35.00");
+        assertThat(eventCount(ME, "MATCH_COMPLETED")).isOne();
+        assertThat(eventCount(PARTNER, "MATCH_COMPLETED")).isOne();
     }
 
     // --- 시간 경과 회복 ---
@@ -211,6 +263,34 @@ class MannerTemperatureIntegrationTest {
                     group_id, member_id, status, allow_minimum_two, created_at, updated_at
                 ) VALUES (?, ?, 'COMPLETED', true, ?, ?), (?, ?, 'COMPLETED', true, ?, ?)
                 """, GROUP_ID, ME, NOW, NOW, GROUP_ID, PARTNER, NOW, NOW);
+    }
+
+    /**
+     * 아직 아무도 도착하지 않은 확정 그룹.
+     *
+     * <p>{@code confirmedAt}을 {@code NOW}로 두면 도착 마감(확정 + 30분) 안이다. 마감이 지나면
+     * {@code MATCHING_ARRIVAL_DEADLINE_EXCEEDED}로 거절되어 완료에 도달하지 못한다.
+     */
+    private void insertConfirmedGroup() {
+        long attemptId = 9_181_002L;
+        long groupId = 9_180_002L;
+        jdbc.update("""
+                INSERT INTO match_attempts(
+                    id, festival_id, target_group_size, status, score, created_by,
+                    started_at, expires_at, created_at, updated_at
+                ) VALUES (?, 9100001, 2, 'CONFIRMED', 80.00, 'SCHEDULER', ?, ?, ?, ?)
+                """, attemptId, NOW, NOW.plusMinutes(2), NOW, NOW);
+        jdbc.update("""
+                INSERT INTO match_groups(
+                    id, attempt_id, festival_id, status, confirmed_member_count,
+                    confirmed_at, created_at, updated_at
+                ) VALUES (?, ?, 9100001, 'CONFIRMED', 2, ?, ?, ?)
+                """, groupId, attemptId, NOW, NOW, NOW);
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES (?, ?, 'JOINED', true, ?, ?), (?, ?, 'JOINED', true, ?, ?)
+                """, groupId, ME, NOW, NOW, groupId, PARTNER, NOW, NOW);
     }
 
     private void insertReportPenalty(long memberId, OffsetDateTime createdAt) {
