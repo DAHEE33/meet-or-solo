@@ -22,6 +22,7 @@ import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
 import com.survey.meetorsolo.domain.safety.report.admin.dto.AdminReportTargetStatus;
 import com.survey.meetorsolo.domain.safety.report.admin.service.AdminReportService;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -109,13 +110,13 @@ class ReportSafetyAutomationIntegrationTest {
     }
 
     @Test
-    void 유효_판정_1건은_penalty_5와_매너온도_5도_차감을_적용하고_cooldown을_만들지_않는다() {
+    void 유효_판정_1건은_penalty와_매너온도_차감을_적용하고_cooldown을_만들지_않는다() {
         long reportId = insertReport(REPORTER_1, GROUP_1, "SAFETY", NOW.minusDays(1));
 
         reports.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.RESOLVED);
 
         assertThat(penaltyScore()).isEqualTo(5);
-        assertThat(mannerTemperature()).isEqualByComparingTo("31.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(1));
         assertThat(cooldownCount()).isZero();
         assertThat(memberStatus()).isEqualTo("ACTIVE");
 
@@ -123,7 +124,8 @@ class ReportSafetyAutomationIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 SELECT concat_ws('|', event_type, score_delta, manner_temperature_delta)
                 FROM match_penalty_events WHERE related_report_id=?
-                """, String.class, reportId)).isEqualTo("REPORT_CONFIRMED|5|-5.00");
+                """, String.class, reportId)).isEqualTo("REPORT_CONFIRMED|5|-"
+                + MannerTemperaturePolicy.REPORT_CONFIRMED_DELTA.toPlainString());
     }
 
     @Test
@@ -133,7 +135,7 @@ class ReportSafetyAutomationIntegrationTest {
         reports.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.REJECTED);
 
         assertThat(penaltyScore()).isZero();
-        assertThat(mannerTemperature()).isEqualByComparingTo("36.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(MannerTemperaturePolicy.INITIAL);
         assertThat(penaltyEventCount(reportId)).isZero();
         assertThat(openAlertCount()).isZero();
     }
@@ -147,7 +149,7 @@ class ReportSafetyAutomationIntegrationTest {
         reports.changeStatus(ADMIN_B, reportId, AdminReportTargetStatus.RESOLVED);
 
         assertThat(penaltyScore()).isEqualTo(5);
-        assertThat(mannerTemperature()).isEqualByComparingTo("31.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(1));
         assertThat(penaltyEventCount(reportId)).isOne();
     }
 
@@ -163,7 +165,7 @@ class ReportSafetyAutomationIntegrationTest {
         assertThat(reportStatus(reportId)).isEqualTo("RESOLVED");
         assertThat(penaltyEventCount(reportId)).isOne();
         assertThat(penaltyScore()).isEqualTo(5);
-        assertThat(mannerTemperature()).isEqualByComparingTo("31.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(1));
     }
 
     @Test
@@ -179,7 +181,7 @@ class ReportSafetyAutomationIntegrationTest {
 
         // penalty와 매너온도는 유효 판정 건마다 적용된다.
         assertThat(penaltyScore()).isEqualTo(15);
-        assertThat(mannerTemperature()).isEqualByComparingTo("21.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(3));
         // 누적 집계는 (reporter, group) distinct이므로 1건이다.
         assertThat(recentValidReportCount()).isEqualTo(1);
         assertThat(openAlertCount()).isZero();
@@ -217,21 +219,32 @@ class ReportSafetyAutomationIntegrationTest {
         assertThat(penaltyEventCount(fourth)).isOne();
     }
 
+    /**
+     * 하한 clamp 검증.
+     *
+     * <p>시작 온도를 하한 바로 위로 옮겨 두고 확인한다. 차감량이 {@code 2.00}으로 낮아져
+     * 시작값에서 하한까지는 신고 9건이 필요한데, {@code uq_reports_reporter_reported_group_reason}
+     * 때문에 (reporter, group, reason) 조합을 그만큼 만들 수 없다. 검증 대상은 "몇 건에
+     * 도달하는가"가 아니라 "하한을 넘지 않는가"이므로 시작점을 옮기는 편이 정확하다.
+     */
     @Test
     void 매너온도는_하한_20도_아래로_내려가지_않는다() {
-        BigDecimal[] expected = {
-                new BigDecimal("31.50"), new BigDecimal("26.50"), new BigDecimal("21.50"),
-                new BigDecimal("20.00"), new BigDecimal("20.00")};
-        long[] reporters = {REPORTER_1, REPORTER_2, REPORTER_3, REPORTER_1, REPORTER_2};
-        long[] groups = {GROUP_1, GROUP_1, GROUP_1, GROUP_2, GROUP_2};
+        BigDecimal justAboveFloor = MannerTemperaturePolicy.FLOOR
+                .add(MannerTemperaturePolicy.REPORT_CONFIRMED_DELTA)
+                .subtract(new BigDecimal("0.50"));
+        jdbc.update("UPDATE members SET manner_temperature=? WHERE id=?", justAboveFloor, REPORTED);
 
-        for (int i = 0; i < expected.length; i++) {
-            long reportId = insertReport(reporters[i], groups[i], "SAFETY", NOW.minusDays(1));
-            reports.changeStatus(ADMIN_A, reportId, AdminReportTargetStatus.RESOLVED);
-            assertThat(mannerTemperature()).isEqualByComparingTo(expected[i]);
-        }
+        long first = insertReport(REPORTER_1, GROUP_1, "SAFETY", NOW.minusDays(1));
+        reports.changeStatus(ADMIN_A, first, AdminReportTargetStatus.RESOLVED);
+        // 21.50 - 2.00 = 19.50이지만 하한 20.00으로 잘린다.
+        assertThat(mannerTemperature()).isEqualByComparingTo(MannerTemperaturePolicy.FLOOR);
 
-        assertThat(penaltyScore()).isEqualTo(25);
+        long second = insertReport(REPORTER_2, GROUP_1, "SAFETY", NOW.minusDays(1));
+        reports.changeStatus(ADMIN_A, second, AdminReportTargetStatus.RESOLVED);
+        assertThat(mannerTemperature()).isEqualByComparingTo(MannerTemperaturePolicy.FLOOR);
+
+        // penalty score는 상한이 없으므로 하한에 도달한 뒤에도 계속 누적된다.
+        assertThat(penaltyScore()).isEqualTo(10);
         // 하한에 도달한 뒤에도 penalty event row는 남고 실제 차감량 0.00을 기록한다.
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM match_penalty_events
@@ -356,22 +369,22 @@ class ReportSafetyAutomationIntegrationTest {
 
         // 접수만으로는 penalty, 매너온도, 알림이 생기지 않는다.
         assertThat(penaltyScore()).isZero();
-        assertThat(mannerTemperature()).isEqualByComparingTo("36.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(MannerTemperaturePolicy.INITIAL);
         assertThat(alertCount()).isZero();
 
         resolveViaApi(first);
         assertThat(penaltyScore()).isEqualTo(5);
-        assertThat(mannerTemperature()).isEqualByComparingTo("31.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(1));
         assertThat(openAlertCount()).isZero();
 
         resolveViaApi(second);
         assertThat(penaltyScore()).isEqualTo(10);
-        assertThat(mannerTemperature()).isEqualByComparingTo("26.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(2));
         assertThat(openAlertCount()).isZero();
 
         resolveViaApi(third);
         assertThat(penaltyScore()).isEqualTo(15);
-        assertThat(mannerTemperature()).isEqualByComparingTo("21.50");
+        assertThat(mannerTemperature()).isEqualByComparingTo(afterConfirmedReports(3));
         assertThat(memberStatus()).isEqualTo("ACTIVE");
         assertThat(cooldownCount()).isZero();
 
@@ -628,6 +641,20 @@ class ReportSafetyAutomationIntegrationTest {
     private int penaltyScore() {
         return jdbc.queryForObject(
                 "SELECT penalty_score FROM members WHERE id=?", Integer.class, REPORTED);
+    }
+
+    /**
+     * 유효 판정 {@code count}건을 받은 뒤의 기대 온도.
+     *
+     * <p>숫자를 하드코딩하지 않는다. 차감량은 30도 매칭 제한과 맞물려 조정되는 정책 값이라
+     * ({@code MannerTemperaturePolicy.REPORT_CONFIRMED_DELTA}) 바뀔 때마다 이 파일의 기대값을
+     * 전부 고쳐야 했다.
+     */
+    private static BigDecimal afterConfirmedReports(int count) {
+        return MannerTemperaturePolicy.INITIAL
+                .subtract(MannerTemperaturePolicy.REPORT_CONFIRMED_DELTA
+                        .multiply(BigDecimal.valueOf(count)))
+                .max(MannerTemperaturePolicy.FLOOR);
     }
 
     private BigDecimal mannerTemperature() {

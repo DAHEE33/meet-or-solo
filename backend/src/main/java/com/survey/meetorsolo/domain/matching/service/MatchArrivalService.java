@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.matching.service;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchEvent;
+import com.survey.meetorsolo.domain.matching.event.MatchCompletedEvent;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroup;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroupMember;
 import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
@@ -89,6 +90,12 @@ public class MatchArrivalService {
         eventPublisher.publishEvent(new MatchingStateChangedEvent(
                 activeMemberIds, completed ? "MATCH_COMPLETED" : "MEMBER_ARRIVED", now
         ));
+        if (completed) {
+            // 매너온도 보상은 AFTER_COMMIT에서 별도 transaction으로 지급한다. 보상 실패가
+            // 완료를 롤백하면 안 되고, 여기서 members까지 잠그면 members -> match_groups 순으로
+            // 잠그는 탈퇴 경로와 교차 deadlock이 생긴다(MannerTemperatureRewardService 참고).
+            eventPublisher.publishEvent(new MatchCompletedEvent(group.getId(), activeMemberIds, now));
+        }
         return groupQueries.snapshot(group.getId(), memberId);
     }
 

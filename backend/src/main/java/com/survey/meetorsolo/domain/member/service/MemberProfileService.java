@@ -131,6 +131,7 @@ public class MemberProfileService {
                 profileFieldCrypto.decrypt(member.getGenderEncrypted()),
                 profileFieldCrypto.decrypt(member.getAgeRangeEncrypted()),
                 member.getStatus(),
+                member.getMannerTemperature(),
                 accessPolicy.sanctionNoticeOf(member),
                 travelStyles.stream()
                         .map(MemberTravelStyle::getStyleCode)

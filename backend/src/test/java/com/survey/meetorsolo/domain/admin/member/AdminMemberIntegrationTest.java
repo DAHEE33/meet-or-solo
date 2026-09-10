@@ -11,6 +11,7 @@ import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
 import com.survey.meetorsolo.domain.member.service.MemberProfileService;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -284,6 +285,123 @@ class AdminMemberIntegrationTest {
 
         assertThat(accessPolicy.findSanctionNotice(USER).contactEmail())
                 .isEqualTo("support@example.test");
+    }
+
+    // --- 매너온도 수동 조정(docs/19 4.9) ---
+
+    @Test
+    void 매너온도_조정은_목표값을_저장하고_감사로그에_변경_전후를_남긴다() {
+        jdbc.update("UPDATE members SET manner_temperature=? WHERE id=?", new BigDecimal("26.50"), USER);
+        var detail = service.adjustMannerTemperature(ADMIN, USER, UUID.randomUUID().toString(),
+                mannerTemperatureRequest("36.50", "26.50"));
+
+        assertThat(detail.mannerTemperature()).isEqualByComparingTo("36.50");
+        assertThat(mannerTemperature(USER)).isEqualByComparingTo("36.50");
+        assertThat(detail.mannerTemperatureAdjustments()).singleElement().satisfies(history -> {
+            assertThat(history.beforeTemperature()).isEqualByComparingTo("26.50");
+            assertThat(history.afterTemperature()).isEqualByComparingTo("36.50");
+            assertThat(history.reasonCode()).isEqualTo(AdminMemberActionReasonCode.ADMIN_CORRECTION);
+        });
+        // 제재 이력 목록에는 섞이지 않는다. actionType enum에 없는 값이라 변환에서 터진다.
+        assertThat(detail.actions()).isEmpty();
+    }
+
+    @Test
+    void 같은_key로_반복_조정하면_한_번만_적용된다() {
+        String key = UUID.randomUUID().toString();
+        var request = mannerTemperatureRequest("30.00", "36.50");
+        service.adjustMannerTemperature(ADMIN, USER, key, request);
+        var repeated = service.adjustMannerTemperature(ADMIN, USER, key, request);
+
+        assertThat(mannerTemperature(USER)).isEqualByComparingTo("30.00");
+        assertThat(repeated.mannerTemperatureAdjustments()).hasSize(1);
+    }
+
+    /**
+     * 두 관리자가 같은 화면을 열어 두고 각자 조정하면 나중 요청이 앞 조정을 조용히 덮는다.
+     * expectedTemperature가 그 경로를 막는지 확인한다.
+     */
+    @Test
+    void 조회_시점과_온도가_달라졌으면_거절한다() {
+        service.adjustMannerTemperature(ADMIN, USER, UUID.randomUUID().toString(),
+                mannerTemperatureRequest("30.00", "36.50"));
+
+        assertThatThrownBy(() -> service.adjustMannerTemperature(ADMIN, USER,
+                UUID.randomUUID().toString(), mannerTemperatureRequest("40.00", "36.50")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_MEMBER_MANNER_TEMPERATURE_CONFLICT));
+        assertThat(mannerTemperature(USER)).isEqualByComparingTo("30.00");
+    }
+
+    @Test
+    void 허용_범위를_벗어난_목표값은_거절한다() {
+        assertThatThrownBy(() -> service.adjustMannerTemperature(ADMIN, USER,
+                UUID.randomUUID().toString(), mannerTemperatureRequest("42.01", "36.50")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_MEMBER_INVALID_REQUEST));
+        assertThat(mannerTemperature(USER)).isEqualByComparingTo("36.50");
+    }
+
+    /**
+     * 상태 판정은 허용 목록으로 한다. 부정 조건으로 쓰면 새 상태가 추가될 때마다 새어 나간다
+     * (탈퇴 회원에게 경고 버튼이 노출되던 것과 같은 결함).
+     */
+    @Test
+    void 탈퇴_회원은_조정할_수_없고_영구차단_회원은_조정할_수_있다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.BAN, AdminMemberStatus.ACTIVE));
+        assertThat(status(USER)).isEqualTo("BANNED");
+        service.adjustMannerTemperature(ADMIN, USER, UUID.randomUUID().toString(),
+                mannerTemperatureRequest("36.50", "36.50"));
+        assertThat(mannerTemperature(USER)).isEqualByComparingTo("36.50");
+
+        service.forceWithdraw(ADMIN, PROFILE_USER, UUID.randomUUID().toString(),
+                new AdminMemberForcedWithdrawalRequest(AdminMemberActionReasonCode.ADMIN_CORRECTION,
+                        null, AdminMemberStatus.PROFILE_REQUIRED, false));
+        assertThat(status(PROFILE_USER)).isEqualTo("WITHDRAWN");
+        assertThatThrownBy(() -> service.adjustMannerTemperature(ADMIN, PROFILE_USER,
+                UUID.randomUUID().toString(), mannerTemperatureRequest("36.50", "36.50")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT));
+    }
+
+    /**
+     * 온도 조정은 접근 권한을 바꾸지 않으므로 세션을 끊지 않는다. SUSPEND/BAN과 다르다.
+     * 안전 알림도 닫지 않는다 — 누적 유효 신고 건수는 그대로이기 때문이다.
+     */
+    @Test
+    void 조정은_세션을_끊지_않고_신고_집계도_바꾸지_않는다() {
+        insertReport("RESOLVED");
+        long before = service.detail(ADMIN, USER).recentValidReportCount();
+
+        service.adjustMannerTemperature(ADMIN, USER, UUID.randomUUID().toString(),
+                mannerTemperatureRequest("40.00", "36.50"));
+
+        assertThat(service.detail(ADMIN, USER).recentValidReportCount()).isEqualTo(before);
+        assertThat(status(USER)).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void 관리자_계정은_이_API로_조정할_수_없다() {
+        assertThatThrownBy(() -> service.adjustMannerTemperature(ADMIN, ADMIN,
+                UUID.randomUUID().toString(), mannerTemperatureRequest("36.50", "36.50")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT));
+    }
+
+    private AdminMemberMannerTemperatureRequest mannerTemperatureRequest(String target, String expected) {
+        return new AdminMemberMannerTemperatureRequest(
+                new BigDecimal(target), new BigDecimal(expected),
+                AdminMemberActionReasonCode.ADMIN_CORRECTION, null);
+    }
+
+    private BigDecimal mannerTemperature(long memberId) {
+        return jdbc.queryForObject(
+                "SELECT manner_temperature FROM members WHERE id=?", BigDecimal.class, memberId);
     }
 
     private AdminMemberActionRequest request(AdminMemberActionType action, AdminMemberStatus expected) {

@@ -19,6 +19,11 @@ export type MemberProfile = {
   gender: Gender | null;
   ageRange: AgeRange | null;
   status: string;
+  /**
+   * 본인의 매너온도(docs/19 4.9). 다른 회원의 온도는 어디에도 내려오지 않는다.
+   * 낮은 온도는 "신고를 받은 적이 있다"를 그대로 드러내기 때문이다.
+   */
+  mannerTemperature: number;
   /** 제재 중일 때만 채워진다. 화면이 활동 UI를 미리 막는 데 쓴다. */
   sanction: SanctionNotice | null;
   travelStyles: TravelStyle[];

@@ -70,6 +70,24 @@ public class AdminMemberController {
                 memberId(accessToken), memberId, idempotencyKey, request));
     }
 
+    /**
+     * 관리자 매너온도 수동 조정({@code docs/19} 4.9).
+     *
+     * <p>제재 조치({@code /actions})와 endpoint를 분리한다. 제재는 회원 상태를 바꾸고
+     * 온도 조정은 상태를 바꾸지 않는다. 매너온도는 신고 확정으로만 내려가는 하강 전용
+     * 지표였으므로 이 endpoint가 유일한 복구 경로다.
+     */
+    @PostMapping("/{memberId}/manner-temperature")
+    public ApiResponse<AdminMemberDetailResponse> adjustMannerTemperature(
+            @CookieValue(name = "access_token", required = false) String accessToken,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable long memberId,
+            @Valid @RequestBody AdminMemberMannerTemperatureRequest request
+    ) {
+        return ApiResponse.success(members.adjustMannerTemperature(
+                memberId(accessToken), memberId, idempotencyKey, request));
+    }
+
     private long memberId(String accessToken) {
         if (accessToken == null || accessToken.isBlank()) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);

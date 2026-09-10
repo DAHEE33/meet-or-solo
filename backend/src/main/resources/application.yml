@@ -88,6 +88,12 @@ app:
     member:
       suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
       suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
+  member:
+    # 시간 경과 매너온도 회복 스케줄러(docs/19 4.9).
+    # 회복 주기(30일)와 상승량은 정책 값이라 설정으로 빼지 않고
+    # MannerTemperaturePolicy에 고정한다. 여기서는 실행 여부와 점검 간격만 다룬다.
+    manner-temperature-recovery-scheduler-enabled: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_ENABLED:false}
+    manner-temperature-recovery-scheduler-fixed-delay: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_FIXED_DELAY:3600000}
   inquiry:
     # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화 스케줄러(docs/29 5.6).
     # 보관 기간 자체는 정책 값이라 설정으로 빼지 않고 InquiryRetentionService.RETENTION_PERIOD에

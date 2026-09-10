@@ -21,6 +21,8 @@ public record AdminMemberDetailResponse(
         /** 누적 유효 신고가 임계에 도달해 이용 제한을 검토해야 하는 회원인지. */
         boolean safetyReviewRequired,
         List<AdminMemberReportHistoryResponse> reports,
-        List<AdminMemberActionHistoryResponse> actions
+        List<AdminMemberActionHistoryResponse> actions,
+        /** 관리자 매너온도 수동 조정 이력. 제재 이력과 성격이 달라 목록을 나눠 둔다(docs/19 4.9). */
+        List<AdminMemberMannerTemperatureHistoryResponse> mannerTemperatureAdjustments
 ) {
 }

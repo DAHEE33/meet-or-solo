@@ -21,6 +21,7 @@ import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingS
 import { formatSeoulDateTime } from '../utils/dateTime';
 import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverClock';
 import { positiveInteger, readNumberFromLocationState } from '../utils/positiveInteger';
+import MannerTemperatureBadge from '../components/member/MannerTemperatureBadge';
 
 function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
   const [remaining, setRemaining] = useState(0);
@@ -261,6 +262,16 @@ export default function MatchingConditionPage() {
           카드가 떠서 "다시 매칭하기"밖에 길이 없는데, 새 매칭 신청이 403으로 막혀 화면에서
           빠져나갈 수 없다. `completionLock.groupId`는 새 pool에 들어가야 비워지기 때문이다.
         */}
+        {/*
+          매너온도는 상태와 무관하게 항상 보여준다. IdleForm 안에 두면 대기·완료 화면에서
+          사라져, 정작 "왜 온도가 올랐지"를 확인하고 싶은 완료 직후에 보이지 않는다.
+          제재 안내 화면에서는 감춘다 — 그 화면의 목적은 제재 사유 전달이다.
+        */}
+        {!sanction.notice && state.restriction && (
+          <div className="flex justify-end">
+            <MannerTemperatureBadge temperature={state.restriction.mannerTemperature} compact />
+          </div>
+        )}
         {sanction.notice ? (
           <AccountRestrictionNotice notice={sanction.notice} />
         ) : (

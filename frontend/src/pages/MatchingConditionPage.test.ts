@@ -65,6 +65,7 @@ describe('checkInNavigationTarget', () => {
 
 const restriction = (active = false): MatchingRestriction => ({
   penaltyScore: 0,
+  mannerTemperature: 36.5,
   serverNow: '2026-07-27T12:00:00+09:00',
   cooldown: {
     active,

@@ -57,7 +57,10 @@ export type MatchProposalActionResponse = {
 };
 
 export type MatchingRestriction = {
+  /** 내부 운영 값이라 화면에 표시하지 않는다. */
   penaltyScore: number;
+  /** 본인의 매너온도(docs/19 4.9). 매칭 화면에 표시한다. */
+  mannerTemperature: number;
   serverNow: string;
   cooldown: {
     active: boolean;
