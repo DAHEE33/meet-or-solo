@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.entity.MemberPreferenceEmbedding;
+import com.survey.meetorsolo.external.openai.EmbeddingFailureReason;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -110,7 +111,7 @@ class MemberPreferenceEmbeddingRepositoryIntegrationTest {
         entityManager.flush();
 
         MemberPreferenceEmbedding embedding = MemberPreferenceEmbedding.create(member, "실패 테스트 텍스트");
-        embedding.markFailed();
+        embedding.markFailed(EmbeddingFailureReason.UNAUTHORIZED.name());
         embeddingRepository.save(embedding);
         entityManager.flush();
         entityManager.clear();
@@ -121,5 +122,7 @@ class MemberPreferenceEmbeddingRepositoryIntegrationTest {
         assertThat(found.getEmbeddingStatus()).isEqualTo("FAILED");
         assertThat(found.getEmbedding()).isNull();
         assertThat(found.getEmbeddingModel()).isNull();
+        // 실패 이유는 DB만 보고 원인을 좁히려고 남긴다.
+        assertThat(found.getEmbeddingErrorReason()).isEqualTo("UNAUTHORIZED");
     }
 }

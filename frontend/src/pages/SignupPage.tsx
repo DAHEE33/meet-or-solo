@@ -19,6 +19,7 @@ import AiConsentSection, {
 } from '../components/consent/AiConsentSection';
 import { SIGNUP_PRIVACY_LABEL, SIGNUP_TERMS_LABEL } from '../components/consent/consentNotice';
 import PreferenceInputSection from '../components/preference/PreferenceInputSection';
+import { preferenceSignupNotice } from '../components/preference/preferenceStatus';
 import {
   EMPTY_PREFERENCE_DRAFT,
   PREFERENCE_TEXT_MAX_LENGTH,
@@ -134,8 +135,9 @@ export default function SignupPage() {
 
     try {
       await agreeAll(['AI_PROCESSING', 'OVERSEAS_TRANSFER']);
-      await preferenceEmbeddingApi.createOrUpdate(preferenceText);
-      return null;
+      const saved = await preferenceEmbeddingApi.createOrUpdate(preferenceText);
+      // 저장은 200이어도 분석은 실패할 수 있다. 가입은 막지 않고 다시 시도할 곳만 알려준다.
+      return preferenceSignupNotice(saved.embeddingStatus);
     } catch {
       return '취향은 저장하지 못했어요. 프로필 수정에서 다시 저장할 수 있어요.';
     }

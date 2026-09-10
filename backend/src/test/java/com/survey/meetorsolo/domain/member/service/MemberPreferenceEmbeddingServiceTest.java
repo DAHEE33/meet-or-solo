@@ -15,6 +15,8 @@ import com.survey.meetorsolo.domain.member.entity.MemberPreferenceEmbedding;
 import com.survey.meetorsolo.domain.member.repository.MemberConsentQueryRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberPreferenceEmbeddingRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
+import com.survey.meetorsolo.external.openai.EmbeddingFailedException;
+import com.survey.meetorsolo.external.openai.EmbeddingFailureReason;
 import com.survey.meetorsolo.external.openai.OpenAiEmbeddingClient;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
@@ -22,6 +24,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -125,6 +128,46 @@ class MemberPreferenceEmbeddingServiceTest {
         MemberPreferenceEmbeddingResponse response = service.createOrUpdate(1L, "텍스트");
 
         assertThat(response.embeddingStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void 실패_이유를_함께_기록한다() {
+        // 상태만 FAILED로 남기면 키 문제인지 아웃바운드 차단인지 DB만 보고는 구분할 수 없다.
+        MemberPreferenceEmbedding saved = failingSave(
+                new EmbeddingFailedException(EmbeddingFailureReason.UNAUTHORIZED));
+
+        assertThat(saved.getEmbeddingStatus()).isEqualTo("FAILED");
+        assertThat(saved.getEmbeddingErrorReason()).isEqualTo("UNAUTHORIZED");
+    }
+
+    @Test
+    void BusinessException이_아닌_예외에도_취향_저장을_되돌리지_않는다() {
+        // 예전에는 BusinessException만 잡아서, 그 밖의 예외가 나면 트랜잭션이 통째로 롤백돼
+        // 방금 저장한 취향 행 자체가 사라졌다. 회원 화면에서는 "입력한 적 없음"으로 되돌아간다.
+        MemberPreferenceEmbedding saved = failingSave(new IllegalArgumentException("헤더 값이 올바르지 않습니다"));
+
+        assertThat(saved.getEmbeddingStatus()).isEqualTo("FAILED");
+        assertThat(saved.getEmbeddingErrorReason()).isEqualTo("UNKNOWN");
+        assertThat(saved.getPreferenceText()).isEqualTo("텍스트");
+    }
+
+    /** 임베딩 호출이 주어진 예외로 실패했을 때 저장된 엔티티를 돌려준다. */
+    private MemberPreferenceEmbedding failingSave(RuntimeException failure) {
+        Member member = Member.createKakaoMember("provider-id", "닉네임", null);
+        when(memberRepository.findById(1L)).thenReturn(Optional.of(member));
+        when(consentRepository.hasAgreedConsent(1L, "AI_PROCESSING")).thenReturn(true);
+        when(consentRepository.hasAgreedConsent(1L, "OVERSEAS_TRANSFER")).thenReturn(true);
+        when(embeddingRepository.findByMemberId(1L)).thenReturn(Optional.empty());
+        when(embeddingRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(openAiEmbeddingClient.embed("텍스트")).thenThrow(failure);
+
+        MemberPreferenceEmbeddingResponse response = service.createOrUpdate(1L, "텍스트");
+        assertThat(response.embeddingStatus()).isEqualTo("FAILED");
+
+        ArgumentCaptor<MemberPreferenceEmbedding> captor =
+                ArgumentCaptor.forClass(MemberPreferenceEmbedding.class);
+        verify(embeddingRepository).save(captor.capture());
+        return captor.getValue();
     }
 
     @Test

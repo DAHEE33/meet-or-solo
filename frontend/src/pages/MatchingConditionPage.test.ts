@@ -508,6 +508,44 @@ describe('정상 완료 card', () => {
     expect(button?.props.disabled).toBe(true);
   });
 
+  it('완료 card에서도 체크인 상태와 취소 버튼을 보여준다', () => {
+    // 완료 card가 IdleForm을 대체하는 동안 체크인 줄이 통째로 사라지면, 체크인이 살아 있어도
+    // 만료 시각을 확인하거나 취소할 방법이 화면에 없다.
+    const onRequestCancelCheckin = vi.fn();
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COMPLETED',
+      completionLock: completionLock(false),
+      completionRemaining: 0,
+      currentCheckin: {
+        checkinId: 1,
+        festivalId: 10,
+        festivalName: '춘천 마임축제',
+        checkedInAt: '2026-07-27T10:00:00+09:00',
+        expiresAt: '2026-07-27T11:00:00+09:00',
+      },
+      onRequestCancelCheckin,
+    })));
+
+    expect(text(tree)).toContain('춘천 마임축제에 체크인됨');
+    expect(text(tree)).toContain('만남이 완료됐어요');
+    const cancelButton = elements(tree).find(
+      (element) => element.type === 'button' && text(element as never) === '체크인 취소',
+    );
+    (cancelButton?.props.onClick as () => void)();
+    expect(onRequestCancelCheckin).toHaveBeenCalledOnce();
+  });
+
+  it('체크인이 없으면 완료 card만 그린다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'COMPLETED',
+      completionLock: completionLock(false),
+      completionRemaining: 0,
+      currentCheckin: null,
+    })));
+    expect(text(tree)).toContain('만남이 완료됐어요');
+    expect(text(tree)).not.toContain('체크인 취소');
+  });
+
   it('제한 종료 후 retry action을 활성화한다', () => {
     const onRetry = vi.fn();
     const tree = renderNode(MatchBody(bodyProps({

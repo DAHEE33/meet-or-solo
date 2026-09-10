@@ -45,6 +45,15 @@ public class MemberPreferenceEmbedding {
     @Column(name = "embedding_status", nullable = false, length = 20)
     private String embeddingStatus;
 
+    /**
+     * 실패 이유({@code EmbeddingFailureReason} 이름). 실패 상태에서만 값이 있다.
+     *
+     * <p>회원 응답에는 내려보내지 않는다. 운영자가 로그 대신 DB에서 원인을 볼 수 있게 남기는
+     * 값이다.
+     */
+    @Column(name = "embedding_error_reason", length = 40)
+    private String embeddingErrorReason;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -67,18 +76,24 @@ public class MemberPreferenceEmbedding {
         this.embedding = null;
         this.embeddingModel = null;
         this.embeddingStatus = STATUS_PENDING;
+        this.embeddingErrorReason = null;
     }
 
     public void markCompleted(float[] embedding, String model) {
         this.embedding = embedding;
         this.embeddingModel = model;
         this.embeddingStatus = STATUS_COMPLETED;
+        this.embeddingErrorReason = null;
     }
 
-    public void markFailed() {
+    /**
+     * 실패로 표시한다. 이유는 나중에 원인을 좁히기 위한 것이라 없어도 상태 전이는 그대로다.
+     */
+    public void markFailed(String errorReason) {
         this.embedding = null;
         this.embeddingModel = null;
         this.embeddingStatus = STATUS_FAILED;
+        this.embeddingErrorReason = errorReason;
     }
 
     @PrePersist
@@ -115,6 +130,10 @@ public class MemberPreferenceEmbedding {
 
     public String getEmbeddingStatus() {
         return embeddingStatus;
+    }
+
+    public String getEmbeddingErrorReason() {
+        return embeddingErrorReason;
     }
 
     public OffsetDateTime getCreatedAt() {

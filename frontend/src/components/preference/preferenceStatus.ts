@@ -154,3 +154,49 @@ export function readPreferenceReturnTo(locationState: unknown): string | null {
   if (!value.startsWith('/') || value.startsWith('//')) return null;
   return value;
 }
+
+/**
+ * 취향 저장 응답을 화면 결과로 바꾼다.
+ *
+ * 저장(POST)은 임베딩 실패와 무관하게 200으로 끝난다. 취향 원문은 저장됐고 분석만 실패한
+ * 상태이기 때문이다. 그래서 응답 코드만 보고 성공 문구를 띄우면, 분석이 실패했는데도
+ * "저장했어요. 이제 더 잘 맞는 사람을 찾을 수 있어요"가 뜨고, 곧바로 매칭 화면에서는
+ * "취향 분석에 실패했어요" 안내가 떠서 두 화면이 서로 다른 말을 한다.
+ *
+ * 판정을 여기 모아서 프로필 수정과 회원가입이 같은 기준을 쓰게 한다.
+ */
+export type PreferenceSaveOutcome = 'ANALYZED' | 'ANALYZING' | 'ANALYSIS_FAILED';
+
+export function preferenceSaveOutcome(status: EmbeddingStatus): PreferenceSaveOutcome {
+  switch (status) {
+    case 'COMPLETED': return 'ANALYZED';
+    case 'FAILED': return 'ANALYSIS_FAILED';
+    default: return 'ANALYZING';
+  }
+}
+
+/** 저장 직후 안내 문구. `failed`면 성공 배너 대신 경고 배너로 그린다. */
+export function preferenceSaveNotice(status: EmbeddingStatus): { failed: boolean; text: string } {
+  switch (preferenceSaveOutcome(status)) {
+    case 'ANALYZED':
+      return { failed: false, text: '저장했어요. 이제 더 잘 맞는 사람을 찾을 수 있어요.' };
+    case 'ANALYZING':
+      return { failed: false, text: '저장했어요. 분석이 끝나면 매칭에 반영돼요.' };
+    default:
+      return {
+        failed: true,
+        text: '취향 글은 저장됐지만 분석에 실패했어요. 잠시 후 다시 분석하면 매칭 정확도가 올라가요.',
+      };
+  }
+}
+
+/**
+ * 회원가입 마지막 단계에서 쓰는 한 줄 안내. 분석 실패는 가입을 막지 않는다.
+ *
+ * 실패해도 가입은 끝내야 하므로 오류가 아니라 안내로 남기고, 다시 시도할 곳을 알려준다.
+ */
+export function preferenceSignupNotice(status: EmbeddingStatus): string | null {
+  return preferenceSaveOutcome(status) === 'ANALYSIS_FAILED'
+    ? '취향은 저장됐지만 분석에 실패했어요. 프로필 수정에서 다시 저장할 수 있어요.'
+    : null;
+}

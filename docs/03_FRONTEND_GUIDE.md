@@ -392,6 +392,29 @@ GPS 반경 확인은 아직 연결하지 않았습니다. 만남 포인트 지�
 Router 완료 notice는 기존처럼 한 번만 소비하고 card 복원은 restriction 응답이
 담당합니다. 자동 테스트는 완료했으며 실제 브라우저 수동 재검증은 남아 있습니다.
 
+### 완료 card 표시 기간
+
+완료 card는 "당일"까지만 보여줍니다. 판정은 `isCompletedCardVisible`
+(`useMatchingSession.ts`) 한 곳에서 합니다.
+
+- `completionLock.active`가 `true`면 항상 표시합니다. 신청이 실제로 막혀 있는
+  동안에는 이유가 화면에 남아야 합니다.
+- 잠금이 풀렸으면 `completionLock.startsAt`과 restriction 응답의 `serverNow`가
+  서울 기준 같은 날일 때만 표시하고, 날이 바뀌면 `IDLE`(신청 화면)로 돌아갑니다.
+
+두 조건을 OR로 묶은 이유는 자정 직전 완료가 몇 분 만에 사라지지 않게 하기
+위해서입니다. 기준 시각은 단말 시계가 아니라 `serverNow`입니다.
+
+이 규칙이 필요한 이유는 backend의 `completionLock.groupId`가 기간 제한 없이
+남기 때문입니다. `findLatestCompletedByMemberId`는 "그 뒤로 새 pool에 들어가지
+않은 최신 완료 group"을 돌려주므로, 새 매칭을 신청하기 전까지 이틀 전 완료가
+계속 첫 화면을 차지했습니다. 재매칭 잠금 자체(1시간)는 바뀌지 않았고 화면
+표시 기간만 정한 규칙입니다. 지난 완료 이력은 `MatchHistoryPage`에서 봅니다.
+
+완료 card가 떠 있는 동안에도 체크인 상태 줄(`CheckinSummaryCard`)을 함께
+보여줍니다. 예전에는 이 줄이 `IdleForm` 안에만 있어 완료 상태에서는 체크인
+만료 시각과 `체크인 취소`가 화면에서 사라졌습니다.
+
 ## 비동기 화면 전환 안정화 후속 범위
 
 matching 완료 기능과 별도로 Frontend 전체의 최초 상태 복원과 화면 전환을

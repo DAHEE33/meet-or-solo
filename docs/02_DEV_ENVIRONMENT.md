@@ -209,6 +209,7 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 | `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
 | `ADMIN_REPORT_CURSOR_HMAC_SECRET` | 관리자 신고 목록 opaque cursor 전용 HMAC-SHA256 서명 키. UTF-8 기준 32바이트 이상 |
 | `SUPPORT_CONTACT_EMAIL` | 제재 안내에 표시하는 고객센터 이메일(`docs/19` 4.8). 비어 있으면 안내에서 문의 문구를 숨긴다. 실제 주소는 저장소에 기록하지 않는다 |
+| `OPENAI_API_KEY` | 취향 전격 분석 임베딩 호출 key. 비어 있으면 기동은 되지만 임베딩이 항상 `API_KEY_MISSING`으로 실패한다. 실제 값은 저장소에 기록하지 않는다 |
 
 예시 값에는 실제 IP, 실제 도메인, 실제 계정, 실제 비밀번호를 넣지 않습니다.
 `SUPPORT_CONTACT_EMAIL`도 같은 이유로 저장소에 실제 주소를 넣지 않습니다. Secret은 아니지만
@@ -217,6 +218,69 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 `ADMIN_REPORT_CURSOR_HMAC_SECRET`은 JWT 서명 키와 다른 난수 Secret을 dev/prod에 각각
 주입하며 실제 값은 repository와 문서에 기록하지 않습니다. 이 키를 회전하면 기존에 발급한
 관리자 신고 목록 cursor는 무효화될 수 있습니다.
+
+## 취향 임베딩 실패 진단
+
+취향 전격 분석(`POST /api/members/me/preference-embedding`)은 실패해도 회원 흐름을 막지
+않습니다. 취향 원문은 저장되고 상태만 `FAILED`가 됩니다. 그래서 "왜 실패했는지"는 화면이
+아니라 아래 세 곳에서 확인합니다.
+
+### 1. 관리자 진단 endpoint
+
+`GET /api/admin/diagnostics/embedding` (관리자 계정 필요)
+
+회원 데이터를 쓰지 않고 고정 문장 하나로 OpenAI 왕복만 시켜봅니다. 실패해도 200이며
+응답에 실패 이유가 담깁니다.
+
+| 필드 | 뜻 |
+| --- | --- |
+| `ok` | 임베딩을 실제로 받아왔는지 |
+| `reason` | 실패 이유(`EmbeddingFailureReason`). 성공이면 `null` |
+| `apiKeyPresent` | API key가 주입돼 있는지. 값 자체는 담지 않는다 |
+| `model` | 호출에 쓴 모델 |
+| `dimensions` | 받아온 벡터 차원. 성공이면 `1536` |
+| `elapsedMs` | 왕복 시간. 타임아웃 판정을 눈으로 확인할 때 쓴다 |
+
+### 2. DB
+
+```sql
+SELECT member_id, embedding_status, embedding_error_reason, embedding_model,
+       (embedding IS NOT NULL) AS has_vector, updated_at
+FROM member_preference_embeddings
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+`embedding_error_reason`은 실패 상태에서만 값이 있습니다(V32). 매칭 점수에 실제로 반영됐는지는
+`match_attempt_members`의 `jaccard_score` / `cosine_score` / `embedding_applied`로 확인하며,
+절차는 `scripts/verify-embedding-score.sql`에 있습니다. dev DB 접속은
+`scripts/start-dev-db-tunnel.ps1`로 터널을 올린 뒤 `localhost:15432`로 합니다.
+
+### 3. backend 로그
+
+```text
+임베딩 생성 실패. memberId=..., reason=..., error=...
+OpenAI Embedding API 실패. reason=..., status=...
+OpenAI Embedding API 실패. reason=..., cause=..., message=...
+```
+
+### 실패 이유별 확인 순서
+
+| reason | 뜻 | 먼저 볼 것 |
+| --- | --- | --- |
+| `API_KEY_MISSING` | key가 주입되지 않음 | 배포 환경변수에 `OPENAI_API_KEY`가 실렸는지 |
+| `UNAUTHORIZED` | 401/403 | key 값 자체, 그리고 호출 IP가 차단되지 않았는지 |
+| `RATE_LIMITED` | 429 | 사용량 한도 |
+| `TIMEOUT` | 응답 지연 | `OPENAI_READ_TIMEOUT`, 서버 네트워크 |
+| `CONNECT_FAILED` | 연결 실패 | DNS, 아웃바운드 차단, TLS |
+| `INVALID_RESPONSE` | 응답 형식·차원 불일치 | 모델 이름(`OPENAI_EMBEDDING_MODEL`) |
+| `UNKNOWN` | 분류되지 않은 예외 | 로그의 `error=` 원문 |
+
+`.env`를 Windows에서 편집해 서버로 옮기면 값 끝에 `CR`이 남아 `Bearer sk-...
+`가 되고
+헤더 자체가 거절됩니다. 키를 "제대로 넣었는데 실패하는" 대표 경로라서 backend가 기동 시
+앞뒤 공백과 줄바꿈을 제거하고 경고를 남깁니다. 키가 비어 있어도 기동은 성공합니다 —
+임베딩 실패가 서비스를 막지 않는다는 원칙 때문입니다.
 
 ## 로컬 실행 순서
 
