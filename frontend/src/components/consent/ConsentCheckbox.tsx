@@ -15,6 +15,13 @@ interface ConsentCheckboxProps {
    */
   documentLabel?: string;
   onOpenDocument?: () => void;
+  /**
+   * 항목 아래에 덧붙이는 한 줄 안내.
+   *
+   * 전문을 보기 전이라 체크가 잠긴 이유를 알려주는 자리다. 잠긴 체크박스만 두면 사용자는
+   * 왜 눌리지 않는지 알 수 없다.
+   */
+  hint?: string;
 }
 
 /**
@@ -31,6 +38,7 @@ export default function ConsentCheckbox({
   onChange,
   documentLabel,
   onOpenDocument,
+  hint,
 }: ConsentCheckboxProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -69,6 +77,11 @@ export default function ConsentCheckbox({
           </button>
         )}
       </div>
+      {hint && (
+        <p role="note" className="pl-[30px] text-[12px] leading-5 text-ink/50">
+          {hint}
+        </p>
+      )}
       {isOpen && (
         <dl className="ml-[30px] flex flex-col gap-1 rounded-xl bg-white px-3 py-2.5">
           {notice.details.map((detail) => (

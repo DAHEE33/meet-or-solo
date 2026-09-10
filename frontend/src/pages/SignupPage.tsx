@@ -71,6 +71,13 @@ export default function SignupPage() {
   const [aiConsent, setAiConsent] = useState<AiConsentDraft>(EMPTY_AI_CONSENT_DRAFT);
   /** 전문을 띄운 문서. 모달이라 열어도 입력한 프로필과 취향이 남는다. */
   const [openDocument, setOpenDocument] = useState<LegalDocumentId | null>(null);
+  /**
+   * 전문을 한 번이라도 연 문서. 열기 전에는 동의 체크를 잠근다.
+   *
+   * 판정 시점을 "닫을 때"가 아니라 "열 때"로 잡았다. 닫는 경로가 `확인했어요`와 `X` 두 개라
+   * 어느 하나가 빠지면 영구히 잠긴 체크박스가 되고, 그건 가입 자체를 막는 버그가 된다.
+   */
+  const [viewedDocuments, setViewedDocuments] = useState<LegalDocumentId[]>([]);
   const [prefDraft, setPrefDraft] = useState<PreferenceDraft>(EMPTY_PREFERENCE_DRAFT);
   /** 프로필은 저장됐는데 취향 저장만 실패한 상태. 가입 자체는 이미 끝났다. */
   const [isProfileSaved, setIsProfileSaved] = useState(false);
@@ -103,6 +110,21 @@ export default function SignupPage() {
       cancelled = true;
     };
   }, [navigate]);
+
+  const openLegalDocument = (id: LegalDocumentId) => {
+    setOpenDocument(id);
+    setViewedDocuments((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  };
+
+  const viewedTerms = viewedDocuments.includes('TERMS');
+  const viewedPrivacy = viewedDocuments.includes('PRIVACY');
+
+  /** 잠긴 이유와 풀렸다는 사실을 같은 자리에서 알린다. 체크를 마치면 안내를 거둔다. */
+  const consentHint = (viewed: boolean, checked: boolean, documentName: string): string | undefined => {
+    if (!viewed) return `${documentName} 전문을 확인하면 동의할 수 있어요.`;
+    if (!checked) return `${documentName}을 확인했어요. 동의에 체크해 주세요.`;
+    return undefined;
+  };
 
   const toggleStyle = (style: TravelStyleCode) => {
     setErrorMessage(null);
@@ -156,6 +178,11 @@ export default function SignupPage() {
     }
     if (!gender || !ageRange || styles.length === 0) {
       setErrorMessage('닉네임, 성별, 연령대, 여행 스타일을 모두 입력해 주세요.');
+      return;
+    }
+    // 체크가 잠긴 상태에서 완료를 누르면 "동의해 주세요"는 막다른 안내가 된다.
+    if (!viewedTerms || !viewedPrivacy) {
+      setErrorMessage('이용약관과 개인정보처리방침 전문을 먼저 확인해 주세요.');
       return;
     }
     if (!agreedTerms || !agreedPrivacy) {
@@ -299,33 +326,37 @@ export default function SignupPage() {
         </section>
 
         {/*
-          필수 동의는 체크 전에 원문을 볼 수 있어야 한다. 요약은 `자세히`로 펼치고 전문은
-          `전문 보기` 모달로 띄운다. 동의 저장 흐름(agreeAll)은 바꾸지 않았다.
+          필수 동의는 전문을 확인한 뒤에만 체크할 수 있다. 요약은 `자세히`로 펼치고 전문은
+          `전문 보기` 모달로 띄우며, 전문을 열기 전에는 체크박스가 잠긴다. 잠금이 풀려도
+          체크는 사용자가 직접 누른다 — `확인했어요`를 동의로 간주하지 않는다.
+          동의 저장 흐름(agreeAll)은 바꾸지 않았다.
         */}
         <section className="flex flex-col gap-4 border-t border-line pt-5">
           <ConsentCheckbox
             id="consent-terms"
             notice={TERMS_NOTICE}
             checked={agreedTerms}
-            disabled={isSaving}
+            disabled={isSaving || !viewedTerms}
             onChange={(checked) => {
               setAgreedTerms(checked);
               setErrorMessage(null);
             }}
             documentLabel="약관 전문 보기"
-            onOpenDocument={() => setOpenDocument('TERMS')}
+            onOpenDocument={() => openLegalDocument('TERMS')}
+            hint={consentHint(viewedTerms, agreedTerms, '이용약관')}
           />
           <ConsentCheckbox
             id="consent-privacy"
             notice={PRIVACY_NOTICE}
             checked={agreedPrivacy}
-            disabled={isSaving}
+            disabled={isSaving || !viewedPrivacy}
             onChange={(checked) => {
               setAgreedPrivacy(checked);
               setErrorMessage(null);
             }}
             documentLabel="처리방침 전문 보기"
-            onOpenDocument={() => setOpenDocument('PRIVACY')}
+            onOpenDocument={() => openLegalDocument('PRIVACY')}
+            hint={consentHint(viewedPrivacy, agreedPrivacy, '개인정보처리방침')}
           />
         </section>
 

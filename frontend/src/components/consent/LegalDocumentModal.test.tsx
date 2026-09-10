@@ -76,4 +76,15 @@ describe('ConsentCheckbox', () => {
     expect(render({ disabled: true })).toContain('disabled=""');
     expect(render()).not.toContain('disabled=""');
   });
+
+  /**
+   * 전문을 보기 전에는 체크가 잠기는데, 잠긴 체크박스만 두면 왜 눌리지 않는지 알 수 없다.
+   * 잠긴 이유를 같은 자리에서 알려야 가입이 막힌 것처럼 보이지 않는다.
+   */
+  it('안내 문구는 넘긴 경우에만 그린다', () => {
+    expect(render()).not.toContain('role="note"');
+    const html = render({ hint: '이용약관 전문을 확인하면 동의할 수 있어요.' });
+    expect(html).toContain('role="note"');
+    expect(html).toContain('이용약관 전문을 확인하면 동의할 수 있어요.');
+  });
 });
