@@ -226,6 +226,30 @@ jdbc:postgresql://postgres:5432/meet_or_solo_dev
 - `proxy_http_version 1.1`, `Upgrade`, `Connection` header를 전달합니다.
 - HTTPS, Certbot, 실제 domain 설정은 이번 단계에서 하지 않습니다.
 
+### 호스트 nginx(TLS) 설정
+
+compose nginx는 TLS를 처리하지 않고 host `18080`에만 붙습니다. dev 도메인으로 접속하려면 Oracle VM에 직접 설치한 nginx가 인증서를 끊고 `127.0.0.1:18080`으로 넘겨야 합니다.
+
+`infra/nginx/host-https.dev.conf.example`이 그 예시입니다.
+
+기준:
+
+- `/ws`를 `location /`보다 먼저 선언하고 `Upgrade`, `Connection` header를 전달합니다.
+- `/ws` location이 없으면 요청이 `location /`로 떨어져 WebSocket handshake가 400으로 끊깁니다.
+- STOMP 유휴 연결이 끊기지 않도록 `proxy_read_timeout`을 기본값보다 크게 둡니다.
+- `CORS_ALLOWED_ORIGINS`에 브라우저가 실제로 여는 origin(`https://<DEV_DOMAIN>`)을 포함합니다. 이 값은 REST CORS와 WebSocket handshake origin 검사에 함께 쓰입니다.
+- 실제 도메인, IP, 인증서 경로는 저장소에 커밋하지 않고 서버에서 치환합니다.
+
+적용 후 아래로 확인합니다.
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -i -o /dev/null -w '%{http_code}
+'   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='   -H 'Origin: https://<DEV_DOMAIN>' https://<DEV_DOMAIN>/ws
+```
+
+`101`이면 정상입니다. `400`이면 Upgrade header가 전달되지 않은 것이고, `403`이면 `CORS_ALLOWED_ORIGINS`에 해당 origin이 없는 것입니다.
+
 ### dev 서버 환경변수 예시
 
 `infra/env/.env.dev.example`은 커밋 가능한 예시 파일입니다. 실제 서버 `.env`는 Oracle VM에서 서버 관리자가 직접 생성하고 repository에 커밋하지 않습니다.

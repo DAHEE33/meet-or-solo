@@ -94,6 +94,20 @@ export function submitPoolEntry(
     : enterPool(festivalId, preferredGroupSize, allowMinimumTwo);
 }
 
+/**
+ * 재신청 흐름에서 pool entry가 거절됐을 때 폼 위에 띄울 한 줄을 만든다.
+ *
+ * 이 흐름은 화면 상태를 `ERROR`로 바꾸지 않고 폼을 열어 둔 채 error만 담기 때문에
+ * (`stateAfterPoolEntryFailure`), 이 문구가 없으면 버튼이 먹통인 것으로 보인다.
+ * 폼은 그대로 두고 다시 누를 수 있게 하는 것이 목적이라 전용 오류 화면으로 전환하지 않는다.
+ */
+export function poolEntryErrorMessage(error: ApiClientError | Error | null): string | null {
+  if (error === null) return null;
+  return error instanceof ApiClientError
+    ? error.message
+    : '신청을 보내지 못했어요. 잠시 후 다시 눌러주세요.';
+}
+
 export function readMatchRoomNotice(locationState: unknown): string | null {
   return locationState
     && typeof locationState === 'object'
@@ -132,7 +146,12 @@ export default function MatchingConditionPage() {
     cancelSearch,
     serverOffsetMs,
   } = useMatchingSession();
-  const { state: checkinState, cancel: cancelCheckin, isCancelling: isCancellingCheckin } = useCurrentCheckin();
+  const {
+    state: checkinState,
+    refresh: refreshCheckin,
+    cancel: cancelCheckin,
+    isCancelling: isCancellingCheckin,
+  } = useCurrentCheckin();
   const sanction = useMemberSanction();
   const currentCheckin = checkinState.status === 'loaded' ? checkinState.checkin : null;
   const [isCancelCheckinDialogOpen, setIsCancelCheckinDialogOpen] = useState(false);
@@ -229,6 +248,10 @@ export default function MatchingConditionPage() {
   };
   const onRetry = () => {
     setMatchRoomNotice(null);
+    // 재신청 화면으로 돌아가기 전에 체크인을 다시 읽는다. mount 이후 체크인이 만료됐거나 다른
+    // 축제로 바뀌었으면 festivalId가 어긋나 "자동 매칭 신청"이 눌리지 않거나 backend에서
+    // 거절된다.
+    void refreshCheckin();
     beginRetry();
   };
   const onRequestCancelCheckin = () => {
@@ -440,6 +463,7 @@ export function MatchBody(props: MatchBodyProps) {
         hasFestival={props.hasFestival}
         currentCheckin={props.currentCheckin}
         canApply={props.canApply}
+        entryErrorMessage={retryableTerminal ? poolEntryErrorMessage(props.error) : null}
         setGroupSize={props.setGroupSize}
         setAllowMinimum={props.setAllowMinimum}
         onStart={props.onStart}
@@ -620,6 +644,7 @@ function IdleForm({
   hasFestival,
   currentCheckin,
   canApply,
+  entryErrorMessage,
   setGroupSize,
   setAllowMinimum,
   onStart,
@@ -631,6 +656,7 @@ function IdleForm({
   hasFestival: boolean;
   currentCheckin: CurrentCheckinResponse | null;
   canApply: boolean;
+  entryErrorMessage: string | null;
   setGroupSize: (size: 2 | 3 | 4) => void;
   setAllowMinimum: (allow: boolean) => void;
   onStart: () => void;
@@ -671,25 +697,44 @@ function IdleForm({
           ))}
         </div>
       </section>
-      <section className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      {/*
+        이 옵션은 "2명만 모이면 바로 매칭"이 아니다. 목표 인원이 모여 제안이 나간 뒤 일부가
+        빠졌을 때 남은 2명으로 계속할지, 확정된 그룹이 2명으로 줄었을 때 유지할지를 정한다
+        (docs/05_MATCHING_POLICY.md 219행·384행). 그룹 구성 자체는 항상 희망 인원 그대로다.
+      */}
+      <section className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[14px] font-semibold text-ink">2명만 모여도 진행</span>
-          <span className="text-[12px] text-ink/50">목표 인원이 다 안 모여도 매칭을 시작해요</span>
+          <span className="text-[14px] font-semibold text-ink">2명만 남아도 계속 진행</span>
+          <span className="text-[12px] leading-relaxed text-ink/50">
+            인원이 모인 뒤 일부가 빠져도 2명이면 시작해요
+          </span>
         </div>
         <button
           type="button"
           role="switch"
           aria-checked={allowMinimum}
           onClick={() => setAllowMinimum(!allowMinimum)}
-          className={`h-7 w-12 shrink-0 rounded-full transition-colors ${allowMinimum ? 'bg-coral' : 'bg-line'}`}
+          className={`flex h-7 w-12 shrink-0 items-center self-center rounded-full px-1 transition-colors ${
+            allowMinimum ? 'bg-coral' : 'bg-line'
+          }`}
         >
           <span
-            className={`block h-5 w-5 translate-y-1 rounded-full bg-white transition-transform ${
-              allowMinimum ? 'translate-x-6' : 'translate-x-1'
+            className={`block h-5 w-5 rounded-full bg-white transition-transform ${
+              allowMinimum ? 'translate-x-5' : 'translate-x-0'
             }`}
           />
         </button>
       </section>
+      {/*
+        재신청 흐름에서 신청이 거절되면 화면 상태는 그대로 두고 error만 담긴다
+        (`stateAfterPoolEntryFailure`). 이 한 줄이 없으면 버튼을 눌러도 아무 일도 일어나지 않는
+        것으로 보인다.
+      */}
+      {entryErrorMessage && (
+        <p role="status" className="rounded-2xl bg-coral/10 px-4 py-3 text-[13px] font-semibold text-coral">
+          {entryErrorMessage}
+        </p>
+      )}
       <PrimaryButton disabled={!canApply} onClick={onStart}>
         자동 매칭 신청
       </PrimaryButton>
