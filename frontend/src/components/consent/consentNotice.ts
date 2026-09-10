@@ -50,3 +50,41 @@ export const AI_CONSENT_FOOTNOTE =
 
 export const SIGNUP_TERMS_LABEL = '이용약관에 동의합니다. (필수)';
 export const SIGNUP_PRIVACY_LABEL = '개인정보 수집·이용에 동의합니다. (필수)';
+
+/**
+ * 가입 시 필수 동의 2종의 요약.
+ *
+ * 요약만으로는 동의 근거가 되지 않으므로 체크박스 옆의 `전문 보기`가 `legalDocuments.ts`의
+ * 원문을 함께 띄운다. 요약과 원문의 내용이 어긋나면 원문이 기준이다.
+ */
+export const TERMS_NOTICE: ConsentItemNotice = {
+  title: SIGNUP_TERMS_LABEL,
+  summary: '서비스 이용 규칙과 오프라인 만남에서의 책임 범위를 정한 약관이에요.',
+  details: [
+    { label: '주요 내용', value: '체크인·동행 매칭 이용 규칙, 금지 행위, 신고와 제재 절차' },
+    {
+      label: '꼭 볼 조항',
+      value: '제8조 — 서비스는 만남의 당사자가 아니고 상대 회원의 신원을 보증하지 않아요.',
+    },
+    { label: '탈퇴', value: '언제든 탈퇴할 수 있고, 탈퇴 후 7일간은 다시 가입할 수 없어요.' },
+    { label: '동의하지 않으면', value: '회원가입을 완료할 수 없어요. 필수 동의예요.' },
+  ],
+};
+
+export const PRIVACY_NOTICE: ConsentItemNotice = {
+  title: SIGNUP_PRIVACY_LABEL,
+  summary: '가입과 매칭에 필요한 정보만 모으고, 위치 좌표는 저장하지 않아요.',
+  details: [
+    {
+      label: '수집 항목',
+      value: '닉네임, 이메일, 성별, 연령대, 여행 스타일, 프로필 사진(선택)',
+    },
+    { label: '이용 목적', value: '회원 식별, 축제 체크인 확인, 동행 매칭, 신고·제재 처리' },
+    {
+      label: '위치 정보',
+      value: '체크인할 때 좌표로 축제까지의 거리만 계산하고 좌표는 저장하지 않아요.',
+    },
+    { label: '보관 기간', value: '탈퇴할 때까지. 탈퇴하면 프로필과 취향 정보는 삭제돼요.' },
+    { label: '동의하지 않으면', value: '회원가입을 완료할 수 없어요. 필수 동의예요.' },
+  ],
+};

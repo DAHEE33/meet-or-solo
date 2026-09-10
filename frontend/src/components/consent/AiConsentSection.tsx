@@ -1,9 +1,8 @@
-import { useState } from 'react';
+import ConsentCheckbox from './ConsentCheckbox';
 import {
   AI_CONSENT_FOOTNOTE,
   AI_PROCESSING_NOTICE,
   OVERSEAS_TRANSFER_NOTICE,
-  type ConsentItemNotice,
 } from './consentNotice';
 
 export interface AiConsentDraft {
@@ -58,55 +57,6 @@ export default function AiConsentSection({
         onChange={(checked) => onChange({ ...value, overseasTransfer: checked })}
       />
       <p className="text-[12px] leading-5 text-ink/45">{AI_CONSENT_FOOTNOTE}</p>
-    </div>
-  );
-}
-
-interface ConsentCheckboxProps {
-  id: string;
-  notice: ConsentItemNotice;
-  checked: boolean;
-  disabled: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-function ConsentCheckbox({ id, notice, checked, disabled, onChange }: ConsentCheckboxProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-start gap-2.5">
-        <input
-          id={id}
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-          className="mt-0.5 h-5 w-5 shrink-0 accent-coral disabled:opacity-50"
-        />
-        <label htmlFor={id} className="flex flex-col gap-0.5">
-          <span className="text-[14px] font-semibold text-ink">{notice.title}</span>
-          <span className="text-[12px] leading-5 text-ink/50">{notice.summary}</span>
-        </label>
-      </div>
-      <button
-        type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
-        aria-expanded={isOpen}
-        className="self-start pl-[30px] text-[12px] text-ink/40 underline active:text-coral"
-      >
-        {isOpen ? '접기' : '자세히'}
-      </button>
-      {isOpen && (
-        <dl className="ml-[30px] flex flex-col gap-1 rounded-xl bg-white px-3 py-2.5">
-          {notice.details.map((detail) => (
-            <div key={detail.label} className="flex gap-2 text-[12px] leading-5">
-              <dt className="w-[92px] shrink-0 font-semibold text-ink/60">{detail.label}</dt>
-              <dd className="flex-1 text-ink/60">{detail.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
     </div>
   );
 }

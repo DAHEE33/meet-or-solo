@@ -17,7 +17,10 @@ import AiConsentSection, {
   isAiConsentComplete,
   type AiConsentDraft,
 } from '../components/consent/AiConsentSection';
-import { SIGNUP_PRIVACY_LABEL, SIGNUP_TERMS_LABEL } from '../components/consent/consentNotice';
+import ConsentCheckbox from '../components/consent/ConsentCheckbox';
+import LegalDocumentModal from '../components/consent/LegalDocumentModal';
+import { PRIVACY_NOTICE, TERMS_NOTICE } from '../components/consent/consentNotice';
+import { legalDocument, type LegalDocumentId } from '../components/consent/legalDocuments';
 import PreferenceInputSection from '../components/preference/PreferenceInputSection';
 import { preferenceSignupNotice } from '../components/preference/preferenceStatus';
 import {
@@ -66,6 +69,8 @@ export default function SignupPage() {
   const [agreedTerms, setAgreedTerms] = useState(false);
   const [agreedPrivacy, setAgreedPrivacy] = useState(false);
   const [aiConsent, setAiConsent] = useState<AiConsentDraft>(EMPTY_AI_CONSENT_DRAFT);
+  /** 전문을 띄운 문서. 모달이라 열어도 입력한 프로필과 취향이 남는다. */
+  const [openDocument, setOpenDocument] = useState<LegalDocumentId | null>(null);
   const [prefDraft, setPrefDraft] = useState<PreferenceDraft>(EMPTY_PREFERENCE_DRAFT);
   /** 프로필은 저장됐는데 취향 저장만 실패한 상태. 가입 자체는 이미 끝났다. */
   const [isProfileSaved, setIsProfileSaved] = useState(false);
@@ -293,33 +298,35 @@ export default function SignupPage() {
           )}
         </section>
 
-        <section className="flex flex-col gap-2.5 border-t border-line pt-5">
-          <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
-              checked={agreedTerms}
-              disabled={isSaving}
-              onChange={(e) => {
-                setAgreedTerms(e.target.checked);
-                setErrorMessage(null);
-              }}
-              className="mt-0.5 h-5 w-5 shrink-0 accent-coral disabled:opacity-50"
-            />
-            <span className="text-[14px] text-ink">{SIGNUP_TERMS_LABEL}</span>
-          </label>
-          <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
-              checked={agreedPrivacy}
-              disabled={isSaving}
-              onChange={(e) => {
-                setAgreedPrivacy(e.target.checked);
-                setErrorMessage(null);
-              }}
-              className="mt-0.5 h-5 w-5 shrink-0 accent-coral disabled:opacity-50"
-            />
-            <span className="text-[14px] text-ink">{SIGNUP_PRIVACY_LABEL}</span>
-          </label>
+        {/*
+          필수 동의는 체크 전에 원문을 볼 수 있어야 한다. 요약은 `자세히`로 펼치고 전문은
+          `전문 보기` 모달로 띄운다. 동의 저장 흐름(agreeAll)은 바꾸지 않았다.
+        */}
+        <section className="flex flex-col gap-4 border-t border-line pt-5">
+          <ConsentCheckbox
+            id="consent-terms"
+            notice={TERMS_NOTICE}
+            checked={agreedTerms}
+            disabled={isSaving}
+            onChange={(checked) => {
+              setAgreedTerms(checked);
+              setErrorMessage(null);
+            }}
+            documentLabel="약관 전문 보기"
+            onOpenDocument={() => setOpenDocument('TERMS')}
+          />
+          <ConsentCheckbox
+            id="consent-privacy"
+            notice={PRIVACY_NOTICE}
+            checked={agreedPrivacy}
+            disabled={isSaving}
+            onChange={(checked) => {
+              setAgreedPrivacy(checked);
+              setErrorMessage(null);
+            }}
+            documentLabel="처리방침 전문 보기"
+            onOpenDocument={() => setOpenDocument('PRIVACY')}
+          />
         </section>
 
         {errorMessage && (
@@ -346,6 +353,13 @@ export default function SignupPage() {
           </>
         )}
       </main>
+
+      {openDocument && (
+        <LegalDocumentModal
+          document={legalDocument(openDocument)}
+          onClose={() => setOpenDocument(null)}
+        />
+      )}
     </MobileLayout>
   );
 }

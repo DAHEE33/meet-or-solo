@@ -1,5 +1,77 @@
 # 진행 상태 기록
 
+## [10-B 동의] 가입 필수 동의 2종의 원문 노출 (docs/19 4.7.1)
+
+상태: Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
+
+배경은 한 줄이다. **동의 체크박스에 볼 것이 없었다.**
+
+`AiConsentSection`의 AI 관련 동의 2종은 체크박스마다 `자세히`가 있어 목적·수집 항목·보관
+기간·거부 시 불이익이 펼쳐진다. 그런데 정작 법정 필수 동의인 이용약관과 개인정보 수집·이용은
+`SignupPage`에 맨몸 체크박스 두 개로 있었고 라벨 한 줄이 전부였다. 저장소 어디에도 약관
+원문이 없었다(프론트 전체에서 관련 텍스트는 체크박스 라벨 2줄과 `LoginPage`의 안내 1줄).
+
+### 이번에 만든 것
+
+- `components/consent/legalDocuments.ts` — 이용약관 15개 조, 개인정보처리방침 14개 절 원문.
+  `termsDocument()` / `privacyDocument()`가 문의처 이메일을 채워 문서를 만든다.
+- `components/consent/LegalDocumentModal.tsx` — 전문 모달. 헤더·푸터는 고정하고 본문만
+  스크롤한다.
+- `components/consent/ConsentCheckbox.tsx` — `AiConsentSection` 안에 있던 내부 컴포넌트를
+  파일로 분리했다. `documentLabel`·`onOpenDocument`를 넘기면 `전문 보기` 버튼이 붙는다.
+  마크업은 옮기기 전과 같아서 AI 동의 화면은 동작이 바뀌지 않는다.
+- `consentNotice.ts`에 `TERMS_NOTICE`·`PRIVACY_NOTICE` 요약 추가.
+
+### 확정한 것
+
+- **페이지 이동이 아니라 모달이다.** 약관을 여는 곳은 가입 마지막 단계이고 그 화면에는
+  닉네임·성별·연령대·여행 스타일·취향 글이 이미 입력돼 있다. `/terms` 같은 페이지로 보내면
+  그 입력이 전부 사라진다. 새 탭도 PWA에서 뒤로가기 흐름이 어긋난다.
+- **동의 저장 흐름은 건드리지 않았다.** `agreeAll(SIGNUP_CONSENT_TYPES)` 호출과 체크 상태
+  판정, 저장 순서 모두 그대로다. 보기 버튼만 늘었다.
+- **원문은 구현에서 뽑았다.** 없는 기능을 약속하지 않았고(자유 대화 없음을 약관에 명시),
+  하는 일을 빠뜨리지도 않았다. 체크인이 좌표를 전송받아 거리만 계산하고 좌표를 저장하지
+  않는다는 사실(`festival_checkins`에 `distance_meters`만 있다)을 처리방침에 그대로 적었다.
+  탈퇴 시 삭제 항목과 보관 항목의 구분도 `Member.withdraw()`가 비우는 컬럼 목록과 맞췄다.
+- **문서 버전은 서버 동의 기록과 묶는다.** `LEGAL_DOCUMENT_VERSION = '1.0'`이
+  `MemberConsentType.TERMS/PRIVACY.currentVersion()`과 같아야 한다. 한쪽만 올리면 "무엇에
+  동의했는지"를 나중에 특정할 수 없다. 테스트가 이 값을 고정한다.
+- **문의처가 비면 소리 없이 지우지 않는다.** `VITE_SUPPORT_CONTACT_EMAIL`이 없으면 문구
+  자리에 설정되지 않았다는 사실을 그대로 남긴다. 제재 안내에서 환경변수 누락이 문의 문구를
+  조용히 없앴던 경로와 같은 실수를 막기 위한 것이다.
+
+### 하지 않기로 한 것
+
+- **동의 조회 API 확장.** `GET /api/members/me/consents`를 4종으로 넓히는 안은 보류했다.
+  프론트 소비처가 `hasAllAiConsents` 하나뿐이고 그것은 AI 2종만 보므로 **읽는 곳이 없다.**
+  값이 생기는 시점은 마이페이지 동의 내역 화면이 생길 때다. 근거는 `docs/19` 4.7.2.
+- 백엔드 변경, 신규 migration, 재동의 강제. 재동의는 조회 조건만 바꿔도 기존 동의자가
+  일괄로 취향을 잃는다.
+
+### 공개 운영 전 확정 필요 (운영자 결정)
+
+`legalDocuments.ts` 상단 `TODO(운영)`에 4건을 남겼다 — 개인정보 보호책임자 성명·직책,
+신고·제재 기록 보유 기간, 오브젝트 스토리지 수탁 사업자명, 만 14세 제한 유지 여부.
+**이 원문은 법률 검토를 받지 않은 초안이다.**
+
+### 검증
+
+- frontend: `npx vitest run` 69 files / 648 tests 전체 통과(신규 22건), `npx tsc -b` 통과,
+  `npx vite build` 통과.
+- backend: 변경 없음. 작업 시작 전 `origin/dev` 기준 baseline은 973건 중 실패 2건
+  (`ContentBookmarkCommentIntegrationTest`의 만료 쿠키 공개 조회, `FestivalRepositoryIntegrationTest`의
+  `@Sql` OVERRIDE)으로 문서에 기록된 것과 같았다. 둘 다 이 브랜치와 무관하다.
+- 수동 검증 대기: ①가입 화면에서 `자세히`·`전문 보기` 동작, ②모달을 열고 닫은 뒤 입력값이
+  남아 있는지, ③`VITE_SUPPORT_CONTACT_EMAIL` 미설정 시 안내 문구 노출, ④AI 동의 화면이
+  이전과 같게 보이는지(컴포넌트 분리 회귀 확인).
+
+### 작업 환경 메모
+
+이 작업은 별도 git worktree(`C:\dev\meet-or-solo-wt-consent`)에서 진행했다. 같은 저장소에서
+다른 세션이 `docs/19` 4.9(관리자 매너온도 조정)를 동시에 진행해 작업 트리를 공유하면 브랜치와
+인덱스가 섞이기 때문이다. dev DB와 Flyway 번호는 worktree로도 갈라지지 않으므로 여전히 공유
+자원이다.
+
 ## [사고 기록] 적용된 migration 수정으로 인한 checksum 충돌 2건
 
 상태: 원인 확정. 1건 해결(V28 → V31 번호 이동), 1건은 `flyway repair` 대기(V31)
