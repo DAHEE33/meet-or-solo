@@ -68,3 +68,23 @@ export function markSplashSeen(): void {
     /* 저장에 실패하면 다음 진입에서 한 번 더 재생될 뿐이라 무시한다. */
   }
 }
+
+/**
+ * 재생 기록을 지워 다음 앱 진입에서 스플래시가 다시 보이게 한다.
+ *
+ * 로그아웃과 탈퇴에서 부른다. 세션이 끝났으므로 그 다음 진입은 새 진입으로 취급하는 것이
+ * 맞고, 공용 기기라면 다음 사람에게는 실제로 첫 진입이다. 다만 로그아웃 착지점인
+ * `/login`은 `SKIP_PATHS`라 로고가 그 자리에서 바로 뜨지는 않는다. 루트나 딥링크로 다시
+ * 들어올 때 한 번 재생된다.
+ *
+ * 세션 만료로 튕기는 경로(`apiClient`의 `redirectToLoginIfUnauthorized`)에서는 부르지
+ * 않는다. 사용자가 의도한 종료가 아니고, 조회 하나가 401을 받을 때마다 로고가 끼어들면
+ * 방해가 된다.
+ */
+export function clearSplashSeen(): void {
+  try {
+    window.sessionStorage.removeItem(SPLASH_SEEN_KEY);
+  } catch {
+    /* 삭제에 실패하면 기록이 남아 다음 진입에서 건너뛸 뿐이라 무시한다. */
+  }
+}

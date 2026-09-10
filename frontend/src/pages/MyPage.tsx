@@ -21,6 +21,7 @@ import { checkInRecords } from '../data/mock/checkIns';
 import { contentBookmarksApi, type BookmarkedContent } from '../api/contentBookmarks';
 import { inquiriesApi } from '../api/inquiries';
 import { bookmarkedContentId, bookmarkedContentTitle } from '../hooks/useContentBookmark';
+import { clearSplashSeen } from '../components/splash/splashPolicy';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import Spinner from '../components/common/Spinner';
@@ -160,6 +161,9 @@ export default function MyPage() {
       setErrorMessage('로그아웃 처리에 실패했습니다. 공용 기기라면 브라우저를 종료해 주세요.');
     } finally {
       setIsLoggingOut(false);
+      // 세션이 끝났으므로 다음 앱 진입은 첫 진입으로 되돌린다. 실패해도 화면상으로는
+      // 로그아웃이라 finally에서 지운다.
+      clearSplashSeen();
       navigate('/login', { replace: true });
     }
   };
@@ -174,6 +178,8 @@ export default function MyPage() {
     setWithdrawalError(null);
     try {
       await memberProfileApi.withdraw();
+      // 탈퇴도 세션 종료다. 공용 기기라면 다음 사람에게는 실제로 첫 진입이다.
+      clearSplashSeen();
       navigate('/login', { replace: true });
     } catch {
       setWithdrawalError('탈퇴 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.');
