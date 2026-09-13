@@ -85,6 +85,20 @@ LEAST(checkin.expires_at, checkin.checked_in_at + INTERVAL '1 hour') > :now
 
 Frontend는 매칭 신청 전(`IDLE`) 화면에서만 이 취소 버튼을 노출한다. `WAITING` 이상(제안 대기·확정 등) 상태에서는 노출하지 않으며, 그 상태에서의 체크인 취소 처리 정책은 여전히 4.4절 미해결 이슈로 남아 있다.
 
+### 2.3 체크인 기록 조회 API
+
+마이페이지 "체크인 기록" 타일이 실제로는 기록 화면이 아니라 체크인을 하는 `/check-in`으로 연결돼 있었고, `festivalId` 없이 들어가면 축제·관광 탐색으로 튕겼습니다. 건수도 mock을 세고 있었습니다. 이력 조회 API 자체가 없었기 때문입니다.
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/members/me/check-ins?cursor=&size=` | 인증 회원의 체크인 기록을 최신순으로 반환. 만료·취소된 체크인도 포함한다. cursor 페이지네이션(기본 20건, 최대 50건). |
+
+- 조회 대상은 JWT의 회원으로 고정한다. 회원 ID를 요청에서 받지 않아 타인 이력을 열 수 없다. `GET /api/members/me/match-history`와 같은 규칙이다.
+- cursor는 `(checked_in_at, id)` 복합이며 HMAC 서명을 붙이지 않는다. 근거는 `MatchHistoryCursorCodec`과 같다 — 조회가 JWT 회원으로 고정돼 있어 cursor를 위조해도 자기 목록 안에서 시작 위치만 바뀐다.
+- **`status`는 서버가 판정해서 내린다.** DB에 `EXPIRED`를 기록하는 배치가 없어 저장된 status는 `ACTIVE`/`CANCELLED`뿐이고, 만료는 `expires_at` 경과로만 표현됩니다. 화면이 이것을 다시 계산하면 2.1절의 유효기간 정책(1시간, `min(expires_at, checked_in_at + 1h)`)과 갈라지므로 `CheckinValidityPolicy`로 `ACTIVE`/`EXPIRED`/`CANCELLED`를 확정해 내립니다.
+- 원본 위경도는 저장 자체를 하지 않으므로 응답에도 없습니다. 축제 좌표와의 거리(`distanceMeters`)만 나갑니다.
+- 만료·취소된 기록도 남깁니다. 이 화면의 목적은 "지금 어디에 체크인되어 있는가"(그것은 `GET /api/festivals/checkin/me`가 답한다)가 아니라 "어디에 다녀왔는가"입니다.
+
 ## 3. 문제 정의 — 다른 축제 재체크인 시 기존 match_pool 미정리
 
 ### 3.1 재현 시나리오

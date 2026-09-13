@@ -92,13 +92,6 @@ export interface Festival {
   nearbyPlaces: FestivalNearbyPlace[];
 }
 
-export interface CheckInRecord {
-  id: number;
-  spotName: string;
-  checkedInAt: string; // ISO
-  memo?: string;
-}
-
 export interface AdminReport {
   id: number;
   type: '신고' | '문의';

@@ -296,6 +296,7 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 | `PlaceDetailPage` | 주변 장소 상세 |
 | `ReviewPage` | 매칭 후 평가와 매너 피드백 |
 | `MyPage` | 프로필, 설정, 이력, 탈퇴 |
+| `CheckInHistoryPage` | `/mypage/check-ins`. 체크인 기록 열람(만료·취소 포함) |
 | `AdminReportPage` | 신고 처리 |
 | `AdminMemberPage` | 회원 및 제재 관리 |
 | `AdminFestivalPage` | 축제/API 데이터 관리 |
@@ -682,6 +683,23 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   밝힙니다. 사진 없음과 같은 얼굴로 보이면 안 됩니다.
 - `TourSpot.contentTypeId`는 `utils/tourSpot.ts`의 세 mapper가 채웁니다. 관광지 목록/상세/근접
   조회 응답이 모두 `contentTypeId`를 내려주므로 backend 변경은 필요하지 않습니다.
+
+## 마이페이지 체크인 기록
+
+- 화면은 `/mypage/check-ins`(`CheckInHistoryPage`)이고 진입점은 `MyPage`의 "체크인 기록" 타일입니다.
+  이전에는 이 타일이 `/check-in`으로 연결돼 있었는데, 그 화면은 route state로 `festivalId`를
+  받아 **체크인을 하는** 화면이라 마이페이지에서 들어가면 축제·관광 탐색으로 튕겼습니다.
+  건수도 mock(`data/mock/checkIns.ts`)을 세고 있었고, 이번에 mock과 `CheckInRecord` 타입을
+  제거했습니다.
+- 목록은 `MatchHistoryPage`와 같은 골격입니다 — loading / 빈 상태 / 오류·재시도 / `더 보기`
+  cursor 페이지네이션. 건수 타일도 매칭 기록과 같이 첫 page만 읽고 뒤가 더 있으면 `20+`로
+  표기하며, 조회 실패는 화면에 드러내지 않습니다(부가 정보).
+- **상태 배지는 서버가 내려준 `status`를 그대로 그립니다.** `expiresAt`으로 화면에서 만료를
+  다시 계산하지 않습니다 — 유효기간 정책(1시간)이 서버와 갈라집니다. 설계는
+  [docs/21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md](21_CHECKIN_MATCH_POOL_INTEGRATION_DESIGN.md)
+  2.3절을 따릅니다.
+- 카드는 축제 상세(`/festivals/:festivalId`)로 이동합니다. 원본 위경도는 응답에 없으므로
+  축제로부터의 거리(`distanceMeters`)만 노출합니다.
 
 ## 1:1 문의 화면
 

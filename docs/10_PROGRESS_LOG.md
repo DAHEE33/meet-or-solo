@@ -5408,3 +5408,62 @@ event_type, related_group_id)`다. 완료 API는 반복 호출되는 것이 정�
 터지지 않는지를 본다.
 
 회귀: frontend 676건 전체 통과, `tsc --noEmit` 통과.
+
+## [10-UI 후속 4] 마이페이지 체크인 기록 화면과 조회 API
+
+브랜치: `feature/wbs-10-a-festival-course` (사용자 결정으로 같은 브랜치에서 이어 작업)
+
+### 발단
+
+마이페이지의 "체크인 기록" 타일을 누르면 축제·관광 탐색으로 튕겼다. 타일이 `/check-in`으로
+연결돼 있었는데 그 화면은 매칭 흐름에서 route state로 `festivalId`를 받아 **체크인을 하는**
+화면이라, 마이페이지에서 들어가면 어느 축제인지 알 수 없어 `/spots`로 replace한다. 옆의 건수도
+mock(`data/mock/checkIns.ts`)을 세고 있었다. 기록 화면이 만들어진 적이 없고 **이력 조회 API도
+없었다** — 있는 것은 유효한 체크인 1건을 주는 `GET /api/festivals/checkin/me`뿐이었다.
+
+### Backend — `GET /api/members/me/check-ins`
+
+`match-history`와 같은 구조로 맞췄다. `domain/festival/history/`에 controller·service·cursor
+codec·DTO를 두고, `FestivalCheckinRepository`에 `festivals`를 JOIN하는 native query를 추가했다.
+
+- 조회 대상은 JWT의 회원으로 고정한다. 회원 ID를 요청에서 받지 않는다.
+- cursor는 `(checked_in_at, id)` 복합이다. 같은 초에 들어온 행이 있어도 순서가 흔들리지 않게
+  id를 tiebreaker로 함께 비교한다. HMAC은 붙이지 않았고 근거는 `MatchHistoryCursorCodec`과 같다.
+- **`status`는 서버가 판정해 내린다.** DB에 `EXPIRED`를 기록하는 배치가 없어서 저장된 값은
+  `ACTIVE`/`CANCELLED`뿐이고 만료는 `expires_at` 경과로만 표현된다. 화면이 이걸 다시 계산하면
+  `CheckinValidityPolicy`(1시간, `min(expires_at, checked_in_at + 1h)`)와 갈라지므로
+  `ACTIVE`/`EXPIRED`/`CANCELLED`를 서버가 확정한다.
+- 원본 위경도는 저장 자체를 안 하므로 응답에도 없다. `distanceMeters`만 나간다.
+
+### Frontend
+
+- `/mypage/check-ins`(`CheckInHistoryPage`) 신규. `MatchHistoryPage`와 같은 골격
+  (loading / 빈 상태 / 오류·재시도 / `더 보기`)이고 카드는 축제 상세로 이동한다.
+- 마이페이지 타일 링크를 `/mypage/check-ins`로 바꾸고 건수를 실제 API로 교체했다. 매칭 기록
+  타일과 같이 첫 page만 읽고 뒤가 더 있으면 `20+`로 표기하며 실패는 드러내지 않는다.
+- mock `data/mock/checkIns.ts`와 `types/index.ts`의 `CheckInRecord`를 제거했다(사용처 없음).
+
+### 이번 범위에서 제외
+
+- **DB 인덱스 추가.** 현재 `(member_id, status, expires_at)`뿐이라 `member_id + checked_in_at
+  DESC` 정렬에 딱 맞는 인덱스는 없다. 체크인 유효기간이 1시간이라 회원당 행 수가 적어 지금은
+  필요하지 않다고 보고 마이그레이션을 넣지 않았다. 데이터가 쌓이면 재검토한다.
+
+### 테스트
+
+- Backend 신규 11건. `CheckinHistoryIntegrationTest` 8건(최신순 정렬, 만료·취소 포함, 유효기간
+  경과 `ACTIVE`의 `EXPIRED` 판정, V17 이전 행처럼 `expires_at`이 멀어도 1시간 정책 적용, 타인
+  체크인 미노출, cursor 페이지 경계, 같은 시각의 id tiebreaker, 축제명·거리 노출),
+  `CheckinHistoryCursorCodecTest` 3건(왕복, 다른 목록 cursor 거부, 깨진 형식 거부).
+- Frontend 신규 9건. `CheckInHistoryPage.test.tsx` 6건, `checkinHistory.test.ts` 3건.
+- 회귀: frontend 685건 전체 통과, `tsc --noEmit`과 production build 통과. backend 665건 중
+  32건 실패인데 전부 Testcontainers가 Docker를 못 찾아서 나는 환경 실패다(작업 PC에 Docker가
+  없음). 이번 변경과 무관하며, 실패 클래스 32개 모두 `@Testcontainers`를 쓰는 기존 테스트다.
+
+**테스트 fixture에서 한 번 걸린 것:** 처음에 같은 회원·같은 축제에 `ACTIVE` 체크인 2건을
+넣었는데 `uq_festival_checkins_member_festival_active`(부분 unique index)가 이를 막는다. 유효한
+`ACTIVE`를 다른 축제로 옮겨 해결했다.
+
+**테스트 실행 방식:** 이 통합 테스트는 같은 도메인의 `FestivalCheckinServiceIntegrationTest`와
+같이 Testcontainers 없이 실행 환경의 PostgreSQL을 쓴다. 데이터는 `@Transactional` 롤백으로
+정리된다.

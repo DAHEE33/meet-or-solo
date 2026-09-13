@@ -15,6 +15,7 @@ import MatchRoomPage from './pages/MatchRoomPage';
 import BlockedMembersPage from './pages/BlockedMembersPage';
 import FavoritesPage from './pages/FavoritesPage';
 import MatchHistoryPage from './pages/MatchHistoryPage';
+import CheckInHistoryPage from './pages/CheckInHistoryPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminRoute from './components/admin/AdminRoute';
 import AdminMembersPage from './pages/AdminMembersPage';
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/mypage" element={<MyPage />} />
           <Route path="/mypage/blocks" element={<BlockedMembersPage />} />
           <Route path="/mypage/matches" element={<MatchHistoryPage />} />
+          <Route path="/mypage/check-ins" element={<CheckInHistoryPage />} />
           <Route path="/mypage/favorites" element={<FavoritesPage />} />
         <Route path="/mypage/inquiries" element={<MyInquiriesPage />} />
         <Route path="/mypage/inquiries/new" element={<InquiryNewPage />} />
