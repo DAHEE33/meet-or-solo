@@ -3,7 +3,17 @@ import type { LegalDocument } from './legalDocuments';
 
 interface LegalDocumentModalProps {
   document: LegalDocument;
+  /** 닫기(X)와 확인 버튼의 기본 동작. 열람만 하고 닫는 경로다. */
   onClose: () => void;
+  /**
+   * 확인 버튼을 눌렀을 때의 동작. 넘기지 않으면 `onClose`와 같다.
+   *
+   * 동의 체크박스를 눌러서 연 경우에는 "확인"이 곧 동의로 이어지므로, 그 처리를 호출부가
+   * 맡을 수 있게 분리했다.
+   */
+  onConfirm?: () => void;
+  /** 확인 버튼 문구. 동의로 이어지는 경우와 열람만 하는 경우를 구분해 보여준다. */
+  confirmLabel?: string;
 }
 
 /**
@@ -13,7 +23,12 @@ interface LegalDocumentModalProps {
  * 그 화면에는 닉네임·성별·연령대·여행 스타일·취향 글이 이미 입력돼 있다. 다른 페이지로
  * 보내면 그 입력이 전부 사라진다.
  */
-export default function LegalDocumentModal({ document, onClose }: LegalDocumentModalProps) {
+export default function LegalDocumentModal({
+  document,
+  onClose,
+  onConfirm,
+  confirmLabel = '확인했어요',
+}: LegalDocumentModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-5">
       <section
@@ -57,10 +72,10 @@ export default function LegalDocumentModal({ document, onClose }: LegalDocumentM
         <footer className="border-t border-line px-6 py-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={onConfirm ?? onClose}
             className="w-full rounded-2xl bg-ink py-3.5 text-[14px] font-bold text-white"
           >
-            확인했어요
+            {confirmLabel}
           </button>
         </footer>
       </section>

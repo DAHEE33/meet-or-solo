@@ -72,12 +72,18 @@ export default function SignupPage() {
   /** 전문을 띄운 문서. 모달이라 열어도 입력한 프로필과 취향이 남는다. */
   const [openDocument, setOpenDocument] = useState<LegalDocumentId | null>(null);
   /**
-   * 전문을 한 번이라도 연 문서. 열기 전에는 동의 체크를 잠근다.
+   * 전문을 한 번이라도 연 문서. 이걸 보기 전에는 체크가 아니라 전문이 먼저 열린다.
    *
-   * 판정 시점을 "닫을 때"가 아니라 "열 때"로 잡았다. 닫는 경로가 `확인했어요`와 `X` 두 개라
-   * 어느 하나가 빠지면 영구히 잠긴 체크박스가 되고, 그건 가입 자체를 막는 버그가 된다.
+   * 판정 시점을 "닫을 때"가 아니라 "열 때"로 잡았다. 닫는 경로가 확인 버튼과 `X` 두 개라
+   * 어느 하나가 빠지면 영원히 체크되지 않는 체크박스가 되고, 그건 가입 자체를 막는 버그다.
    */
   const [viewedDocuments, setViewedDocuments] = useState<LegalDocumentId[]>([]);
+  /**
+   * 체크박스를 눌러서 연 문서. 이 경우에만 확인 버튼이 동의까지 처리한다.
+   *
+   * `전문 보기` 버튼으로 연 것은 열람 의사일 뿐이므로 동의로 잇지 않는다.
+   */
+  const [pendingAgreement, setPendingAgreement] = useState<LegalDocumentId | null>(null);
   const [prefDraft, setPrefDraft] = useState<PreferenceDraft>(EMPTY_PREFERENCE_DRAFT);
   /** 프로필은 저장됐는데 취향 저장만 실패한 상태. 가입 자체는 이미 끝났다. */
   const [isProfileSaved, setIsProfileSaved] = useState(false);
@@ -111,19 +117,44 @@ export default function SignupPage() {
     };
   }, [navigate]);
 
-  const openLegalDocument = (id: LegalDocumentId) => {
+  const openLegalDocument = (id: LegalDocumentId, forAgreement = false) => {
     setOpenDocument(id);
     setViewedDocuments((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setPendingAgreement(forAgreement ? id : null);
+    setErrorMessage(null);
   };
 
-  const viewedTerms = viewedDocuments.includes('TERMS');
-  const viewedPrivacy = viewedDocuments.includes('PRIVACY');
+  const closeLegalDocument = () => {
+    setOpenDocument(null);
+    setPendingAgreement(null);
+  };
 
-  /** 잠긴 이유와 풀렸다는 사실을 같은 자리에서 알린다. 체크를 마치면 안내를 거둔다. */
-  const consentHint = (viewed: boolean, checked: boolean, documentName: string): string | undefined => {
-    if (!viewed) return `${documentName} 전문을 확인하면 동의할 수 있어요.`;
-    if (!checked) return `${documentName}을 확인했어요. 동의에 체크해 주세요.`;
-    return undefined;
+  /**
+   * 확인 버튼. 체크박스를 눌러서 연 경우에만 그 항목을 동의 처리한다.
+   *
+   * 사용자가 이미 "동의합니다"를 누른 뒤 전문을 본 흐름이라 확인이 곧 동의다. `전문 보기`
+   * 버튼으로 연 경우에는 열람만 하고 체크는 사용자가 직접 누른다.
+   */
+  const confirmLegalDocument = () => {
+    if (pendingAgreement === 'TERMS') setAgreedTerms(true);
+    if (pendingAgreement === 'PRIVACY') setAgreedPrivacy(true);
+    closeLegalDocument();
+  };
+
+  /**
+   * 동의 체크박스. 전문을 아직 안 봤으면 체크하는 대신 전문을 띄운다.
+   *
+   * 체크박스를 잠그고 안내 문구를 다는 대신 이 방식을 쓴다. 누르면 바로 약관이 뜨므로
+   * 사용자가 "왜 안 눌리지"를 겪지 않는다.
+   */
+  const handleConsentChange = (id: LegalDocumentId, checked: boolean) => {
+    if (!viewedDocuments.includes(id)) {
+      openLegalDocument(id, true);
+      return;
+    }
+    if (id === 'TERMS') setAgreedTerms(checked);
+    else setAgreedPrivacy(checked);
+    setErrorMessage(null);
   };
 
   const toggleStyle = (style: TravelStyleCode) => {
@@ -178,11 +209,6 @@ export default function SignupPage() {
     }
     if (!gender || !ageRange || styles.length === 0) {
       setErrorMessage('닉네임, 성별, 연령대, 여행 스타일을 모두 입력해 주세요.');
-      return;
-    }
-    // 체크가 잠긴 상태에서 완료를 누르면 "동의해 주세요"는 막다른 안내가 된다.
-    if (!viewedTerms || !viewedPrivacy) {
-      setErrorMessage('이용약관과 개인정보처리방침 전문을 먼저 확인해 주세요.');
       return;
     }
     if (!agreedTerms || !agreedPrivacy) {
@@ -326,9 +352,9 @@ export default function SignupPage() {
         </section>
 
         {/*
-          필수 동의는 전문을 확인한 뒤에만 체크할 수 있다. 요약은 `자세히`로 펼치고 전문은
-          `전문 보기` 모달로 띄우며, 전문을 열기 전에는 체크박스가 잠긴다. 잠금이 풀려도
-          체크는 사용자가 직접 누른다 — `확인했어요`를 동의로 간주하지 않는다.
+          필수 동의는 전문을 확인한 뒤에만 체크된다. 전문을 안 본 상태에서 체크박스를 누르면
+          체크되는 대신 전문이 뜨고, 거기서 `확인했고 동의합니다`를 누르면 그때 체크된다.
+          `전문 보기` 버튼으로 연 경우는 열람 의사일 뿐이라 동의로 잇지 않는다.
           동의 저장 흐름(agreeAll)은 바꾸지 않았다.
         */}
         <section className="flex flex-col gap-4 border-t border-line pt-5">
@@ -336,27 +362,19 @@ export default function SignupPage() {
             id="consent-terms"
             notice={TERMS_NOTICE}
             checked={agreedTerms}
-            disabled={isSaving || !viewedTerms}
-            onChange={(checked) => {
-              setAgreedTerms(checked);
-              setErrorMessage(null);
-            }}
+            disabled={isSaving}
+            onChange={(checked) => handleConsentChange('TERMS', checked)}
             documentLabel="약관 전문 보기"
             onOpenDocument={() => openLegalDocument('TERMS')}
-            hint={consentHint(viewedTerms, agreedTerms, '이용약관')}
           />
           <ConsentCheckbox
             id="consent-privacy"
             notice={PRIVACY_NOTICE}
             checked={agreedPrivacy}
-            disabled={isSaving || !viewedPrivacy}
-            onChange={(checked) => {
-              setAgreedPrivacy(checked);
-              setErrorMessage(null);
-            }}
+            disabled={isSaving}
+            onChange={(checked) => handleConsentChange('PRIVACY', checked)}
             documentLabel="처리방침 전문 보기"
             onOpenDocument={() => openLegalDocument('PRIVACY')}
-            hint={consentHint(viewedPrivacy, agreedPrivacy, '개인정보처리방침')}
           />
         </section>
 
@@ -388,7 +406,9 @@ export default function SignupPage() {
       {openDocument && (
         <LegalDocumentModal
           document={legalDocument(openDocument)}
-          onClose={() => setOpenDocument(null)}
+          onClose={closeLegalDocument}
+          onConfirm={confirmLegalDocument}
+          confirmLabel={pendingAgreement ? '확인했고 동의합니다' : '확인했어요'}
         />
       )}
     </MobileLayout>
