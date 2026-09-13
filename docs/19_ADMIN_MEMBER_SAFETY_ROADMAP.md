@@ -9,7 +9,9 @@
   4.8 회원 제재 사유·기간 통보 구현 완료(수동 검증 대기),
   4.5 1:1 문의 센터 구현 완료(수동 검증 대기),
   4.9 PR A(관리자 온도 수동 조정)와 PR B(값 체계·상승 경로·회원 노출) 구현 완료(수동 검증 대기).
-  **남은 항목은 4.7과 4.9의 PR C(30도 매칭 제한)·D(후기)뿐이다.**
+  4.7.1 동의 원문 노출과 동의 전 전문 확인 완료(PR #66·#69·#71 dev 병합).
+  **남은 항목은 4.7의 나머지(임베딩 재시도, 외부 호출 transaction 분리, 재동의 인프라)와
+  4.9의 PR C(30도 매칭 제한)·D(후기), 그리고 2절 표의 기본 통계다.**
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -978,13 +980,14 @@ feature/wbs-10-b-match-report-entry           — 완료 (4.10)
 feature/wbs-10-b-inquiry-center               — 미사용 (4.5는 10-a 브랜치에서 구현)
 feature/wbs-10-b-admin-manner-temperature-adjust — 완료 (4.9 PR A, 관리자 온도 수동 조정)
 feature/wbs-10-b-manner-temperature-recovery  — 완료 (4.9 PR B, 값 체계 + 상승 경로 + 회원 노출)
-feature/wbs-10-b-consent-followup             — 진행 중 (4.7)
+feature/wbs-10-b-consent-followup             — 완료 (PR #66, 4.7.1 동의 원문)
+feature/wbs-10-b-consent-view-gate            — 완료 (PR #69·#71, 4.7.1 동의 전 전문 확인)
 feature/wbs-10-b-matching-temperature-limit   — 미착수 (4.9 PR C, 30도 매칭 제한)
 feature/wbs-10-b-member-review                — 미착수 (4.9 PR D, 후기 작성)
 ```
 
 4.6 로그아웃이 먼저 끝났으므로 4.4 회원 탈퇴는 `AuthService.revokeSession(memberId)`을 그대로
-재사용했습니다. 남은 항목은 4.7과 4.9의 PR B·C입니다.
+재사용했습니다. 남은 항목은 4.7의 나머지 항목(4.7.3 표)과 4.9의 PR C·D입니다.
 
 4.7과 4.9는 건드리는 파일이 겹치지 않아 병렬로 진행합니다. 다만 **두 작업 모두 새 migration을
 만들 수 있으므로 번호를 잡기 전에 공유 dev DB의 `flyway_schema_history`를 확인하고 서로
