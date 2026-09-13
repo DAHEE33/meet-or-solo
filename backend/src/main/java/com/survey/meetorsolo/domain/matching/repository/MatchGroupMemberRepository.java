@@ -132,6 +132,21 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             @Param("excludedMemberId") long excludedMemberId
     );
 
+    /**
+     * 실제로 만남 장소에 도착한 사람이 있었던 그룹의 id다({@code docs/19} 4.11.1).
+     *
+     * <p>{@code MatchReportRepository.existsArrival}과 같은 판정을 목록용으로 묶은 것이다.
+     * 접수 API와 기준이 갈라지면 화면에서 신고 가능하다고 표시한 항목이 거절된다. 그쪽과 같이
+     * status가 아니라 {@code arrived_at}을 본다.
+     */
+    @Query(value = """
+            SELECT DISTINCT group_id
+            FROM match_group_members
+            WHERE group_id IN (:groupIds)
+              AND arrived_at IS NOT NULL
+            """, nativeQuery = true)
+    List<Long> findGroupIdsWithArrival(@Param("groupIds") List<Long> groupIds);
+
     interface MatchHistoryMemberProjection {
         Long getGroupId();
         Long getMemberId();

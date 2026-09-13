@@ -123,6 +123,23 @@ class MatchHistoryIntegrationTest {
         assertThat(expired.reportableUntil()).isEqualTo(expired.endedAt().plusDays(14));
     }
 
+    /**
+     * 목록의 신고 가능 판정은 접수 API의 {@code validateMeetingHeld}와 같은 기준이어야 한다.
+     * 갈라지면 화면에서 신고 가능하다고 표시한 항목이 접수에서 거절된다.
+     */
+    @Test
+    void 도착자가_없는_매칭은_기간이_남아도_신고할_수_없다() {
+        insertGroup(9_170_001L, "CANCELLED", null, TEST_NOW.minusMinutes(10), PARTNER);
+        jdbc.update("UPDATE match_group_members SET arrived_at = NULL WHERE group_id = ?", 9_170_001L);
+
+        MatchHistoryItemResponse item = item(history.getMyHistory(ME, null, null), 9_170_001L);
+
+        assertThat(item.meetingHeld()).isFalse();
+        assertThat(item.reportable()).isFalse();
+        // 기간 만료와 구분해야 화면이 다른 안내를 낼 수 있다.
+        assertThat(item.reportableUntil()).isAfter(TEST_NOW);
+    }
+
     @Test
     void 이미_신고한_상대는_사유와_무관하게_신고됨으로_표시한다() {
         insertGroup(9_170_001L, "COMPLETED", TEST_NOW.minusDays(1), null, PARTNER);
@@ -232,12 +249,14 @@ class MatchHistoryIntegrationTest {
             case "CANCELLED" -> "CANCELLED";
             default -> "JOINED";
         };
+        // arrived_at을 채운다. 도착자가 없는 그룹은 만남이 성사되지 않은 것으로 보아
+        // reportable이 false가 된다(docs/19 4.11.1).
         jdbc.update("""
                 INSERT INTO match_group_members(
-                    group_id, member_id, status, allow_minimum_two, created_at, updated_at
-                ) VALUES (?, ?, ?, true, ?, ?), (?, ?, ?, true, ?, ?)
-                """, groupId, ME, memberStatus, NOW, NOW,
-                groupId, partnerId, memberStatus, NOW, NOW);
+                    group_id, member_id, status, arrived_at, allow_minimum_two, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, true, ?, ?), (?, ?, ?, ?, true, ?, ?)
+                """, groupId, ME, memberStatus, NOW, NOW, NOW,
+                groupId, partnerId, memberStatus, NOW, NOW, NOW);
     }
 
     private void insertReport(

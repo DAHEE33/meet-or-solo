@@ -38,6 +38,24 @@ public class MatchReportRepository {
         return Boolean.TRUE.equals(exists);
     }
 
+    /**
+     * 그룹에 실제로 만남 장소에 도착한 사람이 있었는지({@code docs/19} 4.11.1).
+     *
+     * <p>판정 기준을 {@code status = 'ARRIVED'}가 아니라 {@code arrived_at IS NOT NULL}로 둔다.
+     * 도착한 뒤에도 status는 완료 시 {@code COMPLETED}, 그룹 취소 시 {@code LEFT}로 바뀌지만
+     * {@code arrived_at}은 지워지지 않는다. status로 판정하면 같은 만남이 그룹 상태에 따라
+     * 신고 가능해졌다 불가능해졌다 한다.
+     */
+    public boolean existsArrival(long groupId) {
+        Boolean exists = jdbc.queryForObject("""
+                SELECT EXISTS (
+                    SELECT 1 FROM match_group_members
+                    WHERE group_id = ? AND arrived_at IS NOT NULL
+                )
+                """, Boolean.class, groupId);
+        return Boolean.TRUE.equals(exists);
+    }
+
     public Optional<ReportSnapshot> insertIfAbsent(
             long reporterMemberId,
             long reportedMemberId,

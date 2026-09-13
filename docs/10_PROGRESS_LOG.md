@@ -1,5 +1,161 @@
 # 진행 상태 기록
 
+## [10-B 매칭] 만남 성립 판정 정리 — 완료는 시간으로, 신고는 도착으로 (docs/19 4.11)
+
+상태: Backend/Frontend 구현·자동 테스트 완료. dev 브라우저 수동 검증 대기
+
+브랜치는 `fix/wbs-10-b-match-completion-and-report-scope`이며 `dev`(`d65d243`)에서 분기했다.
+사용자 제보 2건을 한 브랜치로 묶었다. **둘 다 "만남이 실제로 있었는가"를 판정하는 일이고,
+따로 고치면 신고 쪽과 완료 쪽이 그 사실을 다르게 정의할 위험이 있다.**
+
+### 제보 ①에서 실제로 나온 것 — 상태방 생성만으로 오르지 않았다
+
+"상태방이 만들어지면 매너온도가 오른다"는 제보로 시작했는데, 코드에는 그런 경로가 없었다.
+보상은 `MatchCompletedEvent` 하나에만 걸려 있다. 대신 결함 두 개가 나왔다.
+
+**혼자 도착해도 완료·보상됐다.** 완료 조건이 `activeMembers.allMatch(ARRIVED)`였고
+`activeMembers`가 1명이어도 통과한다. 상대가 모두 이탈하면 남은 한 명의 도착이 완료가 된다.
+
+**닫히지 않는 그룹이 있었다.** 3명 중 2명 도착·1명 노쇼가 그 조합이다. 도착 시점에는 노쇼가
+아직 `JOINED`라 완료되지 않는다. 30분 뒤 노쇼 배치가 그를 `NO_SHOW`로 바꾸면 남은 둘이 모두
+`ARRIVED`가 되는데, 노쇼 후보 조회는 `JOINED`/`ARRIVAL_TIME_SELECTED`인 구성원이 있는 그룹만
+찾으므로 **이 그룹은 다시 조회되지 않는다.** 그룹이 `IN_PROGRESS`로 영구히 남고
+`existsActiveByMemberId`가 계속 참이라 **끝까지 참여한 회원이 새 매칭을 영구히 신청하지
+못한다.** 노쇼한 사람은 멀쩡히 다음 매칭을 잡는데 도착한 사람이 묶이는 구조였다.
+
+### 확정 — 완료는 확정 + 1시간이다
+
+| 항목 | 확정값 |
+| --- | --- |
+| 완료 시점 | 확정 + 1시간 (`MatchMeetingWindowPolicy.MEETING_WINDOW`) |
+| 전원 도착 시 | 완료하지 않는다. 방을 유지하고 "전원 도착 · 만남 진행 중"으로 표시 |
+| 완료 조건 | 도착자 2명 이상. 보상(`+0.50`)은 도착자에게만 |
+| 도착자 1명 이하 | `CANCELLED`, 사유 `INSUFFICIENT_ARRIVALS` |
+| 도착 마감 | 30분 그대로 |
+
+**1시간은 사용자 결정이다.** 축제 구경에 그 정도 걸린다는 판단이고, 코드에도 근거가 맞아떨어
+진다. 재매칭 잠금(`MatchCompletionLockPolicy.MATCH_VALIDITY`)이 이미 확정 + 1시간이라
+**방이 닫히는 순간 잠금도 풀린다.** 30분으로 잡았다면 "만남은 끝났는데 30분 더 신청이 안 되는"
+구간이 생겼다. 두 상수는 앞으로도 함께 움직여야 한다.
+
+**도착 즉시 완료를 없앤 것이 이번의 핵심이다.** 그 시점은 만남의 끝이 아니라 시작인데, 예전엔
+마지막 도착자가 버튼을 누르는 순간 상태방이 사라지고 "모두 도착해 만남이 완료됐어요"가 떴다.
+
+`MatchArrivalService`는 이제 도착만 기록하고 완료를 만들지 않는다. 전원 도착이면 WebSocket
+사유를 `ALL_ARRIVED`로 보내 화면이 구분할 수 있게 했다. 종료 판정은
+`MatchMeetingCloseGroupService`가 하고 `MatchMeetingCloseScheduler`(5초 주기)가 돌린다.
+
+**스케줄러 조건을 노쇼 배치와 다르게 걸었다.** 노쇼는 `app.matching.no-show-scheduler.enabled`
+지만 종료는 `app.matching.scheduler.enabled`다. 노쇼 처리는 페널티라 환경에 따라 끌 수 있지만,
+그룹을 닫는 것은 수명주기의 일부여서 꺼지면 참가자가 새 매칭을 신청하지 못한 채 남는다.
+
+**도착도 노쇼도 아닌 구성원이 남아 있으면 종료를 다음 주기로 미룬다.** 여기서 노쇼를 대신
+찍으면 penalty 적용까지 복제해야 한다. 도착 마감(30분)이 종료(1시간)보다 앞서므로 정상
+운영에서는 한 주기면 정리된다.
+
+이미 잘못 지급된 온도는 일괄 보정하지 않는다. `manner_temperature_events`에 이력이 있고
+관리자 수동 조정(4.9 PR A)이 있으므로 필요하면 개별 처리한다.
+
+### 확정 — 신고는 도착자가 있었던 매칭만
+
+제보 ②는 "확정 3분 만에 취소됐는데, 누구 때문에 깨졌는지도 모르는 상태에서 함께 있던 사람을
+전부 신고할 수 있다"였다. 확인 결과 `MatchReportService`의 참가자 검사는 `existsParticipant`
+하나뿐이고 **SQL에 status 조건이 없었다.** 방에 행만 있으면 됐다.
+
+**기준을 경과 시간이 아니라 도착 여부로 잡았다.** "확정 후 N분 이내 취소는 제외" 방식은 N을
+정할 근거가 없고, 25분 만에 깨진 건은 아무도 만나지 않았는데 신고 대상으로 남는다. 도착
+여부로 보면 질문이 그대로 "실제로 만났는가"가 된다.
+
+**노쇼 신고 경로는 막히지 않는다.** 상대가 오지 않아 취소된 건은 기다린 쪽이 이미 `ARRIVED`라
+조건을 자연스럽게 통과한다. 이 확인을 테스트로 고정했다
+(`신고자만_도착한_노쇼_취소_건은_신고할_수_있다`).
+
+**판정은 status가 아니라 `arrived_at IS NOT NULL`이다.** 도착 뒤에도 status는 완료 시
+`COMPLETED`, 그룹 취소 시 `LEFT`로 바뀌지만 `arrived_at`은 남는다. status로 판정하면 같은
+만남이 그룹 상태에 따라 신고 가능해졌다 불가능해졌다 한다.
+
+전제 하나를 남긴다. 이 판단은 **자유 채팅이 없다**는 데 기댄다. 만나기 전 상태방에서 생길 수
+있는 피해가 사실상 없으므로 도착 전 취소 건을 빼도 놓치는 신고가 없다. 채팅이 생기면 다시
+봐야 한다.
+
+화면은 4.10과 같이 버튼 비활성화다. 다만 **안내 문구를 기간 만료와 갈랐다.** "신고 기간 종료"와
+"만남이 성사되지 않아 신고할 수 없어요"는 사용자가 할 수 있는 일이 다르다. 전자는 늦은 것이고
+후자는 애초에 신고할 만남이 없다. 이를 위해 `MatchHistoryItemResponse`에 `meetingHeld`를 더했다.
+
+### 바뀐 파일
+
+- backend: `MatchMeetingWindowPolicy`(신규), `MatchMeetingCloseGroupService`(신규),
+  `MatchMeetingCloseBatchService`(신규), `MatchMeetingCloseScheduler`(신규),
+  `MatchArrivalService`, `MatchGroupRepository`, `MatchGroupMemberRepository`,
+  `MatchGroupResponse`(`meetingEndsAt` 추가), `MatchReportService`, `MatchReportRepository`,
+  `MatchHistoryService`, `MatchHistoryItemResponse`, `ErrorCode`,
+  `V35__add_insufficient_arrivals_cancel_reason.sql`
+- frontend: `matchHistory.ts`, `matching.ts`, `MatchHistoryPage.tsx`, `MatchRoomPage.tsx`,
+  `useMatchRoom.ts`
+
+### migration — 번호를 `V35`에서 `V36`으로 옮겼다
+
+`V36`은 `match_groups.cancel_reason` 체크 제약에 `INSUFFICIENT_ARRIVALS`를 더한다. 기존 두 사유와
+뜻이 다르다. `INSUFFICIENT_ACTIVE_MEMBERS`는 남은 활성 구성원이 부족한 것이고,
+`INSUFFICIENT_ARRIVALS`는 방은 유지됐지만 실제로 도착한 사람이 부족한 것이다. 한 사유로 묶으면
+나중에 "왜 성사되지 않았나"를 구분할 수 없다.
+
+**처음에 `V35`로 만들었다가 `V36`으로 옮겼다.** 저장소 파일 목록상 마지막이 `V34`라 `V35`를
+잡았는데, 공유 dev DB에는 저장소 어디에도 없는 `V35__add_content_engagement_count_indexes.sql`이
+2026-09-13 22:42에 이미 적용돼 있었다. 테스트를 돌리자 dev DB를 쓰는 통합 테스트가 전부
+`Migration checksum mismatch for migration version 35`로 실패했다. `docs/10`의 `[사고 기록]`
+사고 1과 같은 상황이라 `flyway repair` 대신 번호를 옮겼다. 협업자의 `V35`를 내 파일로
+위장시키면 그쪽 스키마 변경이 기록에서 사라진다.
+
+**내 migration이 공유 dev DB에 적용된 적은 없다.** 번호 충돌로 Flyway가 검증 단계에서 멈춰
+DDL이 실행되지 않았다. `flyway_schema_history`를 조회해 내 script 이름이 없음을 확인했다.
+
+`docs/08`에 이미 "번호는 공유 dev DB의 `flyway_schema_history`를 기준으로 정한다"가 있었는데
+저장소 파일 목록만 보고 정해서 같은 실수를 반복했다.
+
+### 선행 조건 — 협업자의 `V35` 파일이 저장소에 올라와야 한다
+
+**이 브랜치를 병합하기 전에 해결해야 한다.** `V35__add_content_engagement_count_indexes.sql`은
+dev DB에 적용돼 있지만 저장소의 어느 브랜치에도 없다(`git log --all`로 확인).
+
+지금까지 문제가 드러나지 않은 이유는 Flyway의 `ignoreFutureMigrations` 기본값이 `true`이기
+때문이다. 저장소의 마지막 번호가 `V34`인 동안 `V35`는 "미래 migration"으로 분류돼 검증에서
+조용히 넘어갔다. **`V36`이 생기는 순간 `V35`는 미래가 아니라 중간에 빠진 migration이 되고,
+검증이 실패한다.**
+
+```text
+Detected applied migration not resolved locally: 35.
+```
+
+확인한 결과 dev DB를 쓰는 통합 테스트(`FestivalCheckinServiceIntegrationTest`,
+`CheckinHistoryIntegrationTest` 등)가 이 이유로 전부 실패한다. 같은 검증이 애플리케이션
+기동에서도 돌기 때문에 **dev 서버 배포도 같은 지점에서 막힌다.**
+
+해결은 하나뿐이다. 그 migration을 만든 사람이 파일을 저장소에 push해야 한다. `ignore-missing`
+설정으로 덮는 방법은 쓰지 않는다. 적용된 스키마 변경이 코드에 없다는 사실 자체가 문제다.
+
+### 검증
+
+- backend: `./gradlew test` 전체 통과(기존 baseline 실패 제외). 신규·수정 테스트는
+  `MatchArrivalTimeServiceIntegrationTest`(전원 도착에도 진행 중 유지, 노쇼 섞인 그룹의 종료),
+  `MannerTemperatureIntegrationTest`(시간 종료 후 보상, 재처리 멱등, 단독 도착은 취소),
+  `MatchReportIntegrationTest`(도착 없는 매칭 거절, 노쇼 취소 건 허용),
+  `MatchHistoryIntegrationTest`(도착자 없는 매칭은 기간이 남아도 신고 불가).
+- frontend: `npx vitest run` 73 files / 693 tests 통과, `npx tsc -b`, `npx vite build` 통과.
+- 수동 검증 대기: ①전원 도착 뒤 방이 유지되고 "만남 종료 예정"이 뜨는지, ②1시간 뒤 완료와
+  온도 상승, ③2명 도착 + 1명 노쇼 그룹이 닫히고 재매칭이 가능한지, ④도착 없이 취소된 건의
+  신고 버튼 비활성화와 문구.
+
+### 함께 확인한 것 — 회원 알림이 없다
+
+작업 중 "메인에서 매칭 알림이 뜨지 않는다"를 함께 조사했다. 서버는 WebSocket으로 상태 변화
+12종(`MATCH_PROPOSED`, `MATCH_CONFIRMED`, `MEMBER_ARRIVED`, `MEMBER_NO_SHOW`,
+`MATCH_CANCELLED`, `MATCH_COMPLETED` 등)을 보내지만 **구독하는 곳이 `useMatchingSession`과
+`useMatchRoom` 둘뿐**이다. 즉 `/matching`과 `/match-room` 화면에 있을 때만 도착한다. 홈에서는
+아무것도 오지 않고, `AppHeader`의 종 아이콘은 `onClick`이 없는 빈 버튼이다.
+특히 `MATCH_PROPOSED`는 응답 시간이 30초(`MATCHING_PROPOSAL_TIMEOUT`)라 화면을 보고 있지
+않으면 그냥 놓친다. 범위가 커서 이 브랜치에 넣지 않고 `docs/19` 4.11.3에 남겼다.
+
 ## [10-B 동의] 체크박스를 누르면 약관이 먼저 뜨게 (docs/19 4.7.1 재조정)
 
 상태: Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기

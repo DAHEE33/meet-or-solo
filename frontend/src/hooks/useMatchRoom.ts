@@ -132,7 +132,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             error: null,
             eventsError: null,
             terminationNotice: completionSignalReceived
-              ? '모두 도착해 만남이 완료됐어요.'
+              ? '만남이 끝났어요. 매너온도가 올랐어요.'
               : hadCurrentGroup
               ? '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.'
               : currentState.terminationNotice,
@@ -259,7 +259,9 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             events: [],
             error: null,
             actionError: null,
-            terminationNotice: '모두 도착해 만남이 완료됐어요.',
+            // 도착 요청과 만남 종료가 겹친 경우다. 전원 도착만으로는 완료되지 않으므로
+            // 여기 도달하는 것은 만남 시간이 끝나 서버가 방을 닫은 뒤다(docs/19 4.11.2).
+            terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
             isSubmitting: false,
           });
           return true;

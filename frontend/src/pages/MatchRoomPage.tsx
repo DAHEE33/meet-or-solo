@@ -296,7 +296,13 @@ export function CurrentGroupRoom({
   nowEpochMs?: number;
 }) {
   const effectiveNowEpochMs = nowEpochMs ?? Date.parse(group.confirmedAt);
-  const statusText = group.status === 'IN_PROGRESS' ? '미팅 진행 중' : '만남 준비 중';
+  // 전원이 도착해도 방은 닫히지 않는다. 만남이 끝나는 시각까지 상태방이 유지되고, 그때
+  // 서버가 완료로 닫으면서 매너온도 보상을 준다(docs/19 4.11.2).
+  const allArrived = group.members.length > 0
+    && group.members.every((member) => member.status === 'ARRIVED');
+  const statusText = allArrived
+    ? '전원 도착 · 만남 진행 중'
+    : group.status === 'IN_PROGRESS' ? '미팅 진행 중' : '만남 준비 중';
   const period = formatFestivalPeriod(group.festival.eventStartDate, group.festival.eventEndDate);
   const currentMember = group.members.find((member) => member.memberId === group.currentMemberId);
   const canArrive = currentMember?.status === 'JOINED'
@@ -316,8 +322,17 @@ export function CurrentGroupRoom({
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">
           <dt className="text-ink/50">확정 시각</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.confirmedAt)}</dd>
-          <dt className="text-ink/50">최종 도착 마감</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.arrivalDeadlineAt)}</dd>
-          <dt className="text-ink/50">전체 남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.arrivalDeadlineAt, effectiveNowEpochMs)}</dd>
+          {allArrived ? (
+            <>
+              <dt className="text-ink/50">만남 종료 예정</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.meetingEndsAt)}</dd>
+              <dt className="text-ink/50">남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.meetingEndsAt, effectiveNowEpochMs)}</dd>
+            </>
+          ) : (
+            <>
+              <dt className="text-ink/50">최종 도착 마감</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.arrivalDeadlineAt)}</dd>
+              <dt className="text-ink/50">전체 남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.arrivalDeadlineAt, effectiveNowEpochMs)}</dd>
+            </>
+          )}
           <dt className="text-ink/50">확정 인원</dt><dd className="text-right font-semibold text-ink">{group.confirmedMemberCount}명</dd>
           <dt className="text-ink/50">현재 참여 인원</dt><dd className="text-right font-semibold text-ink">{group.currentMemberCount}명</dd>
           <dt className="text-ink/50">현재 상태</dt><dd className="text-right font-semibold text-teal">{statusText}</dd>

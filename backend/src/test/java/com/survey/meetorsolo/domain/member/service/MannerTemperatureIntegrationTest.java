@@ -4,6 +4,8 @@ import static com.survey.meetorsolo.domain.matching.fixture.MatchingScenarioFixt
 import static org.assertj.core.api.Assertions.*;
 
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
+import com.survey.meetorsolo.domain.matching.service.MatchMeetingCloseGroupService;
+import com.survey.meetorsolo.domain.matching.service.MatchMeetingWindowPolicy;
 import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -52,6 +54,7 @@ class MannerTemperatureIntegrationTest {
     private static final long ME = 9_110_001L;
     private static final long PARTNER = 9_110_002L;
     private static final long GROUP_ID = 9_180_001L;
+    private static final long CONFIRMED_GROUP_ID = 9_180_002L;
     private static final OffsetDateTime TEST_NOW = NOW.plusSeconds(10);
 
     @Container
@@ -63,6 +66,7 @@ class MannerTemperatureIntegrationTest {
 
     @Autowired MannerTemperatureRewardService rewards;
     @Autowired MatchArrivalService arrivals;
+    @Autowired MatchMeetingCloseGroupService meetingCloses;
     @Autowired MannerTemperatureRecoveryService recovery;
     @Autowired JdbcTemplate jdbc;
 
@@ -111,29 +115,32 @@ class MannerTemperatureIntegrationTest {
     }
 
     /**
-     * 도착 API에서 보상까지 실제로 이어지는지 확인한다.
+     * 도착에서 보상까지 실제로 이어지는지 확인한다.
      *
      * <p>보상 서비스를 직접 부르는 다른 테스트와 목적이 다르다. 여기서 보는 것은
-     * {@code MatchArrivalService}가 {@code MatchCompletedEvent}를 발행하고 AFTER_COMMIT
-     * handler가 그걸 받아 별도 transaction으로 지급하는 <b>연결</b>이다. 이벤트 발행 한 줄이
-     * 빠져도 다른 테스트는 전부 통과하므로 이 경로가 조용히 끊길 수 있다.
+     * {@code MatchMeetingCloseGroupService}가 {@code MatchCompletedEvent}를 발행하고
+     * AFTER_COMMIT handler가 그걸 받아 별도 transaction으로 지급하는 <b>연결</b>이다. 이벤트
+     * 발행 한 줄이 빠져도 다른 테스트는 전부 통과하므로 이 경로가 조용히 끊길 수 있다.
      *
      * <p>이 테스트 클래스에 {@code @Transactional}을 붙이면 안 된다. 붙이면 테스트 종료 시
      * 롤백되어 AFTER_COMMIT이 아예 발화하지 않고, 검증하려는 연결이 통째로 사라진다.
      */
     @Test
-    void 도착_API로_전원_도착하면_보상까지_이어진다() {
+    void 전원_도착해도_만남_시간이_끝나야_보상한다() {
         insertConfirmedGroup();
         setTemperature(ME, "34.50");
         setTemperature(PARTNER, "34.50");
 
-        // 첫 도착만으로는 완료가 아니므로 보상도 없다.
+        // 도착은 만남의 시작이다. 전원이 도착해도 그 자리에서는 완료도 보상도 아니다.
         arrivals.arrive(ME);
+        arrivals.arrive(PARTNER);
+        assertThat(groupStatus(CONFIRMED_GROUP_ID)).isEqualTo("IN_PROGRESS");
         assertThat(temperature(ME)).isEqualByComparingTo("34.50");
         assertThat(eventCount(ME, "MATCH_COMPLETED")).isZero();
 
-        // 마지막 도착에서 그룹이 완료되고 참여자 전원이 보상을 받는다.
-        arrivals.arrive(PARTNER);
+        // 만남 시간이 끝나면 그룹이 완료되고 도착한 참여자가 보상을 받는다.
+        assertThat(meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt())).isTrue();
+        assertThat(groupStatus(CONFIRMED_GROUP_ID)).isEqualTo("COMPLETED");
         assertThat(temperature(ME)).isEqualByComparingTo("35.00");
         assertThat(temperature(PARTNER)).isEqualByComparingTo("35.00");
         assertThat(eventCount(ME, "MATCH_COMPLETED")).isOne();
@@ -141,23 +148,54 @@ class MannerTemperatureIntegrationTest {
     }
 
     /**
-     * 완료 API는 반복 호출되는 것이 정상 흐름이다. 마지막 도착자 외의 회원이 화면을
-     * 새로고침하면 같은 요청이 다시 들어온다.
+     * 종료 배치는 같은 그룹을 여러 번 볼 수 있다. 5초 주기로 돌고 앞선 주기의 처리가
+     * 늦어지면 다음 주기가 같은 id를 다시 집는다.
      */
     @Test
-    void 완료_후_도착_API를_다시_불러도_보상이_늘지_않는다() {
+    void 만남_종료를_다시_처리해도_보상이_늘지_않는다() {
         insertConfirmedGroup();
         setTemperature(ME, "34.50");
         setTemperature(PARTNER, "34.50");
 
         arrivals.arrive(ME);
         arrivals.arrive(PARTNER);
-        arrivals.arrive(ME);
-        arrivals.arrive(PARTNER);
+        meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt());
+        // 이미 COMPLETED라 활성 그룹 잠금에 걸리지 않는다.
+        assertThat(meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt())).isFalse();
 
         assertThat(temperature(ME)).isEqualByComparingTo("35.00");
         assertThat(eventCount(ME, "MATCH_COMPLETED")).isOne();
         assertThat(eventCount(PARTNER, "MATCH_COMPLETED")).isOne();
+    }
+
+    /**
+     * 혼자 도착한 것은 만남이 아니다({@code docs/19} 4.11.2).
+     *
+     * <p>예전 완료 판정은 "활성 구성원 전원 도착"이라 상대가 이탈해 혼자 남으면 단독 도착으로
+     * 완료·보상이 성립했다.
+     */
+    @Test
+    void 혼자만_도착한_그룹은_완료가_아니라_취소된다() {
+        insertConfirmedGroup();
+        setTemperature(ME, "34.50");
+        jdbc.update("UPDATE match_group_members SET status = 'CANCELLED' WHERE group_id = ? AND member_id = ?",
+                CONFIRMED_GROUP_ID, PARTNER);
+
+        arrivals.arrive(ME);
+        assertThat(meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt())).isTrue();
+
+        assertThat(groupStatus(CONFIRMED_GROUP_ID)).isEqualTo("CANCELLED");
+        assertThat(temperature(ME)).isEqualByComparingTo("34.50");
+        assertThat(eventCount(ME, "MATCH_COMPLETED")).isZero();
+    }
+
+    private OffsetDateTime meetingEndsAt() {
+        return TEST_NOW.plus(MatchMeetingWindowPolicy.MEETING_WINDOW);
+    }
+
+    private String groupStatus(long groupId) {
+        return jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = ?", String.class, groupId);
     }
 
     // --- 시간 경과 회복 ---
@@ -273,7 +311,7 @@ class MannerTemperatureIntegrationTest {
      */
     private void insertConfirmedGroup() {
         long attemptId = 9_181_002L;
-        long groupId = 9_180_002L;
+        long groupId = CONFIRMED_GROUP_ID;
         jdbc.update("""
                 INSERT INTO match_attempts(
                     id, festival_id, target_group_size, status, score, created_by,

@@ -73,6 +73,8 @@ class MatchArrivalTimeServiceIntegrationTest {
     private MatchCancellationService cancellations;
     @Autowired
     private MatchNoShowGroupService noShows;
+    @Autowired
+    private MatchMeetingCloseGroupService meetingCloses;
 
     @Autowired
     private MatchGroupQueryService queries;
@@ -321,31 +323,54 @@ class MatchArrivalTimeServiceIntegrationTest {
         );
     }
 
+    /**
+     * 전원이 도착해도 그 자리에서 완료로 닫지 않는다({@code docs/19} 4.11.2).
+     *
+     * <p>도착은 만남의 끝이 아니라 시작이다. 예전에는 마지막 도착자가 버튼을 누르는 순간 방이
+     * 사라지고 매너온도 보상까지 지급됐다. 완료 판정은
+     * {@link MatchMeetingWindowPolicy#MEETING_WINDOW}가 지난 뒤 종료 배치가 한다.
+     */
     @Test
-    void 마지막_도착은_group과_유효_회원을_완료하고_반복_요청에_같은_snapshot을_반환한다() {
+    void 마지막_도착에도_group은_진행_중으로_남고_만남_시간이_끝나야_완료된다() {
         MatchGroupResponse beforeLast = arrivals.arrive(9_110_001L);
         assertThat(beforeLast.status()).isEqualTo("IN_PROGRESS");
         assertThat(beforeLast.completedAt()).isNull();
 
-        MatchGroupResponse completed = arrivals.arrive(9_110_002L);
-        MatchGroupResponse repeated = arrivals.arrive(9_110_002L);
+        MatchGroupResponse allArrived = arrivals.arrive(9_110_002L);
 
-        assertThat(completed.status()).isEqualTo("COMPLETED");
-        assertThat(completed.completedAt()).isNotNull();
-        assertThat(completed.members()).allSatisfy(member ->
-                assertThat(member.status()).isEqualTo("COMPLETED"));
-        assertThat(repeated.completedAt()).isEqualTo(completed.completedAt());
+        assertThat(allArrived.status()).isEqualTo("IN_PROGRESS");
+        assertThat(allArrived.completedAt()).isNull();
+        assertThat(allArrived.members()).allSatisfy(member ->
+                assertThat(member.status()).isEqualTo("ARRIVED"));
+        assertThat(queries.currentGroup(9_110_001L)).isNotNull();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM match_events
+                WHERE group_id=9171001 AND event_type='MATCH_COMPLETED'
+                """, Integer.class)).isZero();
+        verify(messagingTemplate, timeout(1_000).atLeastOnce()).convertAndSendToUser(
+                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.eq("/queue/matching"),
+                org.mockito.ArgumentMatchers.argThat((MatchingStateChangedNotification notification) ->
+                        "ALL_ARRIVED".equals(notification.reason()))
+        );
+
+        closeMeeting();
+
+        assertThat(queries.currentGroup(9_110_001L)).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("COMPLETED");
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM match_events
                 WHERE group_id=9171001 AND event_type='MATCH_COMPLETED'
                 """, Integer.class)).isEqualTo(1);
-        assertThat(queries.currentGroup(9_110_001L)).isNull();
     }
 
     @Test
     void 완료_회원은_active_unique_index를_점유하지_않아_새_group에_참여할_수_있다() {
         arrivals.arrive(9_110_001L);
         arrivals.arrive(9_110_002L);
+        closeMeeting();
 
         jdbc.update("""
                 INSERT INTO match_attempts (
@@ -391,14 +416,14 @@ class MatchArrivalTimeServiceIntegrationTest {
 
             MatchGroupResponse firstSnapshot = arrivals.arrive(9_110_001L);
             MatchGroupResponse secondSnapshot = arrivals.arrive(9_110_002L);
-            assertThat(firstSnapshot.status()).isEqualTo("COMPLETED");
+            assertThat(firstSnapshot.status()).isEqualTo("IN_PROGRESS");
             assertThat(firstSnapshot.startedAt()).isNotNull();
-            assertThat(firstSnapshot.completedAt()).isNotNull();
+            assertThat(firstSnapshot.completedAt()).isNull();
             assertThat(firstSnapshot.confirmedAt()).isEqualTo(NOW.plusSeconds(10));
             assertThat(firstSnapshot.confirmedMemberCount()).isEqualTo(2);
             assertThat(firstSnapshot.members()).hasSize(2)
                     .allSatisfy(member -> {
-                        assertThat(member.status()).isEqualTo("COMPLETED");
+                        assertThat(member.status()).isEqualTo("ARRIVED");
                         assertThat(member.arrivedAt()).isNotNull();
                     });
             assertThat(secondSnapshot.status()).isEqualTo(firstSnapshot.status());
@@ -410,6 +435,10 @@ class MatchArrivalTimeServiceIntegrationTest {
                     new MemberEventCount(9_110_001L, 1L),
                     new MemberEventCount(9_110_002L, 1L)
             );
+
+            // 완료는 도착이 아니라 만남 시간 종료가 만든다(docs/19 4.11.2).
+            closeMeeting();
+
             assertThat(jdbc.queryForObject("""
                     SELECT COUNT(*)
                     FROM match_group_members
@@ -866,6 +895,45 @@ class MatchArrivalTimeServiceIntegrationTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
         }
+    }
+
+    /**
+     * 노쇼가 섞인 그룹도 만남 시간이 끝나면 닫힌다({@code docs/19} 4.11.2).
+     *
+     * <p>예전에는 이 조합에서 그룹이 영구히 {@code IN_PROGRESS}로 남았다. 도착 시점에는 노쇼가
+     * 아직 {@code JOINED}라 완료되지 않고, 노쇼 배치가 그 회원을 {@code NO_SHOW}로 바꾸고 나면
+     * 남은 구성원이 모두 {@code ARRIVED}여서 노쇼 후보 조회에 다시 걸리지 않았다. 닫히지 않은
+     * 그룹은 {@code existsActiveByMemberId}를 계속 참으로 만들어 <b>도착까지 한 회원의 새 매칭
+     * 신청을 영구히 막는다.</b>
+     */
+    @Test
+    void 노쇼가_있어도_도착자가_둘_이상이면_만남_시간이_끝날_때_완료된다() {
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES (9181003, 9171001, 9110003, 'JOINED', true, ?, ?)
+                """, NOW, NOW);
+
+        arrivals.arrive(9_110_001L);
+        arrivals.arrive(9_110_002L);
+        assertThat(noShows.process(9_171_001L, TEST_NOW.plusMinutes(30))).isTrue();
+
+        closeMeeting();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_group_members
+                WHERE group_id = 9171001 AND status = 'COMPLETED'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(queries.currentGroup(9_110_001L)).isNull();
+        assertThat(queries.currentGroup(9_110_003L)).isNull();
+    }
+
+    /** 만남 시간이 끝난 시점의 종료 배치를 돌린다. 완료 판정은 여기서만 일어난다. */
+    private void closeMeeting() {
+        meetingCloses.process(9_171_001L, TEST_NOW.plus(MatchMeetingWindowPolicy.MEETING_WINDOW));
     }
 
     @TestConfiguration

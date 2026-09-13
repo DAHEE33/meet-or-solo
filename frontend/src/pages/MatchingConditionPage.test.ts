@@ -116,6 +116,7 @@ const group: CurrentMatchGroup = {
   currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20',
   arrivalDeadlineAt: '2026-07-27T12:30:20',
+  meetingEndsAt: '2026-07-27T13:00:20',
   festival: {
     festivalId: 2,
     title: '테스트 축제',

@@ -2,6 +2,7 @@ package com.survey.meetorsolo.domain.matching.dto;
 
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository.ActiveGroupWithFestivalProjection;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalDeadlinePolicy;
+import com.survey.meetorsolo.domain.matching.service.MatchMeetingWindowPolicy;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -14,6 +15,7 @@ public record MatchGroupResponse(
         Integer currentMemberCount,
         OffsetDateTime confirmedAt,
         OffsetDateTime arrivalDeadlineAt,
+        OffsetDateTime meetingEndsAt,
         OffsetDateTime startedAt,
         OffsetDateTime completedAt,
         Long currentMemberId,
@@ -41,6 +43,7 @@ public record MatchGroupResponse(
                 members.size(),
                 confirmedAt,
                 MatchArrivalDeadlinePolicy.deadlineAt(confirmedAt),
+                MatchMeetingWindowPolicy.closesAt(confirmedAt),
                 null,
                 null,
                 null,
@@ -66,6 +69,7 @@ public record MatchGroupResponse(
                 members.size(),
                 confirmedAt,
                 MatchArrivalDeadlinePolicy.deadlineAt(confirmedAt),
+                MatchMeetingWindowPolicy.closesAt(confirmedAt),
                 group.getStartedAt() == null
                         ? null
                         : group.getStartedAt().atZone(KOREA_ZONE).toOffsetDateTime(),

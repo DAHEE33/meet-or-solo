@@ -26,6 +26,7 @@ const group = (status: CurrentMatchGroup['status'] = 'CONFIRMED'): CurrentMatchG
     currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20+09:00',
   arrivalDeadlineAt: '2026-07-27T12:30:20+09:00',
+  meetingEndsAt: '2026-07-27T13:00:20+09:00',
   currentMemberId: 1,
   festival: {
     festivalId: 2,

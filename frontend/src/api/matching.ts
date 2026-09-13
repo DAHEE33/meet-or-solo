@@ -168,6 +168,8 @@ export type CurrentMatchGroup = {
   currentMemberCount: number;
   confirmedAt: string;
   arrivalDeadlineAt: string;
+  /** 만남이 끝났다고 보는 시각. 이 시각에 상태방이 닫히고 매너온도 보상이 지급된다. */
+  meetingEndsAt: string;
   startedAt?: string | null;
   completedAt?: string | null;
   currentMemberId?: number;

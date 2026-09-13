@@ -208,6 +208,31 @@ public interface MatchGroupRepository extends JpaRepository<MatchGroup, Long> {
             @Param("batchSize") int batchSize
     );
 
+    /**
+     * 만남 시간이 끝나 닫아야 할 그룹이다({@code MatchMeetingWindowPolicy}).
+     *
+     * <p>도착자가 한 명이라도 있는 그룹만 찾는다. 아무도 도착하지 않은 그룹은 도착 마감 시점에
+     * 노쇼 경로가 이미 취소했으므로 여기서 다시 볼 일이 없다. 간격 {@code 1 hour}는
+     * {@code MatchMeetingWindowPolicy.MEETING_WINDOW}와 같아야 한다.
+     */
+    @Query(value = """
+            SELECT matching_group.id
+            FROM match_groups matching_group
+            WHERE matching_group.status IN ('CONFIRMED', 'IN_PROGRESS')
+              AND matching_group.confirmed_at + INTERVAL '1 hour' <= :now
+              AND EXISTS (
+                  SELECT 1 FROM match_group_members group_member
+                  WHERE group_member.group_id = matching_group.id
+                    AND group_member.status = 'ARRIVED'
+              )
+            ORDER BY matching_group.confirmed_at, matching_group.id
+            LIMIT :batchSize
+            """, nativeQuery = true)
+    List<Long> findMeetingCloseCandidateIds(
+            @Param("now") java.time.OffsetDateTime now,
+            @Param("batchSize") int batchSize
+    );
+
     interface ActiveGroupWithFestivalProjection {
         Long getGroupId();
         Long getFestivalId();

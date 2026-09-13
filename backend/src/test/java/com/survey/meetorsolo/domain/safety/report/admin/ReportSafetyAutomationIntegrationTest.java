@@ -594,15 +594,19 @@ class ReportSafetyAutomationIntegrationTest {
     /**
      * 신고 접수 API는 group 참여자만 허용한다({@code existsParticipant}).
      * 활성 member 부분 unique index를 피하려고 종료 상태인 {@code COMPLETED}를 사용한다.
+     *
+     * <p>{@code arrived_at}을 채운다. 신고는 실제로 만남이 있었던 매칭만 대상이라
+     * (docs/19 4.11.1) 도착 기록이 없으면 접수가 {@code REPORT_MEETING_NOT_HELD}로 거절된다.
      */
     private void insertGroupMembers(long groupId, long... memberIds) {
         for (long memberId : memberIds) {
             jdbc.update("""
                     INSERT INTO match_group_members(
-                        group_id, member_id, status, allow_minimum_two, created_at, updated_at
-                    ) VALUES (?, ?, 'COMPLETED', TRUE, ?, ?)
+                        group_id, member_id, status, arrived_at, allow_minimum_two,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'COMPLETED', ?, TRUE, ?, ?)
                     ON CONFLICT (group_id, member_id) DO NOTHING
-                    """, groupId, memberId, NOW.minusDays(2), NOW.minusDays(2));
+                    """, groupId, memberId, NOW.minusDays(2), NOW.minusDays(2), NOW.minusDays(2));
         }
     }
 

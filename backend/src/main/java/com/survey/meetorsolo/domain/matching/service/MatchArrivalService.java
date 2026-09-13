@@ -2,7 +2,6 @@ package com.survey.meetorsolo.domain.matching.service;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchEvent;
-import com.survey.meetorsolo.domain.matching.event.MatchCompletedEvent;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroup;
 import com.survey.meetorsolo.domain.matching.entity.MatchGroupMember;
 import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
@@ -61,41 +60,31 @@ public class MatchArrivalService {
         if (!now.isBefore(MatchArrivalDeadlinePolicy.deadlineAt(group.getConfirmedAt()))) {
             throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_DEADLINE_EXCEEDED);
         }
-        boolean newlyArrived = !"ARRIVED".equals(member.getStatus());
-        if (newlyArrived) {
-            member.arrive(now);
-            group.start(now);
-            events.save(MatchEvent.memberArrived(
-                    group.getId(), group.getAttemptId(), memberId, now
-            ));
+        if ("ARRIVED".equals(member.getStatus())) {
+            return groupQueries.snapshot(group.getId(), memberId);
         }
+        member.arrive(now);
+        group.start(now);
+        events.save(MatchEvent.memberArrived(
+                group.getId(), group.getAttemptId(), memberId, now
+        ));
 
+        // 전원이 도착해도 여기서 완료로 닫지 않는다. 도착은 만남의 시작이고 완료 판정은
+        // 확정 + MatchMeetingWindowPolicy.MEETING_WINDOW에서 MatchMeetingCloseGroupService가
+        // 한다(docs/19 4.11.2). 예전에는 마지막 도착자가 버튼을 누르는 순간 상태방이 사라졌고,
+        // 활성 구성원이 한 명만 남은 그룹에서는 단독 도착이 완료·보상으로 이어졌다.
         List<MatchGroupMember> activeMembers = members.stream().filter(this::isActive).toList();
         List<Long> activeMemberIds = activeMembers.stream()
                 .map(MatchGroupMember::getMemberId)
                 .toList();
-        boolean completed = !activeMembers.isEmpty()
+        boolean allArrived = !activeMembers.isEmpty()
                 && activeMembers.stream().allMatch(candidate -> "ARRIVED".equals(candidate.getStatus()));
-        if (!newlyArrived && !completed) {
-            return groupQueries.snapshot(group.getId(), memberId);
-        }
-        if (completed) {
-            group.complete(now);
-            activeMembers.forEach(candidate -> candidate.complete(now));
-            events.save(MatchEvent.matchCompleted(group.getId(), group.getAttemptId(), now));
-        }
         groupMembers.flush();
         groups.flush();
         events.flush();
         eventPublisher.publishEvent(new MatchingStateChangedEvent(
-                activeMemberIds, completed ? "MATCH_COMPLETED" : "MEMBER_ARRIVED", now
+                activeMemberIds, allArrived ? "ALL_ARRIVED" : "MEMBER_ARRIVED", now
         ));
-        if (completed) {
-            // 매너온도 보상은 AFTER_COMMIT에서 별도 transaction으로 지급한다. 보상 실패가
-            // 완료를 롤백하면 안 되고, 여기서 members까지 잠그면 members -> match_groups 순으로
-            // 잠그는 탈퇴 경로와 교차 deadlock이 생긴다(MannerTemperatureRewardService 참고).
-            eventPublisher.publishEvent(new MatchCompletedEvent(group.getId(), activeMemberIds, now));
-        }
         return groupQueries.snapshot(group.getId(), memberId);
     }
 
