@@ -23,7 +23,7 @@
 | 2. status/ddayLabel 매핑 유틸 + `HomePage`/`ExploreListPage`(축제) 실연동 | ✅ 완료 | `utils/festival.ts` |
 | 3. `tour_places` 도메인 신설 | ✅ 완료 | `domain/tourplace` 패키지, sync scheduler 포함 |
 | 4. 축제 ↔ 관광지 근접 관계 API + Explore(관광지)/`TourSpotDetailPage` 실연동 | ✅ 완료 | haversine 기반 |
-| 5. 목록 필터 확장(`keyword`를 backend 쿼리 파라미터로) | ✅ 완료(`keyword`만) | `category`(contentTypeId)는 이미 구현돼 있었음. `region`/`sort`는 여전히 미구현 (7장 참고) |
+| 5. 목록 필터 확장(`keyword`를 backend 쿼리 파라미터로) | ✅ 완료(`keyword`만) | `category`(contentTypeId)는 이미 구현돼 있었음. `region`/`sort`는 이후 `docs/25` 설계로 구현 완료(진행 로그 `[10-A 후속 9]`) |
 | 6. 축제 소개글/이용정보/프로그램(`intro`/`infoItems`/`programs`) | ✅ 완료(온디맨드) | `detailCommon2`/`detailIntro2`/`detailInfo2`, 인메모리 TTL 캐시 (3.6 참고) |
 
 ## 3. Backend 구현 내용
@@ -87,7 +87,7 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 | 화면 | 연동 API | 상태 |
 | --- | --- | --- |
 | `HomePage` | `GET /api/festivals`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동 |
-| `ExploreListPage` | `GET /api/festivals?keyword=`, `GET /api/spots?contentTypeId=&keyword=` | ✅ mock 제거, 실 API 연동, `keyword`/`category` 서버 필터 적용 / ❌ `region`/`sort`는 미구현 |
+| `ExploreListPage` | `GET /api/festivals?keyword=`, `GET /api/spots?contentTypeId=&keyword=` | ✅ mock 제거, 실 API 연동, `keyword`/`category` 서버 필터 적용 / ✅ `region`/`sort`도 이후 구현(`docs/25`) |
 | `FestivalDetailPage` | `GET /api/festivals/{id}`, `GET /api/festivals/{id}/nearby-spots` | ✅ mock 제거, 실 API 연동, 소개/이용정보/프로그램 섹션 신설 |
 | `TourSpotDetailPage` | `GET /api/spots/{id}`, `GET /api/spots/{id}/nearby-festivals`, `GET /api/spots` | ✅ mock 제거, 실 API 연동 |
 
@@ -116,6 +116,7 @@ backend는 데이터 정합성 상태(`ACTIVE`/`ENDED`/`HIDDEN`)만 관리하고
 - `matchingCount`, `matchSupported`는 매칭 도메인 구현 이후에 채워질 값입니다.
 - `detailIntro2`/`detailInfo2`의 정확한 응답 필드명은 관광공사 공식 문서 기준으로 작성했지만, 실제 강원도 축제 데이터로 라이브 호출해 검증하지는 못했습니다(테스트 키 쿼터를 아껴야 해서). 배포 후 실제 응답으로 필드 매핑(특히 `infoItems`의 라벨 구성)을 한 번 점검해야 합니다.
 - 축제 상세 조회는 요청마다 최대 3번의 TourAPI 호출이 발생합니다(캐시 미스 시). 배치 동기화와 달리 트래픽에 비례하는 부하라서, 캐시 TTL(기본 1시간)이 실제 트래픽 대비 적절한지 배포 후 `tour_api_call_log`로 점검이 필요합니다.
+- **(갱신) 목록 필터 `region`/`sort`는 구현 완료입니다.** 아래 보류 결정은 `docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md`로 해제됐고, 지역(시군구)·정렬 필터와 무한스크롤이 들어갔습니다(진행 로그 `[10-A 후속 9]`). 다음 문단은 당시 보류 사유의 기록입니다.
 - 목록 필터 중 `region`(지역 선택)/`sort`(정렬 기준)는 여전히 미구현입니다. `ExploreListPage`의 "지역/일정/정렬" 등 필터 칩은 현재 UI에만 존재하고 동작하지 않는 표시용 라벨이며, 실제 지역 선택 UI·정렬 기준이 정해지기 전까지는 backend 파라미터를 추가하지 않기로 했습니다(`keyword`는 3.5절대로 구현 완료).
   - **후속 설계 완료**: 지역·정렬 필터, 무한스크롤, 내 위치 기준 조회는 [docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md](25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md)에서 설계했습니다(구현 승인 전). 지역 단위는 데이터가 강원 1개 도뿐이라 "도"가 아니라 "시군구"로 시작하며, 관광지의 내 위치 조회는 `docs/06_SECURITY_POLICY.md` 갱신이 선행 조건입니다.
 - `data/mock/tourSpots.ts`는 완전히 제거되지 않고 일부 남아 있습니다. 정리 필요 여부 확인이 필요합니다.
