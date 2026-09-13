@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Heart, MapPinCheck, HeartHandshake, MessageCircleQuestion, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
 import { authApi } from '../api/auth';
 import { matchHistoryApi } from '../api/matchHistory';
+import { checkinApi } from '../api/checkin';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
 import WithdrawalConfirmDialog from '../components/member/WithdrawalConfirmDialog';
@@ -17,7 +18,6 @@ import {
   resolvePreferenceState,
   type PreferenceState,
 } from '../components/preference/preferenceStatus';
-import { checkInRecords } from '../data/mock/checkIns';
 import { contentBookmarksApi, type BookmarkedContent } from '../api/contentBookmarks';
 import { inquiriesApi } from '../api/inquiries';
 import { bookmarkedContentId, bookmarkedContentTitle } from '../hooks/useContentBookmark';
@@ -63,6 +63,7 @@ export default function MyPage() {
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawalError, setWithdrawalError] = useState<string | null>(null);
   const [matchHistory, setMatchHistory] = useState<{ count: number; hasMore: boolean } | null>(null);
+  const [checkInHistory, setCheckInHistory] = useState<{ count: number; hasMore: boolean } | null>(null);
   const [favorites, setFavorites] = useState<BookmarkedContent[] | null>(null);
   const [unreadInquiryCount, setUnreadInquiryCount] = useState(0);
 
@@ -141,6 +142,22 @@ export default function MyPage() {
         if (!controller.signal.aborted) {
           // 첫 page만 읽으므로 뒤가 더 있으면 정확한 총계가 아니라 "20+"로 표기한다.
           setMatchHistory({
+            count: history.items.length,
+            hasMore: history.pagination.hasNext,
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
+  // 체크인 기록 건수도 부가 정보다. 매칭 기록과 같은 이유로 실패를 화면에 드러내지 않는다.
+  useEffect(() => {
+    const controller = new AbortController();
+    checkinApi.getMyHistory(null, controller.signal)
+      .then((history) => {
+        if (!controller.signal.aborted) {
+          setCheckInHistory({
             count: history.items.length,
             hasMore: history.pagination.hasNext,
           });
@@ -293,11 +310,13 @@ export default function MyPage() {
             <span className="text-xs text-ink/50">매칭 기록</span>
           </Link>
           <Link
-            to="/check-in"
+            to="/mypage/check-ins"
             className="flex flex-col gap-1 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]"
           >
             <MapPinCheck size={18} className="text-teal" />
-            <span className="text-lg font-bold text-ink tabular-nums">{checkInRecords.length}</span>
+            <span className="text-lg font-bold text-ink tabular-nums">
+              {checkInHistory ? `${checkInHistory.count}${checkInHistory.hasMore ? '+' : ''}` : '-'}
+            </span>
             <span className="text-xs text-ink/50">체크인 기록</span>
           </Link>
         </section>
