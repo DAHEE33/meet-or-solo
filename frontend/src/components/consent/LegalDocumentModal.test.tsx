@@ -35,6 +35,28 @@ describe('LegalDocumentModal', () => {
     expect(html).toContain('aria-labelledby="legal-document-title"');
   });
 
+  /**
+   * 체크박스를 눌러서 연 경우와 `전문 보기`로 연 경우를 버튼 문구로 구분한다. 전자는 확인이
+   * 곧 동의로 이어지므로 무엇을 누르는지 분명해야 한다.
+   */
+  it('확인 버튼 문구를 바꿀 수 있고 기본값은 열람용이다', () => {
+    const viewOnly = renderToStaticMarkup(
+      <LegalDocumentModal document={termsDocument()} onClose={() => {}} />,
+    );
+    expect(viewOnly).toContain('확인했어요');
+
+    const forAgreement = renderToStaticMarkup(
+      <LegalDocumentModal
+        document={termsDocument()}
+        onClose={() => {}}
+        onConfirm={() => {}}
+        confirmLabel="확인했고 동의합니다"
+      />,
+    );
+    expect(forAgreement).toContain('확인했고 동의합니다');
+    expect(forAgreement).not.toContain('>확인했어요<');
+  });
+
   /** 전문이 길어 본문만 스크롤돼야 한다. 헤더까지 흐르면 닫기 버튼이 화면 밖으로 나간다. */
   it('본문 영역만 스크롤한다', () => {
     const html = renderToStaticMarkup(
@@ -75,16 +97,5 @@ describe('ConsentCheckbox', () => {
   it('저장 중에는 체크박스를 잠근다', () => {
     expect(render({ disabled: true })).toContain('disabled=""');
     expect(render()).not.toContain('disabled=""');
-  });
-
-  /**
-   * 전문을 보기 전에는 체크가 잠기는데, 잠긴 체크박스만 두면 왜 눌리지 않는지 알 수 없다.
-   * 잠긴 이유를 같은 자리에서 알려야 가입이 막힌 것처럼 보이지 않는다.
-   */
-  it('안내 문구는 넘긴 경우에만 그린다', () => {
-    expect(render()).not.toContain('role="note"');
-    const html = render({ hint: '이용약관 전문을 확인하면 동의할 수 있어요.' });
-    expect(html).toContain('role="note"');
-    expect(html).toContain('이용약관 전문을 확인하면 동의할 수 있어요.');
   });
 });
