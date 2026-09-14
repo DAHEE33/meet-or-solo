@@ -1,5 +1,45 @@
 # 진행 상태 기록
 
+## [사고 기록] 저장소에 없는 migration이 공유 dev DB에 적용되는 일 — 3회째
+
+상태: `V35` 해결(협업자 push), `V36` 미해결(저장소에 없음), 우리 migration은 `V37`로 이동
+
+`docs/10`의 앞선 `[사고 기록]`과 같은 뿌리다. **공유 dev DB의 이력이 저장소보다 앞서 있다.**
+
+| 번호 | script | dev DB 적용 | 저장소 |
+| --- | --- | --- | --- |
+| `V28`~`V30` | (협업자) | — | 당시 미push → 우리 것을 `V31`로 이동 |
+| `V35` | `add_content_engagement_count_indexes` | 2026-09-13 22:42 | 2026-09-14 push됨 |
+| `V36` | `add_member_test_account` | 2026-09-14 20:31 | **아직 없음** |
+| `V37` | `add_insufficient_arrivals_cancel_reason` | 미적용 | 이 브랜치 |
+
+### 이번에 겪은 순서
+
+1. 저장소 마지막이 `V34`라 우리 migration을 `V35`로 만들었다
+2. 테스트가 `Migration checksum mismatch for migration version 35`로 전부 실패 → dev DB 조회
+   결과 저장소에 없는 `V35`가 이미 있었다 → **`V36`으로 이동**
+3. 그 뒤 `V35`가 push돼 `dev`를 병합했는데, 이번엔 `checksum mismatch for version 36`
+4. 다시 조회하니 **그날 저녁 20:31에 또 다른 `V36`이 적용**돼 있었다 → **`V37`로 이동**
+
+### `flyway repair`를 쓰지 않은 이유
+
+repair는 기록된 체크섬을 내 파일 것으로 덮어쓴다. 그러면 **남의 migration이 내 파일로
+위장되고 그쪽 스키마 변경이 이력에서 사라진다.** 번호를 옮기는 편이 항상 안전하다.
+
+### 규칙이 한 줄 모자라다
+
+`docs/08`에는 "migration 번호는 공유 dev DB의 `flyway_schema_history`를 기준으로 정한다"가
+있다. 그 규칙은 **번호를 고르는 쪽**만 구속한다. 정작 문제를 만드는 것은 **적용하는 쪽**이다.
+
+> 저장소에 push하지 않은 migration을 공유 dev DB에 적용하지 않는다.
+
+이 한 줄이 없어서 같은 사고가 세 번 났다. 번호를 고르는 쪽은 아무리 조심해도 **적용 시점과
+번호 선택 시점 사이에 끼어드는 migration**을 막을 수 없다.
+
+특히 `V36__add_member_test_account`처럼 **테스트 계정을 넣는 일회성 migration**은 애초에
+migration이 아니라 SQL 스크립트로 처리하는 편이 낫다. 스키마 변경이 아니라 데이터 주입이고,
+운영 DB에는 적용되면 안 되는 내용이다.
+
 ## [10-B 매칭] 로컬 테스트에서 나온 매칭 불가 2건 (사용자 제보)
 
 상태: Backend/Frontend 구현·자동 테스트 완료. 로컬 재검증 대기
