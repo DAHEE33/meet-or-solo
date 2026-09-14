@@ -5467,3 +5467,170 @@ codec·DTO를 두고, `FestivalCheckinRepository`에 `festivals`를 JOIN하는 n
 **테스트 실행 방식:** 이 통합 테스트는 같은 도메인의 `FestivalCheckinServiceIntegrationTest`와
 같이 Testcontainers 없이 실행 환경의 PostgreSQL을 쓴다. 데이터는 `@Transactional` 롤백으로
 정리된다.
+
+## [10-UI 후속 5] 댓글 작성 자격(체크인), 목록 좋아요·후기 수, 기간·상태 필터, 집계 정렬
+
+브랜치: `feature/wbs-10-a-festival-course` (사용자 결정으로 같은 브랜치에서 이어 작업, 커밋 없이 진행)
+
+사용자 요청 4건을 한 번에 처리했다. 설계 근거는 `docs/25` 14장과 `docs/27` 5.2.1에 남겼다.
+
+### 1. 축제 댓글은 체크인한 사람만
+
+`ContentCommentService.create`에서 대상이 축제면 `FestivalCheckinRepository
+.existsByMemberIdAndFestivalId`로 체크인 이력을 검사하고, 없으면
+`403 CONTENT_COMMENT_CHECKIN_REQUIRED`를 던진다.
+
+- **체크인 상태를 보지 않는다.** 유효기간이 1시간이라 상태를 보면 현장을 떠난 순간 후기를 못
+  쓴다. 취소(`CANCELLED`)도 방문을 부정하는 게 아니라 매칭풀에서 빠지려는 행위다.
+- **관광지에는 적용하지 않았다.** 체크인은 `festival_checkins`로 축제 전용이고 관광지에는 개념
+  자체가 없다. 관광지 체크인을 새로 만드는 건 이번 요청보다 훨씬 큰 범위라 사용자와 확인 후
+  제외했다.
+- **조회·좋아요는 그대로다.** 요청대로 제한 대상은 "쓰기" 하나뿐이다.
+- 화면이 403을 받기 전에 알도록 `engagement` 응답 `viewer.canComment`를 추가했다.
+  `ContentCommentForm`이 비로그인 / 체크인 필요 / 작성 가능 3갈래로 분기한다.
+
+### 2. 목록 카드에 좋아요(찜)·후기(댓글) 수
+
+`FestivalListItemResponse`·`TourPlaceListItemResponse`에 `bookmarkCount`·`commentCount`를 넣고
+`EngagementCounts` 컴포넌트를 두 카드가 공유한다.
+
+- "좋아요"는 찜 수다. 콘텐츠 단위 반응이 찜 하나뿐이라는 것을 사용자와 확인했다.
+- 댓글은 `VISIBLE`만 센다(상세 화면 `commentCount`와 같은 기준).
+- **내 찜 목록 쿼리에도 같은 집계를 넣었다.** 같은 카드를 재사용하는데 빠뜨리면 찜 목록에서만
+  항상 0으로 보인다.
+
+### 3. 일정 프리셋 → 기간 직접 선택 + 진행 상태 필터
+
+- `schedule` 파라미터와 `FestivalScheduleFilter` enum·테스트를 삭제하고 `startDate`/`endDate`로
+  교체했다. `DateRangeFilter`는 브라우저 기본 `<input type="date">` 2개다.
+- `progress`(`ALL`/`UPCOMING`/`ONGOING`/`ENDED`)를 추가했다. 판정 규칙은 frontend
+  `resolveDisplayStatus`와 일치시켰다(`ENDED` 상태는 날짜와 무관하게 마감).
+
+**여기서 제일 큰 발견:** 기존 목록 쿼리는 `status = ACTIVE` + 종료일 미경과만 반환해서
+**"진행 마감" 축제가 애초에 나오지 않았다.** `progress`를 넘길 때만 `ENDED`까지 넓히고 종료일
+컷을 푼다. 넘기지 않으면 기존 동작 그대로다 — 같은 API를 `HomePage`와 관광지 상세가 함께 쓰고
+있어 기본값을 바꾸면 그쪽에 지난 축제가 섞인다.
+
+### 4. 좋아요 많은 순 / 후기 많은 순 정렬
+
+- 축제: `RECENTLY_ADDED`(기본) / `BOOKMARK_COUNT_DESC` / `COMMENT_COUNT_DESC`.
+  `START_DATE_ASC`·`END_DATE_ASC`는 삭제했다.
+- 관광지: `TITLE_ASC`(기본) + `RECENTLY_ADDED` + 위 2개.
+- **목록 쿼리를 native query + 인터페이스 프로젝션으로 교체했다.** 정렬 키가 엔티티 속성이 아니라
+  집계 값이라 `Pageable`의 `Sort`로 표현할 수 없고, 응용 계층에서 정렬하면 무한스크롤 페이지
+  경계가 어긋난다. 집계는 파생 테이블에서 한 번만 계산하고 바깥에서 `CASE`로 정렬을 고른다 —
+  PostgreSQL이 `ORDER BY` 식 안의 이름을 출력 별칭이 아니라 입력 컬럼으로 해석하기 때문이다.
+- `V35`: `content_bookmarks(festival_id)`, `content_bookmarks(tour_place_id)` partial index.
+  V26의 unique index는 `member_id` 선행이라 대상별 집계에 안 걸린다. 댓글은 V26의 partial index를
+  그대로 쓴다.
+
+### 부수 변경 — 홈 화면 정렬
+
+`START_DATE_ASC`를 없앴으므로 정렬을 안 넘기는 `HomePage`의 기본 정렬도 `RECENTLY_ADDED`가
+된다. "다가오는 축제" 목록과 히어로 폴백이 배열 순서에 의존하므로 `sortByStartDate`로 브라우저에서
+다시 정렬했다. 서버 정렬을 되살리지 않은 이유는 "날짜 정렬을 다 지운다"가 이번 요청이라서다.
+
+### 테스트
+
+- Backend 신규 16건. `FestivalListFilterIntegrationTest` 10건(기본 가시성 회귀, progress 4종,
+  기간 겹침 3종, 좋아요순, 후기순+숨김·삭제 제외), `ContentCommentServiceTest` 5건(체크인 없으면
+  403, 이력만 있으면 통과, 관광지는 무관, `canComment` 2건), `FestivalControllerTest` 1건
+  (기간·상태 파라미터 전달).
+- Frontend 신규 13건. `EngagementCounts.test.tsx` 5건, `festivals.test.ts` 3건(쿼리 파라미터
+  계약 — 특히 "아무것도 안 넘기면 `progress`를 붙이지 않는다"), `ContentCommentSection.test.tsx`
+  2건(입력창 3갈래), `homeFestival.test.ts` 3건(`sortByStartDate`).
+- 회귀: frontend 705건 전체 통과, `tsc --noEmit`과 production build 통과. backend 676건 중
+  33건 실패인데 **전부 Testcontainers가 Docker를 못 찾아서 나는 환경 실패**다(작업 PC에 Docker가
+  없음). 실패한 33개 testcase를 전부 확인했고 Docker 외 원인은 0건이다.
+
+### 남은 위험
+
+동기화가 다가오는 축제 위주라 dev DB에 `ENDED` 축제가 거의 없을 수 있다. 그러면 "진행 마감"
+필터가 동작은 맞아도 결과가 비어 보인다. dev DB는 SSH 터널이 필요해 여기서 확인하지 못했다.
+
+## [10-UI 후속 6] 목록에서 바로 찜하기
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+
+후속 5에서 목록 카드의 찜·댓글 수를 **표시 전용**으로 만들었는데, 사용자 요청은 "찜은 리스트에서
+바로 누를 수 있게"였다. 표시 전용으로 둔 것은 내 판단이었고 요청과 달랐다. 적용 범위는 탐색
+목록(축제·관광지)과 관광지 상세 "주변에서 열리는 축제" 두 곳이며, **찜 목록은 사용자 확인 후
+표시 전용으로 남겼다**(해제하면 그 항목이 자기 목록에서 사라져야 하는지 별도 결정 필요).
+
+### 막혀 있던 것 2가지
+
+1. **목록 응답에 "내가 찜했는지"가 없었다.** `bookmarkCount`만 있어 하트를 채울지 알 수 없었다.
+   → `bookmarkedByMe`를 추가하고 목록 조회를 `OptionalMemberResolver` 기반 optional-login으로
+   바꿨다. 비로그인·만료 토큰도 그대로 200이다(401을 내면 탐색 화면이 로그인으로 튕긴다).
+2. **카드 전체가 `<Link>`였다.** 그 안에 버튼을 넣으면 잘못된 HTML이고 하트를 눌러도 상세로
+   이동한다. → 카드를 `<div>`로 바꾸고 본문만 링크로 감쌌다. 버튼에서도
+   `preventDefault`/`stopPropagation`으로 한 번 더 막는다.
+
+### 설계 판단
+
+- **`bookmarkedByMe`는 native query에 넣지 않았다.** 정렬 키가 아니라서 쿼리 안에 있을 이유가
+  없고, 한 페이지 id로 `IN` 조회 1건이면 끝난다(`findLikedCommentIds`와 같은 방식). 넣었다면
+  회원 id null 바인딩용 `CAST` 분기가 하나 더 늘어난다.
+- **주변 축제는 집계를 최종 목록에만 한다.** 정렬 기준이 거리라 쿼리로 집계할 수 없어
+  `ContentEngagementSummaryReader.summarize`를 쓰는데, 반경·정렬·개수 제한을 끝낸 뒤에 부른다.
+  먼저 부르면 bounding box 후보 중 버려질 행까지 센다. (기존 이미지 조회도 같은 이유로 최종
+  목록 기준으로 바뀌었다 — 단위 테스트의 stub도 그에 맞춰 고쳤다.)
+- **목록 응답에 `viewerLoggedIn` 추가.** 목록 화면은 engagement를 부르지 않아 로그인 여부를
+  알 수 없는데, 비로그인이 하트를 누르면 요청 없이 `/login`으로 보내야 한다.
+- **낙관적 갱신 없음, 목록 재조회 없음.** `useListBookmarks`가 사용자가 바꾼 것만 overlay map으로
+  들고 있고, 표시 개수는 서버 값에 내 토글만 ±1 한다. 실패하면 상태를 바꾸지 않는다(목록에는
+  오류를 띄울 자리가 없다).
+
+### 걸렸던 것
+
+**Mockito가 `Long` 반환 타입에 `null`이 아니라 `0L`을 돌려준다.** controller 테스트에서
+`OptionalMemberResolver`를 mock으로 두니 비로그인이 회원 0번으로 해석돼 검증이 어긋났다.
+`resolveOrNull`을 명시적으로 `null` 스텁해서 해결했다.
+
+### 테스트
+
+- Backend 신규 5건. `FestivalListFilterIntegrationTest` 2건(내 찜만 `bookmarkedByMe`,
+  비로그인은 전부 false이고 예외 없음), `TourPlaceQueryServiceTest` 3건(주변 축제 집계 전달,
+  집계 없는 축제는 0/false, 이미지·집계를 최종 목록으로만 조회).
+- Frontend 신규 17건. `useListBookmarks.test.ts` 12건(overlay 해석, 개수 ±1, 비로그인은 요청
+  없이 로그인 이동, 연타 차단, 실패 시 무변경, unmount 후 응답 무시),
+  `EngagementCounts.test.tsx` 5건(버튼/표시 전용 분기, 하트가 링크 바깥인지).
+- 회귀: frontend 722건 전체 통과, `tsc --noEmit` 통과. backend 680건 중 33건 실패인데 전부
+  Docker 미설치로 인한 Testcontainers 환경 실패다(33건 전수 확인, 다른 원인 0건).
+
+## [10-UI 후속 7] 목록 찜 즉시 반영 버그 수정과 홈 "축제와 함께 둘러보기" 찜
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+
+### 1. 하트를 눌러도 새로고침해야 반영되던 버그
+
+후속 6에서 만든 `useListBookmarks`가 세션을 **렌더 중에** 만들고 `useEffect` cleanup에서
+`stop()`했다. React StrictMode는 개발 모드에서 mount → unmount → mount로 effect를 두 번 돌리므로,
+첫 cleanup이 세션을 영구 정지시키고 두 번째 mount가 그 정지된 세션을 그대로 썼다. 요청과 서버
+저장은 정상이고 `publish`만 화면에 닿지 않아서, 새로고침하면 서버 값이 보였다.
+
+- 세션 생성을 `useEffect` 안으로 옮겼다(`useInfiniteList`·`useContentBookmark`와 같은 구조).
+- 재생성 시 이전 `overrides`는 이어받고 `pendingKey`는 이어받지 않는다 — 그 요청은 이전 세션과
+  함께 버려졌고, 이어받으면 버튼이 영원히 비활성으로 남는다.
+
+### 2. 홈 "축제와 함께 둘러보기"에 찜·후기 수와 찜 버튼
+
+`GET /api/festivals/{id}/nearby-spots`를 optional-login으로 바꾸고 `NearbyTourPlaceResponse`에
+`bookmarkCount`/`commentCount`/`bookmarkedByMe`를 추가했다. 집계는 다른 반경 검색과 같이
+**반경·정렬·개수 제한을 끝낸 뒤** 최종 목록에만 한다.
+
+`FestivalNearbyPlaceItem`도 다른 카드와 같은 구조로 바꿨다 — 카드 전체가 아니라 본문만 링크이고
+찜 버튼은 그 형제다. 홈 화면의 로그인 여부는 이미 부르고 있던 축제 목록 응답의 `viewerLoggedIn`을
+쓴다(추가 요청 없음).
+
+### 테스트
+
+- Backend 신규 2건(`FestivalQueryServiceTest` — 주변 관광지 집계 전달, 집계를 최종 목록에만 수행).
+  기존 nearby 테스트 2건은 새 시그니처·집계 범위에 맞춰 갱신했다.
+- Frontend 신규 3건(`useListBookmarks.test.ts` 2건 — 세션 재생성 시 overrides 인계/pending 미인계,
+  `EngagementCounts.test.tsx` 1건 — 홈 카드의 하트가 링크 바깥인지).
+- 회귀: frontend 725건 전체 통과, `tsc --noEmit`과 production build 통과. backend 681건 중 33건
+  실패인데 전부 Docker 미설치로 인한 Testcontainers 환경 실패다(전수 확인, 다른 원인 0건).
+
+**걸렸던 것:** 새로 쓴 backend 테스트가 좌표 없는 `syncData()` fixture를 써서 반경 검색이 빈
+목록으로 조기 반환됐다. `syncDataWithCoordinates`로 바꿔 해결했다.

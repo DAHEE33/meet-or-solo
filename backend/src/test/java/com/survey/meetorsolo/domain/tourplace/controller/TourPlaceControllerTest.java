@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
+import com.survey.meetorsolo.domain.content.support.OptionalMemberResolver;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceDetailResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListItemResponse;
 import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListResponse;
@@ -20,6 +21,7 @@ import com.survey.meetorsolo.global.config.SecurityConfig;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -37,8 +39,19 @@ class TourPlaceControllerTest {
     @MockitoBean
     private TourPlaceQueryService tourPlaceQueryService;
 
+    /** 목록 조회가 공개(optional-login)라 controller가 이 해석기를 주입받는다(docs/27 2.1). */
+    @MockitoBean
+    private OptionalMemberResolver optionalMemberResolver;
+
     @MockitoBean
     private JwtProvider jwtProvider;
+
+    @BeforeEach
+    void setUp() {
+        // OptionalMemberResolver는 Long을 반환하므로 mock 기본값이 null이 아니라 0L이다.
+        // 비로그인 열람자를 검증하려면 명시적으로 null을 돌려줘야 한다.
+        when(optionalMemberResolver.resolveOrNull(any())).thenReturn(null);
+    }
 
     @Test
     void 관광지_목록을_공통_응답_형식으로_반환한다() throws Exception {
@@ -50,33 +63,37 @@ class TourPlaceControllerTest {
                         "테스트 관광지",
                         "강원특별자치도 테스트시",
                         TourPlaceStatus.ACTIVE,
-                        "https://example.com/image.jpg"
+                        "https://example.com/image.jpg",
+                        9L,
+                        4L,
+                        true
                 )),
                 0,
                 20,
                 1,
                 1,
-                false
+                false,
+                true
         );
-        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), isNull(), isNull(), eq(TourPlaceListSort.TITLE_ASC))).thenReturn(listResponse);
+        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), isNull(), isNull(), eq(TourPlaceListSort.TITLE_ASC), isNull())).thenReturn(listResponse);
 
         mockMvc.perform(get("/api/spots"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.items[0].title").value("테스트 관광지"));
-        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, null, null, TourPlaceListSort.TITLE_ASC);
+        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, null, null, TourPlaceListSort.TITLE_ASC, null);
     }
 
     @Test
     void keyword_파라미터를_그대로_전달한다() throws Exception {
-        TourPlaceListResponse listResponse = new TourPlaceListResponse(List.of(), 0, 20, 0, 0, false);
-        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), eq("맛집"), isNull(), eq(TourPlaceListSort.TITLE_ASC)))
+        TourPlaceListResponse listResponse = new TourPlaceListResponse(List.of(), 0, 20, 0, 0, false, false);
+        when(tourPlaceQueryService.getVisiblePlaces(eq(0), eq(20), isNull(), eq("맛집"), isNull(), eq(TourPlaceListSort.TITLE_ASC), isNull()))
                 .thenReturn(listResponse);
 
         mockMvc.perform(get("/api/spots").param("keyword", "맛집"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, "맛집", null, TourPlaceListSort.TITLE_ASC);
+        verify(tourPlaceQueryService).getVisiblePlaces(0, 20, null, "맛집", null, TourPlaceListSort.TITLE_ASC, null);
     }
 
     @Test
@@ -106,12 +123,13 @@ class TourPlaceControllerTest {
 
     @Test
     void 관광지_주변_축제를_거리순으로_반환한다() throws Exception {
-        when(tourPlaceQueryService.getNearbyFestivals(eq(1L), any(Integer.class), any(Integer.class)))
+        when(tourPlaceQueryService.getNearbyFestivals(
+                eq(1L), any(Integer.class), any(Integer.class), isNull()))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/spots/1/nearby-festivals"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-        verify(tourPlaceQueryService).getNearbyFestivals(1L, 5000, 10);
+        verify(tourPlaceQueryService).getNearbyFestivals(1L, 5000, 10, null);
     }
 }

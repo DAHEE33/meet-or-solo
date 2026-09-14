@@ -48,6 +48,7 @@ describe('bookmarkedContentPath', () => {
       id: 298, contentId: 'f298', title: '축제', address: null, regionCode: null,
       sigunguCode: null, eventStartDate: null, eventEndDate: null, status: 'ACTIVE',
       originImageUrl: null, thumbnailUrl: null, mapX: null, mapY: null,
+      bookmarkCount: 0, commentCount: 0, bookmarkedByMe: false,
     },
     tourPlace: null,
   };
@@ -58,6 +59,7 @@ describe('bookmarkedContentPath', () => {
     tourPlace: {
       id: 7, contentId: 'p7', contentTypeId: '12', title: '관광지',
       address: null, status: 'ACTIVE', imageUrl: null,
+      bookmarkCount: 0, commentCount: 0, bookmarkedByMe: false,
     },
   };
 

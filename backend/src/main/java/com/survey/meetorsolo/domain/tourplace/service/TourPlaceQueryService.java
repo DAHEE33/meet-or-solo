@@ -1,5 +1,7 @@
 package com.survey.meetorsolo.domain.tourplace.service;
 
+import com.survey.meetorsolo.domain.content.engagement.service.ContentEngagementSummaryReader;
+import com.survey.meetorsolo.domain.content.support.ContentTargetType;
 import com.survey.meetorsolo.domain.festival.dto.NearbyFestivalResponse;
 import com.survey.meetorsolo.domain.festival.entity.Festival;
 import com.survey.meetorsolo.domain.festival.entity.FestivalImage;
@@ -13,6 +15,7 @@ import com.survey.meetorsolo.domain.tourplace.dto.TourPlaceListSort;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlace;
 import com.survey.meetorsolo.domain.tourplace.entity.TourPlaceStatus;
 import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository;
+import com.survey.meetorsolo.domain.tourplace.repository.TourPlaceRepository.TourPlaceListProjection;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
@@ -22,6 +25,8 @@ import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -33,15 +38,18 @@ public class TourPlaceQueryService {
     private final TourPlaceRepository tourPlaceRepository;
     private final FestivalRepository festivalRepository;
     private final FestivalImageRepository festivalImageRepository;
+    private final ContentEngagementSummaryReader engagementSummaries;
 
     public TourPlaceQueryService(
             TourPlaceRepository tourPlaceRepository,
             FestivalRepository festivalRepository,
-            FestivalImageRepository festivalImageRepository
+            FestivalImageRepository festivalImageRepository,
+            ContentEngagementSummaryReader engagementSummaries
     ) {
         this.tourPlaceRepository = tourPlaceRepository;
         this.festivalRepository = festivalRepository;
         this.festivalImageRepository = festivalImageRepository;
+        this.engagementSummaries = engagementSummaries;
     }
 
     @Transactional(readOnly = true)
@@ -51,25 +59,56 @@ public class TourPlaceQueryService {
             String contentTypeId,
             String keyword,
             String sigunguCode,
-            TourPlaceListSort sort
+            TourPlaceListSort sort,
+            Long viewerMemberId
     ) {
         TourPlaceListSort effectiveSort = sort == null ? TourPlaceListSort.TITLE_ASC : sort;
-        PageRequest pageRequest = PageRequest.of(page, size, effectiveSort.sort());
-        Page<TourPlaceListItemResponse> placePage = tourPlaceRepository.findVisiblePlaces(
-                TourPlaceStatus.ACTIVE,
+        PageRequest pageRequest = PageRequest.of(page, size);
+        Page<TourPlaceListProjection> placePage = tourPlaceRepository.findVisiblePlaces(
+                TourPlaceStatus.ACTIVE.name(),
                 normalizeOrNull(contentTypeId),
                 normalizeOrNull(sigunguCode),
                 normalizeKeyword(keyword),
+                effectiveSort.name(),
                 pageRequest
         );
 
+        // 찜 수·댓글 수는 정렬에 필요해 쿼리가 이미 집계했고, "내가 찜했는지"만 한 번 더 모은다.
+        List<Long> placeIds = placePage.getContent().stream()
+                .map(TourPlaceListProjection::getId)
+                .toList();
+        Set<Long> bookmarkedIds = engagementSummaries.bookmarkedIds(
+                ContentTargetType.TOUR_PLACE, placeIds, viewerMemberId
+        );
+
         return new TourPlaceListResponse(
-                placePage.getContent(),
+                placePage.getContent().stream()
+                        .map(place -> toListItem(place, bookmarkedIds.contains(place.getId())))
+                        .toList(),
                 placePage.getNumber(),
                 placePage.getSize(),
                 placePage.getTotalElements(),
                 placePage.getTotalPages(),
-                placePage.hasNext()
+                placePage.hasNext(),
+                viewerMemberId != null
+        );
+    }
+
+    private static TourPlaceListItemResponse toListItem(
+            TourPlaceListProjection place,
+            boolean bookmarkedByMe
+    ) {
+        return new TourPlaceListItemResponse(
+                place.getId(),
+                place.getContentId(),
+                place.getContentTypeId(),
+                place.getTitle(),
+                place.getAddress(),
+                TourPlaceStatus.valueOf(place.getStatus()),
+                place.getImageUrl(),
+                place.getBookmarkCount(),
+                place.getCommentCount(),
+                bookmarkedByMe
         );
     }
 
@@ -93,8 +132,22 @@ public class TourPlaceQueryService {
         );
     }
 
+    /**
+     * 관광지 상세의 "이 장소 주변에서 열리는 축제".
+     *
+     * <p>카드에서 바로 찜을 토글하므로 찜 수·댓글 수와 내 찜 여부를 함께 내려준다. 집계는
+     * <b>반경·정렬·개수 제한을 모두 끝낸 뒤</b> 최종 목록에 대해서만 수행한다 — bounding box
+     * 후보는 반경 밖 축제까지 포함하므로 먼저 집계하면 버려질 행까지 세게 된다.
+     *
+     * @param viewerMemberId 비로그인이면 {@code null}. 이 조회는 공개라 예외를 던지지 않는다
+     */
     @Transactional(readOnly = true)
-    public List<NearbyFestivalResponse> getNearbyFestivals(Long tourPlaceId, int radiusMeters, int limit) {
+    public List<NearbyFestivalResponse> getNearbyFestivals(
+            Long tourPlaceId,
+            int radiusMeters,
+            int limit,
+            Long viewerMemberId
+    ) {
         TourPlace place = tourPlaceRepository.findById(tourPlaceId)
                 .filter(found -> found.getStatus() != TourPlaceStatus.HIDDEN)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "관광지를 찾을 수 없습니다."));
@@ -112,29 +165,48 @@ public class TourPlaceQueryService {
                 box.minLongitude(), box.maxLongitude(),
                 box.minLatitude(), box.maxLatitude()
         );
-        List<Long> festivalIds = candidates.stream().map(Festival::getId).toList();
+
+        record Nearby(Festival festival, long distanceMeters) {
+        }
+        List<Nearby> nearest = candidates.stream()
+                .map(festival -> new Nearby(festival, GeoDistanceCalculator.metersBetween(
+                        place.getMapY(), place.getMapX(), festival.getMapY(), festival.getMapX()
+                )))
+                .filter(nearby -> nearby.distanceMeters() <= radiusMeters)
+                .sorted(Comparator.comparingLong(Nearby::distanceMeters))
+                .limit(limit)
+                .toList();
+
+        List<Long> festivalIds = nearest.stream().map(nearby -> nearby.festival().getId()).toList();
         var thumbnailsByFestivalId = festivalImageRepository.findAllByFestivalIdIn(festivalIds).stream()
                 .collect(java.util.stream.Collectors.toMap(
                         FestivalImage::getFestivalId,
                         FestivalImage::getThumbnailUrl,
                         (first, second) -> first
                 ));
+        Map<Long, ContentEngagementSummaryReader.Summary> summaries = engagementSummaries.summarize(
+                ContentTargetType.FESTIVAL, festivalIds, viewerMemberId
+        );
 
-        return candidates.stream()
-                .map(festival -> toNearbyResponse(place, festival, thumbnailsByFestivalId.get(festival.getId())))
-                .filter(response -> response.distanceMeters() <= radiusMeters)
-                .sorted(Comparator.comparingLong(NearbyFestivalResponse::distanceMeters))
-                .limit(limit)
+        return nearest.stream()
+                .map(nearby -> toNearbyResponse(
+                        nearby.festival(),
+                        nearby.distanceMeters(),
+                        thumbnailsByFestivalId.get(nearby.festival().getId()),
+                        summaries.getOrDefault(
+                                nearby.festival().getId(),
+                                ContentEngagementSummaryReader.Summary.EMPTY
+                        )
+                ))
                 .toList();
     }
 
-    private NearbyFestivalResponse toNearbyResponse(TourPlace place, Festival festival, String thumbnailUrl) {
-        long distanceMeters = GeoDistanceCalculator.metersBetween(
-                place.getMapY(),
-                place.getMapX(),
-                festival.getMapY(),
-                festival.getMapX()
-        );
+    private NearbyFestivalResponse toNearbyResponse(
+            Festival festival,
+            long distanceMeters,
+            String thumbnailUrl,
+            ContentEngagementSummaryReader.Summary summary
+    ) {
         return new NearbyFestivalResponse(
                 festival.getId(),
                 festival.getTitle(),
@@ -143,7 +215,10 @@ public class TourPlaceQueryService {
                 festival.getEventEndDate(),
                 festival.getStatus(),
                 thumbnailUrl,
-                distanceMeters
+                distanceMeters,
+                summary.bookmarkCount(),
+                summary.commentCount(),
+                summary.bookmarkedByMe()
         );
     }
 

@@ -11,6 +11,8 @@ interface ContentCommentSectionProps {
   /** 로그인·관리자 여부는 engagement 응답에서만 온다(docs/27 2.1). */
   loggedIn: boolean;
   admin: boolean;
+  /** 댓글 작성 자격. 축제는 체크인 이력이 있어야 true다(docs/27 5.2). */
+  canComment: boolean;
   /** 목록을 받기 전 헤더에 보여줄 댓글 수. engagement가 먼저 도착한다. */
   initialCount?: number;
 }
@@ -24,6 +26,7 @@ export default function ContentCommentSection({
   target,
   loggedIn,
   admin,
+  canComment,
   initialCount = 0,
 }: ContentCommentSectionProps) {
   const {
@@ -67,6 +70,8 @@ export default function ContentCommentSection({
 
       <ContentCommentForm
         loggedIn={loggedIn}
+        canComment={canComment}
+        festivalId={target.type === 'FESTIVAL' ? target.id : undefined}
         submitting={state.submitting}
         bodyError={state.bodyError}
         onSubmit={create}

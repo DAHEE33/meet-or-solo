@@ -2,7 +2,6 @@ package com.survey.meetorsolo.domain.festival.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSummary;
 import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
@@ -59,19 +58,22 @@ class FestivalRepositoryIntegrationTest {
     @Test
     void findVisibleFestivals는_ACTIVE만_요약_정보_프로젝션으로_반환한다() {
         var page = festivals.findVisibleFestivals(
-                FestivalStatus.ACTIVE, LocalDate.now(), "", null,
-                LocalDate.now(), FestivalScheduleFilter.MAX_SCHEDULE_DATE, 0, FestivalMeetingPointStatus.ACTIVE,
+                0, LocalDate.now(), "", null,
+                null, null, "ALL", "RECENTLY_ADDED", 0, FestivalMeetingPointStatus.ACTIVE.name(),
                 PageRequest.of(0, 10));
 
         assertThat(page.getContent())
-                .extracting(summary -> summary.contentId())
+                .extracting(summary -> summary.getContentId())
                 .containsExactlyInAnyOrder("repo-fixture-has-point", "repo-fixture-no-point");
         assertThat(page.getContent())
-                .filteredOn(summary -> summary.contentId().equals("repo-fixture-has-point"))
+                .filteredOn(summary -> summary.getContentId().equals("repo-fixture-has-point"))
                 .singleElement()
                 .satisfies(summary -> {
-                    assertThat(summary.title()).isEqualTo("장소 있는 축제");
-                    assertThat(summary.status()).isEqualTo(FestivalStatus.ACTIVE);
+                    assertThat(summary.getTitle()).isEqualTo("장소 있는 축제");
+                    assertThat(summary.getStatus()).isEqualTo(FestivalStatus.ACTIVE.name());
+                    // 찜·댓글이 없는 축제는 0으로 온다 — null이 아니라 0이어야 화면이 그대로 쓴다.
+                    assertThat(summary.getBookmarkCount()).isZero();
+                    assertThat(summary.getCommentCount()).isZero();
                 });
     }
 

@@ -26,7 +26,13 @@ const comment = (overrides: Partial<ContentComment> = {}): ContentComment => ({
 describe('ContentCommentSection', () => {
   it('댓글 수 헤더와 입력 영역을 함께 그린다', () => {
     const html = render(
-      <ContentCommentSection target={{ type: 'FESTIVAL', id: 298 }} loggedIn admin={false} initialCount={12} />,
+      <ContentCommentSection
+        target={{ type: 'FESTIVAL', id: 298 }}
+        loggedIn
+        admin={false}
+        canComment
+        initialCount={12}
+      />,
     );
     expect(html).toContain('댓글');
     expect(html).toContain('12');
@@ -35,7 +41,12 @@ describe('ContentCommentSection', () => {
 
   it('비로그인 사용자에게는 입력창 대신 로그인 링크를 준다', () => {
     const html = render(
-      <ContentCommentSection target={{ type: 'TOUR_PLACE', id: 7 }} loggedIn={false} admin={false} />,
+      <ContentCommentSection
+        target={{ type: 'TOUR_PLACE', id: 7 }}
+        loggedIn={false}
+        admin={false}
+        canComment={false}
+      />,
     );
     expect(html).toContain('로그인하고 댓글 남기기');
     expect(html).toContain('href="/login"');
@@ -49,16 +60,64 @@ describe('ContentCommentForm', () => {
 
   it('로그인 상태에서는 500자 제한 입력창과 글자수를 보여준다', () => {
     const html = render(
-      <ContentCommentForm loggedIn submitting={false} bodyError={null} onSubmit={submit} onChangeBody={noop} />,
+      <ContentCommentForm
+        loggedIn
+        canComment
+        submitting={false}
+        bodyError={null}
+        onSubmit={submit}
+        onChangeBody={noop}
+      />,
     );
     expect(html).toContain('maxLength="500"');
     expect(html).toContain('0/500');
     expect(html).toContain('등록');
   });
 
+  it('로그인했지만 체크인한 적 없는 축제에는 입력창 대신 안내를 준다', () => {
+    // 입력창을 주고 등록에서 403을 받으면 작성한 내용이 그대로 버려진다(docs/27 5.2).
+    const html = render(
+      <ContentCommentForm
+        loggedIn
+        canComment={false}
+        festivalId={298}
+        submitting={false}
+        bodyError={null}
+        onSubmit={submit}
+        onChangeBody={noop}
+      />,
+    );
+    expect(html).toContain('체크인하면 댓글을 남길 수 있어요');
+    expect(html).toContain('체크인하러 가기');
+    expect(html).not.toContain('<textarea');
+  });
+
+  it('관광지에는 체크인 화면이 없으므로 체크인 링크를 붙이지 않는다', () => {
+    // 관광지 댓글은 로그인만 하면 쓸 수 있으므로 canComment=false는 사실상 나오지 않지만,
+    // festivalId 없이 렌더해도 링크 없이 안전하게 그려져야 한다.
+    const html = render(
+      <ContentCommentForm
+        loggedIn
+        canComment={false}
+        submitting={false}
+        bodyError={null}
+        onSubmit={submit}
+        onChangeBody={noop}
+      />,
+    );
+    expect(html).not.toContain('체크인하러 가기');
+  });
+
   it('본문 검증 실패 메시지를 alert으로 노출한다', () => {
     const html = render(
-      <ContentCommentForm loggedIn submitting={false} bodyError="댓글을 입력해주세요." onSubmit={submit} onChangeBody={noop} />,
+      <ContentCommentForm
+        loggedIn
+        canComment
+        submitting={false}
+        bodyError="댓글을 입력해주세요."
+        onSubmit={submit}
+        onChangeBody={noop}
+      />,
     );
     expect(html).toContain('role="alert"');
     expect(html).toContain('댓글을 입력해주세요.');

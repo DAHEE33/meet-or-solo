@@ -314,6 +314,7 @@ export default function FestivalDetailPage() {
           target={{ type: 'FESTIVAL', id: festival.id }}
           loggedIn={bookmarkState.loggedIn}
           admin={bookmarkState.admin}
+          canComment={bookmarkState.canComment}
           initialCount={bookmarkState.commentCount}
         />
       </main>

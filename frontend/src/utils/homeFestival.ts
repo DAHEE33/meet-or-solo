@@ -33,6 +33,25 @@ export function shouldReplaceHero(current: HeroSource | null, next: HeroSource):
 }
 
 /**
+ * 시작일이 이른 순으로 정렬한다.
+ *
+ * <p>목록 API의 기본 정렬이 "시작일 빠른순"에서 "최근 등록순"으로 바뀌었기 때문에 홈 화면이
+ * 직접 정렬한다 — 히어로 폴백(`pickFallbackFestival`)과 "다가오는 축제" 목록이 둘 다 배열
+ * 순서에 의존해서, 정렬 없이 두면 다음 주 축제보다 두 달 뒤 축제가 먼저 보인다.
+ *
+ * <p>시작일이 없는 축제(동기화 데이터 불완전)는 뒤로 보낸다.
+ */
+export function sortByStartDate(festivals: readonly Festival[]): Festival[] {
+  return [...festivals].sort((left, right) => {
+    const leftDate = left.periodFull || '';
+    const rightDate = right.periodFull || '';
+    if (!leftDate) return rightDate ? 1 : 0;
+    if (!rightDate) return -1;
+    return leftDate.localeCompare(rightDate);
+  });
+}
+
+/**
  * GPS를 쓸 수 없을 때의 폴백. 이 규칙은 위치 기능 도입 전 동작과 동일해야 한다 —
  * 권한을 거부한 사용자의 화면이 바뀌면 안 된다.
  */

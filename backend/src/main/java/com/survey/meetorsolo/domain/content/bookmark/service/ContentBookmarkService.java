@@ -153,7 +153,11 @@ public class ContentBookmarkService {
                         image == null ? null : image.getOriginImageUrl(),
                         image == null ? null : image.getThumbnailUrl(),
                         row.mapX(),
-                        row.mapY()
+                        row.mapY(),
+                        row.bookmarkCount(),
+                        row.commentCount(),
+                        // 내 찜 목록이므로 정의상 전부 찜한 항목이다.
+                        true
                 )
         );
     }
@@ -168,7 +172,10 @@ public class ContentBookmarkService {
                         row.title(),
                         row.address(),
                         row.status(),
-                        row.imageUrl()
+                        row.imageUrl(),
+                        row.bookmarkCount(),
+                        row.commentCount(),
+                        true
                 )
         );
     }

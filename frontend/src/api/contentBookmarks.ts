@@ -34,6 +34,11 @@ export type ContentEngagement = {
   viewer: {
     loggedIn: boolean;
     admin: boolean;
+    /**
+     * 이 열람자가 댓글을 쓸 수 있는가. 축제 댓글은 그 축제에 체크인한 적이 있어야 쓸 수 있어
+     * 로그인 여부만으로는 판단할 수 없다(docs/27 5.2). 관광지는 체크인이 없어 loggedIn과 같다.
+     */
+    canComment: boolean;
   };
 };
 

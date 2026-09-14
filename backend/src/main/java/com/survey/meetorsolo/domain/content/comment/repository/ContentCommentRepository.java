@@ -2,7 +2,10 @@ package com.survey.meetorsolo.domain.content.comment.repository;
 
 import com.survey.meetorsolo.domain.content.comment.entity.ContentComment;
 import com.survey.meetorsolo.domain.content.comment.entity.ContentCommentStatus;
+import com.survey.meetorsolo.domain.content.support.ContentTargetCountRow;
 import java.time.OffsetDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -224,6 +227,44 @@ public interface ContentCommentRepository extends JpaRepository<ContentComment, 
 
     default Page<ContentCommentRow> findVisibleByTourPlaceId(long tourPlaceId, Pageable pageable) {
         return findVisibleByTourPlaceId(tourPlaceId, ContentCommentStatus.VISIBLE, pageable);
+    }
+
+    /**
+     * 대상별 공개 댓글 수. 목록 조회는 정렬에 필요해 native query 안에서 직접 집계하지만,
+     * 반경 검색처럼 정렬 기준이 거리인 조회는 결과가 정해진 뒤 이 쿼리로 한 번에 모은다.
+     */
+    @Query("""
+            select new com.survey.meetorsolo.domain.content.support.ContentTargetCountRow(
+                comment.festivalId, count(comment.id))
+            from ContentComment comment
+            where comment.festivalId in :festivalIds
+              and comment.status = :status
+            group by comment.festivalId
+            """)
+    List<ContentTargetCountRow> countByFestivalIds(
+            @Param("festivalIds") Collection<Long> festivalIds,
+            @Param("status") ContentCommentStatus status
+    );
+
+    @Query("""
+            select new com.survey.meetorsolo.domain.content.support.ContentTargetCountRow(
+                comment.tourPlaceId, count(comment.id))
+            from ContentComment comment
+            where comment.tourPlaceId in :tourPlaceIds
+              and comment.status = :status
+            group by comment.tourPlaceId
+            """)
+    List<ContentTargetCountRow> countByTourPlaceIds(
+            @Param("tourPlaceIds") Collection<Long> tourPlaceIds,
+            @Param("status") ContentCommentStatus status
+    );
+
+    default List<ContentTargetCountRow> countVisibleByFestivalIds(Collection<Long> festivalIds) {
+        return countByFestivalIds(festivalIds, ContentCommentStatus.VISIBLE);
+    }
+
+    default List<ContentTargetCountRow> countVisibleByTourPlaceIds(Collection<Long> tourPlaceIds) {
+        return countByTourPlaceIds(tourPlaceIds, ContentCommentStatus.VISIBLE);
     }
 
     default long countVisibleByFestivalId(long festivalId) {

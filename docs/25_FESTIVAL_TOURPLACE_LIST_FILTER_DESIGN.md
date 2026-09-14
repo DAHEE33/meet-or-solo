@@ -262,6 +262,9 @@ GET /api/festivals?page=&size=&keyword=&sigunguCode=&sort=
 
 ### 5.2 정렬
 
+> **이 절은 14장에서 개정됐습니다.** 날짜 정렬(`START_DATE_ASC`/`END_DATE_ASC`)은
+> 제거됐고 좋아요·후기 정렬이 추가됐습니다. 아래는 개정 전 기록입니다.
+
 "가까운순"은 사용자 요청대로 **제거**합니다(축제 목록에는 거리 개념을 넣지 않음).
 
 | 값 | 정렬 키 | 용도 |
@@ -338,6 +341,8 @@ GET /api/spots?page=&size=&keyword=&contentTypeId=&sigunguCode=&sort=
 
 ### 6.2 정렬
 
+> **이 절은 14장에서 개정됐습니다.** 좋아요·후기 정렬이 추가됐습니다. 아래는 개정 전 기록입니다.
+
 거리 기준 정렬이 빠지므로 남는 선택지는 두 개입니다.
 
 | 값 | 정렬 키 | 비고 |
@@ -399,7 +404,7 @@ GET /api/spots?page=&size=&keyword=&contentTypeId=&sigunguCode=&sort=
 
 | 엔드포인트 | 변경 |
 | --- | --- |
-| `GET /api/festivals` | `sigunguCode`, `sort`, `schedule`, `matchableOnly` 파라미터 추가. 응답 `items[]`에 `mapX`, `mapY` 추가 |
+| `GET /api/festivals` | `sigunguCode`, `sort`, `schedule`, `matchableOnly` 파라미터 추가. 응답 `items[]`에 `mapX`, `mapY` 추가 (`schedule`은 14장에서 `startDate`/`endDate`/`progress`로 교체됨) |
 | `GET /api/festivals/regions` | **신규** — 데이터에 존재하는 시군구 목록 + 건수 |
 | `GET /api/spots` | `sigunguCode`, `sort` 추가. 거리 정렬·반경은 지원하지 않음(3.1) |
 | `GET /api/spots/regions` | **신규** — 위와 동일 |
@@ -542,3 +547,178 @@ Frontend
 미결 사항: 브랜치명. `feature/wbs-10-a-list-filter-sort-pagination`을 제안하며, 현재는
 `feature/wbs-10-a-festival-course` 브랜치에 Tier A 미커밋 변경이 남아 있어 브랜치 전환은
 사용자 확인 후 진행합니다.
+
+## 14. 개정 — 기간 직접 선택, 진행 상태 필터, 좋아요·후기 정렬
+
+사용자 요청으로 5.2·5.4·6.2를 개정했습니다. **5.4에서 "일정 필터로 흡수"하기로 했던 진행
+상태를 독립 필터로 승격하고, 프리셋 일정 필터를 기간 직접 선택으로 바꿉니다.**
+
+### 14.1 일정 프리셋 → 기간 직접 선택
+
+`schedule`(`ALL`/`ONGOING`/`THIS_WEEKEND`/`THIS_MONTH`)과 `FestivalScheduleFilter` enum을
+**삭제**하고 `startDate`/`endDate`(각각 선택, `yyyy-MM-dd`)로 교체했습니다.
+
+- 겹침 판정 규칙은 그대로입니다 — `event_start_date <= endDate AND event_end_date >= startDate`.
+  날짜가 `null`인 축제(동기화 데이터 불완전)는 열린 구간으로 취급해 배제하지 않습니다.
+- 한쪽만 넘겨도 됩니다. 종료일만 넘기면 "그 날짜 전에 시작하는 축제"가 됩니다.
+- 화면은 브라우저 기본 `<input type="date">` 2개(`DateRangeFilter`)를 씁니다. `FilterSelect`가
+  네이티브 `<select>`를 쓰기로 한 것과 같은 이유입니다 — 달력을 직접 그리면 키보드 조작·연도
+  이동·모바일 네이티브 피커를 전부 다시 만들어야 합니다.
+
+### 14.2 진행 상태 필터 `progress` — 가시성을 넓히는 유일한 스위치
+
+`progress`(`ALL`/`UPCOMING`/`ONGOING`/`ENDED`)를 추가했습니다. 판정 규칙은 frontend
+`resolveDisplayStatus`와 일치시킵니다(`ENDED` 상태는 날짜와 무관하게 마감).
+
+**여기가 이 개정의 핵심 제약입니다.** 기존 목록 쿼리는 `status = ACTIVE`이면서 종료일이 지나지
+않은 축제만 반환했습니다. 즉 **"진행 마감" 축제는 원래 목록에 나오지 않았습니다.**
+
+- `progress`를 넘기면 `status IN ('ACTIVE', 'ENDED')`로 넓히고 종료일 컷을 풉니다.
+- **`progress`를 넘기지 않으면 기존 동작 그대로입니다.** 같은 `GET /api/festivals`를 홈 화면
+  (`HomePage`)과 관광지 상세가 함께 쓰고 있어, 기본값을 바꾸면 그쪽 화면에 지난 축제가
+  섞입니다. 탐색 화면만 항상 `progress`를 보냅니다(기본 선택 `ALL`).
+- 5.4의 "서버 status 필터는 doc 13 3.2 결정을 뒤집는다"는 우려는 이 방식으로 비껴갑니다 —
+  서버는 여전히 화면 표시용 status를 **응답에 담지 않고**, 같은 규칙으로 **걸러내기만** 합니다.
+
+### 14.3 정렬 — 날짜 정렬 삭제, 집계 정렬 추가
+
+| 대상 | 정렬 값 |
+| --- | --- |
+| 축제 | `RECENTLY_ADDED`(기본) / `BOOKMARK_COUNT_DESC` / `COMMENT_COUNT_DESC` |
+| 관광지 | `TITLE_ASC`(기본) / `RECENTLY_ADDED` / `BOOKMARK_COUNT_DESC` / `COMMENT_COUNT_DESC` |
+
+- 축제의 `START_DATE_ASC`·`END_DATE_ASC`는 삭제했습니다. 진행 단계는 14.2의 필터로 고르고,
+  기간은 14.1로 직접 선택합니다.
+- **감수한 비용: 축제 목록의 기본 정렬이 바뀝니다.** `START_DATE_ASC`가 없어졌으므로 정렬을
+  넘기지 않는 `HomePage`도 `RECENTLY_ADDED`를 받습니다. 홈 화면의 "다가오는 축제" 목록과
+  히어로 폴백(`pickFallbackFestival`)이 둘 다 배열 순서에 의존하므로, 홈이 받은 목록을
+  브라우저에서 시작일 순으로 다시 정렬합니다(`sortByStartDate`). 서버 정렬을 되살리지 않은
+  이유는 "날짜 정렬을 다 지운다"가 이번 요청이기 때문입니다.
+
+### 14.4 목록 응답에 좋아요·후기 수 추가
+
+`FestivalListItemResponse`와 `TourPlaceListItemResponse`에 `bookmarkCount`, `commentCount`를
+추가하고 목록 카드 오른쪽에 표시합니다(`EngagementCounts`).
+
+- "좋아요 수"는 **찜(`content_bookmarks`) 수**입니다. 콘텐츠 단위 반응이 찜 하나뿐이고,
+  좋아요는 댓글 단위(`content_comment_likes`)라 목록 지표가 되지 못합니다.
+- "후기 수"는 `status = 'VISIBLE'` 댓글만 셉니다. 상세 화면 `commentCount`와 같은 기준입니다.
+- **목록 카드의 하트는 눌러서 바로 찜할 수 있습니다**(14.8). 탐색 목록(축제·관광지)과 관광지
+  상세의 "주변에서 열리는 축제"가 대상이고, 찜 목록은 표시 전용으로 둡니다.
+- 내 찜 목록(`GET /api/members/me/bookmarks`)도 같은 카드를 재사용하므로 같은 집계를 함께
+  내려줍니다. 안 그러면 찜 목록에서만 항상 0으로 보입니다.
+
+### 14.5 목록 쿼리가 native query로 바뀐 이유
+
+축제·관광지 목록 쿼리를 JPQL 생성자 표현식에서 **native query + 인터페이스 프로젝션**으로
+교체했습니다.
+
+- 정렬 키가 엔티티 속성이 아니라 집계 값이라 `Pageable`의 `Sort`로 표현할 수 없습니다. 정렬을
+  응용 계층에서 하면 페이지 경계가 어긋납니다(무한스크롤이 같은 항목을 중복/누락).
+- 집계를 파생 테이블 안에서 한 번 계산하고 바깥에서 정렬합니다. PostgreSQL은 `ORDER BY` 식
+  안의 이름을 출력 별칭이 아니라 입력 컬럼으로 해석하므로, 감싸지 않으면 같은 서브쿼리를
+  `ORDER BY`에 한 번 더 써야 합니다.
+- 정렬 분기는 `CASE WHEN :sort = '...' THEN ... END`입니다. 마지막 tie-breaker는 여전히 `id`라
+  무한스크롤 페이지 경계가 안정적입니다.
+- 프로젝션 인터페이스 방식은 `FestivalCheckinRepository.CheckinHistoryProjection` 선례를
+  따릅니다.
+
+### 14.6 V35 — 집계용 인덱스
+
+`content_bookmarks (festival_id)`와 `content_bookmarks (tour_place_id)` partial index를
+추가했습니다(`V35__add_content_engagement_count_indexes.sql`).
+
+- V26의 `uq_content_bookmarks_member_festival`/`_place`는 `member_id`가 선행 컬럼이라 대상별
+  집계에 쓰이지 않습니다. 관광지가 4,000건대라 없으면 목록 한 페이지마다 전체 스캔이 반복됩니다.
+- 댓글은 V26의 `idx_content_comments_festival_visible`/`_place_visible`이 이미
+  `(대상, id DESC) WHERE status = 'VISIBLE'` partial index라 집계에 그대로 쓰여 추가하지
+  않았습니다.
+
+### 14.7 남은 위험
+
+동기화(`FestivalSyncScheduler`)가 다가오는 축제 위주라 **dev DB에 `ENDED` 축제가 거의 없을 수
+있습니다.** 그러면 "진행 마감" 필터는 동작이 맞아도 결과가 비어 보입니다. 기능 결함이 아니라
+데이터 범위 문제이며, 확인하려면 dev DB 조회가 필요합니다.
+
+## 15. 개정 — 목록에서 바로 찜하기
+
+14.4에서 목록 카드의 하트를 표시 전용으로 뒀으나, 사용자 요청으로 **목록에서 바로 찜을 토글**할
+수 있게 고쳤습니다.
+
+### 15.1 적용 범위
+
+| 화면 | 찜 버튼 |
+| --- | --- |
+| 탐색 목록 축제 세그먼트 | 누를 수 있음 |
+| 탐색 목록 관광지 세그먼트 | 누를 수 있음 |
+| 관광지 상세 "주변에서 열리는 축제" | 누를 수 있음 |
+| 홈 "축제와 함께 둘러보기" | 누를 수 있음 |
+| 마이페이지 찜 목록 | **표시 전용** |
+
+찜 목록을 제외한 이유: 거기서 해제하면 그 항목이 자기 목록에서 사라져야 하는지(즉시 제거 /
+다음 진입까지 유지) 별도 결정이 필요합니다. 사용자 확인 결과 이번 범위에서 제외했습니다.
+
+### 15.2 목록 조회가 optional-login이 됐다
+
+`GET /api/festivals`, `GET /api/spots`, `GET /api/spots/{id}/nearby-festivals`,
+`GET /api/festivals/{id}/nearby-spots`가 `OptionalMemberResolver`를 쓰는 공개 조회로 바뀌었습니다.
+
+- 응답 항목에 `bookmarkedByMe`가 추가됐습니다. 하트를 채울지 판단하려면 개수만으로는 부족합니다.
+- **비로그인·만료 토큰도 그대로 `200`이고 `bookmarkedByMe`가 전부 `false`입니다.** 여기서
+  `401`을 내면 frontend `apiClient`의 전역 리다이렉트 때문에 탐색 화면을 열기만 해도 로그인으로
+  튕깁니다(docs/27 2.1).
+- 목록 응답(페이지 레벨)에 `viewerLoggedIn`을 추가했습니다. 목록 화면은 상세 화면과 달리
+  `engagement`를 부르지 않아 로그인 여부를 알 방법이 없는데, 비로그인이 하트를 누르면 요청 없이
+  `/login`으로 보내야 하기 때문입니다. 주변 축제는 관광지 상세가 이미 `engagement`로 로그인
+  여부를 알고 있어 배열 응답 그대로 뒀습니다.
+
+### 15.3 "내가 찜했는지"는 목록 쿼리에 넣지 않았다
+
+찜 수·댓글 수와 달리 `bookmarkedByMe`는 **native query 밖에서** 조회합니다
+(`ContentEngagementSummaryReader.bookmarkedIds`).
+
+- 정렬 키가 아니므로 쿼리 안에 있을 이유가 없고, 한 페이지 id들로 `IN` 조회 1건이면 끝납니다
+  (`ContentCommentLikeRepository.findLikedCommentIds`와 같은 방식, N+1 없음).
+- 넣었다면 native query에 회원 id null 바인딩을 위한 `CAST` 분기가 하나 더 늘어납니다.
+
+반경 검색 두 곳(주변 축제, 축제와 함께 둘러보기)은 정렬 기준이 거리라 찜 수·댓글 수도 쿼리로
+집계할 수 없어, 같은 reader의 `summarize`가 **반경·정렬·개수 제한을 모두 끝낸 뒤** 최종 목록에
+대해서만 집계합니다. 먼저 집계하면 bounding box 후보 중 버려질 행까지 세게 됩니다.
+
+### 15.4 카드 구조 — 하트는 링크 바깥에 있어야 한다
+
+`FestivalListItem`과 `ExploreSpotItem`은 **카드 전체가 `<Link>`였습니다.** 그 안에 버튼을 넣으면
+잘못된 HTML인 데다 하트를 눌러도 상세로 이동합니다. 그래서 카드를 `<div>`로 바꾸고 본문만
+`<Link>`로 감쌌습니다. 버튼 쪽에서도 `preventDefault`/`stopPropagation`으로 한 번 더 막습니다.
+
+`EngagementCounts`는 `onToggleBookmark`를 받았을 때만 버튼으로 렌더합니다. 핸들러가 없으면
+기존 표시 전용 그대로라 찜 목록은 영향을 받지 않습니다.
+
+### 15.5 토글 상태 — 낙관적 갱신 없음, 목록 재조회 없음
+
+`useListBookmarks`(`createListBookmarkSession`)가 사용자가 이 화면에서 바꾼 것만 overlay map으로
+들고 있습니다.
+
+- **낙관적 갱신을 하지 않습니다.** 서버가 돌려준 `bookmarked`로만 상태를 바꿉니다. 상세 화면의
+  찜 토글과 같은 규칙입니다.
+- 표시 개수는 서버가 준 수에 내 토글 결과만 ±1 합니다. 목록을 다시 부르지 않으므로 최신 총합은
+  아니지만, 내가 누른 하트가 숫자에 반영되지 않으면 눌리지 않은 것처럼 보입니다.
+- 요청 중인 대상은 `pendingKey`로 막아 연타가 두 번 반영되지 않게 합니다.
+- **실패하면 상태를 바꾸지 않습니다.** 목록 화면에는 오류를 띄울 자리가 없고, 하트가 그대로
+  남는 편이 "눌렸다가 되돌아간" 것보다 덜 혼란스럽습니다.
+
+### 15.6 세션은 반드시 effect 안에서 만든다 (실제로 터진 버그)
+
+`useListBookmarks`가 세션을 **렌더 중에** 만들고 `useEffect` cleanup에서 `stop()`했습니다.
+React StrictMode는 개발 모드에서 mount → unmount → mount로 effect를 두 번 돌리므로, 첫 cleanup이
+세션을 영구 정지시키고 두 번째 mount는 그 정지된 세션을 그대로 씁니다.
+
+증상은 **"하트를 눌러도 화면이 안 바뀌고 새로고침하면 반영됨"**이었습니다. 요청과 서버 저장은
+정상이고 `publish`만 화면에 닿지 않았기 때문입니다.
+
+- 세션 생성을 `useEffect` 안으로 옮겼습니다(`useInfiniteList`·`useContentBookmark`와 같은 구조).
+- 재생성 시 이전 `overrides`를 이어받습니다. 안 그러면 두 번째 세션이 빈 상태로 시작해 다음
+  토글이 이전 결과를 지웁니다. `pendingKey`는 이어받지 않습니다 — 그 요청은 이전 세션과 함께
+  버려졌고, 이어받으면 버튼이 영원히 비활성으로 남습니다.
+
+**이 저장소에서 closure 세션을 쓰는 hook은 전부 effect 안에서 만들어야 합니다.**

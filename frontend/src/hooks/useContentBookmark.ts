@@ -18,6 +18,11 @@ export type ContentBookmarkState = {
   /** docs/27 2.1절 — 로그인 여부는 engagement 응답으로만 판단한다. */
   loggedIn: boolean;
   admin: boolean;
+  /**
+   * 댓글을 쓸 수 있는가. 축제는 그 축제에 체크인한 적이 있어야 하므로 loggedIn과 다르다
+   * (docs/27 5.2). 관광지는 체크인이 없어 loggedIn과 같은 값이다.
+   */
+  canComment: boolean;
   submitting: boolean;
   error: Error | null;
 };
@@ -28,6 +33,7 @@ const initialState: ContentBookmarkState = {
   commentCount: 0,
   loggedIn: false,
   admin: false,
+  canComment: false,
   submitting: false,
   error: null,
 };
@@ -83,6 +89,7 @@ export function createContentBookmarkSession(
         commentCount: engagement.commentCount,
         loggedIn: engagement.viewer.loggedIn,
         admin: engagement.viewer.admin,
+        canComment: engagement.viewer.canComment,
         error: null,
       });
     } catch (error) {
