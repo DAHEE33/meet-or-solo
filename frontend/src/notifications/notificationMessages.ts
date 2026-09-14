@@ -105,13 +105,13 @@ const MESSAGES: Record<string, NotificationMessage> = {
     path: '/mypage',
     level: 'INFO',
   },
-  /** 매칭 실패로 상태방이 아니라 대기 화면이 정리되는 경우다. */
-  CANCELLED: {
-    title: '매칭이 취소됐어요',
-    path: '/matching',
-    level: 'INFO',
-  },
 };
+
+/**
+ * `ALL_ARRIVED`와 `MEMBER_LEFT`는 `fix/wbs-10-b-match-completion-and-report-scope`에서 생긴
+ * 사유다. 그 브랜치가 병합되기 전에는 서버가 보내지 않지만, 매핑을 미리 두어도 해가 없고
+ * 병합 순서에 따라 알림이 잠깐 비는 일을 막는다.
+ */
 
 /**
  * 모르는 사유도 버리지 않는다.
