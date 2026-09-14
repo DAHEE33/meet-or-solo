@@ -1,4 +1,4 @@
--- docs/19 4.11.2 (V37): 만남 시간이 끝났을 때 도착자가 최소 인원에 못 미치면 그룹을 취소한다.
+-- docs/19 4.11.2 (V38): 만남 시간이 끝났을 때 도착자가 최소 인원에 못 미치면 그룹을 취소한다.
 --
 -- 기존 두 사유와 뜻이 다르다.
 --   INSUFFICIENT_ACTIVE_MEMBERS : 취소·노쇼로 남은 "활성 구성원"이 부족해 방을 유지할 수 없음
@@ -21,12 +21,16 @@ ALTER TABLE match_groups
             )
         );
 
--- 번호 주의: 이 migration은 V35 -> V36 -> V37로 두 번 옮겼다. 두 번 다 저장소에는 없는
+-- 번호 주의: 이 migration은 V35 -> V36 -> V37 -> V38로 세 번 옮겼다. 매번 저장소에는 없는
 -- migration이 공유 dev DB에 먼저 적용돼 있었기 때문이다.
---   V35__add_content_engagement_count_indexes.sql (2026-09-13 적용, 이후 push됨)
---   V36__add_member_test_account.sql             (2026-09-14 20:31 적용, 저장소에 없음)
--- docs/10 [사고 기록]의 사고 1과 같은 상황이라 flyway repair 대신 번호를 옮겼다. repair를
--- 쓰면 남의 migration을 내 파일로 위장시켜 그쪽 스키마 변경이 기록에서 사라진다.
+--   V35__add_content_engagement_count_indexes.sql (2026-09-13 22:42 적용, 이후 push됨)
+--   V36__add_member_test_account.sql              (2026-09-14 20:31 적용, 저장소에 없음)
+--   V37__add_admin_local_credentials.sql          (2026-09-14 21:37 적용, 저장소에 없음)
+-- docs/10 [사고 기록]과 같은 상황이라 flyway repair 대신 번호를 옮겼다. repair를 쓰면 남의
+-- migration을 내 파일로 위장시켜 그쪽 스키마 변경이 기록에서 사라진다.
+--
+-- 번호를 쫓아다니는 것으로는 끝나지 않는다. push하지 않은 migration을 공유 DB에 적용하는
+-- 일이 멈춰야 한다(docs/10 [사고 기록] 참고).
 
 -- docs/19 4.11.3: 도착 좌표 검증과 "먼저 갈게요" 이탈.
 --

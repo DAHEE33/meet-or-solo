@@ -11,7 +11,8 @@
 | `V28`~`V30` | (협업자) | — | 당시 미push → 우리 것을 `V31`로 이동 |
 | `V35` | `add_content_engagement_count_indexes` | 2026-09-13 22:42 | 2026-09-14 push됨 |
 | `V36` | `add_member_test_account` | 2026-09-14 20:31 | **아직 없음** |
-| `V37` | `add_insufficient_arrivals_cancel_reason` | 미적용 | 이 브랜치 |
+| `V37` | `add_admin_local_credentials` | 2026-09-14 21:37 | **아직 없음** |
+| `V38` | `add_insufficient_arrivals_cancel_reason` | 미적용 | 이 브랜치 |
 
 ### 이번에 겪은 순서
 
@@ -20,6 +21,10 @@
    결과 저장소에 없는 `V35`가 이미 있었다 → **`V36`으로 이동**
 3. 그 뒤 `V35`가 push돼 `dev`를 병합했는데, 이번엔 `checksum mismatch for version 36`
 4. 다시 조회하니 **그날 저녁 20:31에 또 다른 `V36`이 적용**돼 있었다 → **`V37`로 이동**
+5. 그 사이 **21:37에 `V37__add_admin_local_credentials`까지 적용**돼 있었다 → **`V38`로 이동**
+
+번호를 세 번 옮기는 동안 우리 migration은 **한 번도 dev DB에 적용되지 않았다.** 이력에서
+`insufficient`로 검색하면 0건이다. 번호 충돌로 Flyway가 검증에서 멈춰 DDL이 실행되지 않았다.
 
 ### `flyway repair`를 쓰지 않은 이유
 
@@ -36,9 +41,17 @@ repair는 기록된 체크섬을 내 파일 것으로 덮어쓴다. 그러면 **
 이 한 줄이 없어서 같은 사고가 세 번 났다. 번호를 고르는 쪽은 아무리 조심해도 **적용 시점과
 번호 선택 시점 사이에 끼어드는 migration**을 막을 수 없다.
 
-특히 `V36__add_member_test_account`처럼 **테스트 계정을 넣는 일회성 migration**은 애초에
-migration이 아니라 SQL 스크립트로 처리하는 편이 낫다. 스키마 변경이 아니라 데이터 주입이고,
-운영 DB에는 적용되면 안 되는 내용이다.
+특히 `V36__add_member_test_account`와 `V37__add_admin_local_credentials`처럼 **계정·인증 정보를
+넣는 일회성 migration**은 애초에 migration이 아니라 SQL 스크립트로 처리하는 편이 낫다. 이유가
+셋이다.
+
+- 스키마 변경이 아니라 **데이터 주입**이다. 환경마다 달라야 하는 값이다.
+- **운영 DB에 적용되면 안 되는 내용**인데, migration은 모든 환경에서 순서대로 실행된다.
+- 계정·인증 정보가 저장소에 들어가면 `CLAUDE.md`의 "비밀번호를 하드코딩하지 않는다"와 충돌한다.
+  그래서 push할 수도 없고, push하지 않으면 지금 같은 사고가 난다. **막다른 구조다.**
+
+테스트 계정은 `scripts/`의 SQL로 두고 필요할 때 직접 실행하는 것이 맞다. 그 디렉터리에는 이미
+`diagnose-matching-dev.sql` 같은 운영 보조 스크립트가 있다.
 
 ## [10-B 매칭] 로컬 테스트에서 나온 매칭 불가 2건 (사용자 제보)
 
