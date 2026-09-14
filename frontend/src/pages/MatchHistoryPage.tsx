@@ -144,6 +144,22 @@ export default function MatchHistoryPage() {
   );
 }
 
+/**
+ * 신고 버튼 옆 안내 문구다. 비활성 이유를 구분해서 알린다(docs/19 4.11.1).
+ *
+ * <p>기간이 지난 것과 만남 자체가 없었던 것은 사용자가 할 수 있는 일이 다르다. 전자는 늦은
+ * 것이고 후자는 애초에 신고할 만남이 없다. 한 문구로 묶으면 "왜 못 누르지"가 남는다.
+ */
+export function reportNotice(item: MatchHistoryItem): string {
+  if (item.reportable) {
+    return `신고 가능 (${formatSeoulDateTime(item.reportableUntil)}까지)`;
+  }
+  if (!item.meetingHeld) {
+    return '만남이 성사되지 않아 신고할 수 없어요';
+  }
+  return '신고 기간 종료';
+}
+
 export function MatchHistoryCard({
   item,
   onOpenReport,
@@ -174,9 +190,7 @@ export function MatchHistoryCard({
           {item.meetingPlaceName ? ` · ${item.meetingPlaceName}` : ''}
         </p>
         <p className="text-[12px] font-semibold text-ink/45">
-          {item.reportable
-            ? `신고 가능 (${formatSeoulDateTime(item.reportableUntil)}까지)`
-            : '신고 기간 종료'}
+          {reportNotice(item)}
         </p>
       </header>
 

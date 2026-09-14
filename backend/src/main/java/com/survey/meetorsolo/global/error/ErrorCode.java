@@ -33,10 +33,22 @@ public enum ErrorCode {
             "MATCHING_ARRIVAL_DEADLINE_EXCEEDED",
             "도착 예정 시간을 최종 마감 안으로 선택해주세요."
     ),
+    MATCHING_ARRIVAL_OUT_OF_RANGE(
+            HttpStatus.CONFLICT,
+            "MATCHING_ARRIVAL_OUT_OF_RANGE",
+            "만남 장소 근처에서 도착을 인증해주세요."
+    ),
+    MATCHING_LEAVE_NOT_ALLOWED(
+            HttpStatus.CONFLICT,
+            "MATCHING_LEAVE_NOT_ALLOWED",
+            "지금은 만남에서 나갈 수 없습니다."
+    ),
     REPORT_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "REPORT_INVALID_REQUEST", "신고 요청이 올바르지 않습니다."),
     REPORT_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "REPORT_RESOURCE_NOT_FOUND", "신고할 매칭 정보를 찾을 수 없습니다."),
     REPORT_WINDOW_EXPIRED(HttpStatus.CONFLICT, "REPORT_WINDOW_EXPIRED", "신고 가능한 기간이 지났습니다."),
     REPORT_CONFLICT(HttpStatus.CONFLICT, "REPORT_CONFLICT", "현재 상태에서는 신고를 접수할 수 없습니다."),
+    REPORT_MEETING_NOT_HELD(HttpStatus.CONFLICT, "REPORT_MEETING_NOT_HELD",
+            "만남이 성사되지 않은 매칭은 신고할 수 없습니다."),
     ADMIN_REPORT_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "ADMIN_REPORT_INVALID_REQUEST", "관리자 신고 요청 값이 올바르지 않습니다."),
     ADMIN_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "ADMIN_REPORT_NOT_FOUND", "신고 정보를 찾을 수 없습니다."),
     ADMIN_REPORT_STATUS_CONFLICT(HttpStatus.CONFLICT, "ADMIN_REPORT_STATUS_CONFLICT", "현재 신고 상태에서는 요청한 변경을 처리할 수 없습니다."),

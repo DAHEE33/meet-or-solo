@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(MatchingSchedulerProperties.class)
+@EnableConfigurationProperties({MatchingSchedulerProperties.class, MatchingArrivalProperties.class})
 public class MatchingConfiguration {
     @Bean Clock matchingClock() { return Clock.system(ZoneId.of("Asia/Seoul")); }
     @Bean TravelStyleScorer travelStyleScorer() { return new TravelStyleScorer(); }

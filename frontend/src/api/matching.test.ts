@@ -109,7 +109,8 @@ describe('matchingApi', () => {
     },
   );
 
-  it('도착 완료를 body와 식별자 없이 current 회원 endpoint로 전송한다', async () => {
+  // 도착은 이제 좌표를 함께 보낸다. 서버가 만남 장소와의 거리를 재기 때문이다(docs/19 4.11.3).
+  it('도착 완료를 좌표와 함께 current 회원 endpoint로 전송한다', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, data: {}, error: null }), {
         status: 200,
@@ -118,14 +119,32 @@ describe('matchingApi', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await matchingApi.arrive();
+    await matchingApi.arrive({ latitude: 37.8813, longitude: 127.73 });
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/matching/groups/me/current/arrival',
       expect.objectContaining({
         credentials: 'include',
         method: 'PUT',
+        body: JSON.stringify({ latitude: 37.8813, longitude: 127.73 }),
       }),
+    );
+  });
+
+  it('먼저 나가기를 body 없이 leave endpoint로 전송한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: {}, error: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await matchingApi.leave();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/matching/groups/me/current/leave',
+      expect.objectContaining({ credentials: 'include', method: 'PUT' }),
     );
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('body');
   });

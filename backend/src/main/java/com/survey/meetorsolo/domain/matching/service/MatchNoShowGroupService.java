@@ -59,7 +59,8 @@ public class MatchNoShowGroupService {
                     groupId, group.getAttemptId(), member.getMemberId(), now);
         }
         List<MatchGroupMember> active = members.stream().filter(this::isActive).toList();
-        String reason = continuationPolicy.cancellationReason(active);
+        // 정책은 전체 구성원을 본다(이미 만난 방인지 판정하려면 arrived_at이 필요하다).
+        String reason = continuationPolicy.cancellationReason(members);
         String notificationReason = "MEMBER_NO_SHOW";
         if (reason != null) {
             group.cancel(reason, now);

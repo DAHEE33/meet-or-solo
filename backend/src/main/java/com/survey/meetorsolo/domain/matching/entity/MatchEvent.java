@@ -97,6 +97,12 @@ public class MatchEvent {
         return groupEvent(groupId, attemptId, memberId, "MEMBER_NO_SHOW", Map.of(), now);
     }
 
+    /** 도착한 사람이 "먼저 갈게요"로 나갔다. 도착 전 취소({@code MEMBER_CANCELLED})와 뜻이 다르다. */
+    public static MatchEvent memberLeft(long groupId, long attemptId, long memberId,
+            OffsetDateTime now) {
+        return groupEvent(groupId, attemptId, memberId, "MEMBER_LEFT", Map.of(), now);
+    }
+
     public static MatchEvent matchCancelled(long groupId, long attemptId, String reason,
             OffsetDateTime now) {
         return groupEvent(groupId, attemptId, null, "MATCH_CANCELLED",

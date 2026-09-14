@@ -18,7 +18,7 @@ import { formatSeoulDateTime } from '../utils/dateTime';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
-  const { state, refresh, selectArrivalTime, arrive, cancelParticipation } = useMatchRoom();
+  const { state, refresh, selectArrivalTime, arrive, cancelParticipation, leave } = useMatchRoom();
   const report = useMatchReport();
   const block = useMatchBlock();
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
@@ -58,6 +58,7 @@ export default function MatchRoomPage() {
           onSelectArrivalTime={selectArrivalTime}
           onArrive={arrive}
           onCancel={cancelParticipation}
+          onLeave={leave}
           reportState={report.state}
           onOpenReport={report.open}
           onSelectReportReason={report.selectReason}
@@ -147,6 +148,7 @@ export function MatchRoomContent({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  onLeave,
   reportState,
   onOpenReport,
   onSelectReportReason,
@@ -167,6 +169,7 @@ export function MatchRoomContent({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive?: () => Promise<boolean>;
   onCancel?: (reason: MatchCancellationReason) => Promise<boolean>;
+  onLeave?: () => Promise<boolean>;
   reportState?: MatchReportState;
   onOpenReport?: (target: MatchReportTarget) => void;
   onSelectReportReason?: (reason: MatchReportReasonCode) => void;
@@ -213,6 +216,7 @@ export function MatchRoomContent({
       onSelectArrivalTime={onSelectArrivalTime}
       onArrive={onArrive ?? (() => Promise.resolve(false))}
       onCancel={onCancel ?? (() => Promise.resolve(false))}
+      onLeave={onLeave ?? (() => Promise.resolve(false))}
       reportState={reportState}
       onOpenReport={onOpenReport}
       onSelectReportReason={onSelectReportReason}
@@ -256,6 +260,7 @@ export function CurrentGroupRoom({
   onSelectArrivalTime,
   onArrive,
   onCancel,
+  onLeave,
   reportState,
   onOpenReport,
   onSelectReportReason,
@@ -280,6 +285,7 @@ export function CurrentGroupRoom({
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive: () => Promise<boolean>;
   onCancel: (reason: MatchCancellationReason) => Promise<boolean>;
+  onLeave: () => Promise<boolean>;
   reportState?: MatchReportState;
   onOpenReport?: (target: MatchReportTarget) => void;
   onSelectReportReason?: (reason: MatchReportReasonCode) => void;
@@ -296,13 +302,28 @@ export function CurrentGroupRoom({
   nowEpochMs?: number;
 }) {
   const effectiveNowEpochMs = nowEpochMs ?? Date.parse(group.confirmedAt);
-  const statusText = group.status === 'IN_PROGRESS' ? '미팅 진행 중' : '만남 준비 중';
+  // 전원이 도착해도 방은 닫히지 않는다. 만남이 끝나는 시각까지 상태방이 유지되고, 그때
+  // 서버가 완료로 닫으면서 매너온도 보상을 준다(docs/19 4.11.2).
+  const allArrived = group.members.length > 0
+    && group.members.every((member) => member.status === 'ARRIVED');
+  const statusText = allArrived
+    ? '전원 도착 · 만남 진행 중'
+    : group.status === 'IN_PROGRESS' ? '미팅 진행 중' : '만남 준비 중';
   const period = formatFestivalPeriod(group.festival.eventStartDate, group.festival.eventEndDate);
   const currentMember = group.members.find((member) => member.memberId === group.currentMemberId);
   const canArrive = currentMember?.status === 'JOINED'
     || currentMember?.status === 'ARRIVAL_TIME_SELECTED';
   const arrivalDeadlineReached = effectiveNowEpochMs >= Date.parse(group.arrivalDeadlineAt);
   const canSelectArrivalTime = canArrive && !arrivalDeadlineReached;
+  const hasArrived = currentMember?.status === 'ARRIVED';
+  // 도착자가 2명 이상이면 이미 만남이 성립했다.
+  const meetingHeld = group.members.filter((member) => member.status === 'ARRIVED').length >= 2;
+  // 나가는 경로가 만남 성립 여부로 갈린다(docs/19 4.11.3).
+  //  - 성립 전: "못 갈 것 같아요"(참여 취소). 도착했더라도 마찬가지다. 도착 버튼을 눌렀다
+  //    나가는 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한 책임이 사라진다.
+  //  - 성립 후: "먼저 갈게요". 이미 만났으므로 벌할 이유가 없고 매너온도도 그대로다.
+  const canCancelParticipation = !arrivalDeadlineReached && (canArrive || (hasArrived && !meetingHeld));
+  const canLeaveEarly = hasArrived && meetingHeld;
   const estimatedArrivalAt = getEstimatedArrivalAt(currentMember);
   const estimatedArrivalEpochMs = estimatedArrivalAt ? Date.parse(estimatedArrivalAt) : null;
   const estimatedArrivalPassed = estimatedArrivalEpochMs !== null
@@ -316,8 +337,17 @@ export function CurrentGroupRoom({
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">
           <dt className="text-ink/50">확정 시각</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.confirmedAt)}</dd>
-          <dt className="text-ink/50">최종 도착 마감</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.arrivalDeadlineAt)}</dd>
-          <dt className="text-ink/50">전체 남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.arrivalDeadlineAt, effectiveNowEpochMs)}</dd>
+          {allArrived ? (
+            <>
+              <dt className="text-ink/50">만남 종료 예정</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.meetingEndsAt)}</dd>
+              <dt className="text-ink/50">남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.meetingEndsAt, effectiveNowEpochMs)}</dd>
+            </>
+          ) : (
+            <>
+              <dt className="text-ink/50">최종 도착 마감</dt><dd className="text-right font-semibold text-ink">{formatSeoulDateTime(group.arrivalDeadlineAt)}</dd>
+              <dt className="text-ink/50">전체 남은 시간</dt><dd className="text-right font-semibold text-coral">{formatRemainingTime(group.arrivalDeadlineAt, effectiveNowEpochMs)}</dd>
+            </>
+          )}
           <dt className="text-ink/50">확정 인원</dt><dd className="text-right font-semibold text-ink">{group.confirmedMemberCount}명</dd>
           <dt className="text-ink/50">현재 참여 인원</dt><dd className="text-right font-semibold text-ink">{group.currentMemberCount}명</dd>
           <dt className="text-ink/50">현재 상태</dt><dd className="text-right font-semibold text-teal">{statusText}</dd>
@@ -377,7 +407,37 @@ export function CurrentGroupRoom({
         </section>
       )}
 
-      {canSelectArrivalTime && (
+      {canLeaveEarly && (
+        <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <details>
+            <summary className={`cursor-pointer list-none rounded-2xl border border-line px-4 py-3 text-center text-[15px] font-bold text-ink/70 ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
+              먼저 갈게요
+            </summary>
+            <div role="dialog" aria-modal="true" aria-labelledby="leave-title" className="mt-3 rounded-2xl border border-line bg-sand/40 p-4">
+              <h2 id="leave-title" className="text-[16px] font-bold text-ink">만남에서 나갈까요?</h2>
+              {/*
+                페널티가 없다는 것을 분명히 말한다. 이 버튼은 벌을 주는 자리가 아니라 빠져나올
+                문이고, 자리가 불편할 때 쓰는 경로이기 때문이다(docs/19 4.11.3).
+              */}
+              <p className="mt-1 text-[13px] text-ink/55">
+                이미 만남이 성사돼서 매너온도는 그대로 올라가요. 불이익은 없어요.
+              </p>
+              <div className="mt-4 grid gap-2">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => void onLeave()}
+                  className="rounded-2xl border border-line bg-white px-3 py-3 text-[14px] font-semibold disabled:opacity-50"
+                >
+                  {isSubmitting ? '처리 중...' : '나갈게요'}
+                </button>
+              </div>
+            </div>
+          </details>
+        </section>
+      )}
+
+      {canCancelParticipation && (
         <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <details>
             <summary className={`cursor-pointer list-none rounded-2xl border border-coral px-4 py-3 text-center text-[15px] font-bold text-coral ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
@@ -387,7 +447,10 @@ export function CurrentGroupRoom({
               <h2 id="cancellation-title" className="text-[16px] font-bold text-ink">
                 정말 참여를 취소할까요?
               </h2>
-              <p className="mt-1 text-[13px] text-ink/55">취소 사유는 다른 멤버에게 공개되지 않아요.</p>
+              <p className="mt-1 text-[13px] text-ink/55">
+                취소 사유는 다른 멤버에게 공개되지 않아요.
+                {hasArrived ? ' 아직 만남이 성사되지 않아 참여 취소로 처리돼요.' : ''}
+              </p>
               <div className="mt-4 grid gap-2">
                 {CANCELLATION_OPTIONS.map((option) => (
                   <button

@@ -9,6 +9,8 @@ import {
   type MatchCancellationResult,
 } from '../api/matching';
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
+import { subscribeMatchingNotifications } from '../api/matchingNotificationHub';
+import { getCurrentPosition } from '../utils/geolocation';
 
 export const MATCH_ROOM_FALLBACK_POLL_MS = 5_000;
 export const ARRIVAL_CHANGE_NOTICE_MS = 3_000;
@@ -53,6 +55,7 @@ type MatchRoomSessionDependencies = {
     reason: MatchCancellationReason,
     signal: AbortSignal,
   ) => Promise<MatchCancellationResult>;
+  leave?: (signal: AbortSignal) => Promise<MatchCancellationResult>;
   connect: typeof connectMatchingWebSocket;
   schedule: (callback: () => void, delay: number) => number;
   cancelSchedule: (timer: number) => void;
@@ -132,7 +135,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             error: null,
             eventsError: null,
             terminationNotice: completionSignalReceived
-              ? '모두 도착해 만남이 완료됐어요.'
+              ? '만남이 끝났어요. 매너온도가 올랐어요.'
               : hadCurrentGroup
               ? '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.'
               : currentState.terminationNotice,
@@ -259,7 +262,9 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             events: [],
             error: null,
             actionError: null,
-            terminationNotice: '모두 도착해 만남이 완료됐어요.',
+            // 도착 요청과 만남 종료가 겹친 경우다. 전원 도착만으로는 완료되지 않으므로
+            // 여기 도달하는 것은 만남 시간이 끝나 서버가 방을 닫은 뒤다(docs/19 4.11.2).
+            terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
             isSubmitting: false,
           });
           return true;
@@ -327,6 +332,49 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     return operation;
   };
 
+  /**
+   * 도착한 사람이 먼저 나간다(docs/19 4.11.3). 페널티가 없고, 만남이 성립했다면 매너온도 보상도
+   * 그대로 받는다. 취소와 달리 사유를 받지 않는다.
+   */
+  const leave = (): Promise<boolean> => {
+    if (!dependencies.leave || mutationInFlight || stopped || currentState.status !== 'READY') {
+      return mutationInFlight ?? Promise.resolve(false);
+    }
+    const controller = new AbortController();
+    mutationAbortController = controller;
+    publish({ ...currentState, actionError: null, isSubmitting: true });
+    const operation = dependencies.leave(controller.signal)
+      .then((result) => {
+        if (stopped || controller.signal.aborted) return false;
+        ++generation;
+        clearTimer();
+        publish({
+          ...currentState,
+          status: 'EMPTY',
+          group: null,
+          events: [],
+          actionError: null,
+          cancellationResult: result,
+          terminationNotice: result.groupContinues
+            ? '먼저 나왔어요. 남은 멤버는 만남을 계속해요.'
+            : '먼저 나와 만남이 종료됐어요.',
+          isSubmitting: false,
+        });
+        return true;
+      })
+      .catch((error: unknown) => {
+        if (stopped || controller.signal.aborted || isAbortError(error)) return false;
+        publish({ ...currentState, actionError: normalizeError(error), isSubmitting: false });
+        return false;
+      })
+      .finally(() => {
+        if (mutationAbortController === controller) mutationAbortController = null;
+        if (mutationInFlight === operation) mutationInFlight = null;
+      });
+    mutationInFlight = operation;
+    return operation;
+  };
+
   const refreshEventsAfterMutation = async (
     controller: AbortController,
     mutationGeneration: number,
@@ -354,6 +402,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     selectArrivalTime,
     arrive,
     cancelParticipation,
+    leave,
     stop: () => {
       stopped = true;
       clearTimer();
@@ -375,10 +424,19 @@ export function useMatchRoom() {
       loadCurrentGroupEvents: (signal) => matchingApi.getCurrentGroupEvents(signal),
       selectArrivalTime: (arrivalMinutes, signal) =>
         matchingApi.selectArrivalTime(arrivalMinutes, signal),
-      arrive: (signal) => matchingApi.arrive(signal),
+      // 도착 인증에는 현재 좌표가 필요하다. 서버가 만남 장소와의 거리를 재고 좌표는 버린다.
+      arrive: async (signal) => {
+        const position = await getCurrentPosition();
+        return matchingApi.arrive(
+          { latitude: position.latitude, longitude: position.longitude },
+          signal,
+        );
+      },
       cancelParticipation: (reason, signal) =>
         matchingApi.cancelParticipation(reason, signal),
-      connect: connectMatchingWebSocket,
+      leave: (signal) => matchingApi.leave(signal),
+      // 소켓은 허브가 하나만 유지한다. 여기서 새로 연결하면 알림 센터와 소켓이 2개가 된다.
+      connect: subscribeMatchingNotifications,
       schedule: (callback, delay) => window.setTimeout(callback, delay),
       cancelSchedule: (timer) => window.clearTimeout(timer),
       onState: setState,
@@ -412,7 +470,12 @@ export function useMatchRoom() {
     [],
   );
 
-  return { state, refresh, selectArrivalTime, arrive, cancelParticipation };
+  const leave = useCallback(
+    () => sessionRef.current?.leave() ?? Promise.resolve(false),
+    [],
+  );
+
+  return { state, refresh, selectArrivalTime, arrive, cancelParticipation, leave };
 }
 
 function findChangedOtherMember(

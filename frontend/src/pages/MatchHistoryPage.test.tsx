@@ -14,6 +14,7 @@ function item(overrides: Partial<MatchHistoryItem> = {}): MatchHistoryItem {
     confirmedMemberCount: 3,
     endedAt: '2026-09-05T20:00:00+09:00',
     reportableUntil: '2026-09-19T20:00:00+09:00',
+    meetingHeld: true,
     reportable: true,
     members: [
       { memberId: 7, nickname: '여행자B', profileImageUrl: null, reported: false },
@@ -53,6 +54,14 @@ describe('MatchHistoryCard', () => {
     const expired = card(item({ reportable: false }));
     expect(expired).toContain('신고 기간 종료');
     expect(expired).toContain('disabled=""');
+  });
+
+  // 만남이 없었던 건과 기간이 지난 건은 사용자가 할 수 있는 일이 다르다(docs/19 4.11.1).
+  it('만남이 성사되지 않았으면 기간 만료와 다른 이유를 보여준다', () => {
+    const notHeld = card(item({ meetingHeld: false, reportable: false }));
+    expect(notHeld).toContain('만남이 성사되지 않아 신고할 수 없어요');
+    expect(notHeld).not.toContain('신고 기간 종료');
+    expect(notHeld).toContain('disabled=""');
   });
 
   it('신고 가능하면 버튼을 열어두고 만료 시각을 함께 알려준다', () => {

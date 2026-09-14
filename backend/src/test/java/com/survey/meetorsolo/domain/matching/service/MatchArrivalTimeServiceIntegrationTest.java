@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
+import com.survey.meetorsolo.domain.matching.dto.MatchArrivalRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationReason;
@@ -46,7 +47,9 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
         "app.matching.scheduler.enabled=false",
-        "app.matching.no-show-scheduler.enabled=false"
+        "app.matching.no-show-scheduler.enabled=false",
+        // local 프로필 기본값은 우회(true)다. 검증 자체를 확인해야 하므로 운영 기본값으로 돌린다.
+        "app.matching.arrival.bypass-radius-check=false"
 })
 @Testcontainers
 @Import(MatchArrivalTimeServiceIntegrationTest.FixedClockConfiguration.class)
@@ -57,6 +60,15 @@ import org.testcontainers.utility.DockerImageName;
 class MatchArrivalTimeServiceIntegrationTest {
     private static final java.time.OffsetDateTime TEST_NOW =
             NOW.plusSeconds(10).truncatedTo(ChronoUnit.MICROS);
+    /** 만남 장소 좌표와 같은 지점. fixture의 group에는 장소 좌표가 없어 검증은 건너뛴다. */
+    private static final java.math.BigDecimal MEETING_LATITUDE = new java.math.BigDecimal("37.8813");
+    private static final java.math.BigDecimal MEETING_LONGITUDE = new java.math.BigDecimal("127.7300");
+    /** 만남 장소와 같은 지점. */
+    private static final MatchArrivalRequest AT_MEETING_POINT =
+            new MatchArrivalRequest(MEETING_LATITUDE, MEETING_LONGITUDE);
+    /** 만남 장소에서 1km 넘게 떨어진 지점. */
+    private static final MatchArrivalRequest FAR_AWAY =
+            new MatchArrivalRequest(new java.math.BigDecimal("37.8950"), MEETING_LONGITUDE);
 
     @Container
     @ServiceConnection
@@ -73,6 +85,10 @@ class MatchArrivalTimeServiceIntegrationTest {
     private MatchCancellationService cancellations;
     @Autowired
     private MatchNoShowGroupService noShows;
+    @Autowired
+    private MatchMeetingCloseGroupService meetingCloses;
+    @Autowired
+    private MatchLeaveService leaves;
 
     @Autowired
     private MatchGroupQueryService queries;
@@ -281,8 +297,8 @@ class MatchArrivalTimeServiceIntegrationTest {
     void arrival_time과_arrival_멱등_요청은_timeline_event를_늘리지_않는다() {
         service.select(9_110_001L, 10);
         service.select(9_110_001L, 10);
-        arrivals.arrive(9_110_001L);
-        arrivals.arrive(9_110_001L);
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
 
         MatchGroupEventsResponse response = eventQueries.currentGroupEvents(9_110_001L);
 
@@ -295,8 +311,8 @@ class MatchArrivalTimeServiceIntegrationTest {
         service.select(9_110_001L, 10);
         clearInvocations(messagingTemplate);
 
-        MatchGroupResponse first = arrivals.arrive(9_110_001L);
-        MatchGroupResponse repeated = arrivals.arrive(9_110_001L);
+        MatchGroupResponse first = arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+        MatchGroupResponse repeated = arrivals.arrive(9_110_001L, AT_MEETING_POINT);
 
         assertThat(first.status()).isEqualTo("IN_PROGRESS");
         assertThat(first.startedAt()).isNotNull();
@@ -321,31 +337,54 @@ class MatchArrivalTimeServiceIntegrationTest {
         );
     }
 
+    /**
+     * 전원이 도착해도 그 자리에서 완료로 닫지 않는다({@code docs/19} 4.11.2).
+     *
+     * <p>도착은 만남의 끝이 아니라 시작이다. 예전에는 마지막 도착자가 버튼을 누르는 순간 방이
+     * 사라지고 매너온도 보상까지 지급됐다. 완료 판정은
+     * {@link MatchMeetingWindowPolicy#MEETING_WINDOW}가 지난 뒤 종료 배치가 한다.
+     */
     @Test
-    void 마지막_도착은_group과_유효_회원을_완료하고_반복_요청에_같은_snapshot을_반환한다() {
-        MatchGroupResponse beforeLast = arrivals.arrive(9_110_001L);
+    void 마지막_도착에도_group은_진행_중으로_남고_만남_시간이_끝나야_완료된다() {
+        MatchGroupResponse beforeLast = arrivals.arrive(9_110_001L, AT_MEETING_POINT);
         assertThat(beforeLast.status()).isEqualTo("IN_PROGRESS");
         assertThat(beforeLast.completedAt()).isNull();
 
-        MatchGroupResponse completed = arrivals.arrive(9_110_002L);
-        MatchGroupResponse repeated = arrivals.arrive(9_110_002L);
+        MatchGroupResponse allArrived = arrivals.arrive(9_110_002L, AT_MEETING_POINT);
 
-        assertThat(completed.status()).isEqualTo("COMPLETED");
-        assertThat(completed.completedAt()).isNotNull();
-        assertThat(completed.members()).allSatisfy(member ->
-                assertThat(member.status()).isEqualTo("COMPLETED"));
-        assertThat(repeated.completedAt()).isEqualTo(completed.completedAt());
+        assertThat(allArrived.status()).isEqualTo("IN_PROGRESS");
+        assertThat(allArrived.completedAt()).isNull();
+        assertThat(allArrived.members()).allSatisfy(member ->
+                assertThat(member.status()).isEqualTo("ARRIVED"));
+        assertThat(queries.currentGroup(9_110_001L)).isNotNull();
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM match_events
+                WHERE group_id=9171001 AND event_type='MATCH_COMPLETED'
+                """, Integer.class)).isZero();
+        verify(messagingTemplate, timeout(1_000).atLeastOnce()).convertAndSendToUser(
+                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.eq("/queue/matching"),
+                org.mockito.ArgumentMatchers.argThat((MatchingStateChangedNotification notification) ->
+                        "ALL_ARRIVED".equals(notification.reason()))
+        );
+
+        closeMeeting();
+
+        assertThat(queries.currentGroup(9_110_001L)).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("COMPLETED");
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM match_events
                 WHERE group_id=9171001 AND event_type='MATCH_COMPLETED'
                 """, Integer.class)).isEqualTo(1);
-        assertThat(queries.currentGroup(9_110_001L)).isNull();
     }
 
     @Test
     void 완료_회원은_active_unique_index를_점유하지_않아_새_group에_참여할_수_있다() {
-        arrivals.arrive(9_110_001L);
-        arrivals.arrive(9_110_002L);
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+        arrivals.arrive(9_110_002L, AT_MEETING_POINT);
+        closeMeeting();
 
         jdbc.update("""
                 INSERT INTO match_attempts (
@@ -368,7 +407,7 @@ class MatchArrivalTimeServiceIntegrationTest {
                     (9181099, 9171099, 9110002, 'JOINED', true, ?, ?)
                 """, TEST_NOW, TEST_NOW, TEST_NOW, TEST_NOW)).isEqualTo(2);
         assertThat(queries.currentGroup(9_110_001L).groupId()).isEqualTo(9_171_099L);
-        assertThat(arrivals.arrive(9_110_001L).groupId()).isEqualTo(9_171_099L);
+        assertThat(arrivals.arrive(9_110_001L, AT_MEETING_POINT).groupId()).isEqualTo(9_171_099L);
     }
 
     @Test
@@ -378,27 +417,27 @@ class MatchArrivalTimeServiceIntegrationTest {
         try {
             Future<MatchGroupResponse> first = executor.submit(() -> {
                 await(start);
-                return arrivals.arrive(9_110_001L);
+                return arrivals.arrive(9_110_001L, AT_MEETING_POINT);
             });
             Future<MatchGroupResponse> second = executor.submit(() -> {
                 await(start);
-                return arrivals.arrive(9_110_002L);
+                return arrivals.arrive(9_110_002L, AT_MEETING_POINT);
             });
 
             start.countDown();
             first.get(10, TimeUnit.SECONDS);
             second.get(10, TimeUnit.SECONDS);
 
-            MatchGroupResponse firstSnapshot = arrivals.arrive(9_110_001L);
-            MatchGroupResponse secondSnapshot = arrivals.arrive(9_110_002L);
-            assertThat(firstSnapshot.status()).isEqualTo("COMPLETED");
+            MatchGroupResponse firstSnapshot = arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+            MatchGroupResponse secondSnapshot = arrivals.arrive(9_110_002L, AT_MEETING_POINT);
+            assertThat(firstSnapshot.status()).isEqualTo("IN_PROGRESS");
             assertThat(firstSnapshot.startedAt()).isNotNull();
-            assertThat(firstSnapshot.completedAt()).isNotNull();
+            assertThat(firstSnapshot.completedAt()).isNull();
             assertThat(firstSnapshot.confirmedAt()).isEqualTo(NOW.plusSeconds(10));
             assertThat(firstSnapshot.confirmedMemberCount()).isEqualTo(2);
             assertThat(firstSnapshot.members()).hasSize(2)
                     .allSatisfy(member -> {
-                        assertThat(member.status()).isEqualTo("COMPLETED");
+                        assertThat(member.status()).isEqualTo("ARRIVED");
                         assertThat(member.arrivedAt()).isNotNull();
                     });
             assertThat(secondSnapshot.status()).isEqualTo(firstSnapshot.status());
@@ -410,6 +449,10 @@ class MatchArrivalTimeServiceIntegrationTest {
                     new MemberEventCount(9_110_001L, 1L),
                     new MemberEventCount(9_110_002L, 1L)
             );
+
+            // 완료는 도착이 아니라 만남 시간 종료가 만든다(docs/19 4.11.2).
+            closeMeeting();
+
             assertThat(jdbc.queryForObject("""
                     SELECT COUNT(*)
                     FROM match_group_members
@@ -458,11 +501,11 @@ class MatchArrivalTimeServiceIntegrationTest {
         try {
             Future<MatchGroupResponse> first = executor.submit(() -> {
                 await(start);
-                return arrivals.arrive(9_110_001L);
+                return arrivals.arrive(9_110_001L, AT_MEETING_POINT);
             });
             Future<MatchGroupResponse> second = executor.submit(() -> {
                 await(start);
-                return arrivals.arrive(9_110_001L);
+                return arrivals.arrive(9_110_001L, AT_MEETING_POINT);
             });
 
             start.countDown();
@@ -493,7 +536,7 @@ class MatchArrivalTimeServiceIntegrationTest {
     void 도착_member_update_실패는_member_group_event와_알림을_모두_rollback한다() {
         createFailureTrigger("match_group_members", "fail_arrival_member_update", "UPDATE");
 
-        assertThatThrownBy(() -> arrivals.arrive(9_110_001L))
+        assertThatThrownBy(() -> arrivals.arrive(9_110_001L, AT_MEETING_POINT))
                 .isInstanceOf(RuntimeException.class);
 
         assertArrivalUnchangedAndNoNotification();
@@ -503,7 +546,7 @@ class MatchArrivalTimeServiceIntegrationTest {
     void 도착_group_update_실패는_member_group_event와_알림을_모두_rollback한다() {
         createFailureTrigger("match_groups", "fail_arrival_group_update", "UPDATE");
 
-        assertThatThrownBy(() -> arrivals.arrive(9_110_001L))
+        assertThatThrownBy(() -> arrivals.arrive(9_110_001L, AT_MEETING_POINT))
                 .isInstanceOf(RuntimeException.class);
 
         assertArrivalUnchangedAndNoNotification();
@@ -518,7 +561,7 @@ class MatchArrivalTimeServiceIntegrationTest {
                 """, NOW.plusSeconds(5), NOW.plusSeconds(5));
         createFailureTrigger("match_groups", "fail_arrival_group_update", "UPDATE");
 
-        MatchGroupResponse snapshot = arrivals.arrive(9_110_001L);
+        MatchGroupResponse snapshot = arrivals.arrive(9_110_001L, AT_MEETING_POINT);
 
         assertThat(snapshot.status()).isEqualTo("IN_PROGRESS");
         assertThat(snapshot.startedAt()).isEqualTo(NOW.plusSeconds(5));
@@ -532,7 +575,7 @@ class MatchArrivalTimeServiceIntegrationTest {
     void MEMBER_ARRIVED_event_insert_실패는_member_group_event와_알림을_모두_rollback한다() {
         createFailureTrigger("match_events", "fail_arrival_event_insert", "INSERT");
 
-        assertThatThrownBy(() -> arrivals.arrive(9_110_001L))
+        assertThatThrownBy(() -> arrivals.arrive(9_110_001L, AT_MEETING_POINT))
                 .isInstanceOf(RuntimeException.class);
 
         assertArrivalUnchangedAndNoNotification();
@@ -866,6 +909,191 @@ class MatchArrivalTimeServiceIntegrationTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(exception);
         }
+    }
+
+    /**
+     * 노쇼가 섞인 그룹도 만남 시간이 끝나면 닫힌다({@code docs/19} 4.11.2).
+     *
+     * <p>예전에는 이 조합에서 그룹이 영구히 {@code IN_PROGRESS}로 남았다. 도착 시점에는 노쇼가
+     * 아직 {@code JOINED}라 완료되지 않고, 노쇼 배치가 그 회원을 {@code NO_SHOW}로 바꾸고 나면
+     * 남은 구성원이 모두 {@code ARRIVED}여서 노쇼 후보 조회에 다시 걸리지 않았다. 닫히지 않은
+     * 그룹은 {@code existsActiveByMemberId}를 계속 참으로 만들어 <b>도착까지 한 회원의 새 매칭
+     * 신청을 영구히 막는다.</b>
+     */
+    @Test
+    void 노쇼가_있어도_도착자가_둘_이상이면_만남_시간이_끝날_때_완료된다() {
+        jdbc.update("""
+                INSERT INTO match_group_members(
+                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                ) VALUES (9181003, 9171001, 9110003, 'JOINED', true, ?, ?)
+                """, NOW, NOW);
+
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+        arrivals.arrive(9_110_002L, AT_MEETING_POINT);
+        assertThat(noShows.process(9_171_001L, TEST_NOW.plusMinutes(30))).isTrue();
+
+        closeMeeting();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_group_members
+                WHERE group_id = 9171001 AND status = 'COMPLETED'
+                """, Integer.class)).isEqualTo(2);
+        assertThat(queries.currentGroup(9_110_001L)).isNull();
+        assertThat(queries.currentGroup(9_110_003L)).isNull();
+    }
+
+    // --- 도착 반경 검증 (docs/19 4.11.3) ---
+
+    /**
+     * 만남 장소 좌표가 있는 그룹에서는 반경 밖 도착을 거절한다.
+     *
+     * <p>이 클래스는 {@code bypass-radius-check}를 켜지 않으므로 base 기본값(false)이 적용된다.
+     */
+    @Test
+    void 만남_장소_반경_밖에서는_도착을_거절한다() {
+        setMeetingPoint();
+
+        assertThatThrownBy(() -> arrivals.arrive(9_110_001L, FAR_AWAY))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.MATCHING_ARRIVAL_OUT_OF_RANGE));
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_group_members WHERE id = 9181001", String.class))
+                .isEqualTo("JOINED");
+    }
+
+    /** 좌표는 저장하지 않고 거리만 남긴다. 체크인의 distance_meters와 같은 원칙이다. */
+    @Test
+    void 반경_안_도착은_좌표_대신_거리를_남긴다() {
+        setMeetingPoint();
+
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT arrival_distance_meters FROM match_group_members WHERE id = 9181001
+                """, Integer.class)).isNotNull().isLessThanOrEqualTo(150);
+    }
+
+    /** 장소 좌표가 없는 그룹은 검증하지 않는다. 사용자 잘못이 아닌데 만남이 무산되면 안 된다. */
+    @Test
+    void 만남_장소_좌표가_없으면_반경을_검증하지_않는다() {
+        assertThat(arrivals.arrive(9_110_001L, FAR_AWAY).status()).isEqualTo("IN_PROGRESS");
+        assertThat(jdbc.queryForObject("""
+                SELECT arrival_distance_meters FROM match_group_members WHERE id = 9181001
+                """, Integer.class)).isNull();
+    }
+
+    // --- 먼저 갈게요 (docs/19 4.11.3) ---
+
+    /**
+     * 만남이 성립하기 전에는 무패널티 이탈을 쓸 수 없다({@code docs/19} 4.11.3).
+     *
+     * <p>도착 버튼을 눌렀다 나가는 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한
+     * 책임이 버튼 하나로 사라진다. 그 상태에서 나가려면 참여 취소를 쓴다.
+     */
+    @Test
+    void 혼자_도착한_사람은_먼저_갈_수_없고_참여_취소를_쓴다() {
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+
+        assertThatThrownBy(() -> leaves.leave(9_110_001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.MATCHING_LEAVE_NOT_ALLOWED));
+
+        // 도착한 뒤에도 참여 취소는 열려 있다. 예전에는 도착과 동시에 이 경로가 막혔다.
+        var result = cancellations.cancel(9_110_001L, MatchCancellationReason.OTHER);
+
+        assertThat(result.groupContinues()).isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("CANCELLED");
+    }
+
+    /** 도착 후 취소도 취소다. 페널티 규칙이 도착 전과 같아야 도착 버튼이 샛길이 되지 않는다. */
+    @Test
+    void 도착_후_참여_취소도_확정_3분이_지나면_페널티를_받는다() {
+        // 무패널티 구간(확정 후 3분)을 벗어나게 확정 시각을 앞당긴다.
+        jdbc.update("UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
+                TEST_NOW.minusMinutes(5));
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+
+        cancellations.cancel(9_110_001L, MatchCancellationReason.OTHER);
+
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_penalty_events
+                WHERE related_group_id = 9171001 AND member_id = 9110001
+                """, Integer.class)).isEqualTo(1);
+    }
+
+    /**
+     * 만남이 성립한 뒤 먼저 가면 그룹은 유지된다({@code docs/19} 4.11.3).
+     *
+     * <p>남은 사람이 혼자가 되어도 종료하지 않는다. 이미 만났으므로 "만남이 성립할 수 없다"는
+     * 판단이 성립하지 않고, 여기서 취소하면 끝까지 있던 사람이 보상을 잃는다.
+     */
+    @Test
+    void 만남이_성립한_뒤_먼저_가면_그룹은_유지되고_보상은_둘_다_받는다() {
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+        arrivals.arrive(9_110_002L, AT_MEETING_POINT);
+
+        var result = leaves.leave(9_110_001L);
+
+        assertThat(result.memberStatus()).isEqualTo("LEFT");
+        assertThat(result.groupContinues()).isTrue();
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE group_id = 9171001 AND event_type = 'MEMBER_LEFT'
+                """, Integer.class)).isEqualTo(1);
+        // 만난 뒤의 이탈에는 페널티가 없다.
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_penalty_events WHERE related_group_id = 9171001
+                """, Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("IN_PROGRESS");
+        assertThat(jdbc.queryForObject(
+                "SELECT left_at FROM match_group_members WHERE id = 9181001",
+                java.time.OffsetDateTime.class)).isNotNull();
+
+        // 머문 시간으로 가르지 않는다. 먼저 간 사람도 도착자이므로 완료·보상 대상이다.
+        closeMeeting();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT status FROM match_groups WHERE id = 9171001", String.class))
+                .isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM manner_temperature_events
+                WHERE related_group_id = 9171001 AND event_type = 'MATCH_COMPLETED'
+                """, Integer.class)).isEqualTo(2);
+    }
+
+    /** 도착 전에는 이 경로를 쓸 수 없다. 그쪽은 "못 갈 것 같아요"(취소)가 맡는다. */
+    @Test
+    void 도착하지_않은_사람은_먼저_갈_수_없다() {
+        assertThatThrownBy(() -> leaves.leave(9_110_001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.MATCHING_LEAVE_NOT_ALLOWED));
+    }
+
+    /** 만남 장소 좌표를 fixture group에 채운다. 기본 fixture에는 좌표가 없다. */
+    private void setMeetingPoint() {
+        jdbc.update("""
+                UPDATE match_groups
+                SET meeting_place_name = '남춘천역 광장',
+                    meeting_place_address = '강원 춘천시',
+                    meeting_place_content_id = 'test-place',
+                    meeting_map_x = ?, meeting_map_y = ?
+                WHERE id = 9171001
+                """, MEETING_LONGITUDE, MEETING_LATITUDE);
+    }
+
+    /** 만남 시간이 끝난 시점의 종료 배치를 돌린다. 완료 판정은 여기서만 일어난다. */
+    private void closeMeeting() {
+        meetingCloses.process(9_171_001L, TEST_NOW.plus(MatchMeetingWindowPolicy.MEETING_WINDOW));
     }
 
     @TestConfiguration

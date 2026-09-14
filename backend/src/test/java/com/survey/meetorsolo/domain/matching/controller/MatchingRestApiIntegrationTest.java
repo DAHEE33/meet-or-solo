@@ -213,8 +213,15 @@ class MatchingRestApiIntegrationTest {
                 .andExpect(jsonPath("$.data.members.length()").value(2));
     }
 
+    /**
+     * 상대가 빠져 혼자 남아도 상태방은 열린다({@code docs/19} 4.11.3).
+     *
+     * <p>예전에는 활성 참여자가 2명 미만이면 정합성 오류로 거절했다. 이제 만남이 성립한 방은
+     * 상대가 먼저 나가도 만남 시간이 끝날 때까지 유지되므로, 그 상태를 거절하면 남은 사람이
+     * 상태방을 열지도 못한다. 빠진 사람 쪽에서는 활성 그룹이 없으므로 여전히 빈 응답이다.
+     */
     @Test
-    void inactive_member는_제외하고_확정_인원과_불일치하면_충돌로_처리한다() throws Exception {
+    void inactive_member가_빠져_혼자_남아도_남은_회원은_상태방을_조회한다() throws Exception {
         insertGroup("CONFIRMED");
         jdbc.update("""
                 UPDATE match_group_members
@@ -224,8 +231,9 @@ class MatchingRestApiIntegrationTest {
 
         mockMvc.perform(get("/api/matching/groups/me/current")
                         .cookie(cookie(9_110_001L)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("MATCHING_CONFLICT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.currentMemberCount").value(1))
+                .andExpect(jsonPath("$.data.confirmedMemberCount").value(2));
 
         mockMvc.perform(get("/api/matching/groups/me/current")
                         .cookie(cookie(9_110_002L)))

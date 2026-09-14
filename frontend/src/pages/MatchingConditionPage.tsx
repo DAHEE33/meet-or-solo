@@ -463,7 +463,12 @@ export function MatchBody(props: MatchBodyProps) {
         hasFestival={props.hasFestival}
         currentCheckin={props.currentCheckin}
         canApply={props.canApply}
-        entryErrorMessage={retryableTerminal ? poolEntryErrorMessage(props.error) : null}
+        /*
+          예전에는 재신청 흐름(retryableTerminal)에서만 이 문구를 띄웠다. 그런데 최초 신청도
+          실패하면 화면 상태를 바꾸지 않고 error만 담기 때문에(stateAfterPoolEntryFailure),
+          버튼은 눌리는데 아무 일도 일어나지 않는 것으로 보였다. 흐름을 가리지 않고 띄운다.
+        */
+        entryErrorMessage={poolEntryErrorMessage(props.error)}
         setGroupSize={props.setGroupSize}
         setAllowMinimum={props.setAllowMinimum}
         onStart={props.onStart}
@@ -698,15 +703,17 @@ function IdleForm({
         </div>
       </section>
       {/*
-        이 옵션은 "2명만 모이면 바로 매칭"이 아니다. 목표 인원이 모여 제안이 나간 뒤 일부가
-        빠졌을 때 남은 2명으로 계속할지, 확정된 그룹이 2명으로 줄었을 때 유지할지를 정한다
-        (docs/05_MATCHING_POLICY.md 219행·384행). 그룹 구성 자체는 항상 희망 인원 그대로다.
+        이 옵션은 세 자리에서 쓰인다(docs/05).
+        ① 그룹을 만들 때 희망 인원이 안 모이면 더 적은 인원으로 묶을지 — 켜야 묶인다
+        ② 제안이 나간 뒤 일부가 빠졌을 때 남은 인원으로 계속할지
+        ③ 확정된 그룹이 2명으로 줄었을 때 유지할지
+        예전에는 ①에서 이 값을 읽지 않아, 3명을 희망한 두 사람이 동의해도 매칭되지 않았다.
       */}
       <section className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[14px] font-semibold text-ink">2명만 남아도 계속 진행</span>
+          <span className="text-[14px] font-semibold text-ink">인원이 적어도 진행</span>
           <span className="text-[12px] leading-relaxed text-ink/50">
-            인원이 모인 뒤 일부가 빠져도 2명이면 시작해요
+            희망 인원이 안 모이면 2명이라도 매칭하고, 도중에 빠져도 계속해요
           </span>
         </div>
         <button

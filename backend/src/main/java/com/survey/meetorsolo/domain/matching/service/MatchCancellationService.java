@@ -53,7 +53,16 @@ public class MatchCancellationService {
                 .filter(value -> value.getMemberId() == memberId)
                 .findFirst().orElseThrow(this::conflict);
         if (!"JOINED".equals(actor.getStatus())
-                && !"ARRIVAL_TIME_SELECTED".equals(actor.getStatus())) throw conflict();
+                && !"ARRIVAL_TIME_SELECTED".equals(actor.getStatus())
+                && !"ARRIVED".equals(actor.getStatus())) throw conflict();
+        // 도착했더라도 아직 만남이 성립하지 않았다면 이 경로로 나간다(docs/19 4.11.3).
+        // 도착 버튼을 누른 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한
+        // 책임이 버튼 하나로 사라진다. 반대로 이미 만난 뒤라면 취소가 아니라 이탈이므로
+        // MatchLeaveService가 맡는다. 두 경로는 겹치지 않는다.
+        if (continuationPolicy.meetingHeld(members)) {
+            throw new BusinessException(ErrorCode.MATCHING_CONFLICT,
+                    "이미 만남이 시작돼 참여 취소 대신 먼저 나가기를 써야 합니다.");
+        }
 
         if (!now.isBefore(MatchArrivalDeadlinePolicy.deadlineAt(group.getConfirmedAt()))) {
             throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_DEADLINE_EXCEEDED);
@@ -88,7 +97,8 @@ public class MatchCancellationService {
     private int finishGroupIfNeeded(MatchGroup group, List<MatchGroupMember> members,
             OffsetDateTime now) {
         List<MatchGroupMember> active = members.stream().filter(this::isActive).toList();
-        String reason = continuationPolicy.cancellationReason(active);
+        // 정책은 전체 구성원을 본다. 이미 만난 방인지 판정하려면 빠진 사람의 arrived_at도 필요하다.
+        String reason = continuationPolicy.cancellationReason(members);
         if (reason == null) return active.size();
         group.cancel(reason, now);
         active.forEach(member -> member.leave(now));

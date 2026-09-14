@@ -27,6 +27,7 @@ import InquiryNewPage from './pages/InquiryNewPage';
 import InquiryDetailPage from './pages/InquiryDetailPage';
 import SanctionNoticeDialog from './components/common/SanctionNoticeDialog';
 import SplashGate from './components/splash/SplashGate';
+import NotificationCenter from './components/notifications/NotificationCenter';
 
 export default function App() {
   return (
@@ -70,6 +71,11 @@ export default function App() {
         여기서 사유·기간 안내를 띄운다. 화면마다 붙이지 않도록 최상단에 한 번만 둔다.
       */}
       <SanctionNoticeDialog />
+      {/*
+        어느 화면에 있든 매칭 알림을 받는다(docs/19 4.11.5 1단계). 화면 안에서 연결하면
+        그 화면을 벗어나는 순간 알림이 끊기므로 최상단에 한 번만 둔다.
+      */}
+      <NotificationCenter />
     </BrowserRouter>
   );
 }

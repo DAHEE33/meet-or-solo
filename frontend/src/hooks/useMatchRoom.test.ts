@@ -19,6 +19,7 @@ const group: CurrentMatchGroup = {
   currentMemberCount: 2,
   confirmedAt: '2026-07-27T12:00:20+09:00',
   arrivalDeadlineAt: '2026-07-27T12:30:20+09:00',
+  meetingEndsAt: '2026-07-27T13:00:20+09:00',
   currentMemberId: 1,
   festival: {
     festivalId: 2,
@@ -391,7 +392,7 @@ describe('createMatchRoomSession', () => {
     expect(test.scheduledDelays.size).toBe(0);
   });
 
-  it('마지막 도착 COMPLETED 응답은 완료 안내와 EMPTY로 전환하고 polling을 정리한다', async () => {
+  it('도착 응답이 COMPLETED면 완료 안내와 EMPTY로 전환하고 polling을 정리한다', async () => {
     const test = harness();
     test.loads[0].resolve(group);
     await test.session.refresh();
@@ -408,7 +409,7 @@ describe('createMatchRoomSession', () => {
     expect(test.states.at(-1)).toMatchObject({
       status: 'EMPTY',
       group: null,
-      terminationNotice: '모두 도착해 만남이 완료됐어요.',
+      terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
     });
     expect(test.scheduled.size).toBe(0);
   });
@@ -424,7 +425,7 @@ describe('createMatchRoomSession', () => {
 
     expect(test.states.at(-1)).toMatchObject({
       status: 'EMPTY',
-      terminationNotice: '모두 도착해 만남이 완료됐어요.',
+      terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
     });
     expect(test.scheduled.size).toBe(0);
   });

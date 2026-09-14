@@ -112,18 +112,48 @@ class MatchGroupComposerTest {
     }
 
     @Test
-    void 서로_다른_희망_인원이나_축제의_후보를_같은_그룹으로_섞지_않는다() {
+    void 다른_축제의_후보는_같은_그룹으로_섞지_않는다() {
         List<MatchingCandidate> candidates = List.of(
                 candidate(1, 2, PHOTO),
-                candidate(2, 3, PHOTO),
                 candidate(3, 2, 2L, BASE_TIME, true, PHOTO)
         );
 
         assertThat(composer.compose(candidates)).isEmpty();
     }
 
+    /**
+     * 희망 인원이 달라도 <b>작은 쪽에 맞춰</b> 묶는다.
+     *
+     * <p>예전에는 희망 인원으로도 버킷을 나눠서, 2명을 고른 사람과 3명을 고른 사람은 같은 축제에
+     * 있어도 영원히 만나지 못했다. 사용자에게는 "매칭이 안 된다"로만 보인다.
+     */
     @Test
-    void allowMinimumTwo는_최초_그룹_조합에_영향을_주지_않는다() {
+    void 희망_인원이_달라도_작은_쪽에_맞춰_묶는다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 2, PHOTO),
+                candidate(2, 3, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).containsExactly(1L, 2L);
+    }
+
+    /** 희망보다 큰 그룹은 누구에게도 강요하지 않는다. */
+    @Test
+    void 희망_인원보다_큰_그룹은_만들지_않는다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 2, PHOTO),
+                candidate(2, 2, PHOTO),
+                candidate(3, 2, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).hasSize(2);
+    }
+
+    /** 희망 인원이 그대로 채워지면 동의 여부와 무관하게 같은 결과다. */
+    @Test
+    void 희망_인원이_정확히_채워지면_allowMinimumTwo는_결과를_바꾸지_않는다() {
         List<MatchingCandidate> allowed = List.of(
                 candidate(1, 3, BASE_TIME, true, PHOTO),
                 candidate(2, 3, BASE_TIME, true, PHOTO),
@@ -139,13 +169,41 @@ class MatchGroupComposerTest {
                 .isEqualTo(poolIds(composer.compose(notAllowed)));
     }
 
+    /**
+     * 사용자 제보로 드러난 문제다. 3명을 희망한 두 사람이 "2명이어도 괜찮아요"에 동의했는데도
+     * 매칭이 되지 않았다. 조합 단계에서 그 동의를 읽지 않았기 때문이다.
+     */
     @Test
-    void 후보가_희망_인원보다_적으면_불완전한_그룹을_만들지_않는다() {
+    void 희망보다_적어도_전원이_동의하면_줄여서_묶는다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 3, BASE_TIME, true, PHOTO),
+                candidate(2, 3, BASE_TIME, true, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).containsExactly(1L, 2L);
+    }
+
+    /** 한 명이라도 동의하지 않으면 줄이지 않는다. 사전에 받아둔 의사를 무시하면 안 된다. */
+    @Test
+    void 한_명이라도_동의하지_않으면_줄여서_묶지_않는다() {
         assertThat(composer.compose(List.of(
-                candidate(1, 4, PHOTO),
-                candidate(2, 4, PHOTO),
-                candidate(3, 4, PHOTO)
+                candidate(1, 3, BASE_TIME, true, PHOTO),
+                candidate(2, 3, BASE_TIME, false, PHOTO)
         ))).isEmpty();
+    }
+
+    /** 3명이 모일 수 있으면 2명으로 성급히 쪼개지 않는다. */
+    @Test
+    void 큰_조합이_가능하면_먼저_묶는다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 3, BASE_TIME, true, PHOTO),
+                candidate(2, 3, BASE_TIME, true, PHOTO),
+                candidate(3, 3, BASE_TIME, true, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).hasSize(3);
     }
 
     private MatchingCandidate candidate(long id, int groupSize, TravelStyleCode... styles) {

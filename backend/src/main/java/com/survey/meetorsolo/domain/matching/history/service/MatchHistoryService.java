@@ -90,10 +90,16 @@ public class MatchHistoryService {
             reportedPairs.add(pairKey(pair.groupId(), pair.reportedMemberId()));
         }
 
+        // 만남이 성사되지 않은 그룹은 신고 대상이 아니다(docs/19 4.11.1). 접수 API의
+        // MatchReportService.validateMeetingHeld와 같은 기준을 써야 목록에서 신고 가능하다고
+        // 표시한 항목이 접수에서 거절되지 않는다.
+        Set<Long> groupIdsWithArrival = new HashSet<>(groupMembers.findGroupIdsWithArrival(groupIds));
+
         OffsetDateTime now = OffsetDateTime.now(clock);
         List<MatchHistoryItemResponse> items = new ArrayList<>(page.size());
         for (MatchGroupRepository.MatchHistoryGroupProjection group : page) {
             OffsetDateTime endedAt = group.getEndedAt().atOffset(now.getOffset());
+            boolean meetingHeld = groupIdsWithArrival.contains(group.getGroupId());
             items.add(new MatchHistoryItemResponse(
                     group.getGroupId(),
                     group.getStatus(),
@@ -103,7 +109,8 @@ public class MatchHistoryService {
                     group.getConfirmedMemberCount() == null ? 0 : group.getConfirmedMemberCount(),
                     endedAt,
                     MatchReportWindowPolicy.reportableUntil(endedAt),
-                    MatchReportWindowPolicy.isReportable(endedAt, now),
+                    meetingHeld,
+                    meetingHeld && MatchReportWindowPolicy.isReportable(endedAt, now),
                     members(membersByGroup.get(group.getGroupId()), group.getGroupId(), reportedPairs)));
         }
 

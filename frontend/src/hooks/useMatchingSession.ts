@@ -8,7 +8,7 @@ import {
   type MatchProposalAction,
   type MatchingRestriction,
 } from '../api/matching';
-import { connectMatchingWebSocket } from '../api/matchingWebSocket';
+import { subscribeMatchingNotifications } from '../api/matchingNotificationHub';
 import { isSameSeoulDate } from '../utils/dateTime';
 import { calculateServerOffsetMs } from '../utils/serverClock';
 
@@ -327,7 +327,7 @@ export function useMatchingSession() {
     };
   }, [refresh]);
 
-  useEffect(() => connectMatchingWebSocket({
+  useEffect(() => subscribeMatchingNotifications({
     onConnected: () => {
       if (mountedRef.current) void refresh();
     },

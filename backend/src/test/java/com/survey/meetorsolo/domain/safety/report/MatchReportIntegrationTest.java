@@ -245,6 +245,40 @@ class MatchReportIntegrationTest {
                 Integer.class, GROUP_ID)).isZero();
     }
 
+    /**
+     * 만남이 성사되지 않은 매칭은 신고 대상이 아니다({@code docs/19} 4.11.1).
+     *
+     * <p>확정 직후 깨진 매칭까지 신고 대상이면, 누구 때문에 깨졌는지 알 수 없는 상태에서 함께
+     * 있던 사람을 14일 동안 신고할 수 있다.
+     */
+    @Test
+    void 아무도_도착하지_않은_매칭은_신고할_수_없다() {
+        insertGroup("CANCELLED", null, NOW.plusMinutes(3), REPORTER_ID, REPORTED_ID);
+        clearArrivals();
+
+        assertThatThrownBy(this::submit)
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.REPORT_MEETING_NOT_HELD));
+        assertThat(reportCount()).isZero();
+    }
+
+    /**
+     * 노쇼 신고 경로가 함께 막히지 않는지 확인한다.
+     *
+     * <p>기준을 경과 시간이 아니라 도착 여부로 잡은 이유가 여기 있다. 상대가 오지 않아 취소된
+     * 건은 기다린 쪽이 이미 도착해 있으므로 그대로 신고할 수 있다.
+     */
+    @Test
+    void 신고자만_도착한_노쇼_취소_건은_신고할_수_있다() {
+        insertGroup("CANCELLED", null, NOW.plusMinutes(30), REPORTER_ID, REPORTED_ID);
+        jdbc.update("UPDATE match_group_members SET arrived_at = NULL, status = 'NO_SHOW' "
+                + "WHERE group_id = ? AND member_id = ?", GROUP_ID, REPORTED_ID);
+
+        assertThat(service.submit(REPORTER_ID, GROUP_ID, REPORTED_ID, MatchReportReasonCode.NO_SHOW)
+                .status()).isEqualTo("SUBMITTED");
+    }
+
     @Test
     void report_insert_실패는_부분_저장_없이_rollback한다() {
         insertGroup("CONFIRMED", null, null, REPORTER_ID, REPORTED_ID);
@@ -293,14 +327,21 @@ class MatchReportIntegrationTest {
                     confirmed_at, completed_at, cancelled_at, created_at, updated_at
                 ) VALUES (?, 9130001, 9100001, ?, 2, ?, ?, ?, ?, ?)
                 """, GROUP_ID, status, NOW, completedAt, cancelledAt, NOW, NOW);
+        // arrived_at을 채운다. 신고는 실제로 만남이 있었던 매칭만 대상이므로(docs/19 4.11.1)
+        // 도착 기록이 없으면 모든 접수가 REPORT_MEETING_NOT_HELD로 거절된다.
         jdbc.update("""
                 INSERT INTO match_group_members(
-                    id, group_id, member_id, status, allow_minimum_two, created_at, updated_at
+                    id, group_id, member_id, status, arrived_at, allow_minimum_two,
+                    created_at, updated_at
                 ) VALUES
-                    (9180001, ?, ?, 'JOINED', true, ?, ?),
-                    (9180002, ?, ?, 'JOINED', true, ?, ?)
-                """, GROUP_ID, firstMemberId, NOW, NOW,
-                GROUP_ID, secondMemberId, NOW, NOW);
+                    (9180001, ?, ?, 'JOINED', ?, true, ?, ?),
+                    (9180002, ?, ?, 'JOINED', ?, true, ?, ?)
+                """, GROUP_ID, firstMemberId, NOW, NOW, NOW,
+                GROUP_ID, secondMemberId, NOW, NOW, NOW);
+    }
+
+    private void clearArrivals() {
+        jdbc.update("UPDATE match_group_members SET arrived_at = NULL WHERE group_id = ?", GROUP_ID);
     }
 
     private int reportCount() {

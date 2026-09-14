@@ -6,6 +6,7 @@ import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupEventsResponse;
 import com.survey.meetorsolo.domain.matching.dto.MatchGroupResponse;
+import com.survey.meetorsolo.domain.matching.dto.MatchArrivalRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchArrivalTimeRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchCancellationResponse;
@@ -18,6 +19,7 @@ import com.survey.meetorsolo.domain.matching.service.MatchGroupQueryService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
+import com.survey.meetorsolo.domain.matching.service.MatchLeaveService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationResult;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
@@ -50,6 +52,7 @@ public class MatchingController {
     private final MatchGroupEventQueryService groupEventQueries;
     private final MatchArrivalTimeService arrivalTimes;
     private final MatchArrivalService arrivals;
+    private final MatchLeaveService leaves;
     private final MatchProposalActionService proposalActions;
     private final MatchCancellationService cancellations;
     private final MatchPoolCancellationService poolCancellations;
@@ -62,6 +65,7 @@ public class MatchingController {
             MatchGroupEventQueryService groupEventQueries,
             MatchArrivalTimeService arrivalTimes,
             MatchArrivalService arrivals,
+            MatchLeaveService leaves,
             MatchProposalActionService proposalActions,
             MatchCancellationService cancellations,
             MatchPoolCancellationService poolCancellations
@@ -73,6 +77,7 @@ public class MatchingController {
         this.groupEventQueries = groupEventQueries;
         this.arrivalTimes = arrivalTimes;
         this.arrivals = arrivals;
+        this.leaves = leaves;
         this.proposalActions = proposalActions;
         this.cancellations = cancellations;
         this.poolCancellations = poolCancellations;
@@ -117,9 +122,21 @@ public class MatchingController {
 
     @PutMapping("/groups/me/current/arrival")
     public ApiResponse<MatchGroupResponse> arrive(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken,
+            @Valid @RequestBody MatchArrivalRequest request
+    ) {
+        return ApiResponse.success(arrivals.arrive(memberId(accessToken), request));
+    }
+
+    /**
+     * 도착한 사람이 만남에서 먼저 나간다(docs/19 4.11.3). 도착 전에는 이 경로가 아니라
+     * 참여 취소(/groups/me/current/cancellation)를 쓴다.
+     */
+    @PutMapping("/groups/me/current/leave")
+    public ApiResponse<MatchCancellationResponse> leave(
             @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
     ) {
-        return ApiResponse.success(arrivals.arrive(memberId(accessToken)));
+        return ApiResponse.success(leaves.leave(memberId(accessToken)));
     }
 
     @PutMapping("/groups/me/current/arrival-time")
