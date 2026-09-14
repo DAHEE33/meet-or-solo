@@ -7,7 +7,7 @@ describe('adminMembersApi', () => {
   afterEach(() => vi.unstubAllGlobals());
   it('검색·상태·role과 opaque cursor를 전송한다', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ items: [], pagination: { size: 10, hasNext: false, nextCursor: null } })); vi.stubGlobal('fetch', fetchMock);
-    const filters: AdminMemberFilters = { query: '회원', status: 'SUSPENDED', role: 'USER' };
+    const filters: AdminMemberFilters = { query: '회원', status: 'SUSPENDED', role: 'USER', testAccount: false };
     await adminMembersApi.list(filters, 'opaque+/=', 10);
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toContain('query=%ED%9A%8C%EC%9B%90'); expect(url).toContain('status=SUSPENDED'); expect(url).toContain('role=USER'); expect(url).toContain('cursor=opaque%2B%2F%3D');

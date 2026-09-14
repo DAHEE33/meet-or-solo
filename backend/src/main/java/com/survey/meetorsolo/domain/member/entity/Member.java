@@ -24,6 +24,8 @@ public class Member {
 
     public static final String PROVIDER_KAKAO = "KAKAO";
     public static final String PROVIDER_NAVER = "NAVER";
+    /** 슈퍼관리자 로컬 계정. 소셜 제공자가 아니라 자체 ID/PW 계정을 뜻한다(docs/30). */
+    public static final String PROVIDER_LOCAL = "LOCAL";
     public static final String ROLE_USER = "USER";
     public static final String ROLE_ADMIN = "ADMIN";
     public static final String STATUS_PROFILE_REQUIRED = "PROFILE_REQUIRED";
@@ -89,6 +91,16 @@ public class Member {
 
     @Column(nullable = false, length = 30)
     private String status = STATUS_PROFILE_REQUIRED;
+
+    /**
+     * 테스트 계정 여부. 축제 체크인의 GPS 반경·정확도 검증을 면제받는다.
+     *
+     * <p>{@code role}과 겸하지 않는다. 관리자인 것과 테스트 계정인 것은 다른 사실이라,
+     * 겸하면 모든 관리자가 위치 검증 면제가 되고 테스트 계정에는 관리자 권한이 붙는다.
+     * 지정·해제는 관리자만 할 수 있고 {@code admin_actions}에 감사 기록이 남는다.
+     */
+    @Column(name = "test_account", nullable = false)
+    private boolean testAccount = false;
 
     @Column(name = "last_login_at")
     private OffsetDateTime lastLoginAt;
@@ -176,6 +188,23 @@ public class Member {
         return createSocialMember(PROVIDER_NAVER, providerUserId, email, nickname, profileImageUrl);
     }
 
+    /**
+     * 슈퍼관리자 로컬 계정({@code docs/30}).
+     *
+     * <p>별도 관리자 principal을 만들지 않고 회원 row 1건으로 둔다. {@code admin_actions}의
+     * {@code admin_member_id}가 {@code members} FK라 회원이 아닌 관리자는 감사 로그를 남길 수
+     * 없다. 프로필 입력 절차가 없으므로 처음부터 {@code ACTIVE}로 만든다.
+     *
+     * <p>비밀번호는 여기에 담지 않는다. 인증 수단은 {@code admin_credentials}가 따로 가진다.
+     */
+    public static Member createLocalAdmin(String providerUserId, String nickname) {
+        Member member = new Member(PROVIDER_LOCAL, providerUserId, null, nickname, null);
+        member.role = ROLE_ADMIN;
+        member.status = STATUS_ACTIVE;
+        member.markLoggedIn();
+        return member;
+    }
+
     private static Member createSocialMember(
             String provider,
             String providerUserId,
@@ -227,6 +256,23 @@ public class Member {
             this.profileImageUrl = profileImageUrl;
         }
         markLoggedIn();
+    }
+
+    /**
+     * 슈퍼관리자 로컬 계정의 권한을 되살린다({@code docs/30}).
+     *
+     * <p>기동 시 부트스트랩이 부른다. 실수로 role이 내려갔거나 상태가 바뀌었을 때 재기동만으로
+     * 복구할 수 있어야 하기 때문이다. <b>제재 상태는 건드리지 않는다</b> — 관리자를 정지·차단한
+     * 것은 의도된 조치이고, 재기동이 그것을 지워 버리면 제재가 무의미해진다.
+     */
+    public void restoreLocalAdminRole() {
+        if (!PROVIDER_LOCAL.equals(provider)) {
+            throw new IllegalStateException("로컬 관리자 계정이 아닙니다.");
+        }
+        this.role = ROLE_ADMIN;
+        if (STATUS_PROFILE_REQUIRED.equals(status)) {
+            this.status = STATUS_ACTIVE;
+        }
     }
 
     public void markLoggedIn() {
@@ -357,6 +403,10 @@ public class Member {
         this.profileImageObjectKey = null;
         this.genderEncrypted = null;
         this.ageRangeEncrypted = null;
+
+        // 테스트 계정 표시도 지운다. 탈퇴는 같은 row를 남기고 rejoin()이 그 row를 되살리므로,
+        // 남겨두면 재가입한 계정이 위치 검증 면제를 그대로 물려받는다.
+        this.testAccount = false;
     }
 
     /**
@@ -576,6 +626,24 @@ public class Member {
 
     public String getStatus() {
         return status;
+    }
+
+    public boolean isTestAccount() {
+        return testAccount;
+    }
+
+    /**
+     * 테스트 계정 지정·해제. 바뀐 경우에만 {@code true}를 반환한다.
+     *
+     * <p>반환값으로 변경 여부를 알리는 이유는 호출부가 값이 실제로 바뀐 경우에만 감사 로그를
+     * 남기기 때문이다. 같은 값을 다시 보내는 요청은 멱등하게 아무 기록도 남기지 않는다.
+     */
+    public boolean updateTestAccount(boolean value) {
+        if (this.testAccount == value) {
+            return false;
+        }
+        this.testAccount = value;
+        return true;
     }
 
     public Integer getPenaltyScore() {

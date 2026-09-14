@@ -136,6 +136,18 @@ public class AuthService {
         events.publishEvent(new MemberLoggedOutEvent(memberId));
     }
 
+    /**
+     * 이미 인증이 끝난 회원에게 session을 발급한다.
+     *
+     * <p>인증 수단과 무관하다. OAuth 콜백과 관리자 ID/PW 로그인(docs/30)이 같은 경로를 쓰므로
+     * token 수명·refresh token 회전 규칙이 갈라지지 않는다. <b>이 메서드는 비밀번호나 OAuth
+     * code를 검증하지 않는다.</b> 호출부가 검증을 끝낸 뒤에만 부른다.
+     */
+    @Transactional
+    public AuthTokenResponse issueSession(Member member) {
+        return issueTokens(member);
+    }
+
     private AuthTokenResponse issueTokens(Member member) {
 
         String accessToken = jwtProvider.createAccessToken(member);

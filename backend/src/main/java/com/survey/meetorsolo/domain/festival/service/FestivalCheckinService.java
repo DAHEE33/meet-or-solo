@@ -12,6 +12,7 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import com.survey.meetorsolo.domain.festival.event.FestivalCheckinCancelledEvent;
 import com.survey.meetorsolo.domain.festival.repository.FestivalCheckinRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
+import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
@@ -32,17 +33,20 @@ public class FestivalCheckinService {
 
     private final FestivalRepository festivalRepository;
     private final FestivalCheckinRepository festivalCheckinRepository;
+    private final MemberRepository memberRepository;
     private final FestivalCheckinProperties properties;
     private final ApplicationEventPublisher eventPublisher;
 
     public FestivalCheckinService(
             FestivalRepository festivalRepository,
             FestivalCheckinRepository festivalCheckinRepository,
+            MemberRepository memberRepository,
             FestivalCheckinProperties properties,
             ApplicationEventPublisher eventPublisher
     ) {
         this.festivalRepository = festivalRepository;
         this.festivalCheckinRepository = festivalCheckinRepository;
+        this.memberRepository = memberRepository;
         this.properties = properties;
         this.eventPublisher = eventPublisher;
     }
@@ -57,7 +61,12 @@ public class FestivalCheckinService {
             throw new BusinessException(ErrorCode.FESTIVAL_LOCATION_UNAVAILABLE);
         }
 
-        boolean bypassRadiusCheck = properties.bypassRadiusCheck();
+        // 반경 검증을 건너뛰는 경로는 두 가지이고 의미가 다르다.
+        // - 설정(bypassRadiusCheck): 환경 전체를 끈다. 실기기 GPS가 없는 환경의 임시 수단이다.
+        // - 테스트 계정: 그 계정만 면제한다. 같은 환경에서 일반 계정은 반경 검증을 그대로 받는다.
+        // 둘을 나눠 두면 dev 환경에서도 "반경 검증이 실제로 동작하는지"를 확인할 수 있다.
+        boolean testAccount = memberRepository.existsByIdAndTestAccountIsTrue(memberId);
+        boolean bypassRadiusCheck = properties.bypassRadiusCheck() || testAccount;
         if (!bypassRadiusCheck
                 && request.accuracyMeters() != null
                 && request.accuracyMeters() > properties.accuracyThresholdMeters()) {
@@ -75,8 +84,9 @@ public class FestivalCheckinService {
         }
         if (bypassRadiusCheck && distanceMeters > festival.getCheckinRadiusMeters()) {
             log.warn(
-                    "GPS 반경 검증을 건너뛰고 체크인을 허용했습니다(local/dev 전용). "
+                    "GPS 반경 검증을 건너뛰고 체크인을 허용했습니다(사유={}). "
                             + "memberId={}, festivalId={}, distanceMeters={}, radiusMeters={}",
+                    testAccount ? "TEST_ACCOUNT" : "CONFIG_BYPASS",
                     memberId, festivalId, distanceMeters, festival.getCheckinRadiusMeters()
             );
         }

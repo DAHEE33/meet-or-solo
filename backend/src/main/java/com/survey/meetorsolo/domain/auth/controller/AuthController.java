@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.auth.controller;
 
 import com.survey.meetorsolo.domain.auth.dto.AuthTokenResponse;
+import com.survey.meetorsolo.domain.auth.service.AuthCookieFactory;
 import com.survey.meetorsolo.domain.auth.service.AuthService;
 import com.survey.meetorsolo.domain.auth.service.SanctionNoticeCookieService;
 import com.survey.meetorsolo.domain.member.dto.MemberSanctionNotice;
@@ -40,6 +41,7 @@ public class AuthController {
     private final SanctionNoticeCookieService sanctionNoticeCookies;
     private final String frontendBaseUrl;
     private final boolean secureCookies;
+    private final AuthCookieFactory cookies;
 
     public AuthController(
             AuthService authService,
@@ -53,6 +55,7 @@ public class AuthController {
         this.sanctionNoticeCookies = sanctionNoticeCookies;
         this.frontendBaseUrl = frontendBaseUrl.replaceAll("/+$", "");
         this.secureCookies = secureCookies;
+        this.cookies = new AuthCookieFactory(secureCookies);
     }
 
     @GetMapping("/api/auth/kakao/login")
@@ -265,18 +268,17 @@ public class AuthController {
                 .build();
     }
 
+    /**
+     * session cookie 속성은 {@link AuthCookieFactory} 한 곳에 둔다. 관리자 ID/PW 로그인
+     * (docs/30)이 같은 cookie를 발급하고 이 controller의 로그아웃이 그것까지 지우므로,
+     * 속성이 두 곳에 있으면 한쪽만 바뀌었을 때 로그아웃이 조용히 실패한다.
+     */
     private ResponseCookie tokenCookie(String name, String value, Duration maxAge) {
-        return ResponseCookie.from(name, value)
-                .httpOnly(true)
-                .secure(secureCookies)
-                .sameSite("Lax")
-                .path("/")
-                .maxAge(maxAge)
-                .build();
+        return cookies.token(name, value, maxAge);
     }
 
     private ResponseCookie expiredTokenCookie(String name) {
-        return tokenCookie(name, "", Duration.ZERO);
+        return cookies.expired(name);
     }
 
     private static final class MemberStatusRedirect {

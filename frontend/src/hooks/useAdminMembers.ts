@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminMembersApi, type AdminMemberActionRequest, type AdminMemberDetail, type AdminMemberFilters, type AdminMemberForcedWithdrawalRequest, type AdminMemberListItem, type AdminMemberMannerTemperatureRequest, type AdminMemberPage } from '../api/adminMembers';
+import { adminMembersApi, type AdminMemberActionRequest, type AdminMemberDetail, type AdminMemberFilters, type AdminMemberForcedWithdrawalRequest, type AdminMemberListItem, type AdminMemberMannerTemperatureRequest, type AdminMemberPage, type AdminMemberTestAccountRequest } from '../api/adminMembers';
 
-export const EMPTY_ADMIN_MEMBER_FILTERS: AdminMemberFilters = { query: '', status: '', role: 'USER' };
+export const EMPTY_ADMIN_MEMBER_FILTERS: AdminMemberFilters = { query: '', status: '', role: 'USER', testAccount: false };
 export type AdminMembersState = {
   status: 'LOADING' | 'READY' | 'ERROR'; items: AdminMemberListItem[]; filters: AdminMemberFilters;
   pageIndex: number; hasNext: boolean; detail: AdminMemberDetail | null; selectedMemberId: number | null;
@@ -23,6 +23,7 @@ type Dependencies = {
   act: (memberId: number, request: AdminMemberActionRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
   forceWithdraw: (memberId: number, request: AdminMemberForcedWithdrawalRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
   adjustMannerTemperature: (memberId: number, request: AdminMemberMannerTemperatureRequest, key: string, signal: AbortSignal) => Promise<AdminMemberDetail>;
+  updateTestAccount: (memberId: number, request: AdminMemberTestAccountRequest, signal: AbortSignal) => Promise<AdminMemberDetail>;
 };
 
 export function createAdminMembersSession(dependencies: Dependencies, onState: (state: AdminMembersState) => void) {
@@ -94,6 +95,24 @@ export function createAdminMembersSession(dependencies: Dependencies, onState: (
       }).catch((error: unknown) => { if (stopped || controller.signal.aborted || requestId !== actionId) return false; publish({ ...state, submitting: false, actionError: error instanceof Error ? error : new Error('매너온도 조정 실패') }); return false; }).finally(() => { if (actionController === controller) actionController = null; if (inFlight === operation) inFlight = null; });
       inFlight = operation; return operation;
     },
+    /**
+     * 테스트 계정 지정·해제.
+     *
+     * 제재·강제 탈퇴·매너온도와 달리 확인 dialog와 pending 상태를 두지 않는다. 목표 값을
+     * 그대로 보내는 되돌릴 수 있는 조치이고, 사유 입력도 받지 않아 물어볼 것이 없다.
+     * 다만 같은 inFlight 잠금을 공유하므로 제재 처리 중에 겹쳐 나가지 않는다.
+     */
+    updateTestAccount: (enabled: boolean) => {
+      if (inFlight) return inFlight;
+      if (!state.detail || stopped) return Promise.resolve(false);
+      const memberId = state.detail.memberId; const controller = new AbortController(); actionController = controller; const requestId = ++actionId;
+      publish({ ...state, submitting: true, actionError: null });
+      const operation = dependencies.updateTestAccount(memberId, { enabled, reasonNote: null }, controller.signal).then((detail) => {
+        if (stopped || controller.signal.aborted || requestId !== actionId) return false;
+        publish({ ...state, detail, items: state.items.map((item) => item.memberId === memberId ? { ...item, testAccount: detail.testAccount } : item), submitting: false, successMessage: enabled ? '테스트 계정으로 지정했습니다.' : '테스트 계정 지정을 해제했습니다.' }); return true;
+      }).catch((error: unknown) => { if (stopped || controller.signal.aborted || requestId !== actionId) return false; publish({ ...state, submitting: false, actionError: error instanceof Error ? error : new Error('테스트 계정 변경 실패') }); return false; }).finally(() => { if (actionController === controller) actionController = null; if (inFlight === operation) inFlight = null; });
+      inFlight = operation; return operation;
+    },
     stop: () => { stopped = true; listId++; detailId++; actionId++; listController?.abort(); detailController?.abort(); actionController?.abort(); inFlight = null; },
   };
 }
@@ -112,5 +131,6 @@ export function useAdminMembers() {
     requestTemperature: useCallback((request: AdminMemberMannerTemperatureRequest) => sessionRef.current?.requestTemperature(request), []),
     cancelTemperature: useCallback(() => sessionRef.current?.cancelTemperature(), []),
     submitTemperature: useCallback(() => sessionRef.current?.submitTemperature() ?? Promise.resolve(false), []),
+    updateTestAccount: useCallback((enabled: boolean) => sessionRef.current?.updateTestAccount(enabled) ?? Promise.resolve(false), []),
   };
 }

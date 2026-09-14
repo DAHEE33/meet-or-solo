@@ -5681,3 +5681,101 @@ codec·DTO를 두고, `FestivalCheckinRepository`에 `festivals`를 JOIN하는 n
 
 **걸렸던 것:** 새로 쓴 backend 테스트가 좌표 없는 `syncData()` fixture를 써서 반경 검색이 빈
 목록으로 조기 반환됐다. `syncDataWithCoordinates`로 바꿔 해결했다.
+
+## [10-UI 후속 8] 테스트 계정과 체크인 거리 제한 복원
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+
+### 1. 거리 제한을 다시 켰다
+
+`application-local.yml`·`application-dev.yml`의 `bypass-radius-check` 기본값을 `true`에서
+`false`로 되돌렸다. 이 값은 **환경 전체**의 GPS 반경·정확도 검증을 끄기 때문에, 켜 둔 동안에는
+local/dev에서 반경 검증이 실제로 동작하는지 확인할 방법이 아예 없었다. 환경변수
+`FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK`로 여전히 켤 수 있지만 기본은 검증을 한다.
+
+### 2. 대신 계정 단위 면제를 만들었다
+
+`members.test_account`(`V36`)를 추가하고, `/admin/members`에서 관리자가 지정·해제한다.
+테스트 계정은 반경·정확도 검증을 면제받고 같은 환경의 일반 계정은 검증을 그대로 받는다.
+설계 판단과 API·감사 로그 규칙은 `docs/19` 4.12에 있다.
+
+핵심 판단 세 가지:
+
+- **`role`을 재사용하지 않았다.** 관리자인 것과 테스트 계정인 것은 다른 사실이다.
+- **별도 메뉴를 만들지 않았다.** 기존 `/admin/members`가 이미 가입 회원 목록·검색·filter·
+  cursor pagination을 전부 갖고 있다. 메뉴를 더 두면 같은 목록이 두 곳에 생긴다.
+- **`Idempotency-Key`를 받지 않는다.** 토글이 아니라 목표 값을 쓰므로 반복 요청이 멱등하고,
+  값이 바뀌지 않으면 감사 로그도 남기지 않는다.
+
+`Member.withdraw()`가 표시를 지운다. 탈퇴는 같은 row를 남기고 `rejoin()`이 되살리므로,
+남겨두면 재가입 계정이 위치 검증 면제를 물려받는다.
+
+### 걸렸던 것
+
+`jsonb_build_object`에 boolean 파라미터를 그대로 넘기면 PostgreSQL이 파라미터 타입을 결정하지
+못한다. `CAST(:before AS boolean)`으로 명시했다.
+
+### 테스트
+
+- Backend 신규 9건(단위 3건 `FestivalCheckinServiceTest`, 통합 6건 `AdminMemberIntegrationTest`).
+- Frontend 신규 6건(`AdminMembersTestAccount.test.tsx`).
+- 회귀: frontend 731건 전체 통과, `tsc --noEmit`과 production build 통과. backend 684건 중 33건
+  실패인데 전부 Docker 미설치로 인한 Testcontainers 환경 실패다(`build/test-results` 전수 확인,
+  33건 모두 `ContainerFetchException`. 다른 원인 0건). **신규 통합 테스트 6건도 이 환경에서는
+  실행되지 않았다.**
+
+## [슈퍼관리자] ID/PW 로그인 구현
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+설계: `docs/30_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md`
+
+SSO를 유지한 채 `/admin/login` 진입 경로를 하나 더 만들었다. 슈퍼관리자도 `members` row
+1건(`provider='LOCAL'`, `role='ADMIN'`)에 매핑하므로, 로그인 이후의 관리자 API는 코드가
+하나도 바뀌지 않는다.
+
+### 막혔던 것 — Flyway checksum
+
+처음에 사용자 요청대로 `V36`에 DDL을 이어 붙였는데 통합 테스트 34건이 한꺼번에 깨졌다.
+원인은 `Migration checksum mismatch for migration version 36`이었다. **`V36`은 직전 테스트
+실행이 이미 dev DB(`127.0.0.1:15432`, SSH 터널)에 적용한 상태였다.** 적용된 migration을
+수정하면 checksum이 달라지고, 되돌리려면 공용 dev DB의 history를 손봐야 한다.
+
+공용 DB에 파괴적 DDL을 돌리는 대신 `V36`을 적용 당시 내용으로 되돌리고
+`V37__add_admin_local_credentials.sql`로 분리했다. **적용이 끝난 migration은 수정하지 않는다.**
+
+### 설계 판단
+
+- **transaction 분리.** 로그인 실패는 `BusinessException`(=`RuntimeException`)으로 알리는데,
+  던지는 순간 transaction이 rollback된다. 같은 transaction에서 실패 횟수를 올리면 그 UPDATE도
+  사라져 **잠금이 영원히 걸리지 않는다.** `AdminLoginFailureRecorder`를
+  `REQUIRES_NEW`로 분리한 이유가 이것이다.
+- **cookie 속성 일원화.** `AuthCookieFactory`를 만들어 OAuth 콜백과 ID/PW 로그인이 같은 코드로
+  cookie를 발급한다. 로그아웃 하나가 둘 다 지우므로 속성이 갈라지면 로그아웃이 조용히 실패한다.
+- **경로를 `/api/auth/admin/login`에 뒀다.** `/api/auth/**`는 `MemberAccessInterceptor` 제외
+  대상이고 frontend `apiClient`의 refresh 재귀 방지 접두이며 `SecurityConfig` permitAll 목록과도
+  일관된다. `/api/admin/` 아래 두면 제재된 소셜 계정 cookie가 남아 있을 때 로그인 시도 자체가 막힌다.
+- **실패 응답을 구분하지 않는다.** 아이디 오류·비밀번호 오류·잠금·권한 없음이 전부
+  `401 ADMIN_LOGIN_FAILED`다. 없는 아이디도 더미 해시로 BCrypt 비교 비용을 한 번 치른 뒤
+  실패시켜 응답 시간 차이를 없앤다.
+- **계정은 환경변수로만 만든다.** `ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`가 둘 다 있을
+  때만 `SuperAdminAccountBootstrap`이 동작한다. 비밀번호 변경도 같은 경로다(환경변수 교체 후
+  재기동). 같은 비밀번호면 해시를 다시 만들지 않는다 — BCrypt는 salt가 매번 달라 무조건 덮으면
+  재기동과 실제 변경을 감사에서 구분할 수 없다.
+- **frontend 401 분기.** 기존 `apiClient`는 모든 401을 `/login`으로 보냈다. 관리자 화면에서
+  session이 끊기면 관리자가 자기 계정으로 돌아올 방법이 없으므로 `loginPathFor`로 갈랐다.
+  영구 제한은 계정 자체가 막힌 상태라 어느 화면이든 안내가 있는 소셜 로그인으로 보낸다.
+
+### 테스트
+
+- Backend 신규 11건(`AdminLoginServiceTest` 9건 — 성공·비밀번호 오류·없는 아이디·잠금·잠금
+  해제·권한 없음·제재·카운터 초기화·비밀번호 회전, `AdminAuthControllerTest` 2건 — cookie 속성,
+  body에 token 없음).
+- Frontend 신규 13건(`adminAuth.test.ts` 7건 — 요청 형식과 `loginPathFor` 분기,
+  `AdminLoginPage.test.tsx` 4건, `AdminHeader.test.tsx` 2건).
+- 회귀: frontend 743건 전체 통과, `tsc --noEmit`과 production build 통과. backend 695건 중 33건
+  실패인데 전부 Docker 미설치로 인한 Testcontainers 환경 실패다(전수 확인, 다른 원인 0건).
+
+### 남은 일
+
+`ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`를 환경에 넣고 기동해야 계정이 생긴다.
+dev DB에는 `V37`이 아직 적용되지 않았으므로 다음 기동 때 적용된다.

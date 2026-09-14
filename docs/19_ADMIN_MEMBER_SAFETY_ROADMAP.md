@@ -11,6 +11,7 @@
   4.9 PR A(관리자 온도 수동 조정)와 PR B(값 체계·상승 경로·회원 노출) 구현 완료(수동 검증 대기).
   4.7.1 동의 원문 노출과 동의 전 전문 확인 완료(PR #66·#69·#71 dev 병합).
   4.11에 확인·수정 대기 2건(짧게 취소된 매칭의 신고 대상 여부, 만남 완료 전 매너온도 상승)이 있다.
+  4.12 테스트 계정 구현 완료(수동 검증 대기).
   **남은 항목은 4.7의 나머지(임베딩 재시도, 외부 호출 transaction 분리, 재동의 인프라)와
   4.9의 PR C(30도 매칭 제한)·D(후기), 그리고 2절 표의 기본 통계다.**
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
@@ -986,6 +987,84 @@ PR B에서 **본인 것만** 노출한다.
    함께 영향을 받으므로 범위가 커진다
 4. 이미 잘못 지급된 온도를 되돌릴지. `manner_temperature_events`에 이력이 남아 있고 관리자
    수동 조정(4.9 PR A)이 있으므로 보정이 가능하다
+
+### 4.12 테스트 계정 — 완료(수동 검증 대기)
+
+브랜치: `feature/wbs-10-a-festival-course`
+
+#### 문제
+
+축제 체크인은 GPS 반경(축제별 `checkin_radius_meters`)과 위치 정확도를 검증한다. 개발 중에는
+현장에 갈 수 없으므로 `app.festival.checkin.bypass-radius-check`를 local/dev에서 `true`로 두고
+**환경 전체의 검증을 꺼 두었다**. 그 결과 두 가지가 생겼다.
+
+1. local/dev에서 반경 검증이 실제로 동작하는지 확인할 방법이 없다. 검증 코드가 깨져도 알 수 없다.
+2. 운영 전환 시 그 환경에서 한 번도 통과해 본 적 없는 경로가 처음 동작한다.
+
+#### 설계
+
+환경 단위 우회를 계정 단위 면제로 바꾼다.
+
+- `members.test_account` (`V36`) — 이 회원만 반경·정확도 검증을 면제받는다.
+- local/dev의 `bypass-radius-check` 기본값을 `false`로 되돌린다. 환경변수
+  `FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK`로 여전히 켤 수 있지만 기본은 검증을 한다.
+- 같은 환경에서 테스트 계정은 통과하고 일반 계정은 반경 검증을 받는다.
+
+**`role`을 재사용하지 않는다.** 관리자인 것과 테스트 계정인 것은 다른 사실이다. 겸하면 모든
+관리자가 위치 검증 면제가 되고, 반대로 테스트 계정에 관리자 권한이 붙는다.
+
+#### API
+
+```text
+PUT /api/admin/members/{memberId}/test-account   { "enabled": true, "reasonNote": null }
+GET /api/admin/members?testAccount=true          테스트 계정만 조회
+```
+
+`POST /actions`(제재)·`/forced-withdrawal`·`/manner-temperature`와 endpoint를 분리한다. 이
+조치는 회원 상태를 전혀 바꾸지 않고 사유 code도 받지 않는다.
+
+- **`Idempotency-Key`를 받지 않는다.** 토글이 아니라 목표 값을 그대로 쓰므로 몇 번을 보내도
+  결과가 같다. 키로 막아야 할 중복 부작용 자체가 없다. `PUT`인 이유도 이것이다.
+- **관리자 계정과 자기 자신도 대상으로 허용한다.** 제재는 관리자끼리 권한을 뺏을 수 있어
+  막지만, 이 조치는 권한을 바꾸지 않고 자기 계정으로 체크인 흐름을 확인하는 것이 정상 용도다.
+- **대상 상태는 `ACTIVE`·`PROFILE_REQUIRED`만 허용한다.** 제재 중인 회원은 체크인 자체가
+  막혀 있어 면제할 대상이 없고, 제재 우회 수단으로 보일 여지를 남기지 않는다.
+
+#### 감사 로그
+
+`admin_actions.action_type = 'TEST_ACCOUNT_UPDATE'`(`V36`). `reason_code`는 비운다 — 제재 사유
+목록 중 이 조치에 맞는 값이 없고, 억지로 고르면 감사 로그가 오염된다. metadata에 변경 전후
+flag를 남긴다. **값이 실제로 바뀐 경우에만 기록한다.**
+
+제재 이력 목록(`AdminMemberRepository.findActions`)의 `action_type` 필터에는 넣지 않았다.
+권한을 줄이는 제재와 안전장치를 면제하는 조치를 한 목록에서 섞어 읽을 수 없다.
+
+#### 탈퇴 시 표시 제거
+
+`Member.withdraw()`가 `test_account`를 `false`로 되돌린다. 탈퇴는 같은 row를 남기고
+`rejoin()`이 그 row를 되살리므로, 남겨두면 재가입한 계정이 위치 검증 면제를 그대로 물려받는다.
+
+#### 화면
+
+기존 `/admin/members`(회원 관리)를 확장했다. 별도 메뉴를 만들지 않았다 — 이미 가입 회원
+목록·검색·상태/역할 filter·cursor pagination이 모두 있고, 메뉴를 하나 더 두면 같은 목록이
+두 곳에 생긴다.
+
+- 목록 행에 `테스트 계정` badge
+- 필터에 "테스트 계정만" 체크박스
+- 상세 dialog에 지정·해제 버튼과 "무엇이 풀리는지"를 밝히는 안내 문구
+
+되돌릴 수 있는 조치라 제재·강제 탈퇴와 달리 확인 dialog를 두지 않았다.
+
+#### 테스트
+
+- Backend 단위 3건(`FestivalCheckinServiceTest`) — 테스트 계정이면 설정이 꺼져 있어도 반경 밖
+  체크인 허용, 낮은 정확도 허용, 테스트 계정이 아니면 반경 검증 그대로.
+- Backend 통합 6건(`AdminMemberIntegrationTest`) — 지정·해제와 감사 로그, 같은 값 재요청은
+  무기록, 제재 이력 목록 제외, 제재 중 회원 거부, 관리자 자기 지정, filter, 강제 탈퇴 시 표시 제거.
+  **Docker가 없는 환경에서는 실행되지 않는다(Testcontainers).**
+- Frontend 6건(`AdminMembersTestAccount.test.tsx`) — 버튼 분기, 상태별 노출, 세션 성공·실패·이중 제출.
+
 
 ## 5. 공통 보안·동시성 원칙
 
