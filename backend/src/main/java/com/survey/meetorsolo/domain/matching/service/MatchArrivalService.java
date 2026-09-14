@@ -10,6 +10,7 @@ import com.survey.meetorsolo.domain.matching.event.MatchingStateChangedEvent;
 import com.survey.meetorsolo.domain.matching.repository.MatchEventRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
+import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
@@ -34,6 +35,7 @@ public class MatchArrivalService {
     private final MatchGroupQueryService groupQueries;
     private final ApplicationEventPublisher eventPublisher;
     private final MatchingArrivalProperties arrivalProperties;
+    private final MemberRepository members;
 
     public MatchArrivalService(
             Clock clock,
@@ -42,7 +44,8 @@ public class MatchArrivalService {
             MatchEventRepository events,
             MatchGroupQueryService groupQueries,
             ApplicationEventPublisher eventPublisher,
-            MatchingArrivalProperties arrivalProperties
+            MatchingArrivalProperties arrivalProperties,
+            MemberRepository members
     ) {
         this.clock = clock;
         this.groups = groups;
@@ -51,6 +54,7 @@ public class MatchArrivalService {
         this.groupQueries = groupQueries;
         this.eventPublisher = eventPublisher;
         this.arrivalProperties = arrivalProperties;
+        this.members = members;
     }
 
     @Transactional
@@ -117,11 +121,16 @@ public class MatchArrivalService {
                 request.latitude(), request.longitude());
         int radiusMeters = arrivalProperties.radiusMeters();
         if (distanceMeters > radiusMeters) {
-            if (!arrivalProperties.bypassRadiusCheck()) {
+            // 체크인과 같은 두 경로다(FestivalCheckinService 참고).
+            // - 설정: 환경 전체를 끈다. 실기기 GPS가 없는 환경의 임시 수단이다.
+            // - 테스트 계정: 그 계정만 면제한다. 같은 환경에서 일반 계정은 검증을 그대로 받는다.
+            boolean testAccount = members.existsByIdAndTestAccountIsTrue(memberId);
+            if (!arrivalProperties.bypassRadiusCheck() && !testAccount) {
                 throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_OUT_OF_RANGE);
             }
-            log.warn("도착 반경 검증을 건너뛰고 도착을 인정했습니다(local/dev 전용). "
+            log.warn("도착 반경 검증을 건너뛰고 도착을 인정했습니다(사유={}). "
                             + "memberId={}, groupId={}, distanceMeters={}, radiusMeters={}",
+                    testAccount ? "TEST_ACCOUNT" : "CONFIG_BYPASS",
                     memberId, group.getId(), distanceMeters, radiusMeters);
         }
         return Math.toIntExact(distanceMeters);

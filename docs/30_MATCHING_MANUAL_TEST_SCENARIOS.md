@@ -41,11 +41,15 @@
 ### 환경 변수
 
 ```bash
-MATCHING_SCHEDULER_ENABLED=true            # 매칭 성사와 만남 종료 배치
-MATCHING_NO_SHOW_SCHEDULER_ENABLED=true    # 도착 마감 노쇼 처리
-MATCHING_ARRIVAL_RADIUS_METERS=150         # 도착 인정 반경
-MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK=true  # 반경 검증 우회(시나리오 B에서만 false로)
+MATCHING_SCHEDULER_ENABLED=true          # 매칭 성사와 만남 종료 배치
+MATCHING_NO_SHOW_SCHEDULER_ENABLED=true  # 도착 마감 노쇼 처리
+MATCHING_ARRIVAL_RADIUS_METERS=150       # 도착 인정 반경
 ```
+
+**GPS 반경은 환경 전체로 끄지 않습니다.** 체크인·도착 모두 어느 환경에서나 검증이 켜져 있고,
+현장에 가지 않고 테스트하려면 **`/admin/members`에서 그 계정을 테스트 계정으로 지정**합니다
+(`members.test_account`). 계정 단위 면제라 같은 환경에서 일반 계정은 반경 검증을 그대로 받고,
+그래서 **검증이 실제로 동작하는지도 함께 확인할 수 있습니다.**
 
 **만남 종료 배치는 `MATCHING_SCHEDULER_ENABLED`에 걸려 있습니다.** 노쇼 배치와 플래그가 다릅니다.
 그룹을 닫는 것은 수명주기의 일부여서, 꺼지면 참가자가 새 매칭을 신청하지 못한 채 남습니다.
@@ -150,14 +154,16 @@ UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '61 minutes' WHER
 
 | | |
 | --- | --- |
-| 준비 | A 상태방 진입. **`MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK=false`로 바꾸고 재기동** |
+| 준비 | A 상태방 진입. **A를 테스트 계정에서 해제**(`/admin/members`) — 그래야 반경 검증을 받는다 |
 | 조작 | 만남 장소에서 150m 넘게 떨어진 곳에서 "도착했어요" (브라우저 개발자도구의 위치 재정의 사용) |
 | 기대 — 화면 | "만남 장소 근처에서 도착을 인증해주세요" |
 | 기대 — DB | 해당 참가자 `status`가 `JOINED` 그대로, `arrival_distance_meters`는 `NULL` |
 | 이어서 | 반경 안 좌표로 다시 도착 → 성공, `arrival_distance_meters`에 거리(미터)가 남음 |
 
 **좌표는 저장되지 않아야 합니다.** `match_group_members`에 위경도 컬럼이 없다는 것을 확인합니다.
-검증 후에는 `bypass`를 다시 `true`로 되돌립니다.
+
+이어서 **A를 테스트 계정으로 지정**하고 같은 반경 밖 좌표로 다시 눌러보세요. 이번에는 통과해야
+합니다. 같은 환경에서 계정에 따라 갈리는 것이 이 설계의 핵심입니다.
 
 ### C. 전원 도착해도 방이 유지된다
 

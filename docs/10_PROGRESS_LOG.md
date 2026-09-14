@@ -1,5 +1,55 @@
 # 진행 상태 기록
 
+## [10-B 매칭] dev 병합 정리 — 도착 반경도 계정 단위 면제로
+
+상태: Backend/Frontend 구현·자동 테스트 완료. dev 병합 준비됨
+
+협업자가 `V35`~`V37`을 push해 `dev`를 병합했다. 그 과정에서 두 가지를 정리했다.
+
+### 충돌 마커를 커밋한 사고
+
+`git merge` 출력을 `tail`로만 확인하는 바람에 `application-local.yml`·`application-dev.yml`의
+충돌을 놓치고 **마커째 커밋했다.** YAML이 깨져 테스트가 **529건 실패**했다. 실패 메시지가
+`while scanning a simple key`(YAML 파서 오류)라 원인을 찾는 데는 오래 걸리지 않았다.
+
+교훈은 단순하다. **병합 결과는 `git status`로 확인하고, 출력을 잘라 보지 않는다.**
+
+### dev 방침에 맞춰 도착 반경 면제를 바꿨다
+
+`dev`가 GPS 반경 검증을 **환경 전체 우회에서 계정 단위 면제로** 바꿨다
+(`members.test_account`, `V36`). 근거가 타당하다.
+
+> 환경 전체를 끄면 그 환경에서는 아무도 반경 검증을 통과할 필요가 없어, 정작 검증 로직이
+> 동작하는지 확인할 방법이 사라진다.
+
+우리가 이번에 넣은 **도착 인정 반경도 같은 문제**를 갖고 있었다. `app.matching.arrival.
+bypass-radius-check`를 local·dev에서 `true`로 두면 그 환경에서 도착 검증이 도는지 확인할 수
+없다. 그래서 체크인과 같은 구조로 맞췄다.
+
+| 경로 | 뜻 |
+| --- | --- |
+| 설정(`bypass-radius-check`) | 환경 전체를 끈다. **어느 환경에서도 기본은 `false`** |
+| `members.test_account` | 그 계정만 면제한다. 같은 환경에서 일반 계정은 검증을 그대로 받는다 |
+
+로그도 체크인과 같이 사유(`TEST_ACCOUNT` / `CONFIG_BYPASS`)를 남긴다. `.env`·`.env.example`·
+`.env.dev.example`에서 도착 우회 환경변수를 걷어내고, `docs/30` 시나리오 B를 **"테스트 계정
+해제 → 반경 밖 거절 → 테스트 계정 지정 → 통과"**로 바꿨다. 같은 환경에서 계정에 따라 갈리는
+것을 확인하는 절차다.
+
+### migration 번호는 `V38`로 확정
+
+`V35`~`V37`이 모두 push돼 저장소와 dev DB 이력이 다시 맞았다. 우리 migration은 `V38`이다.
+
+### 검증
+
+- backend: **1078건 중 2건 실패.** 둘 다 `docs/10`에 기록된 기존 baseline
+  (`ContentBookmarkCommentIntegrationTest` 만료 쿠키 401, `FestivalRepositoryIntegrationTest`
+  `@Sql` 문제). **migration·매칭·신고·온도·알림 실패 0건.**
+- frontend: `npx vitest run` 81 files / 764 tests 통과, `npx tsc -b` 통과.
+
+**드디어 dev DB 의존 테스트가 전부 살아났다.** 직전까지는 저장소에 없는 migration 때문에
+34건이 막혀 있었다.
+
 ## [사고 기록] 저장소에 없는 migration이 공유 dev DB에 적용되는 일 — 3회째
 
 상태: `V35` 해결(협업자 push), `V36` 미해결(저장소에 없음), 우리 migration은 `V37`로 이동

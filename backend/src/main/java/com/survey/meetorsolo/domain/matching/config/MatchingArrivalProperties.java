@@ -10,8 +10,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 화면에 반경 안내가 떠 있었을 뿐 검증이 없었다.
  *
  * @param radiusMeters      만남 장소 핀에서 이 거리 안이면 도착으로 인정한다.
- * @param bypassRadiusCheck 반경 검증을 건너뛴다. <b>local·dev 전용</b>이다. 개발자가 축제 현장에
- *                          갈 수 없으므로 그 환경에서만 켠다. 운영 기본값은 {@code false}다.
+ * @param bypassRadiusCheck 환경 전체의 반경 검증을 끈다. <b>어느 환경에서도 기본은
+ *                          {@code false}다.</b> 환경 전체를 끄면 그 환경에서 검증이 실제로
+ *                          동작하는지 확인할 방법이 사라진다. 현장에 가지 않고 확인해야 하면
+ *                          {@code members.test_account}로 계정 단위 면제를 쓴다(체크인과 같다).
  */
 @ConfigurationProperties(prefix = "app.matching.arrival")
 public record MatchingArrivalProperties(

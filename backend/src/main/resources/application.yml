@@ -123,5 +123,6 @@ app:
     arrival:
       # 만남 장소 핀에서 이 거리 안이면 도착으로 인정한다. 화면에도 같은 값이 안내된다.
       radius-meters: ${MATCHING_ARRIVAL_RADIUS_METERS:150}
-      # 반경 검증 우회는 local/dev 전용이다. 운영에서는 켜지 않는다.
+      # 환경 전체를 끄는 스위치다. 체크인과 마찬가지로 어느 환경에서도 기본은 false이고,
+      # 현장에 가지 않고 확인해야 하면 members.test_account로 계정 단위 면제를 쓴다.
       bypass-radius-check: ${MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK:false}
