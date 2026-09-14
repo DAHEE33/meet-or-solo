@@ -21,6 +21,7 @@ app:
     sync:
       enabled: ${FESTIVAL_SYNC_ENABLED:true}
     checkin:
+<<<<<<< HEAD
       # 개발계에서도 실제 축제 현장에 있지 않아도 체크인 흐름을 테스트할 수 있게 GPS 반경·정확도
       # 검증을 기본적으로 건너뛴다. 운영에서는 base application.yml의 기본값(false)을 그대로 쓴다.
       bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:true}
@@ -29,6 +30,15 @@ app:
       # dev에서는 만남 장소 근처에 실제로 갈 수 없으므로 도착 반경 검증을 건너뛴다.
       # 체크인의 bypass-radius-check와 같은 이유이고, 운영에서는 base 기본값(false)을 쓴다.
       bypass-radius-check: ${MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK:true}
+=======
+      # 환경 전체의 GPS 반경·정확도 검증을 끄지 않는다. 껐던 동안에는 개발계에서
+      # 반경 검증이 실제로 동작하는지 확인할 방법이 없었다.
+      #
+      # 현장에 가지 않고 체크인 흐름을 테스트해야 하면 /admin/members에서 그 계정을
+      # 테스트 계정으로 지정한다(members.test_account). 계정 단위 면제라 같은 환경에서
+      # 일반 계정은 반경 검증을 그대로 받는다.
+      bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:false}
+>>>>>>> origin/dev
   tour-place:
     sync:
       enabled: ${TOUR_PLACE_SYNC_ENABLED:true}

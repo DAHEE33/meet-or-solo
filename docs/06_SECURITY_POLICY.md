@@ -83,6 +83,9 @@ DB_USERNAME
 DB_PASSWORD
 JWT_SECRET
 ADMIN_REPORT_CURSOR_HMAC_SECRET
+ADMIN_LOCAL_USERNAME
+ADMIN_LOCAL_PASSWORD
+ADMIN_LOCAL_NICKNAME
 KAKAO_CLIENT_ID
 KAKAO_CLIENT_SECRET
 NAVER_CLIENT_ID
@@ -100,6 +103,23 @@ UTF-8 기준 32바이트 이상의 서로 다른 난수 Secret을 dev/prod 환�
 기본값이나 예측 가능한 fallback은 두지 않고 누락·blank·짧은 값이면 Backend 시작을
 실패시킵니다. 실제 값은 source, example, 문서와 로그에 기록하지 않습니다. 키를 회전하면
 기존에 발급한 cursor가 무효화될 수 있으며 DB migration은 필요하지 않습니다.
+
+## 슈퍼관리자 ID/PW 로그인
+
+SSO를 유지한 채 `/admin/login` 진입 경로를 하나 더 둡니다(설계는
+[docs/30](30_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md)).
+
+- 슈퍼관리자도 `members` row 1건(`provider = 'LOCAL'`, `role = 'ADMIN'`)에 매핑합니다.
+  로그인 성공 시 발급되는 session은 소셜 로그인과 완전히 같습니다.
+- 비밀번호는 BCrypt 해시로만 저장합니다. 평문과 가역 암호화를 쓰지 않습니다.
+- 계정은 migration이 아니라 `ADMIN_LOCAL_USERNAME`·`ADMIN_LOCAL_PASSWORD` 환경변수로
+  만들고 회전합니다. 둘 중 하나라도 비면 계정을 만들지 않습니다. 기본 계정을 자동 생성하면
+  운영에 예측 가능한 아이디·비밀번호가 생깁니다.
+- 실패 응답은 아이디 오류·비밀번호 오류·잠금·권한 없음을 구분하지 않고 전부
+  `401 ADMIN_LOGIN_FAILED`입니다. 구분해 알리면 아이디를 열거할 수 있습니다.
+- 연속 5회 실패 시 10분 잠급니다. 잠금 여부도 응답으로 알리지 않습니다.
+- 아이디·비밀번호는 로그에 남기지 않습니다. 실패 사유만 서버 로그에 남깁니다.
+- 운영에서는 nginx `location /admin`에 IP allow를 거는 것을 권장합니다(배포 단계 범위).
 
 ## 개인정보
 

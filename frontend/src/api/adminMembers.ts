@@ -11,6 +11,8 @@ export type AdminMemberListItem = {
   memberId: number; nickname: string | null; profileImageUrl: string | null; role: 'USER' | 'ADMIN';
   status: AdminMemberStatus; penaltyScore: number; mannerTemperature: number;
   suspendedUntil: string | null; createdAt: string;
+  /** 테스트 계정이면 축제 체크인의 GPS 반경·정확도 검증을 면제받는다. */
+  testAccount: boolean;
 };
 export type AdminMemberDetail = AdminMemberListItem & {
   suspendedAt: string | null; lastLoginAt: string | null;
@@ -23,7 +25,11 @@ export type AdminMemberDetail = AdminMemberListItem & {
   /** 관리자 매너온도 수동 조정 이력. 제재 이력과 성격이 달라 목록을 나눠 둔다(docs/19 4.9). */
   mannerTemperatureAdjustments: Array<{ actionId: number; beforeTemperature: number; afterTemperature: number; reasonCode: AdminMemberActionReasonCode; reasonNote: string | null; createdAt: string }>;
 };
-export type AdminMemberFilters = { query: string; status: AdminMemberStatus | ''; role: 'USER' | 'ADMIN' | '' };
+export type AdminMemberFilters = {
+  query: string; status: AdminMemberStatus | ''; role: 'USER' | 'ADMIN' | '';
+  /** true면 테스트 계정만 조회한다. false는 "제외"가 아니라 "조건 없음"이다. */
+  testAccount: boolean;
+};
 export type AdminMemberPage = { items: AdminMemberListItem[]; pagination: { size: number; hasNext: boolean; nextCursor: string | null } };
 export type AdminMemberActionRequest = {
   action: AdminMemberActionType; reasonCode: AdminMemberActionReasonCode; reasonNote: string | null;
@@ -63,10 +69,19 @@ function query(filters: AdminMemberFilters, cursor: string | null, size: number)
   if (filters.query) value.set('query', filters.query);
   if (filters.status) value.set('status', filters.status);
   if (filters.role) value.set('role', filters.role);
+  if (filters.testAccount) value.set('testAccount', 'true');
   if (cursor) value.set('cursor', cursor);
   value.set('size', String(size));
   return value.toString();
 }
+
+/**
+ * 테스트 계정 지정·해제 요청(docs/19 4.12).
+ *
+ * 제재·강제 탈퇴·매너온도와 타입을 분리한다. 회원 상태를 바꾸지 않고 사유 code도 받지 않는다.
+ * 토글이 아니라 목표 값을 보내므로 같은 요청을 반복해도 결과가 같다.
+ */
+export type AdminMemberTestAccountRequest = { enabled: boolean; reasonNote: string | null };
 
 export const adminMembersApi = {
   list: (filters: AdminMemberFilters, cursor: string | null, size = 20, signal?: AbortSignal) =>
@@ -84,6 +99,11 @@ export const adminMembersApi = {
   ) =>
     apiClient<AdminMemberDetail>(`/api/admin/members/${memberId}/forced-withdrawal`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(request), signal,
+    }),
+  updateTestAccount: (memberId: number, request: AdminMemberTestAccountRequest, signal?: AbortSignal) =>
+    apiClient<AdminMemberDetail>(`/api/admin/members/${memberId}/test-account`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request), signal,
     }),
   adjustMannerTemperature: (

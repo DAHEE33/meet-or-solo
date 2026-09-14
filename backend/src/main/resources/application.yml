@@ -83,6 +83,13 @@ app:
     # 환경변수 SUPPORT_CONTACT_EMAIL로만 주입하고, 비어 있으면 안내에서 문의 문구를 숨긴다.
     contact-email: ${SUPPORT_CONTACT_EMAIL:}
   admin:
+    # 슈퍼관리자 ID/PW 로그인(docs/30). 셋 다 환경변수로만 주입하고 저장소에는 실제 값을
+    # 넣지 않는다. username이나 password가 비어 있으면 계정을 만들지 않는다 —
+    # 기본 계정을 자동 생성하면 운영에 예측 가능한 아이디·비밀번호가 생긴다.
+    local:
+      username: ${ADMIN_LOCAL_USERNAME:}
+      password: ${ADMIN_LOCAL_PASSWORD:}
+      nickname: ${ADMIN_LOCAL_NICKNAME:슈퍼관리자}
     report:
       cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
     member:

@@ -11,6 +11,7 @@ import SoloCoursePage from './pages/SoloCoursePage';
 import CheckInPage from './pages/CheckInPage';
 import MyPage from './pages/MyPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminLoginPage from './pages/AdminLoginPage';
 import MatchRoomPage from './pages/MatchRoomPage';
 import BlockedMembersPage from './pages/BlockedMembersPage';
 import FavoritesPage from './pages/FavoritesPage';
@@ -56,6 +57,8 @@ export default function App() {
         <Route path="/mypage/inquiries" element={<MyInquiriesPage />} />
         <Route path="/mypage/inquiries/new" element={<InquiryNewPage />} />
         <Route path="/mypage/inquiries/:inquiryId" element={<InquiryDetailPage />} />
+          {/* 관리자 로그인은 AdminRoute 바깥이다. 권한 확인을 통과해야 볼 수 있으면 로그인할 수 없다. */}
+          <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
           <Route path="/admin/reports" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
           <Route path="/admin/members" element={<AdminRoute><AdminMembersPage /></AdminRoute>} />

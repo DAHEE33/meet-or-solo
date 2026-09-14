@@ -27,11 +27,12 @@ public class AdminMemberController {
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String role,
+            @RequestParam(required = false) Boolean testAccount,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) Integer size
     ) {
         return ApiResponse.success(members.list(
-                memberId(accessToken), query, status, role, cursor, size));
+                memberId(accessToken), query, status, role, testAccount, cursor, size));
     }
 
     @GetMapping("/{memberId}")
@@ -86,6 +87,23 @@ public class AdminMemberController {
     ) {
         return ApiResponse.success(members.adjustMannerTemperature(
                 memberId(accessToken), memberId, idempotencyKey, request));
+    }
+
+    /**
+     * 테스트 계정 지정·해제.
+     *
+     * <p>제재({@code /actions})·강제 탈퇴·매너온도와 endpoint를 분리한다. 회원 상태를 전혀
+     * 바꾸지 않고, 목표 값을 그대로 쓰는 조치라 {@code Idempotency-Key}도 받지 않는다.
+     * {@code PUT}인 이유가 그것이다 — 같은 요청을 반복해도 결과가 같다.
+     */
+    @PutMapping("/{memberId}/test-account")
+    public ApiResponse<AdminMemberDetailResponse> updateTestAccount(
+            @CookieValue(name = "access_token", required = false) String accessToken,
+            @PathVariable long memberId,
+            @Valid @RequestBody AdminMemberTestAccountRequest request
+    ) {
+        return ApiResponse.success(members.updateTestAccount(
+                memberId(accessToken), memberId, request));
     }
 
     private long memberId(String accessToken) {

@@ -31,7 +31,7 @@ export default function AdminRoute({ children }: { children: ReactNode }) {
     return <main role="status" className="min-h-screen bg-sand p-8 text-center text-ink/60">관리자 권한을 확인하고 있습니다.</main>;
   }
   if (state.status === 'FORBIDDEN') {
-    return <main role="alert" className="min-h-screen bg-sand p-8 text-center"><h1 className="text-xl font-bold text-ink">관리자만 접근할 수 있습니다</h1><p className="mt-2 text-sm text-ink/60">현재 계정에는 관리자 권한이 없습니다.</p></main>;
+    return <main role="alert" className="min-h-screen bg-sand p-8 text-center"><h1 className="text-xl font-bold text-ink">관리자만 접근할 수 있습니다</h1><p className="mt-2 text-sm text-ink/60">현재 계정에는 관리자 권한이 없습니다.</p><a href="/admin/login" className="mt-4 inline-block rounded-xl border border-line bg-white px-4 py-2 font-semibold">관리자 계정으로 로그인</a></main>;
   }
   if (state.status === 'ERROR') {
     return <main role="alert" className="min-h-screen bg-sand p-8 text-center"><h1 className="text-xl font-bold text-ink">권한을 확인하지 못했습니다</h1><button type="button" onClick={() => window.location.reload()} className="mt-4 rounded-xl border border-line bg-white px-4 py-2 font-semibold">다시 시도</button></main>;
