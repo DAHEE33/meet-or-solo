@@ -17,6 +17,7 @@ import com.survey.meetorsolo.global.exception.BusinessException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import com.survey.meetorsolo.domain.matching.config.MatchingArrivalProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +30,8 @@ class MatchGroupQueryServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MatchGroupQueryService(groups, groupMembers, members);
+        service = new MatchGroupQueryService(groups, groupMembers, members,
+                new MatchingArrivalProperties(150, false));
         when(members.existsById(1L)).thenReturn(true);
     }
 
@@ -138,20 +140,22 @@ class MatchGroupQueryServiceTest {
                 .isEqualTo("MATCHING_CONFLICT");
     }
 
+    /** 확정 인원보다 참여자가 많은 것은 여전히 있을 수 없는 상태다. */
     @Test
-    void 저장된_확정_인원과_실제_참여자_수가_다르면_정합성_오류로_처리한다() {
+    void 확정_인원보다_참여자가_많으면_정합성_오류로_처리한다() {
         ActiveGroupWithFestivalProjection group = group(
                 10L,
                 20L,
                 "CONFIRMED",
-                2,
+                1,
                 OffsetDateTime.parse("2026-07-27T12:30:00+09:00")
         );
-        ActiveGroupMemberProjection participant =
-                participant(100L, 1L, "member-a", null, "JOINED");
+        // participant()가 내부에서 mock을 세우므로 thenReturn 안에서 만들면 중첩 stubbing이 된다.
+        ActiveGroupMemberProjection first = participant(100L, 1L, "member-a", null, "JOINED");
+        ActiveGroupMemberProjection second = participant(101L, 2L, "member-b", null, "JOINED");
         when(groups.findActiveByMemberId(1L)).thenReturn(List.of(group));
         when(groupMembers.findActiveMembersWithProfileByGroupId(10L))
-                .thenReturn(List.of(participant));
+                .thenReturn(List.of(first, second));
 
         assertThatThrownBy(() -> service.currentGroup(1L))
                 .isInstanceOf(BusinessException.class);
@@ -200,25 +204,31 @@ class MatchGroupQueryServiceTest {
         assertThat(response.members()).hasSize(2);
     }
 
+    /**
+     * 활성 참여자가 혼자 남는 것은 이제 정상이다({@code docs/19} 4.11.3).
+     *
+     * <p>만남이 성립한 방은 상대가 먼저 나가도 만남 시간이 끝날 때까지 유지된다. 예전에는 이
+     * 상태를 정합성 오류로 보고 거절해서, 남은 사람이 상태방을 열지도 못했다.
+     */
     @Test
-    void inactive_참여자가_제외되어_확정_인원과_달라지면_정합성_오류로_처리한다() {
+    void 상대가_먼저_나가_혼자_남아도_정상_반환한다() {
         ActiveGroupWithFestivalProjection group = group(
                 10L,
                 20L,
-                "CONFIRMED",
+                "IN_PROGRESS",
                 2,
                 OffsetDateTime.parse("2026-07-27T12:30:00+09:00")
         );
         ActiveGroupMemberProjection participant =
-                participant(100L, 1L, "member-a", null, "JOINED");
+                participant(100L, 1L, "member-a", null, "ARRIVED");
         when(groups.findActiveByMemberId(1L)).thenReturn(List.of(group));
         when(groupMembers.findActiveMembersWithProfileByGroupId(10L))
                 .thenReturn(List.of(participant));
 
-        assertThatThrownBy(() -> service.currentGroup(1L))
-                .isInstanceOf(BusinessException.class)
-                .extracting(error -> ((BusinessException) error).getErrorCode().getCode())
-                .isEqualTo("MATCHING_CONFLICT");
+        MatchGroupResponse response = service.currentGroup(1L);
+
+        assertThat(response.currentMemberCount()).isEqualTo(1);
+        assertThat(response.confirmedMemberCount()).isEqualTo(2);
     }
 
     private ActiveGroupWithFestivalProjection group(

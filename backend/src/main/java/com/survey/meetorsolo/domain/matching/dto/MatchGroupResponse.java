@@ -56,7 +56,8 @@ public record MatchGroupResponse(
     public static MatchGroupResponse from(
             ActiveGroupWithFestivalProjection group,
             List<MatchGroupMemberResponse> members,
-            long currentMemberId
+            long currentMemberId,
+            int arrivalRadiusMeters
     ) {
         OffsetDateTime confirmedAt = group.getConfirmedAt()
                 .atZone(KOREA_ZONE)
@@ -78,7 +79,7 @@ public record MatchGroupResponse(
                         : group.getCompletedAt().atZone(KOREA_ZONE).toOffsetDateTime(),
                 currentMemberId,
                 MatchGroupFestivalResponse.from(group),
-                MatchGroupMeetingPointResponse.from(group),
+                MatchGroupMeetingPointResponse.from(group, arrivalRadiusMeters),
                 List.copyOf(members)
         );
     }

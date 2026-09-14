@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.matching.entity.MatchGroupMember;
+import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -64,6 +65,9 @@ class MatchGroupContinuationPolicyTest {
         MatchGroupMember member = mock(MatchGroupMember.class);
         when(member.getAllowMinimumTwo()).thenReturn(allowMinimumTwo);
         when(member.getStatus()).thenReturn(status);
+        // 만남 성립 판정은 status가 아니라 arrived_at을 본다. 먼저 나간 사람도 도착자다.
+        when(member.getArrivedAt()).thenReturn(
+                "ARRIVED".equals(status) ? OffsetDateTime.parse("2026-07-27T12:40:00+09:00") : null);
         return member;
     }
 }

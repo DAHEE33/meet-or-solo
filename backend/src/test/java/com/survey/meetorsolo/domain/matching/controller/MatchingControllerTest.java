@@ -1,5 +1,7 @@
 package com.survey.meetorsolo.domain.matching.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +28,7 @@ import com.survey.meetorsolo.domain.matching.service.MatchArrivalTimeService;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolCancellationService;
 import com.survey.meetorsolo.domain.matching.service.MatchCancellationService;
+import com.survey.meetorsolo.domain.matching.service.MatchLeaveService;
 import com.survey.meetorsolo.domain.matching.service.MatchPoolEntryService;
 import com.survey.meetorsolo.domain.matching.service.MatchProposalActionService;
 import com.survey.meetorsolo.domain.matching.service.MatchingQueryService;
@@ -70,6 +73,9 @@ class MatchingControllerTest {
 
     @MockitoBean
     private MatchArrivalService arrivals;
+
+    @MockitoBean
+    private MatchLeaveService leaves;
 
     @MockitoBean
     private MatchProposalActionService proposalActions;
@@ -353,19 +359,23 @@ class MatchingControllerTest {
     void 도착_완료는_body_없이_로그인_회원_기준_snapshot을_반환한다() throws Exception {
         when(jwtProvider.getMemberIdFromAccessToken("valid-token")).thenReturn(1L);
         MatchGroupResponse response = arrivalGroupResponse();
-        when(arrivals.arrive(1L)).thenReturn(response);
+        when(arrivals.arrive(eq(1L), any())).thenReturn(response);
 
         mockMvc.perform(put("/api/matching/groups/me/current/arrival")
-                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token")))
+                        .cookie(new jakarta.servlet.http.Cookie("access_token", "valid-token"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"latitude\":37.8813,\"longitude\":127.7300}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.groupId").value(10));
 
-        verify(arrivals).arrive(1L);
+        verify(arrivals).arrive(eq(1L), any());
     }
 
     @Test
     void 도착_완료는_인증_쿠키가_없으면_401을_반환한다() throws Exception {
-        mockMvc.perform(put("/api/matching/groups/me/current/arrival"))
+        mockMvc.perform(put("/api/matching/groups/me/current/arrival")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"latitude\":37.8813,\"longitude\":127.7300}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }

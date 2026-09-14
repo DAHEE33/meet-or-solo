@@ -113,3 +113,8 @@ app:
       batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}
     no-show-scheduler:
       enabled: ${MATCHING_NO_SHOW_SCHEDULER_ENABLED:false}
+    arrival:
+      # 만남 장소 핀에서 이 거리 안이면 도착으로 인정한다. 화면에도 같은 값이 안내된다.
+      radius-meters: ${MATCHING_ARRIVAL_RADIUS_METERS:150}
+      # 반경 검증 우회는 local/dev 전용이다. 운영에서는 켜지 않는다.
+      bypass-radius-check: ${MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK:false}

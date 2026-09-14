@@ -75,7 +75,7 @@ public class MatchPoolEntryService {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "cooldown 중에는 매칭을 신청할 수 없습니다.");
         }
         var completionLock = completionLocks.evaluate(
-                groups.findLatestCompletedByMemberId(memberId).orElse(null), now);
+                groups.findLatestHeldMeetingByMemberId(memberId).orElse(null), now);
         if (completionLock.active()) {
             throw new BusinessException(ErrorCode.MATCHING_COMPLETION_LOCKED);
         }

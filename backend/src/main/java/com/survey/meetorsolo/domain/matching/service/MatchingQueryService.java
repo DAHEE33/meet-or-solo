@@ -95,7 +95,7 @@ public class MatchingQueryService {
         Member member = requireMember(memberId);
         OffsetDateTime now = OffsetDateTime.now(clock);
         MatchCooldown cooldown = cooldowns.findActive(memberId, now).orElse(null);
-        var completedGroup = groups.findLatestCompletedByMemberId(memberId).orElse(null);
+        var completedGroup = groups.findLatestHeldMeetingByMemberId(memberId).orElse(null);
         return MatchingRestrictionResponse.of(
                 member.getPenaltyScore(), member.getMannerTemperature(), cooldown,
                 completionLocks.evaluate(completedGroup, now), now);

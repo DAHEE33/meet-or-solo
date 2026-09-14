@@ -88,7 +88,8 @@ public class MatchCancellationService {
     private int finishGroupIfNeeded(MatchGroup group, List<MatchGroupMember> members,
             OffsetDateTime now) {
         List<MatchGroupMember> active = members.stream().filter(this::isActive).toList();
-        String reason = continuationPolicy.cancellationReason(active);
+        // 정책은 전체 구성원을 본다. 이미 만난 방인지 판정하려면 빠진 사람의 arrived_at도 필요하다.
+        String reason = continuationPolicy.cancellationReason(members);
         if (reason == null) return active.size();
         group.cancel(reason, now);
         active.forEach(member -> member.leave(now));

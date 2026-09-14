@@ -239,8 +239,20 @@ export const matchingApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ arrivalMinutes }),
     }),
-  arrive: (signal?: AbortSignal) =>
+  /**
+   * 도착 인증. 서버가 만남 장소와의 거리를 재서 반경 안인지 확인한다(docs/19 4.11.3).
+   * 좌표는 거리 계산에만 쓰이고 저장되지 않는다.
+   */
+  arrive: (position: { latitude: number; longitude: number }, signal?: AbortSignal) =>
     apiClient<CurrentMatchGroup>('/api/matching/groups/me/current/arrival', {
+      method: 'PUT',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(position),
+    }),
+  /** 도착한 사람이 만남에서 먼저 나간다. 페널티는 없다(docs/19 4.11.3). */
+  leave: (signal?: AbortSignal) =>
+    apiClient<MatchCancellationResult>('/api/matching/groups/me/current/leave', {
       method: 'PUT',
       signal,
     }),

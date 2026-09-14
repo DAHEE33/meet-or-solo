@@ -71,8 +71,10 @@ public class MatchMeetingCloseGroupService {
             return false;
         }
 
+        // 판정 기준은 현재 상태가 아니라 arrived_at이다. 먼저 나간 사람(LEFT + left_at)도
+        // 실제로 그 자리에 왔으므로 만남 성립 인원에 든다. 머문 시간으로 가르지 않기로 했다.
         List<MatchGroupMember> arrived = members.stream()
-                .filter(member -> "ARRIVED".equals(member.getStatus()))
+                .filter(member -> member.getArrivedAt() != null)
                 .toList();
         List<Long> arrivedMemberIds = arrived.stream()
                 .map(MatchGroupMember::getMemberId)
@@ -84,11 +86,13 @@ public class MatchMeetingCloseGroupService {
         boolean meetingHeld = MatchMeetingWindowPolicy.isMeetingHeld(arrived.size());
         if (meetingHeld) {
             group.complete(now);
-            arrived.forEach(member -> member.complete(now));
+            arrived.stream().filter(member -> "ARRIVED".equals(member.getStatus()))
+                    .forEach(member -> member.complete(now));
             events.save(MatchEvent.matchCompleted(groupId, group.getAttemptId(), now));
         } else {
             group.cancel(MatchMeetingWindowPolicy.INSUFFICIENT_ARRIVALS, now);
-            arrived.forEach(member -> member.leave(now));
+            arrived.stream().filter(member -> "ARRIVED".equals(member.getStatus()))
+                    .forEach(member -> member.leave(now));
             events.save(MatchEvent.matchCancelled(
                     groupId, group.getAttemptId(),
                     MatchMeetingWindowPolicy.INSUFFICIENT_ARRIVALS, now));

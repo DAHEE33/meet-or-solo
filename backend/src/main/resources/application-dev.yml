@@ -24,6 +24,11 @@ app:
       # 개발계에서도 실제 축제 현장에 있지 않아도 체크인 흐름을 테스트할 수 있게 GPS 반경·정확도
       # 검증을 기본적으로 건너뛴다. 운영에서는 base application.yml의 기본값(false)을 그대로 쓴다.
       bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:true}
+  matching:
+    arrival:
+      # dev에서는 만남 장소 근처에 실제로 갈 수 없으므로 도착 반경 검증을 건너뛴다.
+      # 체크인의 bypass-radius-check와 같은 이유이고, 운영에서는 base 기본값(false)을 쓴다.
+      bypass-radius-check: ${MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK:true}
   tour-place:
     sync:
       enabled: ${TOUR_PLACE_SYNC_ENABLED:true}

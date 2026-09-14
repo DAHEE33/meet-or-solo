@@ -27,6 +27,16 @@ public enum ErrorCode {
             "MATCHING_ARRIVAL_DEADLINE_EXCEEDED",
             "도착 예정 시간을 최종 마감 안으로 선택해주세요."
     ),
+    MATCHING_ARRIVAL_OUT_OF_RANGE(
+            HttpStatus.CONFLICT,
+            "MATCHING_ARRIVAL_OUT_OF_RANGE",
+            "만남 장소 근처에서 도착을 인증해주세요."
+    ),
+    MATCHING_LEAVE_NOT_ALLOWED(
+            HttpStatus.CONFLICT,
+            "MATCHING_LEAVE_NOT_ALLOWED",
+            "지금은 만남에서 나갈 수 없습니다."
+    ),
     REPORT_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "REPORT_INVALID_REQUEST", "신고 요청이 올바르지 않습니다."),
     REPORT_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "REPORT_RESOURCE_NOT_FOUND", "신고할 매칭 정보를 찾을 수 없습니다."),
     REPORT_WINDOW_EXPIRED(HttpStatus.CONFLICT, "REPORT_WINDOW_EXPIRED", "신고 가능한 기간이 지났습니다."),

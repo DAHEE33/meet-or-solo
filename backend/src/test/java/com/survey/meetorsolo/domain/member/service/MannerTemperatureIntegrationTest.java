@@ -3,6 +3,7 @@ package com.survey.meetorsolo.domain.member.service;
 import static com.survey.meetorsolo.domain.matching.fixture.MatchingScenarioFixture.NOW;
 import static org.assertj.core.api.Assertions.*;
 
+import com.survey.meetorsolo.domain.matching.dto.MatchArrivalRequest;
 import com.survey.meetorsolo.domain.matching.service.MatchArrivalService;
 import com.survey.meetorsolo.domain.matching.service.MatchMeetingCloseGroupService;
 import com.survey.meetorsolo.domain.matching.service.MatchMeetingWindowPolicy;
@@ -56,6 +57,9 @@ class MannerTemperatureIntegrationTest {
     private static final long GROUP_ID = 9_180_001L;
     private static final long CONFIRMED_GROUP_ID = 9_180_002L;
     private static final OffsetDateTime TEST_NOW = NOW.plusSeconds(10);
+    /** fixture의 group에는 만남 장소 좌표가 없어 반경 검증은 건너뛴다. */
+    private static final MatchArrivalRequest AT_MEETING_POINT = new MatchArrivalRequest(
+            new BigDecimal("37.8813"), new BigDecimal("127.7300"));
 
     @Container
     @ServiceConnection
@@ -132,8 +136,8 @@ class MannerTemperatureIntegrationTest {
         setTemperature(PARTNER, "34.50");
 
         // 도착은 만남의 시작이다. 전원이 도착해도 그 자리에서는 완료도 보상도 아니다.
-        arrivals.arrive(ME);
-        arrivals.arrive(PARTNER);
+        arrivals.arrive(ME, AT_MEETING_POINT);
+        arrivals.arrive(PARTNER, AT_MEETING_POINT);
         assertThat(groupStatus(CONFIRMED_GROUP_ID)).isEqualTo("IN_PROGRESS");
         assertThat(temperature(ME)).isEqualByComparingTo("34.50");
         assertThat(eventCount(ME, "MATCH_COMPLETED")).isZero();
@@ -157,8 +161,8 @@ class MannerTemperatureIntegrationTest {
         setTemperature(ME, "34.50");
         setTemperature(PARTNER, "34.50");
 
-        arrivals.arrive(ME);
-        arrivals.arrive(PARTNER);
+        arrivals.arrive(ME, AT_MEETING_POINT);
+        arrivals.arrive(PARTNER, AT_MEETING_POINT);
         meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt());
         // 이미 COMPLETED라 활성 그룹 잠금에 걸리지 않는다.
         assertThat(meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt())).isFalse();
@@ -181,7 +185,7 @@ class MannerTemperatureIntegrationTest {
         jdbc.update("UPDATE match_group_members SET status = 'CANCELLED' WHERE group_id = ? AND member_id = ?",
                 CONFIRMED_GROUP_ID, PARTNER);
 
-        arrivals.arrive(ME);
+        arrivals.arrive(ME, AT_MEETING_POINT);
         assertThat(meetingCloses.process(CONFIRMED_GROUP_ID, meetingEndsAt())).isTrue();
 
         assertThat(groupStatus(CONFIRMED_GROUP_ID)).isEqualTo("CANCELLED");

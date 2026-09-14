@@ -31,8 +31,8 @@ class MatchNoShowGroupServiceTest {
         MatchGroupMember noShow = member(101, 1, true, confirmed);
         MatchGroupMember arrivedA = member(102, 2, true, confirmed);
         MatchGroupMember arrivedB = member(103, 3, true, confirmed);
-        arrivedA.arrive(confirmed.plusMinutes(5));
-        arrivedB.arrive(confirmed.plusMinutes(6));
+        arrivedA.arrive(confirmed.plusMinutes(5), 10);
+        arrivedB.arrive(confirmed.plusMinutes(6), 12);
 
         MatchGroupRepository groups = mock(MatchGroupRepository.class);
         MatchGroupMemberRepository members = mock(MatchGroupMemberRepository.class);

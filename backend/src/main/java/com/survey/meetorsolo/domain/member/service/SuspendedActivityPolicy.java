@@ -76,7 +76,9 @@ public class SuspendedActivityPolicy {
             // 진행 중 만남에서만 쓰이는 요청. 활성 매칭이 있는 회원은 애초에 정지되지 않는다
             // (AdminMemberService의 ADMIN_MEMBER_ACTIVE_MATCH_CONFLICT).
             Rule.of("PUT", "/api/matching/groups/me/current/arrival"),
-            Rule.of("PUT", "/api/matching/groups/me/current/arrival-time")
+            Rule.of("PUT", "/api/matching/groups/me/current/arrival-time"),
+            // 만남에서 빠져나오는 요청이다. 막으면 정지 회원이 자리를 뜨지 못한다(docs/19 4.11.3).
+            Rule.of("PUT", "/api/matching/groups/me/current/leave")
     );
 
     private final AntPathMatcher matcher = new AntPathMatcher();
