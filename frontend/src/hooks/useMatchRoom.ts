@@ -9,6 +9,7 @@ import {
   type MatchCancellationResult,
 } from '../api/matching';
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
+import { subscribeMatchingNotifications } from '../api/matchingNotificationHub';
 import { getCurrentPosition } from '../utils/geolocation';
 
 export const MATCH_ROOM_FALLBACK_POLL_MS = 5_000;
@@ -434,7 +435,8 @@ export function useMatchRoom() {
       cancelParticipation: (reason, signal) =>
         matchingApi.cancelParticipation(reason, signal),
       leave: (signal) => matchingApi.leave(signal),
-      connect: connectMatchingWebSocket,
+      // 소켓은 허브가 하나만 유지한다. 여기서 새로 연결하면 알림 센터와 소켓이 2개가 된다.
+      connect: subscribeMatchingNotifications,
       schedule: (callback, delay) => window.setTimeout(callback, delay),
       cancelSchedule: (timer) => window.clearTimeout(timer),
       onState: setState,

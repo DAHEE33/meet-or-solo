@@ -31,7 +31,14 @@
       "Bash(/c/Users/jyp48/AppData/Local/Programs/IntelliJ IDEA/jbr/bin/java.exe *)",
       "Bash(npm -v)",
       "Bash(node -e ' *)",
-      "Bash(node *)"
-    ]
+      "Bash(node *)",
+      "Bash(grep -r \"AI_PROCESSING\\\\|OVERSEAS_TRANSFER\" C:/dev/meet-or-solo --include=*.java --include=*.md)",
+      "Bash(find backend/src/test -name *IntegrationTest* -o -name *TestcontainersConfig* -o -name *TestConfiguration*)",
+      "Bash(./gradlew test:*)",
+      "Bash(ls *.bat)",
+      "Bash(ls gradlew*)",
+      "Read(//c//**)",
+      "Bash(JAVA_HOME=\"/c/Temp/meet-or-solo-jdk17/jdk-17.0.19+10\" ./gradlew test --tests \"com.survey.meetorsolo.domain.matching.group.MatchGroupComposerTest\" --tests \"com.survey.meetorsolo.domain.matching.scoring.EmbeddingScorerTest\" -x javadoc)",
+      "Bash(claude update:*)"    ]
   }
 }
