@@ -162,6 +162,27 @@ migration 수정 금지 규칙은 이미 적용된 것에 대한 것이다). 새
 - `match_group_members.arrival_distance_meters`, `left_at` 추가
 - `match_events.event_type`에 `MEMBER_LEFT` 추가
 
+### 검증 — 수명주기 하네스를 따로 만들었다
+
+개별 서비스 테스트는 각 규칙을 고정할 뿐, **그 사이가 이어지는지는 보지 않는다.** 규칙을 하나씩
+통과해도 컨트롤러에서 배치, 보상 이벤트, 재매칭 제한 조회로 가는 연결이 끊기면 사용자에게는
+아무것도 동작하지 않는다. 그래서 `MatchMeetingLifecycleHarnessTest`를 추가했다. 실제
+PostgreSQL(Testcontainers) 위에서 **HTTP 경로로** 4.11의 결정을 시나리오별로 밟는다.
+
+| 시나리오 | 확인하는 것 |
+| --- | --- |
+| 전원 도착 → 만남 종료 | 도착해도 `IN_PROGRESS` 유지, 진행 중 재신청 차단, 종료 시 `COMPLETED` + 양쪽 `34.50 → 35.00`, 상태방 소멸 |
+| 도착 반경 | 1km 밖 `MATCHING_ARRIVAL_OUT_OF_RANGE`로 거절, 반경 안이면 `arrival_distance_meters` 기록 |
+| 성립 전 이탈 | 먼저 나가기 `MATCHING_LEAVE_NOT_ALLOWED`, 도착 후에도 참여 취소는 열림 |
+| 성립 후 이탈 | 방 유지, 혼자 남아도 상태방 조회 가능, 페널티 0, 나간 사람도 잠금 유지 + 보상 |
+| 신고 대상 | 도착자 없는 취소 건 `REPORT_MEETING_NOT_HELD`, 기다린 사람이 도착해 있으면 노쇼 신고 가능 |
+| 상수 정합성 | `MEETING_WINDOW == MATCH_VALIDITY` — 어긋나면 방과 잠금이 따로 논다 |
+
+하네스를 만들며 fixture 함정도 하나 찾았다. `matching-engine-foundation.sql`이 두 회원에게
+`WAITING` 풀을 남겨두는데, 그대로 두면 재매칭 신청이 **"이미 진행 중인 pool" 검사에서 먼저
+막혀** 정작 확인하려던 활성 그룹·완료 잠금 검사에 닿지 못한다. 통과하지만 아무것도 검증하지
+않는 테스트가 될 뻔했다.
+
 ### 검증
 
 - backend: 매칭·신고·매너온도 관련 테스트 전체 통과. 신규는 도착 반경 밖 거절, 거리만 저장,
