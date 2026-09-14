@@ -15,7 +15,7 @@
 | Controller | [`FestivalCheckinController`](../backend/src/main/java/com/survey/meetorsolo/domain/festival/controller/FestivalCheckinController.java) — `POST /api/festivals/{festivalId}/checkin` |
 | Service | [`FestivalCheckinService`](../backend/src/main/java/com/survey/meetorsolo/domain/festival/service/FestivalCheckinService.java) |
 | Entity | [`FestivalCheckin`](../backend/src/main/java/com/survey/meetorsolo/domain/festival/entity/FestivalCheckin.java) — 원본 위경도는 저장하지 않고 축제 좌표와의 `distanceMeters`만 저장 |
-| 설정 | [`FestivalCheckinProperties`](../backend/src/main/java/com/survey/meetorsolo/domain/festival/config/FestivalCheckinProperties.java) — `app.festival.checkin.valid-duration`(기본 6h, `FESTIVAL_CHECKIN_VALID_DURATION`), `accuracy-threshold-meters`(기본 100m) |
+| 설정 | 유효기간은 [`CheckinValidityPolicy.VALIDITY`](../backend/src/main/java/com/survey/meetorsolo/domain/checkin/CheckinValidityPolicy.java) **상수 1시간**이다(5절에서 통일했고 환경변수가 아니다). 정확도 임계값만 [`FestivalCheckinProperties`](../backend/src/main/java/com/survey/meetorsolo/domain/festival/config/FestivalCheckinProperties.java)의 `accuracy-threshold-meters`(기본 100m)에 남아 있다 |
 
 `checkIn()`이 하는 일:
 
