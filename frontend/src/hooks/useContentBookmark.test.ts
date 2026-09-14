@@ -15,7 +15,7 @@ import type { TourPlaceListItem } from '../api/spots';
 const engagement = (overrides: Partial<ContentEngagement> = {}): ContentEngagement => ({
   bookmarked: false,
   commentCount: 0,
-  viewer: { loggedIn: true, admin: false },
+  viewer: { loggedIn: true, admin: false, canComment: true },
   ...overrides,
 });
 
@@ -40,6 +40,9 @@ const festival = (id: number, status: FestivalListItem['status'] = 'ACTIVE'): Fe
   thumbnailUrl: null,
   mapX: null,
   mapY: null,
+  bookmarkCount: 0,
+  commentCount: 0,
+  bookmarkedByMe: false,
 });
 
 const tourPlace = (id: number, status: TourPlaceListItem['status'] = 'ACTIVE'): TourPlaceListItem => ({
@@ -50,6 +53,9 @@ const tourPlace = (id: number, status: TourPlaceListItem['status'] = 'ACTIVE'): 
   address: '강원 테스트로 2',
   status,
   imageUrl: null,
+  bookmarkCount: 0,
+  commentCount: 0,
+  bookmarkedByMe: false,
 });
 
 const festivalBookmark = (id: number, status: FestivalListItem['status'] = 'ACTIVE'): BookmarkedContent => ({
@@ -112,7 +118,7 @@ describe('createContentBookmarkSession', () => {
   it('engagement에서 찜·로그인·관리자 여부를 함께 읽는다', async () => {
     const states: ContentBookmarkState[] = [];
     const load = vi.fn().mockResolvedValue(
-      engagement({ bookmarked: true, commentCount: 12, viewer: { loggedIn: true, admin: true } }),
+      engagement({ bookmarked: true, commentCount: 12, viewer: { loggedIn: true, admin: true, canComment: true } }),
     );
     const session = createContentBookmarkSession(load, vi.fn(), (state) => states.push(state));
 
@@ -139,7 +145,7 @@ describe('createContentBookmarkSession', () => {
 
   it('비로그인 상태에서는 서버를 호출하지 않는다', async () => {
     const setBookmark = vi.fn();
-    const load = vi.fn().mockResolvedValue(engagement({ viewer: { loggedIn: false, admin: false } }));
+    const load = vi.fn().mockResolvedValue(engagement({ viewer: { loggedIn: false, admin: false, canComment: false } }));
     const session = createContentBookmarkSession(load, setBookmark, () => {});
 
     await session.reload();

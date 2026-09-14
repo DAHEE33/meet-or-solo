@@ -10,6 +10,7 @@ import com.survey.meetorsolo.domain.content.comment.repository.ContentCommentRep
 import com.survey.meetorsolo.domain.content.comment.repository.ContentCommentRow;
 import com.survey.meetorsolo.domain.content.support.ContentTarget;
 import com.survey.meetorsolo.domain.content.support.ContentTargetReader;
+import com.survey.meetorsolo.domain.festival.repository.FestivalCheckinRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -48,6 +49,7 @@ public class ContentCommentService {
     private final ContentCommentLikeRepository likes;
     private final ContentTargetReader targets;
     private final MemberRepository members;
+    private final FestivalCheckinRepository checkins;
     private final Clock clock;
 
     public ContentCommentService(
@@ -55,12 +57,14 @@ public class ContentCommentService {
             ContentCommentLikeRepository likes,
             ContentTargetReader targets,
             MemberRepository members,
+            FestivalCheckinRepository checkins,
             Clock clock
     ) {
         this.comments = comments;
         this.likes = likes;
         this.targets = targets;
         this.members = members;
+        this.checkins = checkins;
         this.clock = clock;
     }
 
@@ -135,6 +139,7 @@ public class ContentCommentService {
         }
 
         targets.requireVisible(target);
+        requireCheckedIn(memberId, target);
 
         OffsetDateTime now = OffsetDateTime.now(clock);
         requireNotTooFrequent(memberId, now);
@@ -149,6 +154,39 @@ public class ContentCommentService {
                 true,
                 saved.getCreatedAt()
         );
+    }
+
+    /**
+     * 축제 댓글은 그 축제에 체크인한 적 있는 회원만 쓸 수 있다 — 현장에 가본 사람의 후기만
+     * 남기기 위한 제한이다(docs/27 5.2).
+     *
+     * <p>관광지에는 체크인 개념이 없으므로(체크인은 {@code festival_checkins}로 축제 전용)
+     * 이 제한을 적용하지 않는다. 관광지에 같은 제한을 걸려면 관광지 체크인 자체를 먼저
+     * 만들어야 한다.
+     */
+    private void requireCheckedIn(long memberId, ContentTarget target) {
+        if (!canComment(memberId, target)) {
+            throw new BusinessException(ErrorCode.CONTENT_COMMENT_CHECKIN_REQUIRED);
+        }
+    }
+
+    /**
+     * 이 회원이 이 대상에 댓글을 쓸 수 있는가. 화면이 입력창을 띄울지 판단하도록
+     * engagement 응답({@code viewer.canComment})이 그대로 쓴다 — 써보고 403을 받는 대신
+     * 미리 안내하기 위한 값이다.
+     *
+     * <p>닉네임·도배 간격 같은 나머지 조건은 여기서 보지 않는다. 그 둘은 입력창을 감출 이유가
+     * 아니라 제출 시점에 안내할 오류다.
+     */
+    @Transactional(readOnly = true)
+    public boolean canComment(Long viewerMemberId, ContentTarget target) {
+        if (viewerMemberId == null) {
+            return false;
+        }
+        if (!target.isFestival()) {
+            return true;
+        }
+        return checkins.existsByMemberIdAndFestivalId(viewerMemberId, target.id());
     }
 
     private void requireNotTooFrequent(long memberId, OffsetDateTime now) {

@@ -7,6 +7,7 @@ import {
   pickNearestFestival,
   shouldReplaceHero,
   sigunguName,
+  sortByStartDate,
 } from './homeFestival';
 
 function festival(id: number, status: Festival['status']): Festival {
@@ -42,6 +43,9 @@ function listItem(id: number, mapX: number | null, mapY: number | null, address:
     thumbnailUrl: null,
     mapX,
     mapY,
+    bookmarkCount: 0,
+    commentCount: 0,
+    bookmarkedByMe: false,
   };
 }
 
@@ -158,4 +162,51 @@ describe('shouldReplaceHero', () => {
     expect(shouldReplaceHero('CHECKIN', 'CHECKIN')).toBe(true);
     expect(shouldReplaceHero('NEAREST', 'NEAREST')).toBe(true);
   });
+});
+
+describe('sortByStartDate', () => {
+  it('시작일이 이른 축제를 앞에 둔다', () => {
+    // 목록 API 기본 정렬이 "최근 등록순"으로 바뀌어, 홈 화면의 순서는 여기서 만든다.
+    const sorted = sortByStartDate([
+      dated(2, '2026.09.20 – 2026.09.25'),
+      dated(1, '2026.08.01 – 2026.08.05'),
+      dated(3, '2026.09.01 – 2026.09.03'),
+    ]);
+
+    expect(sorted.map((item) => item.id)).toEqual([1, 3, 2]);
+  });
+
+  it('기간을 모르는 축제는 뒤로 보낸다', () => {
+    const sorted = sortByStartDate([
+      dated(1, ''),
+      dated(2, '2026.08.01 – 2026.08.05'),
+    ]);
+
+    expect(sorted.map((item) => item.id)).toEqual([2, 1]);
+  });
+
+  it('원본 배열을 바꾸지 않는다', () => {
+    const original = [dated(2, '2026.09.20'), dated(1, '2026.08.01')];
+
+    sortByStartDate(original);
+
+    expect(original.map((item) => item.id)).toEqual([2, 1]);
+  });
+
+  function dated(id: number, periodFull: string): Festival {
+    return {
+      id,
+      name: `축제 ${id}`,
+      status: 'upcoming',
+      ddayLabel: '',
+      periodShort: '',
+      periodFull,
+      address: '',
+      intro: '',
+      thumbnailUrl: null,
+      infoItems: [],
+      programs: [],
+      nearbyPlaces: [],
+    };
+  }
 });

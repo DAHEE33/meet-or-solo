@@ -55,6 +55,12 @@ export type FestivalListItem = {
   // docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md 4.1 참고.
   mapX: number | null;
   mapY: number | null;
+  /** 이 축제를 찜한 회원 수. 화면에는 "좋아요 수"로 표시한다. */
+  bookmarkCount: number;
+  /** 공개 댓글 수. 화면에는 "후기 수"로 표시한다. */
+  commentCount: number;
+  /** 내가 찜했는가. 목록에서 바로 찜을 토글하므로 필요하다. 비로그인이면 항상 false. */
+  bookmarkedByMe: boolean;
 };
 
 export type FestivalListResponse = {
@@ -64,6 +70,12 @@ export type FestivalListResponse = {
   totalElements: number;
   totalPages: number;
   hasNext: boolean;
+  /**
+   * 이 응답을 받는 사람이 로그인했는가. 목록 화면은 상세 화면과 달리 engagement를 부르지
+   * 않으므로 로그인 여부가 여기로 온다 — 비로그인이 하트를 누르면 요청 없이 `/login`으로
+   * 보내야 한다(docs/27 2.1).
+   */
+  viewerLoggedIn: boolean;
 };
 
 export type NearbyTourPlaceItem = {
@@ -73,6 +85,12 @@ export type NearbyTourPlaceItem = {
   contentTypeId: string;
   imageUrl: string | null;
   distanceMeters: number;
+  /** 이 관광지를 찜한 회원 수. 화면에는 "좋아요 수"로 표시한다. */
+  bookmarkCount: number;
+  /** 공개 댓글 수. */
+  commentCount: number;
+  /** 내가 찜했는가. 홈 "축제와 함께 둘러보기" 카드에서도 바로 찜할 수 있다. */
+  bookmarkedByMe: boolean;
 };
 
 export type SoloCourseType = 'HALF' | 'FULL';
@@ -97,9 +115,15 @@ export type SoloCourseResponse = {
   stops: SoloCourseStop[];
 };
 
-export type FestivalListSort = 'START_DATE_ASC' | 'END_DATE_ASC' | 'RECENTLY_ADDED';
+// 날짜 정렬(시작일 빠른순/종료 임박순)은 없다. 진행 단계는 progress 필터로 고르고 기간은
+// startDate/endDate로 직접 선택한다.
+export type FestivalListSort = 'RECENTLY_ADDED' | 'BOOKMARK_COUNT_DESC' | 'COMMENT_COUNT_DESC';
 
-export type FestivalScheduleFilter = 'ALL' | 'ONGOING' | 'THIS_WEEKEND' | 'THIS_MONTH';
+/**
+ * 진행 상태 필터. **이 값을 넘겨야 종료된 축제까지 검색된다** — 넘기지 않으면 서버가 기존과
+ * 같이 진행 중·예정 축제만 돌려준다(홈 화면이 같은 API를 쓰기 때문).
+ */
+export type FestivalProgressFilter = 'ALL' | 'UPCOMING' | 'ONGOING' | 'ENDED';
 
 export type FestivalListQuery = {
   page?: number;
@@ -107,7 +131,11 @@ export type FestivalListQuery = {
   keyword?: string;
   sigunguCode?: string;
   sort?: FestivalListSort;
-  schedule?: FestivalScheduleFilter;
+  /** 기간 시작(yyyy-MM-dd). 축제 기간과 겹치면 걸린다. 한쪽만 넘겨도 된다. */
+  startDate?: string;
+  /** 기간 끝(yyyy-MM-dd). */
+  endDate?: string;
+  progress?: FestivalProgressFilter;
   matchableOnly?: boolean;
 };
 
@@ -124,7 +152,9 @@ export const festivalsApi = {
     if (keyword) params.set('keyword', keyword);
     if (query.sigunguCode) params.set('sigunguCode', query.sigunguCode);
     if (query.sort) params.set('sort', query.sort);
-    if (query.schedule) params.set('schedule', query.schedule);
+    if (query.startDate) params.set('startDate', query.startDate);
+    if (query.endDate) params.set('endDate', query.endDate);
+    if (query.progress) params.set('progress', query.progress);
     if (query.matchableOnly) params.set('matchableOnly', 'true');
     return apiClient<FestivalListResponse>(`/api/festivals?${params.toString()}`);
   },
