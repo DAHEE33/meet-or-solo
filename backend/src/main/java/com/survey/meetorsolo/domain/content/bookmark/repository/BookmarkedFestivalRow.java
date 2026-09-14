@@ -24,6 +24,8 @@ public record BookmarkedFestivalRow(
         FestivalStatus status,
         BigDecimal mapX,
         BigDecimal mapY,
+        long bookmarkCount,
+        long commentCount,
         OffsetDateTime bookmarkedAt
 ) {
 }

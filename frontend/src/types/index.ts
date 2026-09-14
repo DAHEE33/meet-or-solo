@@ -23,6 +23,12 @@ export interface TourSpot {
   /** 리뷰 도메인 구현 전까지는 실 API에서 제공하지 않는 optional 값 */
   rating?: number;
   reviewCount?: number;
+  /** 목록 카드에 표시하는 좋아요(찜) 수. 목록 API에서만 오므로 optional이다. */
+  bookmarkCount?: number;
+  /** 목록 카드에 표시하는 후기(댓글) 수. 목록 API에서만 오므로 optional이다. */
+  commentCount?: number;
+  /** 내가 찜했는가. 목록 카드의 하트를 채울지 정한다. 목록 API에서만 온다. */
+  bookmarkedByMe?: boolean;
   imageUrl: string | null; // null이면 플레이스홀더 렌더링
   tags?: string[];
   description?: string;
@@ -90,6 +96,12 @@ export interface Festival {
   infoItems: InfoRow[];
   programs: FestivalProgram[];
   nearbyPlaces: FestivalNearbyPlace[];
+  /** 목록 카드에 표시하는 좋아요(찜) 수. 목록 API에서만 오므로 optional이다. */
+  bookmarkCount?: number;
+  /** 목록 카드에 표시하는 후기(댓글) 수. 목록 API에서만 오므로 optional이다. */
+  commentCount?: number;
+  /** 내가 찜했는가. 목록 카드의 하트를 채울지 정한다. 목록 API에서만 온다. */
+  bookmarkedByMe?: boolean;
 }
 
 export interface AdminReport {

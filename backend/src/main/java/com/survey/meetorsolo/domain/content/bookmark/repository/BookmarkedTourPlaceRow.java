@@ -15,6 +15,8 @@ public record BookmarkedTourPlaceRow(
         String address,
         TourPlaceStatus status,
         String imageUrl,
+        long bookmarkCount,
+        long commentCount,
         OffsetDateTime bookmarkedAt
 ) {
 }

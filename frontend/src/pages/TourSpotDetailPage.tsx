@@ -9,6 +9,12 @@ import type { Festival, TourSpot } from '../types';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import { resolveBookmarkAction, useContentBookmark } from '../hooks/useContentBookmark';
+import {
+  resolveBookmarked,
+  resolveBookmarkCount,
+  targetKey,
+  useListBookmarks,
+} from '../hooks/useListBookmarks';
 import ImagePlaceholder from '../components/common/ImagePlaceholder';
 import { placeholderKindFromContentType } from '../components/common/imagePlaceholderPresets';
 import MapPlaceholder from '../components/common/MapPlaceholder';
@@ -32,6 +38,9 @@ export default function TourSpotDetailPage() {
   // (docs/27 2.1 — /api/members/me를 부르면 비로그인 사용자가 화면째로 튕긴다).
   const bookmarkTarget = detail ? ({ type: 'TOUR_PLACE', id: detail.id } as const) : null;
   const { state: bookmarkState, toggle: toggleBookmark } = useContentBookmark(bookmarkTarget);
+  // 주변 축제 카드의 찜은 이 화면(관광지)의 찜과 대상이 다르므로 별도 세션이다. 로그인 여부는
+  // 이미 받은 engagement 응답에서 가져온다 — 목록 화면과 달리 여기서는 그 값이 이미 있다.
+  const nearbyBookmarks = useListBookmarks(bookmarkState.loggedIn, () => navigate('/login'));
 
   useEffect(() => {
     const id = Number(spotId);
@@ -205,9 +214,29 @@ export default function TourSpotDetailPage() {
           <section className="flex flex-col gap-2.5">
             <h3 className="text-[17px] font-bold text-ink">이 장소 주변에서 열리는 축제</h3>
             <div className="flex flex-col gap-2.5">
-              {nearbyFestivalCards.map((festival) => (
-                <FestivalListItem key={festival.id} festival={festival} />
-              ))}
+              {nearbyFestivalCards.map((festival) => {
+                const target = { type: 'FESTIVAL' as const, id: festival.id };
+                const bookmarked = resolveBookmarked(
+                  nearbyBookmarks.state,
+                  target,
+                  festival.bookmarkedByMe ?? false,
+                );
+                return (
+                  <FestivalListItem
+                    key={festival.id}
+                    festival={{
+                      ...festival,
+                      bookmarkCount: resolveBookmarkCount(nearbyBookmarks.state, target, {
+                        bookmarked: festival.bookmarkedByMe ?? false,
+                        bookmarkCount: festival.bookmarkCount ?? 0,
+                      }),
+                    }}
+                    bookmarked={bookmarked}
+                    onToggleBookmark={() => nearbyBookmarks.toggle(target, bookmarked)}
+                    bookmarkPending={nearbyBookmarks.state.pendingKey === targetKey(target)}
+                  />
+                );
+              })}
             </div>
           </section>
         )}
@@ -236,6 +265,7 @@ export default function TourSpotDetailPage() {
           target={{ type: 'TOUR_PLACE', id: detail.id }}
           loggedIn={bookmarkState.loggedIn}
           admin={bookmarkState.admin}
+          canComment={bookmarkState.canComment}
           initialCount={bookmarkState.commentCount}
         />
       </main>

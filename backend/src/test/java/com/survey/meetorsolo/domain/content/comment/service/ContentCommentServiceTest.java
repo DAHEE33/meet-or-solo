@@ -17,6 +17,7 @@ import com.survey.meetorsolo.domain.content.comment.repository.ContentCommentLik
 import com.survey.meetorsolo.domain.content.comment.repository.ContentCommentRepository;
 import com.survey.meetorsolo.domain.content.support.ContentTarget;
 import com.survey.meetorsolo.domain.content.support.ContentTargetReader;
+import com.survey.meetorsolo.domain.festival.repository.FestivalCheckinRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
@@ -35,19 +36,29 @@ class ContentCommentServiceTest {
     private static final long OTHER_MEMBER_ID = 9_110_002L;
     private static final long COMMENT_ID = 9_130_001L;
     private static final ContentTarget FESTIVAL = ContentTarget.festival(9_100_001L);
+    private static final ContentTarget TOUR_PLACE = ContentTarget.tourPlace(9_100_002L);
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-07T12:00:00+09:00");
 
     private final ContentCommentRepository comments = mock(ContentCommentRepository.class);
     private final ContentCommentLikeRepository likes = mock(ContentCommentLikeRepository.class);
     private final ContentTargetReader targets = mock(ContentTargetReader.class);
     private final MemberRepository members = mock(MemberRepository.class);
+    private final FestivalCheckinRepository checkins = mock(FestivalCheckinRepository.class);
     private final Clock clock = Clock.fixed(NOW.toInstant(), ZoneId.of("Asia/Seoul"));
 
     private ContentCommentService service;
 
     @BeforeEach
     void setUp() {
-        service = new ContentCommentService(comments, likes, targets, members, clock);
+        service = new ContentCommentService(comments, likes, targets, members, checkins, clock);
+    }
+
+    /**
+     * 축제 댓글은 그 축제에 체크인한 적 있는 회원만 쓸 수 있다(docs/27 5.2). 작성 성공을 보는
+     * 테스트는 이 조건을 먼저 만족시켜야 뒤 단계에 도달한다.
+     */
+    private void givenCheckedIn() {
+        when(checkins.existsByMemberIdAndFestivalId(MEMBER_ID, FESTIVAL.id())).thenReturn(true);
     }
 
     private Member activeMember() {
@@ -98,12 +109,72 @@ class ContentCommentServiceTest {
                 .isEqualTo(ErrorCode.CONTENT_COMMENT_INVALID_REQUEST);
     }
 
+    // --- docs/27 5.2: 축제 댓글은 체크인한 사람만 -----------------------------------------
+
+    @Test
+    void 체크인한_적_없는_축제에는_댓글을_남길_수_없다() {
+        Member member = activeMember();
+        when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        when(checkins.existsByMemberIdAndFestivalId(MEMBER_ID, FESTIVAL.id())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.create(MEMBER_ID, FESTIVAL, "가본 적 없는 축제 후기"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.CONTENT_COMMENT_CHECKIN_REQUIRED);
+
+        verify(comments, never()).save(any());
+    }
+
+    @Test
+    void 체크인_이력이_있으면_지금_체크인_중이_아니어도_댓글을_남길_수_있다() {
+        // 체크인 유효기간이 1시간이라 상태를 보면 현장을 떠난 순간 후기를 못 쓴다. 그래서
+        // repository가 상태를 보지 않고 "행이 있는가"만 판정한다.
+        Member member = activeMember();
+        when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        givenCheckedIn();
+        when(comments.findLatestCreatedAtByMemberId(MEMBER_ID)).thenReturn(Optional.empty());
+        when(comments.save(any(ContentComment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(service.create(MEMBER_ID, FESTIVAL, "다녀왔어요").body()).isEqualTo("다녀왔어요");
+    }
+
+    @Test
+    void 관광지는_체크인_기능이_없으므로_체크인_없이_댓글을_남길_수_있다() {
+        Member member = activeMember();
+        when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        when(comments.findLatestCreatedAtByMemberId(MEMBER_ID)).thenReturn(Optional.empty());
+        when(comments.save(any(ContentComment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(service.create(MEMBER_ID, TOUR_PLACE, "좋았어요").body()).isEqualTo("좋았어요");
+        verify(checkins, never()).existsByMemberIdAndFestivalId(anyLong(), anyLong());
+    }
+
+    @Test
+    void canComment는_비로그인이면_대상과_무관하게_false다() {
+        assertThat(service.canComment(null, FESTIVAL)).isFalse();
+        assertThat(service.canComment(null, TOUR_PLACE)).isFalse();
+    }
+
+    @Test
+    void canComment는_축제면_체크인_이력을_관광지면_로그인_여부를_따른다() {
+        when(checkins.existsByMemberIdAndFestivalId(MEMBER_ID, FESTIVAL.id())).thenReturn(false);
+
+        assertThat(service.canComment(MEMBER_ID, FESTIVAL)).isFalse();
+        assertThat(service.canComment(MEMBER_ID, TOUR_PLACE)).isTrue();
+
+        when(checkins.existsByMemberIdAndFestivalId(MEMBER_ID, FESTIVAL.id())).thenReturn(true);
+        assertThat(service.canComment(MEMBER_ID, FESTIVAL)).isTrue();
+    }
+
     // --- docs/27 10-7: 도배 완화 5초 규칙 ----------------------------------------------------
 
     @Test
     void 마지막_댓글로부터_5초_이내면_429다() {
         Member member = activeMember();
         when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        givenCheckedIn();
         when(comments.findLatestCreatedAtByMemberId(MEMBER_ID))
                 .thenReturn(Optional.of(NOW.minusSeconds(4)));
 
@@ -119,6 +190,7 @@ class ContentCommentServiceTest {
     void 마지막_댓글로부터_5초가_지나면_등록한다() {
         Member member = activeMember();
         when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        givenCheckedIn();
         when(comments.findLatestCreatedAtByMemberId(MEMBER_ID))
                 .thenReturn(Optional.of(NOW.minusSeconds(5)));
         when(comments.save(any(ContentComment.class)))
@@ -133,6 +205,7 @@ class ContentCommentServiceTest {
     void 첫_댓글은_도배_규칙에_걸리지_않는다() {
         Member member = activeMember();
         when(members.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        givenCheckedIn();
         when(comments.findLatestCreatedAtByMemberId(MEMBER_ID)).thenReturn(Optional.empty());
         when(comments.save(any(ContentComment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

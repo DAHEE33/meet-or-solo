@@ -9,6 +9,9 @@ export function mapTourPlaceListItemToTourSpot(item: TourPlaceListItem): TourSpo
     contentTypeId: item.contentTypeId,
     address: item.address ?? '',
     imageUrl: item.imageUrl,
+    bookmarkCount: item.bookmarkCount,
+    commentCount: item.commentCount,
+    bookmarkedByMe: item.bookmarkedByMe,
   };
 }
 
@@ -30,6 +33,9 @@ export function mapNearbyTourPlaceToTourSpot(item: NearbyTourPlaceItem): TourSpo
     address: item.address ?? '',
     imageUrl: item.imageUrl,
     distanceKm: Math.round((item.distanceMeters / 1000) * 10) / 10,
+    bookmarkCount: item.bookmarkCount,
+    commentCount: item.commentCount,
+    bookmarkedByMe: item.bookmarkedByMe,
   };
 }
 

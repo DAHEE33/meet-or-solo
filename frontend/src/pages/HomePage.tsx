@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { MapPin } from 'lucide-react';
 import type { Festival, TourSpot } from '../types';
 import type { MemberProfile } from '../api/memberProfile';
@@ -12,6 +12,7 @@ import {
   pickNearestFestival,
   shouldReplaceHero,
   sigunguName,
+  sortByStartDate,
   type HeroSource,
 } from '../utils/homeFestival';
 import { getCurrentPosition } from '../utils/geolocation';
@@ -21,6 +22,12 @@ import AppHeader from '../components/layout/AppHeader';
 import FestivalHeroCard from '../components/home/FestivalHeroCard';
 import FestivalMatchingBanner from '../components/home/FestivalMatchingBanner';
 import UpcomingFestivalCard from '../components/home/UpcomingFestivalCard';
+import {
+  resolveBookmarked,
+  resolveBookmarkCount,
+  targetKey,
+  useListBookmarks,
+} from '../hooks/useListBookmarks';
 import CtaBanner from '../components/home/CtaBanner';
 import FestivalNearbyPlaceItem from '../components/home/FestivalNearbyPlaceItem';
 
@@ -34,6 +41,10 @@ export default function HomePage() {
   const [heroRegionName, setHeroRegionName] = useState<string | null>(null);
   const [upcomingFestivals, setUpcomingFestivals] = useState<Festival[]>([]);
   const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlace[]>([]);
+  // 목록 응답이 알려주는 로그인 여부. 홈은 상세 화면과 달리 engagement를 부르지 않는다.
+  const [viewerLoggedIn, setViewerLoggedIn] = useState(false);
+  const navigate = useNavigate();
+  const nearbyBookmarks = useListBookmarks(viewerLoggedIn, () => navigate('/login'));
 
   useEffect(() => {
     let mounted = true;
@@ -62,7 +73,9 @@ export default function HomePage() {
 
     festivalsApi.getList(0, 20).then((festivalList) => {
       if (!mounted) return;
-      const mapped = festivalList.items.map(mapFestivalListItemToFestival);
+      setViewerLoggedIn(festivalList.viewerLoggedIn);
+      // 목록 API 기본 정렬이 "최근 등록순"이라 홈 화면이 쓰는 시작일 순서는 직접 만든다.
+      const mapped = sortByStartDate(festivalList.items.map(mapFestivalListItemToFestival));
       setUpcomingFestivals(mapped.filter((festival) => festival.status === 'upcoming'));
 
       // 목록이 도착하면 먼저 폴백 기준으로 히어로를 그린다. 체크인·위치 조회가 화면을 막지 않게
@@ -215,14 +228,31 @@ export default function HomePage() {
               </Link>
             </div>
             <div className="flex flex-col gap-2.5">
-              {nearbyPlaces.map(({ spot, distanceMeters }) => (
-                <FestivalNearbyPlaceItem
-                  key={spot.id}
-                  spot={spot}
-                  distanceLabel={formatDistanceLabel(distanceMeters)}
-                  walkLabel={formatWalkMinutesLabel(distanceMeters)}
-                />
-              ))}
+              {nearbyPlaces.map(({ spot, distanceMeters }) => {
+                const target = { type: 'TOUR_PLACE' as const, id: spot.id };
+                const bookmarked = resolveBookmarked(
+                  nearbyBookmarks.state,
+                  target,
+                  spot.bookmarkedByMe ?? false,
+                );
+                return (
+                  <FestivalNearbyPlaceItem
+                    key={spot.id}
+                    spot={{
+                      ...spot,
+                      bookmarkCount: resolveBookmarkCount(nearbyBookmarks.state, target, {
+                        bookmarked: spot.bookmarkedByMe ?? false,
+                        bookmarkCount: spot.bookmarkCount ?? 0,
+                      }),
+                    }}
+                    distanceLabel={formatDistanceLabel(distanceMeters)}
+                    walkLabel={formatWalkMinutesLabel(distanceMeters)}
+                    bookmarked={bookmarked}
+                    onToggleBookmark={() => nearbyBookmarks.toggle(target, bookmarked)}
+                    bookmarkPending={nearbyBookmarks.state.pendingKey === targetKey(target)}
+                  />
+                );
+              })}
             </div>
           </section>
         )}

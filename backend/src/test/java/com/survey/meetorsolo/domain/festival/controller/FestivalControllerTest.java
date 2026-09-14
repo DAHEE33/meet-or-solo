@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.festival.controller;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -7,12 +8,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.survey.meetorsolo.domain.auth.jwt.JwtProvider;
+import com.survey.meetorsolo.domain.content.support.OptionalMemberResolver;
 import com.survey.meetorsolo.domain.festival.dto.FestivalDetailResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalInfoItem;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListItemResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListResponse;
 import com.survey.meetorsolo.domain.festival.dto.FestivalListSort;
-import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
+import com.survey.meetorsolo.domain.festival.dto.FestivalProgressFilter;
 import com.survey.meetorsolo.domain.festival.dto.FestivalProgramItem;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseResponse;
 import com.survey.meetorsolo.domain.festival.dto.SoloCourseStopResponse;
@@ -48,6 +50,10 @@ class FestivalControllerTest {
     @MockitoBean
     private SoloCourseService soloCourseService;
 
+    /** 목록 조회가 공개(optional-login)라 controller가 이 해석기를 주입받는다(docs/27 2.1). */
+    @MockitoBean
+    private OptionalMemberResolver optionalMemberResolver;
+
     @MockitoBean
     private JwtProvider jwtProvider;
 
@@ -55,6 +61,9 @@ class FestivalControllerTest {
 
     @BeforeEach
     void setUp() {
+        // OptionalMemberResolver는 Long을 반환하므로 mock 기본값이 null이 아니라 0L이다.
+        // 비로그인 열람자를 검증하려면 명시적으로 null을 돌려줘야 한다.
+        when(optionalMemberResolver.resolveOrNull(any())).thenReturn(null);
         listResponse = new FestivalListResponse(
                 List.of(new FestivalListItemResponse(
                         1L,
@@ -71,19 +80,25 @@ class FestivalControllerTest {
 
                         new BigDecimal("127.7300000000"),
 
-                        new BigDecimal("37.8813000000")
+                        new BigDecimal("37.8813000000"),
+                        7L,
+                        3L,
+                        true
                 )),
                 0,
                 20,
                 1,
                 1,
-                false
+                false,
+                true
         );
     }
 
     @Test
     void 축제_목록을_공통_응답_형식으로_반환한다() throws Exception {
-        when(festivalQueryService.getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
+        when(festivalQueryService.getActiveFestivals(
+                0, 20, null, null, FestivalListSort.RECENTLY_ADDED, null, null, null, false, null))
+                .thenReturn(listResponse);
 
         mockMvc.perform(get("/api/festivals"))
                 .andExpect(status().isOk())
@@ -91,19 +106,47 @@ class FestivalControllerTest {
                 .andExpect(jsonPath("$.data.items[0].contentId").value("100"))
                 .andExpect(jsonPath("$.data.items[0].thumbnailUrl")
                         .value("https://example.com/thumbnail.jpg"))
+                // 목록 카드가 오른쪽에 표시하는 좋아요(찜)·후기(댓글) 수.
+                .andExpect(jsonPath("$.data.items[0].bookmarkCount").value(7))
+                .andExpect(jsonPath("$.data.items[0].commentCount").value(3))
                 .andExpect(jsonPath("$.data.page").value(0))
                 .andExpect(jsonPath("$.data.totalElements").value(1));
-        verify(festivalQueryService).getActiveFestivals(0, 20, null, null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
+        verify(festivalQueryService).getActiveFestivals(
+                0, 20, null, null, FestivalListSort.RECENTLY_ADDED, null, null, null, false, null);
     }
 
     @Test
     void keyword_파라미터를_그대로_전달한다() throws Exception {
-        when(festivalQueryService.getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false)).thenReturn(listResponse);
+        when(festivalQueryService.getActiveFestivals(
+                0, 20, "봄", null, FestivalListSort.RECENTLY_ADDED, null, null, null, false, null))
+                .thenReturn(listResponse);
 
         mockMvc.perform(get("/api/festivals").param("keyword", "봄"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
-        verify(festivalQueryService).getActiveFestivals(0, 20, "봄", null, FestivalListSort.START_DATE_ASC, FestivalScheduleFilter.ALL, false);
+        verify(festivalQueryService).getActiveFestivals(
+                0, 20, "봄", null, FestivalListSort.RECENTLY_ADDED, null, null, null, false, null);
+    }
+
+    @Test
+    void 기간과_진행_상태_파라미터를_그대로_전달한다() throws Exception {
+        when(festivalQueryService.getActiveFestivals(
+                0, 20, null, null, FestivalListSort.COMMENT_COUNT_DESC,
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31),
+                FestivalProgressFilter.ENDED, false, null))
+                .thenReturn(listResponse);
+
+        mockMvc.perform(get("/api/festivals")
+                        .param("sort", "COMMENT_COUNT_DESC")
+                        .param("startDate", "2026-08-01")
+                        .param("endDate", "2026-08-31")
+                        .param("progress", "ENDED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        verify(festivalQueryService).getActiveFestivals(
+                0, 20, null, null, FestivalListSort.COMMENT_COUNT_DESC,
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31),
+                FestivalProgressFilter.ENDED, false, null);
     }
 
     @Test
@@ -160,16 +203,21 @@ class FestivalControllerTest {
 
     @Test
     void 축제_주변_관광지를_거리순으로_반환한다() throws Exception {
-        when(festivalQueryService.getNearbyTourPlaces(1L, 5000, 10)).thenReturn(List.of(
-                new NearbyTourPlaceResponse(1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 300)
+        when(festivalQueryService.getNearbyTourPlaces(1L, 5000, 10, null)).thenReturn(List.of(
+                new NearbyTourPlaceResponse(
+                        1L, "테스트 관광지", "강원특별자치도 테스트시", "12", null, 300, 5L, 2L, true)
         ));
 
         mockMvc.perform(get("/api/festivals/1/nearby-spots"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data[0].title").value("테스트 관광지"))
-                .andExpect(jsonPath("$.data[0].distanceMeters").value(300));
-        verify(festivalQueryService).getNearbyTourPlaces(1L, 5000, 10);
+                .andExpect(jsonPath("$.data[0].distanceMeters").value(300))
+                // 홈 "축제와 함께 둘러보기" 카드가 쓰는 찜·후기 수와 내 찜 여부.
+                .andExpect(jsonPath("$.data[0].bookmarkCount").value(5))
+                .andExpect(jsonPath("$.data[0].commentCount").value(2))
+                .andExpect(jsonPath("$.data[0].bookmarkedByMe").value(true));
+        verify(festivalQueryService).getNearbyTourPlaces(1L, 5000, 10, null);
     }
 
     @Test

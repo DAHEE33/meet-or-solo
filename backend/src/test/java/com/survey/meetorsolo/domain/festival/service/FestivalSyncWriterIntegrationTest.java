@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.survey.meetorsolo.domain.festival.dto.FestivalSyncData;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalImageRepository;
-import com.survey.meetorsolo.domain.festival.dto.FestivalScheduleFilter;
 import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.entity.FestivalStatus;
 import java.time.LocalDate;
@@ -114,19 +113,21 @@ class FestivalSyncWriterIntegrationTest {
         );
 
         var page = festivalRepository.findVisibleFestivals(
-                FestivalStatus.ACTIVE,
+                0,
                 today,
                 "",
                 null,
-                today,
-                FestivalScheduleFilter.MAX_SCHEDULE_DATE,
-                 0,
-                FestivalMeetingPointStatus.ACTIVE,
+                null,
+                null,
+                "ALL",
+                "RECENTLY_ADDED",
+                0,
+                FestivalMeetingPointStatus.ACTIVE.name(),
                 PageRequest.of(0, 10_000)
         );
 
         assertThat(page.getContent())
-                .extracting(festival -> festival.contentId())
+                .extracting(festival -> festival.getContentId())
                 .contains(activeContentId)
                 .doesNotContain(endedContentId);
     }

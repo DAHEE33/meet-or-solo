@@ -42,23 +42,26 @@ public class ContentEngagementService {
         return new ContentEngagementResponse(
                 bookmarks.isBookmarked(viewerMemberId, target),
                 comments.countVisibleComments(target),
-                resolveViewer(viewerMemberId)
+                resolveViewer(viewerMemberId, target)
         );
     }
 
     /**
      * 관리자 여부는 공개 댓글 섹션에서 관리자에게만 숨김 버튼을 노출하기 위해 함께 내려준다.
+     * 댓글 작성 자격({@code canComment})도 같은 이유로 함께 내려준다 — 축제 댓글은 체크인
+     * 이력이 있어야 쓸 수 있어, 화면이 입력창을 띄우기 전에 알아야 한다(docs/27 5.2).
      * 회원 row가 사라진 토큰이면 로그인하지 않은 것으로 본다.
      */
-    private ContentEngagementViewerResponse resolveViewer(Long viewerMemberId) {
+    private ContentEngagementViewerResponse resolveViewer(Long viewerMemberId, ContentTarget target) {
         if (viewerMemberId == null) {
-            return new ContentEngagementViewerResponse(false, false);
+            return new ContentEngagementViewerResponse(false, false, false);
         }
         return members.findById(viewerMemberId)
                 .map(member -> new ContentEngagementViewerResponse(
                         true,
-                        Member.ROLE_ADMIN.equals(member.getRole())
+                        Member.ROLE_ADMIN.equals(member.getRole()),
+                        comments.canComment(viewerMemberId, target)
                 ))
-                .orElseGet(() -> new ContentEngagementViewerResponse(false, false));
+                .orElseGet(() -> new ContentEngagementViewerResponse(false, false, false));
     }
 }

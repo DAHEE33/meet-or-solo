@@ -42,17 +42,21 @@ class TourPlaceRepositoryIntegrationTest {
 
     @Test
     void findVisiblePlaces는_ACTIVE만_목록_응답_프로젝션으로_반환한다() {
-        var page = places.findVisiblePlaces(TourPlaceStatus.ACTIVE, null, null, "", PageRequest.of(0, 10));
+        var page = places.findVisiblePlaces(
+                TourPlaceStatus.ACTIVE.name(), null, null, "", "TITLE_ASC", PageRequest.of(0, 10));
 
         assertThat(page.getContent())
-                .extracting(item -> item.contentId())
+                .extracting(item -> item.getContentId())
                 .containsExactlyInAnyOrder("repo-place-near", "repo-place-far");
         assertThat(page.getContent())
-                .filteredOn(item -> item.contentId().equals("repo-place-near"))
+                .filteredOn(item -> item.getContentId().equals("repo-place-near"))
                 .singleElement()
                 .satisfies(item -> {
-                    assertThat(item.title()).isEqualTo("가까운 관광지");
-                    assertThat(item.status()).isEqualTo(TourPlaceStatus.ACTIVE);
+                    assertThat(item.getTitle()).isEqualTo("가까운 관광지");
+                    assertThat(item.getStatus()).isEqualTo(TourPlaceStatus.ACTIVE.name());
+                    // 찜·댓글이 없는 관광지는 0으로 온다.
+                    assertThat(item.getBookmarkCount()).isZero();
+                    assertThat(item.getCommentCount()).isZero();
                 });
     }
 

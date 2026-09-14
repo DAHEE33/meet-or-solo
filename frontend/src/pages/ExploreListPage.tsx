@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, RotateCw } from 'lucide-react';
 import type { Festival } from '../types';
 import {
   festivalsApi,
   type FestivalListItem,
   type FestivalListSort,
-  type FestivalScheduleFilter,
+  type FestivalProgressFilter,
   type RegionOption,
 } from '../api/festivals';
 import { spotsApi, type TourPlaceListItem, type TourPlaceListSort } from '../api/spots';
 import { mapFestivalListItemToFestival } from '../utils/festival';
 import { mapTourPlaceListItemToTourSpot } from '../utils/tourSpot';
 import { useInfiniteList } from '../hooks/useInfiniteList';
+import { useListBookmarks, resolveBookmarked, resolveBookmarkCount, targetKey } from '../hooks/useListBookmarks';
 import { useInfiniteScrollSentinel } from '../hooks/useInfiniteScrollSentinel';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import FestivalListItemCard from '../components/festival/FestivalListItem';
 import ExploreSpotItem from '../components/explore/ExploreSpotItem';
+import DateRangeFilter from '../components/explore/DateRangeFilter';
 import FilterSelect from '../components/explore/FilterSelect';
 import { LoadingMore, LoadingState } from '../components/common/Spinner';
 
@@ -32,17 +35,19 @@ const SPOT_CATEGORIES: { label: string; contentTypeId?: string }[] = [
   { label: '맛집', contentTypeId: '39' },
 ];
 
+// 날짜 정렬(시작일 빠른순/종료 임박순)은 없앴다. 진행 단계는 아래 상태 필터로 고르고, 기간은
+// DateRangeFilter로 직접 선택한다.
 const FESTIVAL_SORTS: { value: FestivalListSort; label: string }[] = [
-  { value: 'START_DATE_ASC', label: '시작일 빠른순' },
-  { value: 'END_DATE_ASC', label: '종료 임박순' },
   { value: 'RECENTLY_ADDED', label: '최근 등록순' },
+  { value: 'BOOKMARK_COUNT_DESC', label: '좋아요 많은순' },
+  { value: 'COMMENT_COUNT_DESC', label: '후기 많은순' },
 ];
 
-const FESTIVAL_SCHEDULES: { value: FestivalScheduleFilter; label: string }[] = [
-  { value: 'ALL', label: '전체 기간' },
+const FESTIVAL_PROGRESSES: { value: FestivalProgressFilter; label: string }[] = [
+  { value: 'ALL', label: '전체 상태' },
+  { value: 'UPCOMING', label: '진행 전' },
   { value: 'ONGOING', label: '진행 중' },
-  { value: 'THIS_WEEKEND', label: '이번 주말' },
-  { value: 'THIS_MONTH', label: '이번 달' },
+  { value: 'ENDED', label: '진행 마감' },
 ];
 
 // 관광지에는 거리 정렬(가까운순/먼순)이 없다. 사용자 좌표를 서버로 보내지 않아 서버에
@@ -50,15 +55,24 @@ const FESTIVAL_SCHEDULES: { value: FestivalScheduleFilter; label: string }[] = [
 const SPOT_SORTS: { value: TourPlaceListSort; label: string }[] = [
   { value: 'TITLE_ASC', label: '이름순' },
   { value: 'RECENTLY_ADDED', label: '최근 등록순' },
+  { value: 'BOOKMARK_COUNT_DESC', label: '좋아요 많은순' },
+  { value: 'COMMENT_COUNT_DESC', label: '후기 많은순' },
 ];
 
-const festivalListDependencies = {
+/**
+ * 목록 조회 의존성. 응답의 `viewerLoggedIn`을 화면으로 흘려보내야 해서 상수가 아니라 팩토리다 —
+ * 목록 화면은 상세 화면과 달리 engagement를 부르지 않으므로 로그인 여부가 목록 응답으로만 온다
+ * (비로그인이 하트를 누르면 요청 없이 `/login`으로 보내야 한다, docs/27 2.1).
+ */
+const createFestivalListDependencies = (onViewerLoggedIn: (loggedIn: boolean) => void) => ({
   fetchPage: async (
     query: {
       keyword: string;
       sigunguCode: string;
       sort: FestivalListSort;
-      schedule: FestivalScheduleFilter;
+      startDate: string;
+      endDate: string;
+      progress: FestivalProgressFilter;
     },
     page: number,
     size: number,
@@ -66,13 +80,18 @@ const festivalListDependencies = {
     const response = await festivalsApi.getList(page, size, query.keyword || undefined, {
       sigunguCode: query.sigunguCode || undefined,
       sort: query.sort,
-      schedule: query.schedule,
+      startDate: query.startDate || undefined,
+      endDate: query.endDate || undefined,
+      // 이 화면은 진행 마감 축제까지 찾을 수 있어야 하므로 항상 넘긴다. 넘기지 않으면 서버가
+      // 기존 가시성(진행 중·예정만)을 그대로 쓴다.
+      progress: query.progress,
     });
+    onViewerLoggedIn(response.viewerLoggedIn);
     return { items: response.items, page: response.page, hasNext: response.hasNext };
   },
-};
+});
 
-const spotListDependencies = {
+const createSpotListDependencies = (onViewerLoggedIn: (loggedIn: boolean) => void) => ({
   fetchPage: async (
     query: { keyword: string; contentTypeId: string; sigunguCode: string; sort: TourPlaceListSort },
     page: number,
@@ -85,9 +104,10 @@ const spotListDependencies = {
       query.keyword || undefined,
       { sigunguCode: query.sigunguCode || undefined, sort: query.sort },
     );
+    onViewerLoggedIn(response.viewerLoggedIn);
     return { items: response.items, page: response.page, hasNext: response.hasNext };
   },
-};
+});
 
 export default function ExploreListPage() {
   const [segment, setSegment] = useState<Segment>('festival');
@@ -95,10 +115,13 @@ export default function ExploreListPage() {
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [festivalSigunguCode, setFestivalSigunguCode] = useState('');
-  const [festivalSort, setFestivalSort] = useState<FestivalListSort>('START_DATE_ASC');
-  const [festivalSchedule, setFestivalSchedule] = useState<FestivalScheduleFilter>('ALL');
+  const [festivalSort, setFestivalSort] = useState<FestivalListSort>('RECENTLY_ADDED');
+  const [festivalStartDate, setFestivalStartDate] = useState('');
+  const [festivalEndDate, setFestivalEndDate] = useState('');
+  const [festivalProgress, setFestivalProgress] = useState<FestivalProgressFilter>('ALL');
   const [spotSigunguCode, setSpotSigunguCode] = useState('');
   const [spotSort, setSpotSort] = useState<TourPlaceListSort>('TITLE_ASC');
+  const [viewerLoggedIn, setViewerLoggedIn] = useState(false);
   const [festivalRegions, setFestivalRegions] = useState<RegionOption[]>([]);
   const [spotRegions, setSpotRegions] = useState<RegionOption[]>([]);
   const isFirstKeyword = useRef(true);
@@ -150,9 +173,18 @@ export default function ExploreListPage() {
       keyword: debouncedKeyword,
       sigunguCode: festivalSigunguCode,
       sort: festivalSort,
-      schedule: festivalSchedule,
+      startDate: festivalStartDate,
+      endDate: festivalEndDate,
+      progress: festivalProgress,
     }),
-    [debouncedKeyword, festivalSigunguCode, festivalSort, festivalSchedule],
+    [
+      debouncedKeyword,
+      festivalSigunguCode,
+      festivalSort,
+      festivalStartDate,
+      festivalEndDate,
+      festivalProgress,
+    ],
   );
 
   const spotQuery = useMemo(
@@ -165,6 +197,13 @@ export default function ExploreListPage() {
     [debouncedKeyword, contentTypeId, spotSigunguCode, spotSort],
   );
 
+  // 두 목록이 같은 로그인 여부를 쓰므로 어느 쪽 응답이 와도 같은 값을 채운다.
+  const festivalListDependencies = useMemo(
+    () => createFestivalListDependencies(setViewerLoggedIn),
+    [],
+  );
+  const spotListDependencies = useMemo(() => createSpotListDependencies(setViewerLoggedIn), []);
+
   const festivals = useInfiniteList<FestivalListItem, typeof festivalQuery>(
     festivalListDependencies,
     festivalQuery,
@@ -173,6 +212,9 @@ export default function ExploreListPage() {
     spotListDependencies,
     spotQuery,
   );
+
+  const navigate = useNavigate();
+  const bookmarks = useListBookmarks(viewerLoggedIn, () => navigate('/login'));
 
   const active = isFestival ? festivals : spots;
   const sentinelRef = useInfiniteScrollSentinel(
@@ -201,8 +243,10 @@ export default function ExploreListPage() {
     setDebouncedKeyword('');
     if (isFestival) {
       setFestivalSigunguCode('');
-      setFestivalSort('START_DATE_ASC');
-      setFestivalSchedule('ALL');
+      setFestivalSort('RECENTLY_ADDED');
+      setFestivalStartDate('');
+      setFestivalEndDate('');
+      setFestivalProgress('ALL');
     } else {
       setSpotSigunguCode('');
       setSpotSort('TITLE_ASC');
@@ -277,16 +321,24 @@ export default function ExploreListPage() {
                 onChange={setFestivalSigunguCode}
               />
               <FilterSelect
-                label="일정"
-                value={festivalSchedule}
-                options={FESTIVAL_SCHEDULES.map((s) => ({ value: s.value, label: s.label }))}
-                onChange={(value) => setFestivalSchedule(value as FestivalScheduleFilter)}
+                label="상태"
+                value={festivalProgress}
+                options={FESTIVAL_PROGRESSES.map((s) => ({ value: s.value, label: s.label }))}
+                onChange={(value) => setFestivalProgress(value as FestivalProgressFilter)}
               />
               <FilterSelect
                 label="정렬"
                 value={festivalSort}
                 options={FESTIVAL_SORTS.map((s) => ({ value: s.value, label: s.label }))}
                 onChange={(value) => setFestivalSort(value as FestivalListSort)}
+              />
+              <DateRangeFilter
+                startDate={festivalStartDate}
+                endDate={festivalEndDate}
+                onChange={(start, end) => {
+                  setFestivalStartDate(start);
+                  setFestivalEndDate(end);
+                }}
               />
             </>
           ) : (
@@ -340,8 +392,52 @@ export default function ExploreListPage() {
         {!isEmpty && !isInitialLoading && !isError && (
           <div className="flex flex-col gap-2.5">
             {isFestival
-              ? festivalCards.map((f) => <FestivalListItemCard key={f.id} festival={f} />)
-              : visibleSpots.map((s) => <ExploreSpotItem key={s.id} spot={s} />)}
+              ? festivalCards.map((f) => {
+                  const target = { type: 'FESTIVAL' as const, id: f.id };
+                  const bookmarked = resolveBookmarked(
+                    bookmarks.state,
+                    target,
+                    f.bookmarkedByMe ?? false,
+                  );
+                  return (
+                    <FestivalListItemCard
+                      key={f.id}
+                      festival={{
+                        ...f,
+                        bookmarkCount: resolveBookmarkCount(bookmarks.state, target, {
+                          bookmarked: f.bookmarkedByMe ?? false,
+                          bookmarkCount: f.bookmarkCount ?? 0,
+                        }),
+                      }}
+                      bookmarked={bookmarked}
+                      onToggleBookmark={() => bookmarks.toggle(target, bookmarked)}
+                      bookmarkPending={bookmarks.state.pendingKey === targetKey(target)}
+                    />
+                  );
+                })
+              : visibleSpots.map((s) => {
+                  const target = { type: 'TOUR_PLACE' as const, id: s.id };
+                  const bookmarked = resolveBookmarked(
+                    bookmarks.state,
+                    target,
+                    s.bookmarkedByMe ?? false,
+                  );
+                  return (
+                    <ExploreSpotItem
+                      key={s.id}
+                      spot={{
+                        ...s,
+                        bookmarkCount: resolveBookmarkCount(bookmarks.state, target, {
+                          bookmarked: s.bookmarkedByMe ?? false,
+                          bookmarkCount: s.bookmarkCount ?? 0,
+                        }),
+                      }}
+                      bookmarked={bookmarked}
+                      onToggleBookmark={() => bookmarks.toggle(target, bookmarked)}
+                      bookmarkPending={bookmarks.state.pendingKey === targetKey(target)}
+                    />
+                  );
+                })}
           </div>
         )}
 

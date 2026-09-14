@@ -625,6 +625,26 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
 - 삭제 버튼은 `mine`이 `true`일 때만 노출합니다. 관리자 숨김 버튼은 `viewer.admin`이 `true`일 때만
   노출하며, 이 두 값 모두 이미 받은 응답에서 나오므로 추가 요청이 없습니다.
 
+### 댓글 입력창을 띄울지 결정하는 규칙
+
+입력창은 **세 갈래**입니다. `ContentCommentForm`이 이 순서로 분기합니다.
+
+| 조건 | 화면 |
+| --- | --- |
+| `loggedIn === false` | "로그인하고 댓글 남기기" 링크 |
+| `loggedIn && !canComment` | "이 축제에 체크인하면 댓글을 남길 수 있어요" + 체크인 화면 링크 |
+| `canComment` | 입력창 |
+
+- `canComment`는 `engagement` 응답의 `viewer.canComment`입니다. **축제 댓글은 그 축제에 체크인한
+  적이 있어야 쓸 수 있으므로**(`docs/27` 5.2.1) 로그인 여부만으로는 판단할 수 없습니다. 관광지는
+  체크인 개념이 없어 `loggedIn`과 같은 값입니다.
+- 입력창을 띄워 놓고 등록에서 `403`을 주면 작성한 내용이 그대로 버려집니다. 비로그인에게 입력창
+  대신 로그인 링크를 주는 것과 같은 이유로 미리 막습니다.
+- **댓글 조회와 좋아요는 이 제한과 무관합니다.** 목록은 비로그인도 보고, 좋아요는 로그인만 하면
+  누구나 누릅니다. 제한 대상은 "쓰기" 하나뿐입니다.
+- 체크인 안내의 링크는 `/check-in`으로 `state={{ festivalId }}`를 넘깁니다. `CheckInPage`가
+  route state로 `festivalId`를 받는 화면이라, 그 값 없이 보내면 `/spots`로 튕깁니다.
+
 ### 상태 관리와 방어 규칙
 
 - `useContentBookmark`, `useContentComments`는 `useMemberBlocks` 패턴을 따릅니다. framework 없는
@@ -731,3 +751,92 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   경계에서 항목이 중복·누락됩니다. 대신 긴급 filter를 둡니다(`docs/29` 5.7).
 - 문의 유형·상태 라벨과 상태 배지 색은 `api/inquiries.ts`에만 둡니다. 화면마다 code를 문구로
   바꾸면 노출 심사를 여러 곳에서 해야 합니다.
+
+## 축제·관광 탐색 목록의 필터와 정렬
+
+설계 근거는 `docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md` 14장입니다.
+
+### 축제 세그먼트
+
+필터 행은 `지역` · `상태` · `정렬` · 기간 선택 4개입니다.
+
+- **기간**은 `DateRangeFilter`(브라우저 기본 `<input type="date">` 2개)입니다. 시작일과 종료일을
+  각각 비워둘 수 있고, 축제 기간과 **겹치면** 걸립니다. 프리셋("전체 기간/진행 중/이번 주말/이번
+  달")은 제거했습니다.
+- **상태**는 `전체 상태` / `진행 전` / `진행 중` / `진행 마감`이며 `progress` 파라미터로 갑니다.
+  **이 값을 보내야 종료된 축제까지 검색됩니다** — 보내지 않으면 서버가 기존 가시성(진행 중·예정만)을
+  씁니다. 이 화면은 항상 보내고, 홈 화면은 보내지 않습니다.
+- **정렬**은 `최근 등록순`(기본) / `좋아요 많은순` / `후기 많은순`입니다. 날짜 정렬(시작일
+  빠른순·종료 임박순)은 제거했습니다 — 진행 단계는 상태 필터로, 기간은 기간 선택으로 고릅니다.
+
+### 관광지 세그먼트
+
+`지역` · `정렬`입니다. 정렬에 `좋아요 많은순`·`후기 많은순`이 추가됐고 `이름순`이 기본입니다.
+
+### 목록 카드의 좋아요·후기 수
+
+`EngagementCounts`가 축제 카드(`FestivalListItem`)와 관광지 카드(`ExploreSpotItem`) 오른쪽에
+같은 모양으로 붙습니다.
+
+- **"좋아요 수"는 찜 수입니다.** 콘텐츠 단위 반응이 찜(`Heart`) 하나뿐이고, 좋아요(`ThumbsUp`)는
+  댓글 단위라 목록 지표가 되지 못합니다.
+- **하트를 눌러 바로 찜할 수 있습니다.** 탐색 목록(축제·관광지), 관광지 상세의 "주변에서
+  열리는 축제", 홈 화면의 "축제와 함께 둘러보기"가 대상입니다. 찜 목록(`FavoritesPage`)만 표시 전용입니다 — 거기서 해제하면 그
+  항목이 자기 목록에서 사라져야 하는지 별도 결정이 필요해 이번 범위에서 제외했습니다.
+- `EngagementCounts`는 `onToggleBookmark`를 받았을 때만 하트를 버튼으로 그립니다. 핸들러가
+  없으면 표시 전용입니다.
+- `bookmarkCount`/`commentCount`는 `Festival`·`TourSpot` 타입에서 optional입니다. 목록 API에서만
+  오므로, 상세 매퍼로 만든 객체에서는 아예 그리지 않습니다(`undefined`가 0으로 보이면 안 됩니다).
+- 내 찜 목록(`FavoritesPage`)도 같은 카드를 쓰고 서버가 같은 집계를 함께 내려줍니다.
+
+### 홈 화면이 직접 정렬하는 이유
+
+목록 API 기본 정렬이 `START_DATE_ASC`에서 `RECENTLY_ADDED`로 바뀌었습니다. `HomePage`의
+"다가오는 축제" 목록과 히어로 폴백(`pickFallbackFestival`)이 둘 다 배열 순서에 의존하므로,
+받은 목록을 브라우저에서 `sortByStartDate`로 다시 정렬합니다.
+
+## 목록에서 바로 찜하기
+
+설계 근거는 `docs/25_FESTIVAL_TOURPLACE_LIST_FILTER_DESIGN.md` 15장입니다.
+
+### 카드는 전체가 링크가 아닙니다
+
+`FestivalListItem`·`ExploreSpotItem`·`FestivalNearbyPlaceItem`은 **본문만** `<Link>`이고 찜
+버튼은 그 형제입니다. 찜
+버튼이 링크 안에 있으면 잘못된 HTML인 데다 하트를 눌러도 상세 화면으로 이동합니다. 버튼
+쪽에서도 `preventDefault`/`stopPropagation`으로 한 번 더 막습니다.
+
+**카드에 새 인터랙션을 넣을 때 이 구조를 되돌리지 마세요.**
+
+### 로그인 여부를 목록 응답에서 받는 이유
+
+목록 화면은 상세 화면과 달리 `engagement`를 부르지 않습니다. 로그인 여부를 알려고
+`GET /api/members/me`를 부르면 비로그인 사용자가 공개 목록에서 401을 받아 화면째로 튕깁니다
+(docs/27 2.1). 그래서 목록 응답이 `viewerLoggedIn`을 함께 줍니다.
+
+비로그인이 하트를 누르면 **요청을 보내지 않고** `/login`으로 보냅니다. 상세 화면의
+`resolveBookmarkAction`과 같은 규칙입니다.
+
+관광지 상세의 "주변에서 열리는 축제"는 그 화면이 이미 `engagement`로 로그인 여부를 알고 있어
+`bookmarkState.loggedIn`을 그대로 씁니다.
+
+### 상태는 overlay로 관리합니다
+
+`useListBookmarks`는 목록을 다시 부르지 않고, **사용자가 이 화면에서 바꾼 것만** overlay map
+(`FESTIVAL:12` → boolean)으로 들고 있습니다. `resolveBookmarked`/`resolveBookmarkCount`가
+목록 응답 값과 overlay를 합쳐 카드가 그릴 값을 만듭니다.
+
+- 낙관적 갱신을 하지 않습니다 — 서버 응답의 `bookmarked`로만 바꿉니다.
+- 표시 개수는 서버가 준 수에 내 토글만 ±1 합니다. 최신 총합은 아니지만, 내가 누른 하트가
+  숫자에 반영되지 않으면 눌리지 않은 것처럼 보입니다.
+- `pendingKey`로 연타를 막고, 실패하면 상태를 바꾸지 않습니다(목록에는 오류를 띄울 자리가 없음).
+
+### closure 세션은 effect 안에서 만드세요
+
+`useListBookmarks`가 세션을 렌더 중에 만들고 effect cleanup에서 `stop()`했다가, StrictMode의
+mount → unmount → mount 때문에 **정지된 세션을 계속 쓰는** 버그가 났습니다. 하트를 눌러도 화면이
+안 바뀌고 새로고침해야 반영되는 증상이었습니다(요청과 저장은 정상, `publish`만 안 닿음).
+
+`useInfiniteList`·`useContentBookmark`처럼 **세션 생성을 `useEffect` 안에 두세요.** 재생성 시
+사용자가 바꾼 상태(`overrides`)는 이어받고, 진행 중이던 요청 표시(`pendingKey`)는 이어받지
+않습니다 — 그 요청은 이전 세션과 함께 버려졌습니다.

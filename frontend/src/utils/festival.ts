@@ -117,6 +117,9 @@ export function mapFestivalListItemToFestival(item: FestivalListItem): Festival 
     infoItems: [],
     programs: [],
     nearbyPlaces: [],
+    bookmarkCount: item.bookmarkCount,
+    commentCount: item.commentCount,
+    bookmarkedByMe: item.bookmarkedByMe,
   };
 }
 
@@ -158,6 +161,9 @@ export function mapNearbyFestivalToFestival(item: NearbyFestivalItem): Festival 
     periodFull: formatFestivalPeriod(item),
     address: item.address ?? '',
     distanceKm: Math.round((item.distanceMeters / 1000) * 10) / 10,
+    bookmarkCount: item.bookmarkCount,
+    commentCount: item.commentCount,
+    bookmarkedByMe: item.bookmarkedByMe,
     intro: '',
     thumbnailUrl: item.thumbnailUrl ?? null,
     infoItems: [],
