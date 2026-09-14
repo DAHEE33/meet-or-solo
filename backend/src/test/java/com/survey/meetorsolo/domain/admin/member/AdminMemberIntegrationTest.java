@@ -72,10 +72,10 @@ class AdminMemberIntegrationTest {
 
     @Test
     void 목록은_검색_filter와_동일시각_ID_cursor를_안정적으로_처리한다() {
-        var first = service.list(ADMIN, "memb", "ACTIVE", "USER", null, 1);
+        var first = service.list(ADMIN, "memb", "ACTIVE", "USER", null, null, 1);
         assertThat(first.items()).extracting(AdminMemberListItemResponse::memberId).containsExactly(USER);
         assertThat(first.pagination().hasNext()).isFalse();
-        assertThatThrownBy(() -> service.list(ADMIN, null, "UNKNOWN", null, null, 20))
+        assertThatThrownBy(() -> service.list(ADMIN, null, "UNKNOWN", null, null, null, 20))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(ErrorCode.ADMIN_MEMBER_INVALID_REQUEST));
@@ -408,6 +408,89 @@ class AdminMemberIntegrationTest {
         return new AdminMemberActionRequest(action, AdminMemberActionReasonCode.COMMUNITY_GUIDELINE,
                 null, action == AdminMemberActionType.SUSPEND ? AdminSuspensionDuration.SEVEN_DAYS : null,
                 null, expected);
+    }
+
+    @Test
+    void 테스트_계정_지정과_해제는_감사로그를_남기고_같은_값_재요청은_기록하지_않는다() {
+        AdminMemberDetailResponse enabled =
+                service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
+        assertThat(enabled.testAccount()).isTrue();
+        assertThat(testAccount(USER)).isTrue();
+        assertThat(testAccountActionCount(USER)).isOne();
+
+        // 같은 값을 다시 보내도 상태는 그대로고 감사 로그는 늘지 않는다.
+        service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
+        assertThat(testAccountActionCount(USER)).isOne();
+
+        AdminMemberDetailResponse disabled =
+                service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(false, null));
+        assertThat(disabled.testAccount()).isFalse();
+        assertThat(testAccount(USER)).isFalse();
+        assertThat(testAccountActionCount(USER)).isEqualTo(2);
+    }
+
+    /** 테스트 계정 표시는 제재 이력이 아니다. 제재 목록에 섞이면 조치 이력을 읽을 수 없다. */
+    @Test
+    void 테스트_계정_기록은_제재_이력_목록에_나오지_않는다() {
+        service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
+        assertThat(service.detail(ADMIN, USER).actions()).isEmpty();
+    }
+
+    @Test
+    void 제재_중인_회원은_테스트_계정으로_지정할_수_없다() {
+        service.act(ADMIN, USER, UUID.randomUUID().toString(),
+                request(AdminMemberActionType.BAN, AdminMemberStatus.ACTIVE));
+
+        assertThatThrownBy(() -> service.updateTestAccount(
+                ADMIN, USER, new AdminMemberTestAccountRequest(true, null)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT));
+        assertThat(testAccount(USER)).isFalse();
+    }
+
+    /** 제재와 달리 관리자 자신도 대상이 된다. 권한을 바꾸는 조치가 아니기 때문이다. */
+    @Test
+    void 관리자는_자기_계정을_테스트_계정으로_지정할_수_있다() {
+        assertThat(service.updateTestAccount(
+                ADMIN, ADMIN, new AdminMemberTestAccountRequest(true, null)).testAccount()).isTrue();
+    }
+
+    @Test
+    void 테스트_계정_filter는_지정된_회원만_돌려준다() {
+        service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
+
+        assertThat(service.list(ADMIN, null, null, "USER", true, null, 20).items())
+                .extracting(AdminMemberListItemResponse::memberId)
+                .containsExactly(USER);
+        // false는 "제외"가 아니라 "조건 없음"이다.
+        assertThat(service.list(ADMIN, null, null, "USER", false, null, 20).items())
+                .extracting(AdminMemberListItemResponse::memberId)
+                .containsExactlyInAnyOrder(USER, PROFILE_USER);
+    }
+
+    @Test
+    void 강제_탈퇴하면_테스트_계정_표시가_지워진다() {
+        service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
+        service.forceWithdraw(ADMIN, USER, UUID.randomUUID().toString(),
+                new AdminMemberForcedWithdrawalRequest(
+                        AdminMemberActionReasonCode.COMMUNITY_GUIDELINE, null,
+                        AdminMemberStatus.ACTIVE, true));
+
+        assertThat(testAccount(USER)).isFalse();
+    }
+
+    private boolean testAccount(long memberId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT test_account FROM members WHERE id=?", Boolean.class, memberId));
+    }
+
+    private int testAccountActionCount(long memberId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM admin_actions
+                WHERE target_member_id=? AND action_type='TEST_ACCOUNT_UPDATE'
+                """, Integer.class, memberId);
+        return count == null ? 0 : count;
     }
 
     private void insertMember(long id, String nickname, String role, String status) {

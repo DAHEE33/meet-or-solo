@@ -66,9 +66,9 @@ public class AdminMemberService {
     @Transactional(readOnly = true)
     public AdminMemberPageResponse list(
             long adminMemberId, String queryValue, String statusValue, String roleValue,
-            String cursorValue, Integer sizeValue) {
+            Boolean testAccountValue, String cursorValue, Integer sizeValue) {
         authorization.requireAdmin(adminMemberId);
-        AdminMemberFilter filter = filter(queryValue, statusValue, roleValue);
+        AdminMemberFilter filter = filter(queryValue, statusValue, roleValue, testAccountValue);
         int size = size(sizeValue);
         AdminMemberCursorCodec.Cursor cursor = blank(cursorValue) ? null
                 : cursorCodec.decode(cursorValue, filter.fingerprint());
@@ -279,6 +279,58 @@ public class AdminMemberService {
     }
 
     /**
+     * 테스트 계정 지정·해제.
+     *
+     * <p>테스트 계정은 축제 체크인의 GPS 반경·정확도 검증을 면제받는다. 지금까지는
+     * {@code app.festival.checkin.bypass-radius-check}로 local/dev "환경 전체"의 검증을 껐는데,
+     * 그러면 그 환경에서 반경 검증이 실제로 동작하는지 확인할 방법이 사라진다. 계정 단위로
+     * 바꾸면 같은 환경에서 일반 계정은 검증을 그대로 받는다.
+     *
+     * <p>제재·강제 탈퇴·매너온도 조정과 달리 {@code Idempotency-Key}를 받지 않는다. 목표 값을
+     * 그대로 쓰는 조치라 몇 번을 보내도 결과가 같고, 값이 바뀌지 않으면 감사 로그도 남기지
+     * 않는다. 키로 막아야 할 중복 부작용 자체가 없다.
+     *
+     * <p>다른 조치와 달리 관리자 계정과 자기 자신도 대상으로 허용한다. 제재는 관리자끼리
+     * 권한을 뺏을 수 있어 막지만, 이 조치는 권한을 바꾸지 않고 자기 계정으로 체크인 흐름을
+     * 확인하는 것이 정상적인 용도다.
+     */
+    @Transactional
+    public AdminMemberDetailResponse updateTestAccount(
+            long adminMemberId, long memberId, AdminMemberTestAccountRequest request) {
+        authorization.requireAdmin(adminMemberId);
+        if (request.reasonNote() != null && containsSensitiveLabel(request.reasonNote())) {
+            throw invalid("관리자 사유에는 인증정보나 위치정보를 입력할 수 없습니다.");
+        }
+
+        Member member = members.findByIdForUpdate(memberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_MEMBER_NOT_FOUND));
+        validateTestAccountStatus(member.getStatus());
+
+        boolean before = member.isTestAccount();
+        if (member.updateTestAccount(Boolean.TRUE.equals(request.enabled()))) {
+            adminMembers.insertTestAccountAction(
+                    adminMemberId, memberId, before, member.isTestAccount(),
+                    request.reasonNote(), OffsetDateTime.now(clock));
+            members.flush();
+        }
+        return detail(memberId);
+    }
+
+    /**
+     * 테스트 계정으로 지정할 수 있는 상태인지 확인한다.
+     *
+     * <p>허용 목록으로 쓴다({@code validateWarningStatus}와 같은 이유). 제재 중인 회원은
+     * 제외한다 — 체크인 자체가 막혀 있어 면제해 줄 대상이 없고, 제재를 우회하는 수단으로
+     * 보일 여지를 남기지 않는다. 탈퇴·삭제 회원은 익명화됐다.
+     */
+    private void validateTestAccountStatus(String status) {
+        if (!Member.STATUS_ACTIVE.equals(status)
+                && !Member.STATUS_PROFILE_REQUIRED.equals(status)) {
+            throw new BusinessException(ErrorCode.ADMIN_MEMBER_STATUS_CONFLICT);
+        }
+    }
+
+    /**
      * 온도를 조정할 수 있는 상태인지 확인한다.
      *
      * <p>허용 목록으로 쓴다. {@code status != 'WITHDRAWN'} 같은 부정 조건으로 쓰면 새 상태가
@@ -379,13 +431,14 @@ public class AdminMemberService {
                 member.memberId(), member.nickname(), member.profileImageUrl(), member.role(),
                 member.status(), member.penaltyScore(), member.mannerTemperature(),
                 entity.getSuspendedAt(), member.suspendedUntil(), member.createdAt(),
-                entity.getLastLoginAt(), validReportCount,
+                entity.getLastLoginAt(), member.testAccount(), validReportCount,
                 reportConfirmation.isSafetyReviewRequired(validReportCount),
                 adminMembers.findReports(memberId), adminMembers.findActions(memberId),
                 adminMembers.findMannerTemperatureAdjustments(memberId));
     }
 
-    private AdminMemberFilter filter(String query, String status, String role) {
+    private AdminMemberFilter filter(
+            String query, String status, String role, Boolean testAccount) {
         try {
             String normalizedQuery = blank(query) ? null : query.trim();
             if (normalizedQuery != null && normalizedQuery.length() > 50) throw invalid("검색어가 너무 깁니다.");
@@ -394,7 +447,10 @@ public class AdminMemberService {
             if (parsedRole != null && !Set.of(Member.ROLE_USER, Member.ROLE_ADMIN).contains(parsedRole)) {
                 throw invalid("role 값이 올바르지 않습니다.");
             }
-            return new AdminMemberFilter(normalizedQuery, parsedStatus, parsedRole);
+            // false는 "테스트 계정 제외"가 아니라 "조건 없음"으로 접는다. 화면의 체크박스가
+            // 꺼진 상태를 그대로 보내도 전체 목록이 나온다.
+            return new AdminMemberFilter(normalizedQuery, parsedStatus, parsedRole,
+                    Boolean.TRUE.equals(testAccount) ? Boolean.TRUE : null);
         } catch (BusinessException exception) {
             throw exception;
         } catch (IllegalArgumentException exception) {

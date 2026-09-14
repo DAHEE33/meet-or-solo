@@ -26,6 +26,25 @@ export const BANNED_CODE = 'MEMBER_BANNED';
 
 export const SANCTION_LOGIN_PATH = '/login?oauthError=account_restricted';
 
+/** 관리자 화면의 경로 접두와 그 로그인 화면. 관리자 session은 진입 경로가 따로 있다(docs/30). */
+const ADMIN_PATH_PREFIX = '/admin';
+export const ADMIN_LOGIN_PATH = '/admin/login';
+
+/**
+ * 인증이 끊겼을 때 어느 로그인 화면으로 보낼지 고른다.
+ *
+ * 관리자 화면에서 session이 끊겼는데 소셜 로그인 화면으로 보내면, 관리자는 자기 계정으로
+ * 돌아올 방법이 없다. 반대로 일반 화면을 관리자 로그인으로 보내서도 안 된다.
+ * 영구 제한은 계정 자체가 막힌 상태라 어느 화면에 있었든 안내가 있는 소셜 로그인으로 보낸다.
+ */
+export function loginPathFor(pathname: string, banned: boolean): string | null {
+  if (banned) return pathname === '/login' ? null : SANCTION_LOGIN_PATH;
+  if (pathname === ADMIN_PATH_PREFIX || pathname.startsWith(`${ADMIN_PATH_PREFIX}/`)) {
+    return pathname === ADMIN_LOGIN_PATH ? null : ADMIN_LOGIN_PATH;
+  }
+  return pathname === '/login' ? null : '/login';
+}
+
 /**
  * 정지 회원이 활동을 시도해 403을 받았을 때 발생시키는 이벤트.
  *
@@ -235,9 +254,10 @@ function redirectToLoginIfUnauthorized(status: number, code?: string | null): vo
   const banned = status === 403 && code === BANNED_CODE;
   // window는 이동이 필요할 때만 읽는다. 먼저 읽으면 다른 status에서도 window에 의존하게 된다.
   if (status !== 401 && !banned) return;
-  if (window.location.pathname === '/login') return;
 
-  window.location.replace(banned ? SANCTION_LOGIN_PATH : '/login');
+  const destination = loginPathFor(window.location.pathname, banned);
+  if (destination === null) return;
+  window.location.replace(destination);
 }
 
 /**

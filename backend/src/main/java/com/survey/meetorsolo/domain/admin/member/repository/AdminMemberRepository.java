@@ -20,7 +20,8 @@ public class AdminMemberRepository {
                         ELSE m.nickname END AS nickname,
                    m.profile_image_url, m.role, m.status,
                    m.penalty_score, m.manner_temperature, m.suspended_at,
-                   m.suspended_until, m.created_at, m.last_login_at
+                   m.suspended_until, m.created_at, m.last_login_at,
+                   m.test_account
             FROM members m
             """;
 
@@ -45,6 +46,9 @@ public class AdminMemberRepository {
         if (filter.role() != null) {
             sql.append(" AND m.role=:role");
             parameters.put("role", filter.role());
+        }
+        if (Boolean.TRUE.equals(filter.testAccount())) {
+            sql.append(" AND m.test_account");
         }
         if (cursor != null) {
             sql.append(" AND (m.created_at < :createdAt OR (m.created_at=:createdAt AND m.id < :memberId))");
@@ -201,7 +205,8 @@ public class AdminMemberRepository {
                 rs.getLong("id"), rs.getString("nickname"), rs.getString("profile_image_url"),
                 rs.getString("role"), AdminMemberStatus.valueOf(rs.getString("status")),
                 rs.getInt("penalty_score"), rs.getBigDecimal("manner_temperature"),
-                dateTime(rs, "suspended_until"), dateTime(rs, "created_at"));
+                dateTime(rs, "suspended_until"), dateTime(rs, "created_at"),
+                rs.getBoolean("test_account"));
     }
 
     private static String escapeLike(String value) {
@@ -219,6 +224,43 @@ public class AdminMemberRepository {
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         Object value = rs.getObject(column);
         return value == null ? null : ((Number) value).longValue();
+    }
+
+    /**
+     * 테스트 계정 지정·해제를 감사 로그에 남긴다({@code action_type = TEST_ACCOUNT_UPDATE}).
+     *
+     * <p>{@link #insertAction}과 분리한 이유는 이 조치가 {@code AdminMemberActionRequest}를
+     * 쓰지 않기 때문이다. 회원 상태를 바꾸지 않으므로 {@code beforeStatus}/{@code afterStatus}
+     * 대신 변경 전후 flag를 metadata에 남긴다. {@code reason_code}는 비운다 —
+     * 제재 사유 목록 중 이 조치에 맞는 값이 없고, 억지로 고르면 감사 로그가 오염된다.
+     */
+    public long insertTestAccountAction(
+            long adminMemberId,
+            long targetMemberId,
+            boolean before,
+            boolean after,
+            String reasonNote,
+            OffsetDateTime now
+    ) {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("adminMemberId", adminMemberId);
+        parameters.put("targetMemberId", targetMemberId);
+        parameters.put("reason", normalize(reasonNote));
+        parameters.put("before", before);
+        parameters.put("after", after);
+        parameters.put("createdAt", now);
+        Long id = jdbc.queryForObject("""
+                INSERT INTO admin_actions(
+                    admin_member_id, target_member_id, action_type, reason, metadata, created_at
+                ) VALUES (
+                    :adminMemberId, :targetMemberId, 'TEST_ACCOUNT_UPDATE', :reason,
+                    jsonb_build_object(
+                        'beforeTestAccount', CAST(:before AS boolean),
+                        'afterTestAccount', CAST(:after AS boolean)),
+                    :createdAt
+                ) RETURNING id
+                """, parameters, Long.class);
+        return Objects.requireNonNull(id);
     }
 
     public record LockedReport(long reportId, long reportedMemberId, String status) {

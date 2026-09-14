@@ -7,6 +7,12 @@ public enum ErrorCode {
     INVALID_INPUT_VALUE(HttpStatus.BAD_REQUEST, "INVALID_INPUT_VALUE", "요청 값이 올바르지 않습니다."),
     VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "요청 값 검증에 실패했습니다."),
     OAUTH_LOGIN_FAILED(HttpStatus.BAD_REQUEST, "OAUTH_LOGIN_FAILED", "OAuth 로그인 처리에 실패했습니다."),
+    /**
+     * 관리자 ID/PW 로그인 실패(docs/30). 아이디 오류·비밀번호 오류·잠금·권한 없음을 구분하지
+     * 않고 전부 이 code로 응답한다. 구분해서 알려주면 아이디 목록을 열거할 수 있다.
+     */
+    ADMIN_LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "ADMIN_LOGIN_FAILED",
+            "아이디 또는 비밀번호가 올바르지 않습니다."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "접근 권한이 없습니다."),
     MATCHING_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "MATCHING_INVALID_REQUEST", "매칭 요청이 올바르지 않습니다."),

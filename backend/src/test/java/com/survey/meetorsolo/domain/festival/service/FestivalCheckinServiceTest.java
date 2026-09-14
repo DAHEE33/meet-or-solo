@@ -19,6 +19,7 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalCheckinStatus;
 import com.survey.meetorsolo.domain.festival.event.FestivalCheckinCancelledEvent;
 import com.survey.meetorsolo.domain.festival.repository.FestivalCheckinRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
+import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.math.BigDecimal;
@@ -46,6 +47,9 @@ class FestivalCheckinServiceTest {
     private FestivalCheckinRepository festivalCheckinRepository;
 
     @Mock
+    private MemberRepository memberRepository;
+
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     private FestivalCheckinService service() {
@@ -56,9 +60,15 @@ class FestivalCheckinServiceTest {
         return new FestivalCheckinService(
                 festivalRepository,
                 festivalCheckinRepository,
+                memberRepository,
                 new FestivalCheckinProperties(100, bypassRadiusCheck),
                 eventPublisher
         );
+    }
+
+    /** 테스트 계정 조회 결과를 고정한다. 설정 우회(bypassRadiusCheck)와 경로가 다르다. */
+    private void testAccount(long memberId, boolean value) {
+        when(memberRepository.existsByIdAndTestAccountIsTrue(memberId)).thenReturn(value);
     }
 
     @Test
@@ -142,6 +152,61 @@ class FestivalCheckinServiceTest {
 
         assertThat(result.status()).isEqualTo(FestivalCheckinStatus.ACTIVE);
         verify(festivalCheckinRepository).save(any(FestivalCheckin.class));
+    }
+
+    @Test
+    void 테스트_계정이면_설정이_꺼져_있어도_반경을_벗어나서_체크인할_수_있다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+        when(festivalCheckinRepository.findAllByMemberIdAndStatus(1L, FestivalCheckinStatus.ACTIVE))
+                .thenReturn(List.of());
+        testAccount(1L, true);
+
+        FestivalCheckinResponse result = service().checkIn(
+                1L, 10L,
+                new CheckInRequest(new BigDecimal("37.5000000000"), new BigDecimal("128.5000000000"), 20)
+        );
+
+        assertThat(result.status()).isEqualTo(FestivalCheckinStatus.ACTIVE);
+        verify(festivalCheckinRepository).save(any(FestivalCheckin.class));
+    }
+
+    @Test
+    void 테스트_계정이면_위치_정확도가_낮아도_체크인이_생성된다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+        when(festivalCheckinRepository.findAllByMemberIdAndStatus(1L, FestivalCheckinStatus.ACTIVE))
+                .thenReturn(List.of());
+        testAccount(1L, true);
+
+        FestivalCheckinResponse result = service().checkIn(
+                1L, 10L,
+                new CheckInRequest(new BigDecimal("37.0000000000"), new BigDecimal("128.0000000000"), 150)
+        );
+
+        assertThat(result.status()).isEqualTo(FestivalCheckinStatus.ACTIVE);
+        verify(festivalCheckinRepository).save(any(FestivalCheckin.class));
+    }
+
+    /**
+     * 면제 판정은 요청한 회원 자신의 표시로만 한다. 다른 회원이 테스트 계정이라는 사실은
+     * 이 요청과 무관하다.
+     */
+    @Test
+    void 테스트_계정이_아닌_회원은_반경_검증을_그대로_받는다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+        testAccount(2L, false);
+
+        assertThatThrownBy(() -> service().checkIn(
+                2L, 10L,
+                new CheckInRequest(new BigDecimal("37.5000000000"), new BigDecimal("128.5000000000"), 20)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(exception ->
+                        assertThat(((BusinessException) exception).getErrorCode())
+                                .isEqualTo(ErrorCode.CHECKIN_OUT_OF_RANGE));
+        verify(festivalCheckinRepository, never()).save(any());
     }
 
     @Test
