@@ -42,8 +42,11 @@ public class MatchGroupContinuationPolicy {
      *
      * <p>2인 진행 미동의({@code allowMinimumTwo = false})도 이 조건에 흡수된다. 그 의사는
      * <b>만나기 전</b>의 것이라, 둘 다 도착한 뒤에는 근거가 사라진다.
+     *
+     * <p>나가는 경로를 가르는 기준이기도 하다. 성립 전이면 참여 취소
+     * ({@code MatchCancellationService}), 성립 후면 먼저 나가기({@code MatchLeaveService})다.
      */
-    private boolean meetingHeld(List<MatchGroupMember> members) {
+    public boolean meetingHeld(List<MatchGroupMember> members) {
         return members.stream().filter(member -> member.getArrivedAt() != null).count()
                 >= MatchMeetingWindowPolicy.MINIMUM_ARRIVED_MEMBERS;
     }

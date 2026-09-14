@@ -315,10 +315,15 @@ export function CurrentGroupRoom({
     || currentMember?.status === 'ARRIVAL_TIME_SELECTED';
   const arrivalDeadlineReached = effectiveNowEpochMs >= Date.parse(group.arrivalDeadlineAt);
   const canSelectArrivalTime = canArrive && !arrivalDeadlineReached;
-  // 도착한 사람만 "먼저 갈게요"를 쓴다. 도착 전에는 "못 갈 것 같아요"(취소)가 그 자리를 맡는다.
   const hasArrived = currentMember?.status === 'ARRIVED';
-  // 도착자가 2명 이상이면 이미 만남이 성립했고, 나가도 매너온도 보상은 그대로다.
+  // 도착자가 2명 이상이면 이미 만남이 성립했다.
   const meetingHeld = group.members.filter((member) => member.status === 'ARRIVED').length >= 2;
+  // 나가는 경로가 만남 성립 여부로 갈린다(docs/19 4.11.3).
+  //  - 성립 전: "못 갈 것 같아요"(참여 취소). 도착했더라도 마찬가지다. 도착 버튼을 눌렀다
+  //    나가는 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한 책임이 사라진다.
+  //  - 성립 후: "먼저 갈게요". 이미 만났으므로 벌할 이유가 없고 매너온도도 그대로다.
+  const canCancelParticipation = !arrivalDeadlineReached && (canArrive || (hasArrived && !meetingHeld));
+  const canLeaveEarly = hasArrived && meetingHeld;
   const estimatedArrivalAt = getEstimatedArrivalAt(currentMember);
   const estimatedArrivalEpochMs = estimatedArrivalAt ? Date.parse(estimatedArrivalAt) : null;
   const estimatedArrivalPassed = estimatedArrivalEpochMs !== null
@@ -402,7 +407,7 @@ export function CurrentGroupRoom({
         </section>
       )}
 
-      {hasArrived && (
+      {canLeaveEarly && (
         <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <details>
             <summary className={`cursor-pointer list-none rounded-2xl border border-line px-4 py-3 text-center text-[15px] font-bold text-ink/70 ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
@@ -412,12 +417,10 @@ export function CurrentGroupRoom({
               <h2 id="leave-title" className="text-[16px] font-bold text-ink">만남에서 나갈까요?</h2>
               {/*
                 페널티가 없다는 것을 분명히 말한다. 이 버튼은 벌을 주는 자리가 아니라 빠져나올
-                문이다(docs/19 4.11.3). 상대가 오지 않아 혼자 기다릴 때와 자리가 불편할 때 쓴다.
+                문이고, 자리가 불편할 때 쓰는 경로이기 때문이다(docs/19 4.11.3).
               */}
               <p className="mt-1 text-[13px] text-ink/55">
-                {meetingHeld
-                  ? '이미 만남이 성사돼서 매너온도는 그대로 올라가요. 불이익은 없어요.'
-                  : '아직 만남이 성사되지 않아 매너온도는 오르지 않아요. 불이익은 없고 바로 다시 신청할 수 있어요.'}
+                이미 만남이 성사돼서 매너온도는 그대로 올라가요. 불이익은 없어요.
               </p>
               <div className="mt-4 grid gap-2">
                 <button
@@ -434,7 +437,7 @@ export function CurrentGroupRoom({
         </section>
       )}
 
-      {canSelectArrivalTime && (
+      {canCancelParticipation && (
         <section className="flex flex-col gap-3 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
           <details>
             <summary className={`cursor-pointer list-none rounded-2xl border border-coral px-4 py-3 text-center text-[15px] font-bold text-coral ${isSubmitting ? 'pointer-events-none opacity-50' : ''}`}>
@@ -444,7 +447,10 @@ export function CurrentGroupRoom({
               <h2 id="cancellation-title" className="text-[16px] font-bold text-ink">
                 정말 참여를 취소할까요?
               </h2>
-              <p className="mt-1 text-[13px] text-ink/55">취소 사유는 다른 멤버에게 공개되지 않아요.</p>
+              <p className="mt-1 text-[13px] text-ink/55">
+                취소 사유는 다른 멤버에게 공개되지 않아요.
+                {hasArrived ? ' 아직 만남이 성사되지 않아 참여 취소로 처리돼요.' : ''}
+              </p>
               <div className="mt-4 grid gap-2">
                 {CANCELLATION_OPTIONS.map((option) => (
                   <button

@@ -35,6 +35,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 것을 가를 근거가 없으므로, 먼저 갔는지 끝까지 있었는지로 보상을 가르지 않는다. 판정은 오직
  * <b>만남이 성립했는가</b>(도착자 2명 이상)뿐이다.
  *
+ * <p><b>만남이 성립한 뒤에만 쓸 수 있다.</b> 도착자가 나 혼자인데도 무패널티로 나갈 수 있으면,
+ * 도착 버튼을 눌렀다 나가는 것으로 취소 페널티를 피하는 샛길이 된다. 그 상태에서 나가는 것은
+ * 오고 있는 사람을 두고 떠나는 것이므로 참여 취소({@code MatchCancellationService})와 같은
+ * 규칙을 받는다.
+ *
  * <p>그래서 이 서비스가 하는 일은 셋이다 — 구성원을 이탈로 바꾸고, 타임라인에 남기고, 남은
  * 인원으로 방을 이어갈 수 있는지 판정한다. 보상과 재매칭 잠금은 건드리지 않는다. 그쪽은
  * {@code arrived_at}만 보므로 이탈해도 결과가 같다.
@@ -78,9 +83,11 @@ public class MatchLeaveService {
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.MATCHING_LEAVE_NOT_ALLOWED));
 
-        // 도착한 사람만 나갈 수 있다. 도착 전에는 "못 갈 것 같아요"(MatchCancellationService)가
-        // 그 자리를 맡는다. 둘을 합치지 않는 이유는 페널티 규칙이 다르기 때문이다.
-        if (!"ARRIVED".equals(actor.getStatus())) {
+        // 도착했고 <b>만남이 성립한</b> 사람만 이 경로를 쓴다. 둘 중 하나라도 아니면 참여 취소
+        // (MatchCancellationService)가 맡는다. 이 경로에 페널티가 없기 때문에 경계가 중요하다.
+        // 성립 전에도 무패널티로 나갈 수 있으면, 도착 버튼을 눌렀다 나가는 것만으로 취소
+        // 페널티를 피할 수 있고 오고 있는 사람에 대한 책임이 사라진다.
+        if (!"ARRIVED".equals(actor.getStatus()) || !continuationPolicy.meetingHeld(members)) {
             throw new BusinessException(ErrorCode.MATCHING_LEAVE_NOT_ALLOWED);
         }
 

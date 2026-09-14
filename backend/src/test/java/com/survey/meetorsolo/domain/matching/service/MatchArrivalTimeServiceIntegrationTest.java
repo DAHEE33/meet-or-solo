@@ -989,24 +989,42 @@ class MatchArrivalTimeServiceIntegrationTest {
     // --- 먼저 갈게요 (docs/19 4.11.3) ---
 
     /**
-     * 혼자 도착해 기다리다 나가는 경우다. 만남이 성립하지 않았으므로 그룹이 종료된다.
+     * 만남이 성립하기 전에는 무패널티 이탈을 쓸 수 없다({@code docs/19} 4.11.3).
      *
-     * <p>이 경로가 없을 때는 도착을 누른 사람이 도착 마감(30분)까지 빠져나올 수 없었다.
+     * <p>도착 버튼을 눌렀다 나가는 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한
+     * 책임이 버튼 하나로 사라진다. 그 상태에서 나가려면 참여 취소를 쓴다.
      */
     @Test
-    void 혼자_도착한_사람이_나가면_그룹이_종료된다() {
+    void 혼자_도착한_사람은_먼저_갈_수_없고_참여_취소를_쓴다() {
         arrivals.arrive(9_110_001L, AT_MEETING_POINT);
 
-        var result = leaves.leave(9_110_001L);
+        assertThatThrownBy(() -> leaves.leave(9_110_001L))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.MATCHING_LEAVE_NOT_ALLOWED));
 
-        assertThat(result.memberStatus()).isEqualTo("LEFT");
+        // 도착한 뒤에도 참여 취소는 열려 있다. 예전에는 도착과 동시에 이 경로가 막혔다.
+        var result = cancellations.cancel(9_110_001L, MatchCancellationReason.OTHER);
+
         assertThat(result.groupContinues()).isFalse();
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM match_groups WHERE id = 9171001", String.class))
                 .isEqualTo("CANCELLED");
+    }
+
+    /** 도착 후 취소도 취소다. 페널티 규칙이 도착 전과 같아야 도착 버튼이 샛길이 되지 않는다. */
+    @Test
+    void 도착_후_참여_취소도_확정_3분이_지나면_페널티를_받는다() {
+        // 무패널티 구간(확정 후 3분)을 벗어나게 확정 시각을 앞당긴다.
+        jdbc.update("UPDATE match_groups SET confirmed_at = ? WHERE id = 9171001",
+                TEST_NOW.minusMinutes(5));
+        arrivals.arrive(9_110_001L, AT_MEETING_POINT);
+
+        cancellations.cancel(9_110_001L, MatchCancellationReason.OTHER);
+
         assertThat(jdbc.queryForObject("""
-                SELECT count(*) FROM match_events
-                WHERE group_id = 9171001 AND event_type = 'MEMBER_LEFT'
+                SELECT count(*) FROM match_penalty_events
+                WHERE related_group_id = 9171001 AND member_id = 9110001
                 """, Integer.class)).isEqualTo(1);
     }
 
@@ -1023,7 +1041,16 @@ class MatchArrivalTimeServiceIntegrationTest {
 
         var result = leaves.leave(9_110_001L);
 
+        assertThat(result.memberStatus()).isEqualTo("LEFT");
         assertThat(result.groupContinues()).isTrue();
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_events
+                WHERE group_id = 9171001 AND event_type = 'MEMBER_LEFT'
+                """, Integer.class)).isEqualTo(1);
+        // 만난 뒤의 이탈에는 페널티가 없다.
+        assertThat(jdbc.queryForObject("""
+                SELECT count(*) FROM match_penalty_events WHERE related_group_id = 9171001
+                """, Integer.class)).isZero();
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM match_groups WHERE id = 9171001", String.class))
                 .isEqualTo("IN_PROGRESS");
