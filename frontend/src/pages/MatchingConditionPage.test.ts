@@ -686,22 +686,29 @@ describe('재신청 폼의 신청 실패 안내', () => {
     expect(text(tree)).toContain('자동 매칭 신청');
   });
 
-  it('재신청 폼이 아닌 IDLE 화면에는 지난 오류를 끌고 오지 않는다', () => {
+  /**
+   * 예전에는 재신청 흐름에서만 이 문구를 띄웠다. 그런데 최초 신청도 실패하면 화면 상태를
+   * 바꾸지 않고 error만 담기 때문에, 버튼은 눌리는데 아무 일도 일어나지 않는 것으로 보였다.
+   * 사용자 제보로 드러난 문제라 흐름을 가리지 않고 띄운다.
+   */
+  it('최초 신청 화면에서도 실패 사유를 띄운다', () => {
     const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE', error: new Error('network') })));
-    expect(text(tree)).not.toContain('다시 눌러주세요');
+    expect(text(tree)).toContain('다시 눌러주세요');
+    // 폼을 오류 화면으로 갈아끼우지 않는다. 그대로 다시 누를 수 있어야 한다.
+    expect(text(tree)).toContain('자동 매칭 신청');
   });
 });
 
-describe('2명 진행 옵션 문구', () => {
+describe('인원 축소 진행 옵션 문구', () => {
   /**
-   * 이 옵션은 그룹 구성 단계에서 쓰이지 않는다(`MatchGroupComposer`는 희망 인원 그대로만
-   * 조합한다). "2명만 모여도 매칭된다"고 읽히는 문구는 실제 동작과 어긋난다.
+   * 이 옵션은 이제 그룹 구성 단계에서도 쓰인다. `MatchGroupComposer`가 희망 인원이 안 모이면
+   * 동의한 사람끼리 더 적은 인원으로 묶는다. 문구가 예전 동작에 머물러 있으면 사용자는 켜고도
+   * 매칭이 왜 되는지(또는 왜 안 되는지) 알 수 없다.
    */
-  it('2명이 모이면 바로 매칭된다고 읽히지 않게 안내한다', () => {
+  it('희망 인원이 안 모여도 매칭된다는 것을 알린다', () => {
     const tree = renderNode(MatchBody(bodyProps({ status: 'IDLE' })));
 
-    expect(text(tree)).toContain('2명만 남아도 계속 진행');
-    expect(text(tree)).toContain('인원이 모인 뒤 일부가 빠져도 2명이면 시작해요');
-    expect(text(tree)).not.toContain('목표 인원이 다 안 모여도 매칭을 시작해요');
+    expect(text(tree)).toContain('인원이 적어도 진행');
+    expect(text(tree)).toContain('희망 인원이 안 모이면 2명이라도 매칭하고, 도중에 빠져도 계속해요');
   });
 });
