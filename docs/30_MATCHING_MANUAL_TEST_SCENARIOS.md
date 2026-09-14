@@ -400,37 +400,224 @@ UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '61 minutes' WHER
 1단계는 서버에 저장하지 않아 **다른 기기에서는 보이지 않고 앱을 껐다 켜면 사라질 수 있습니다.**
 그건 버그가 아니라 2단계(알림함)와 3단계(PWA push)의 범위입니다.
 
-## 4. 확인용 SQL
+## 4. DB 조회와 조작
+
+### 4.0 먼저 — 어느 DB인가
+
+`.env`의 `DB_HOST`/`DB_PORT`/`POSTGRES_DB`를 확인하세요. **`meet_or_solo_dev`면 SSH 터널로
+공유 dev DB에 붙어 있는 것**이고, 이 절의 `UPDATE`·`DELETE`는 **쓰면 안 됩니다**(`docs/08`).
+
+조작이 필요한 시나리오(🕐 표시, 그리고 4.3의 초기화)는 **로컬 DB에서** 하세요.
+
+```bash
+docker compose -f docker-compose.local.yml up -d
+# .env에서 DB_HOST=localhost, DB_PORT=5432, POSTGRES_DB=meet_or_solo_local 로 변경
+```
+
+### 4.1 시작 전 — id부터 찾는다
+
+거의 모든 조회가 `memberId`와 `groupId`를 요구합니다. 매번 이 둘부터 찾으세요.
 
 ```sql
--- 그룹과 참가자 한눈에
-SELECT g.id, g.status AS group_status, g.confirmed_at, g.completed_at, g.cancelled_at,
-       g.cancel_reason, m.member_id, m.status AS member_status,
-       m.arrived_at, m.arrival_distance_meters, m.left_at, m.no_show_at
+-- 1) 내 memberId (닉네임으로)
+SELECT id, nickname, status, role, test_account, penalty_score, manner_temperature
+FROM members
+WHERE nickname IN ('테스터A', '테스터B');
+
+-- 2) 지금 내가 속한 활성 그룹
+SELECT g.id AS group_id, g.status, g.confirmed_at, g.confirmed_member_count
+FROM match_groups g
+JOIN match_group_members m ON m.group_id = g.id
+WHERE m.member_id = :memberId
+  AND g.status IN ('CONFIRMED', 'IN_PROGRESS')
+ORDER BY g.id DESC;
+
+-- 3) 방금 끝난 그룹 (완료 카드·신고 확인용)
+SELECT g.id AS group_id, g.status, g.completed_at, g.cancelled_at, g.cancel_reason
+FROM match_groups g
+JOIN match_group_members m ON m.group_id = g.id
+WHERE m.member_id = :memberId
+ORDER BY g.id DESC
+LIMIT 5;
+```
+
+### 4.2 시나리오별 — 무엇을 보는가
+
+#### 매칭 신청·제안 (A, A-1 ~ A-5)
+
+```sql
+-- 내 매칭 신청. WAITING -> PROPOSED -> MATCHED 순으로 바뀐다.
+-- search_expires_at이 지나면 EXPIRED가 되고 매칭은 실패한다(검색 창 60초).
+SELECT id, status, preferred_group_size, allow_minimum_two,
+       entered_at, search_expires_at, festival_id
+FROM match_pools
+WHERE member_id = :memberId
+ORDER BY id DESC LIMIT 3;
+
+-- 제안과 응답. SENT면 아직 응답 전이고 expires_at까지 30초다.
+SELECT p.id, p.attempt_id, p.member_id, p.status, p.sent_at, p.expires_at, p.responded_at
+FROM match_proposals p
+WHERE p.attempt_id = (
+    SELECT attempt_id FROM match_attempt_members WHERE member_id = :memberId
+    ORDER BY attempt_id DESC LIMIT 1)
+ORDER BY p.id;
+
+-- 체크인이 유효한가. 유효한 ACTIVE 체크인이 없으면 신청 자체가 막힌다.
+SELECT id, festival_id, status, distance_meters, checked_in_at, expires_at
+FROM festival_checkins
+WHERE member_id = :memberId
+ORDER BY id DESC LIMIT 3;
+
+-- 그 축제에 ACTIVE 만남 장소가 있는가. 없으면 MATCHING_MEETING_POINT_NOT_READY.
+SELECT id, name, status FROM festival_meeting_points WHERE festival_id = :festivalId;
+```
+
+#### 도착·이탈·종료 (B, C, D, H, I, J, K)
+
+```sql
+-- 그룹과 참가자를 한 번에. 이 문서에서 가장 자주 쓰는 조회다.
+SELECT g.id, g.status AS group_status, g.confirmed_at, g.completed_at,
+       g.cancelled_at, g.cancel_reason,
+       m.member_id, m.status AS member_status,
+       m.arrival_minutes, m.arrived_at, m.arrival_distance_meters,
+       m.left_at, m.no_show_at, m.allow_minimum_two
 FROM match_groups g
 JOIN match_group_members m ON m.group_id = g.id
 WHERE g.id = :groupId
 ORDER BY m.id;
+```
 
--- 타임라인
+읽는 법입니다.
+
+| 보이는 것 | 뜻 |
+| --- | --- |
+| `member_status = 'ARRIVED'` + `arrived_at` | 도착 완료 |
+| `arrival_distance_meters` 있음 | 반경 검증을 통과했거나 면제로 인정됐다. **좌표는 저장되지 않는다** |
+| `member_status = 'LEFT'` + `left_at` 있음 | 본인이 "먼저 갈게요"로 나감 |
+| `member_status = 'LEFT'` + `left_at` 없음 | 그룹 종료로 정리됨(본인 의사 아님) |
+| `member_status = 'NO_SHOW'` + `no_show_at` | 도착 마감까지 안 옴 |
+| `group_status = 'COMPLETED'` | 만남 성립(도착자 2명 이상) + 보상 지급 |
+| `cancel_reason = 'INSUFFICIENT_ARRIVALS'` | 만남 시간이 끝났는데 도착자가 1명 이하 |
+| `cancel_reason = 'INSUFFICIENT_ACTIVE_MEMBERS'` | 남은 인원이 1명 이하 |
+| `cancel_reason = 'MINIMUM_TWO_NOT_ALLOWED'` | 2명 남았는데 동의하지 않은 사람이 있음 |
+
+```sql
+-- 타임라인. 화면에 보이는 순서와 같아야 한다.
 SELECT event_type, member_id, payload, created_at
 FROM match_events WHERE group_id = :groupId ORDER BY id;
+```
 
--- 매너온도 이력
+#### 페널티·쿨타임 (A-4, E, F, G)
+
+```sql
+-- 이 그룹/풀에서 생긴 페널티
+SELECT member_id, event_type, score_delta, reason,
+       related_group_id, related_pool_id, created_at
+FROM match_penalty_events
+WHERE related_group_id = :groupId OR related_pool_id = :poolId
+ORDER BY id;
+
+-- 지금 걸려 있는 쿨타임. expires_at이 지나면 화면에서 풀린다.
+SELECT id, member_id, reason, status, starts_at, expires_at
+FROM match_cooldowns
+WHERE member_id = :memberId AND status = 'ACTIVE'
+ORDER BY id DESC;
+```
+
+| `reason` | 언제 | 길이 |
+| --- | --- | --- |
+| `REJECT` | 제안 거절 | 30초 |
+| `TIMEOUT` | 제안 무응답 | 2분 (`penalty_score +1`) |
+| `CANCEL` | 매칭 탐색 취소 | 20초 → 1분 → 5분 → 10분 |
+| `NO_SHOW` | 도착 마감까지 미도착 | 30분 → 60분 (`penalty_score +3`) |
+
+#### 매너온도 (D, I, Q)
+
+```sql
 SELECT member_id, event_type, delta, before_temperature, after_temperature,
        related_group_id, created_at
-FROM manner_temperature_events WHERE related_group_id = :groupId ORDER BY id;
+FROM manner_temperature_events
+WHERE related_group_id = :groupId
+ORDER BY id;
 
--- 페널티와 쿨타임
-SELECT member_id, event_type, score_delta, reason, created_at
-FROM match_penalty_events WHERE related_group_id = :groupId ORDER BY id;
-
-SELECT member_id, reason, status, starts_at, expires_at
-FROM match_cooldowns WHERE related_group_id = :groupId ORDER BY id;
-
--- 회원 현재 값
-SELECT id, status, penalty_score, manner_temperature FROM members WHERE id IN (:a, :b);
+SELECT id, nickname, manner_temperature, penalty_score FROM members WHERE id IN (:a, :b);
 ```
+
+완료 보상은 `MATCH_COMPLETED` / `+0.50`입니다. **도착자에게만** 들어가고 그룹당 한 번입니다.
+
+#### 신고·차단 (L, M, N)
+
+```sql
+SELECT id, reporter_member_id, reported_member_id, group_id, reason_code, status, created_at
+FROM reports WHERE group_id = :groupId ORDER BY id;
+
+-- 신고 가능 여부의 근거. 이 그룹에 도착자가 있었는가(docs/19 4.11.1)
+SELECT count(*) AS arrived_count
+FROM match_group_members WHERE group_id = :groupId AND arrived_at IS NOT NULL;
+```
+
+`arrived_count`가 **0이면 신고 버튼이 비활성**이고 "만남이 성사되지 않아 신고할 수 없어요"가
+떠야 합니다. 1 이상이면 신고할 수 있습니다.
+
+### 4.3 조작 — 시간 당기기와 초기화
+
+> **로컬 DB에서만 하세요.** 공유 dev DB에는 쓰지 않습니다.
+
+```sql
+-- 도착 마감(30분)을 지나게 한다. 노쇼 배치가 5초 안에 처리한다.
+UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '31 minutes' WHERE id = :groupId;
+
+-- 만남 종료(1시간)를 지나게 한다. 종료 배치가 5초 안에 닫는다.
+UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '61 minutes' WHERE id = :groupId;
+
+-- 취소 무페널티 구간(확정 후 3분)을 지나게 한다. G 시나리오용.
+UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '5 minutes' WHERE id = :groupId;
+```
+
+시나리오를 여러 번 돌리려면 아래를 **매번 초기화**해야 합니다. 그러지 않으면 쿨타임이 쌓여
+신청이 막히고, 재매칭 잠금 때문에 새 매칭이 잡히지 않습니다.
+
+```sql
+-- 1) 남아 있는 활성 그룹·풀 정리 (테스트가 중간에 끊겼을 때)
+UPDATE match_group_members SET status = 'LEFT'
+WHERE member_id IN (:a, :b) AND status IN ('JOINED', 'ARRIVAL_TIME_SELECTED', 'ARRIVED');
+
+UPDATE match_groups SET status = 'CANCELLED', cancelled_at = now(),
+       cancel_reason = 'INSUFFICIENT_ACTIVE_MEMBERS'
+WHERE status IN ('CONFIRMED', 'IN_PROGRESS');
+
+UPDATE match_pools SET status = 'CANCELLED'
+WHERE member_id IN (:a, :b) AND status IN ('WAITING', 'LOCKED', 'PROPOSED');
+
+-- 2) 쿨타임 해제
+UPDATE match_cooldowns SET status = 'EXPIRED'
+WHERE member_id IN (:a, :b) AND status = 'ACTIVE';
+
+-- 3) 재매칭 잠금 해제 — 지난 만남을 2시간 전으로 밀어낸다
+UPDATE match_groups SET confirmed_at = confirmed_at - INTERVAL '2 hours'
+WHERE id IN (SELECT group_id FROM match_group_members WHERE member_id IN (:a, :b));
+
+-- 4) 매너온도·페널티 되돌리기 (여러 번 돌린 뒤 값이 헷갈릴 때)
+UPDATE members SET manner_temperature = 36.50, penalty_score = 0 WHERE id IN (:a, :b);
+
+-- 5) 테스트 계정 지정·해제 (관리자 화면 대신 SQL로)
+UPDATE members SET test_account = TRUE  WHERE id IN (:a, :b);
+UPDATE members SET test_account = FALSE WHERE id IN (:a, :b);
+```
+
+**1)을 먼저 하고 2)3)을 하세요.** 활성 그룹이 남아 있으면 잠금·쿨타임을 풀어도 새 신청이
+`이미 활성 매칭 그룹에 참여 중입니다`로 막힙니다.
+
+### 4.4 자주 막히는 지점
+
+| 증상 | 확인할 것 |
+| --- | --- |
+| 매칭 신청 버튼이 회색 | 체크인이 `ACTIVE`이고 `expires_at`이 남았는가 / 쿨타임·완료 잠금이 있는가 |
+| 눌리는데 반응 없음 | **화면에 사유 한 줄이 뜬다.** 안 뜨면 그건 결함이니 기록 |
+| 신청은 되는데 매칭이 안 됨 | 상대와 `festival_id`가 같은가 / `match_pools.status`가 `WAITING`에서 안 바뀌는가 / **희망 인원이 다르면 작은 쪽에 맞춰 묶이므로 "인원이 적어도 진행"이 켜져 있는가** |
+| 제안이 안 옴 | `MATCHING_SCHEDULER_ENABLED=true`인가 / 서버 로그에 스케줄러 tick이 보이는가 |
+| 도착이 거절됨 | `test_account`인가 / 브라우저 위치 권한을 허용했는가 / 만남 장소에 좌표가 있는가 |
+| 30분·1시간이 지나도 그대로 | `MATCHING_NO_SHOW_SCHEDULER_ENABLED` / `MATCHING_SCHEDULER_ENABLED`가 켜져 있는가 |
 
 ## 5. 결과 기록
 
