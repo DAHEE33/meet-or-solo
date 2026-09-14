@@ -1,5 +1,89 @@
 # 진행 상태 기록
 
+## [10-B 알림] 앱 전역 매칭 알림 1단계 (docs/19 4.11.5)
+
+상태: Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
+
+브랜치는 `feature/wbs-10-b-home-notifications`이며 `dev`(`d65d243`)에서 분기했다.
+**`fix/wbs-10-b-match-completion-and-report-scope`와 섞지 않았다.** 그쪽에는 `V36`이 있어
+아직 push되지 않은 협업자의 `V35`와 충돌하는데, 알림 1단계는 migration이 없어 `dev`에서
+바로 분기하면 그 문제를 피할 수 있다.
+
+### 무엇이 없었나
+
+알림 기능이 **아예 없었다.** 헤더의 종 아이콘(`AppHeader`)은 `onClick`이 없는 빈 버튼이었다.
+
+서버는 이미 WebSocket으로 상태 변화를 12종 넘게 보내고 있었다(`MATCH_PROPOSED`,
+`MATCH_CONFIRMED`, `MEMBER_ARRIVED`, `MEMBER_NO_SHOW`, `MATCH_CANCELLED`, `MATCH_COMPLETED` 등).
+문제는 **구독하는 곳이 `useMatchingSession`과 `useMatchRoom` 둘뿐**이었다는 것이다. 연결을 화면
+안에서 만들었기 때문에 `/matching`과 `/match-room`을 벗어나면 연결이 끊겼다. 홈이나
+마이페이지에 있으면 아무것도 오지 않았다.
+
+**가장 아픈 건 `MATCH_PROPOSED`다.** 응답 시간이 30초(`MATCHING_PROPOSAL_TIMEOUT`)이고 놓치면
+`penalty_score +1`과 쿨타임 2분이 붙는다(`MatchingPenaltyPolicy.roundOneTimeout`). 화면을 보고
+있지 않으면 불이익을 받는 구조였다.
+
+### 연결을 먼저 하나로 합쳤다
+
+전역 연결을 그냥 추가하면 매칭 화면에서 소켓이 2개가 되고 같은 알림을 두 번 받는다. 그래서
+`matchingNotificationHub`를 두고 **구독자를 세어 소켓 하나만** 유지한다. 첫 구독자에 연결하고
+마지막 구독자가 떠나면 끊는다.
+
+구독 API를 `connectMatchingWebSocket`과 **같은 시그니처로** 맞춘 것이 주효했다. 두 훅은 이미
+`connect`를 주입받는 구조라 주입 대상만 바꿔도 되고, 훅 내부 로직은 한 줄도 건드리지 않았다.
+
+React context가 아니라 모듈 수준 객체로 둔 이유는 구독자가 트리 곳곳에 있기 때문이다. 헤더의
+종은 `MobileLayout` 안, 훅은 화면 안, 알림 센터는 `App` 최상단이라 한 Provider로 묶기 어색하다.
+알림 목록도 같은 이유로 `useSyncExternalStore` 기반 모듈 store로 만들었다.
+
+### 확정한 것
+
+| 항목 | 결정 |
+| --- | --- |
+| 표시 방식 | `MATCH_PROPOSED`·`MATCH_CONFIRMED`는 **배너**(자동으로 사라지지 않음), 나머지는 토스트 5초 |
+| 중복 억제 | 이미 그 화면을 보고 있으면 토스트를 띄우지 않는다. **단 배너는 예외** |
+| 재연결 중복 | `사유:발생시각`을 키로 같은 알림을 두 번 쌓지 않는다 |
+| 보관 | 최근 20건을 `localStorage`에. 새로고침은 견디지만 **기기마다 다르다** |
+| 읽음 처리 | 종을 눌러 목록을 여는 순간 전체 읽음 |
+| 로그인 전 | `/login`·`/signup`에서는 연결하지 않는다. 인증이 없어 5초마다 실패·재시도만 한다 |
+| 모르는 사유 | 버리지 않고 기본 문구로 목록에 남긴다 |
+
+마지막 항목은 백엔드에 사유가 하나 늘었을 때를 위한 것이다. 매핑에 없다고 알림을 통째로
+버리면 "왜 안 뜨지"의 원인을 찾기 어렵다.
+
+**보관 한계를 화면에 적었다.** 목록 하단에 "최근 알림만 이 기기에 보관해요"를 둔다. 1단계는
+서버에 저장하지 않아 다른 기기에서는 보이지 않고 오래된 것은 사라지는데, 그걸 숨기면 사용자가
+알림을 신뢰할 수 없게 된다.
+
+### 단계를 나눈 이유
+
+기술이 아니라 **오늘 할 수 있느냐**로 갈랐다.
+
+| 단계 | 내용 | 막는 것 |
+| --- | --- | --- |
+| 1단계(이번) | 전역 연결 + 토스트·배너 + 벨 뱃지·목록 | 없음. 프론트 전용이라 migration이 없다 |
+| 2단계 | `notifications` 테이블 + 조회 API. 앱을 껐다 켜도 남는 알림함 | migration 필요 → 협업자 `V35` push 이후 |
+| 3단계 | PWA Web Push. 앱이 꺼져 있어도 수신 | 구독 테이블 + VAPID + service worker를 `injectManifest`로 교체. iOS는 홈 화면 설치 필요 |
+
+### 바뀐 파일
+
+- `api/matchingNotificationHub.ts`(신규), `notifications/notificationStore.ts`(신규),
+  `notifications/notificationMessages.ts`(신규),
+  `components/notifications/NotificationCenter.tsx`(신규)
+- `components/layout/AppHeader.tsx`(종에 뱃지·목록), `App.tsx`(알림 센터 마운트),
+  `hooks/useMatchRoom.ts`·`hooks/useMatchingSession.ts`(허브 구독으로 전환)
+
+### 검증
+
+- frontend: `npx vitest run` 74 files / 705 tests 통과(신규 13건), `npx tsc -b`,
+  `npx vite build` 통과.
+- 신규 테스트의 핵심은 **소켓이 하나만 열리는지**다. 구독자가 둘일 때 연결이 한 번만 일어나고,
+  하나가 해제돼도 끊기지 않으며, 마지막이 해제될 때만 닫히는 것을 고정했다. 이 작업에서 가장
+  깨지기 쉬운 부분이다.
+- 수동 검증 대기: ①홈에 머무는 동안 매칭이 성사되면 배너가 뜨는지, ②눌러서 해당 화면으로
+  가는지, ③상태방에서 도착 알림이 토스트로 중복되지 않는지, ④종 뱃지 숫자와 목록,
+  ⑤새로고침 후 목록 유지, ⑥로그인 화면에서 소켓 재시도 로그가 없는지.
+
 ## [10-B 동의] 체크박스를 누르면 약관이 먼저 뜨게 (docs/19 4.7.1 재조정)
 
 상태: Frontend 구현·자동 테스트 완료. 브라우저 수동 검증 대기
