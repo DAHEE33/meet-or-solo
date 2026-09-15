@@ -77,6 +77,16 @@ export type MatchingRestriction = {
     expiresAt: string | null;
     remainingSeconds: number;
   };
+  /**
+   * 매너온도 매칭 제한(docs/19 4.9 PR C).
+   *
+   * 사유(신고)도 해제 예정 시각도 담기지 않는다. 낮은 온도는 곧 "신고를 받았다"이고,
+   * 회복은 만남 완료와 시간 경과 두 경로에 달려 있어 확정된 해제 시각이 없다.
+   */
+  temperatureLimit: {
+    active: boolean;
+    minimumTemperature: number;
+  };
 };
 
 export type ArrivalMinutesSnapshot = 0 | 5 | 10 | 20 | 25 | 30;

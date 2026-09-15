@@ -78,7 +78,14 @@ public class SuspendedActivityPolicy {
             Rule.of("PUT", "/api/matching/groups/me/current/arrival"),
             Rule.of("PUT", "/api/matching/groups/me/current/arrival-time"),
             // 만남에서 빠져나오는 요청이다. 막으면 정지 회원이 자리를 뜨지 못한다(docs/19 4.11.3).
-            Rule.of("PUT", "/api/matching/groups/me/current/leave")
+            Rule.of("PUT", "/api/matching/groups/me/current/leave"),
+            // 알림 읽음 처리. 본인 알림함을 읽는 행위이고 다른 사용자에게 보이지 않는다.
+            // 정지 회원에게 막으면 제재 통보나 지난 매칭 결과를 확인만 하고도 뱃지가 남는다.
+            Rule.of("PATCH", "/api/members/me/notifications/read"),
+            // 알림 수신 설정. 본인 기기 설정이라 활동이 아니다. 특히 해지를 막으면 알림을
+            // 끄고 싶어도 못 끄게 된다(docs/32 3.4).
+            Rule.of("POST", "/api/members/me/push-subscriptions"),
+            Rule.of("DELETE", "/api/members/me/push-subscriptions")
     );
 
     private final AntPathMatcher matcher = new AntPathMatcher();

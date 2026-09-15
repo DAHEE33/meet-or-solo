@@ -166,6 +166,34 @@ class MatchPoolEntryServiceIntegrationTest {
                 Integer.class, MEMBER_ID)).isZero();
     }
 
+    /**
+     * 30도 매칭 제한(docs/19 4.9 PR C). status는 그대로 ACTIVE이고 매칭 신청만 막힌다.
+     */
+    @Test
+    void 매너온도가_30도_미만이면_신청을_막고_제한_상태를_함께_알린다() {
+        jdbc.update("UPDATE members SET manner_temperature = 28.50 WHERE id = ?", MEMBER_ID);
+
+        assertError(MEMBER_ID, ErrorCode.MATCHING_TEMPERATURE_RESTRICTED);
+
+        var restrictions = queries.restrictions(MEMBER_ID);
+        assertThat(restrictions.temperatureLimit().active()).isTrue();
+        assertThat(restrictions.temperatureLimit().minimumTemperature()).isEqualByComparingTo("30.00");
+        // 자동 제한은 회원 status를 바꾸지 않는다(docs/19 4.3).
+        assertThat(jdbc.queryForObject("SELECT status FROM members WHERE id=?", String.class, MEMBER_ID))
+                .isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_pools WHERE member_id=?",
+                Integer.class, MEMBER_ID)).isZero();
+    }
+
+    /** 경계값은 허용한다. 회복해서 30.00에 닿으면 바로 신청할 수 있어야 한다. */
+    @Test
+    void 매너온도가_정확히_30도면_신청할_수_있다() {
+        jdbc.update("UPDATE members SET manner_temperature = 30.00 WHERE id = ?", MEMBER_ID);
+
+        assertThat(queries.restrictions(MEMBER_ID).temperatureLimit().active()).isFalse();
+        assertThat(entries.enter(MEMBER_ID, request()).status()).isEqualTo("WAITING");
+    }
+
     @Test
     void 정상_완료_제한_경계_후에는_유효한_체크인으로_신청할_수_있다() {
         insertTerminalGroup(MEMBER_ID, "COMPLETED", "COMPLETED",

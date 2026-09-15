@@ -22,6 +22,7 @@ import { formatSeoulDateTime } from '../utils/dateTime';
 import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverClock';
 import { positiveInteger, readNumberFromLocationState } from '../utils/positiveInteger';
 import MannerTemperatureBadge from '../components/member/MannerTemperatureBadge';
+import { enablePush } from '../push/webPush';
 
 function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
   const [remaining, setRemaining] = useState(0);
@@ -223,8 +224,18 @@ export default function MatchingConditionPage() {
   const hasFestival = festivalId !== null;
   const cooldownActive = state.restriction?.cooldown.active === true;
   const completionLockActive = state.restriction?.completionLock.active === true;
-  const canApply = hasFestival && !isSubmitting && !cooldownActive && !completionLockActive;
+  // 온도 제한은 화면 상태로도 갈리지만(TEMPERATURE_RESTRICTED), 신청 버튼도 함께 막는다.
+  // 상태 파생과 버튼 조건이 어긋나면 눌리는데 서버가 거절하는 버튼이 남는다.
+  const temperatureRestricted = state.restriction?.temperatureLimit.active === true;
+  const canApply = hasFestival && !isSubmitting && !cooldownActive && !completionLockActive
+    && !temperatureRestricted;
   const startPool = () => {
+    /*
+      알림 권한을 여기서 한 번 묻는다(docs/32 3.4). 앱을 켜자마자 묻는 것은 무엇에 쓰는지
+      모르는 채 결정하게 만들고, 매칭 제안은 응답 시간이 30초라 화면을 닫아도 알림이 닿아야
+      하는 유일한 지점이다. 실패해도 신청은 그대로 진행한다 — push는 세 번째 경로일 뿐이다.
+    */
+    void enablePush();
     void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
   };
   const onStart = () => {
@@ -322,6 +333,8 @@ export default function MatchingConditionPage() {
           terminationReason={state.pool?.terminationReason ?? null}
           completionLock={state.restriction?.completionLock ?? null}
           completionRemaining={completionRemaining}
+          mannerTemperature={state.restriction?.mannerTemperature ?? null}
+          minimumTemperature={state.restriction?.temperatureLimit.minimumTemperature ?? null}
           setGroupSize={setGroupSize}
           setAllowMinimum={setAllowMinimum}
           onStart={onStart}
@@ -432,6 +445,9 @@ interface MatchBodyProps {
   terminationReason?: MatchTerminationReason | null;
   completionLock: MatchingRestriction['completionLock'] | null;
   completionRemaining: number;
+  /** 본인 매너온도와 매칭 기준 온도(docs/19 4.9 PR C). */
+  mannerTemperature: number | null;
+  minimumTemperature: number | null;
   setGroupSize: (size: 2 | 3 | 4) => void;
   setAllowMinimum: (allow: boolean) => void;
   onStart: () => void;
@@ -514,6 +530,15 @@ export function MatchBody(props: MatchBodyProps) {
         currentCheckin={props.currentCheckin}
         onRetry={props.onRetry}
         onRequestCancelCheckin={props.onRequestCancelCheckin}
+      />
+    );
+  }
+  if (status === 'TEMPERATURE_RESTRICTED') {
+    return (
+      <TemperatureRestrictedCard
+        mannerTemperature={props.mannerTemperature}
+        minimumTemperature={props.minimumTemperature}
+        festivalId={props.festivalId}
       />
     );
   }
@@ -942,6 +967,66 @@ function ConfirmedCard({ group, onEnterRoom }: { group: CurrentMatchGroup; onEnt
 }
 
 // ── 8. CANCELLED / EXPIRED / cooldown ─────────────────
+/**
+ * 매너온도가 낮아 매칭이 막힌 상태(docs/19 4.9 PR C).
+ *
+ * <p><b>신고를 문구에 쓰지 않는다.</b> 온도가 낮은 이유는 곧 "신고를 받았다"이고, 그것을
+ * 화면에 적으면 같은 만남에 있던 사람 중 누가 신고했는지 좁힐 수 있다(docs/19 4.8 신고자 보호).
+ *
+ * <p><b>카운트다운도 두지 않는다.</b> 회복은 만남 완료 보상과 시간 경과 두 경로에 달려 있어
+ * 확정된 해제 시각이 없다. 쿨타임처럼 남은 시간을 보여주면 지킬 수 없는 약속이 된다. 대신
+ * 기준 온도와 회복 방법을 적는다 — 본인 온도는 이미 본인에게 보이는 값이다.
+ *
+ * <p>솔로 코스는 그대로 열어 둔다. 막힌 것은 매칭이지 서비스가 아니다.
+ */
+function TemperatureRestrictedCard({
+  mannerTemperature,
+  minimumTemperature,
+  festivalId,
+}: {
+  mannerTemperature: number | null;
+  minimumTemperature: number | null;
+  festivalId: number | null;
+}) {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ink/10">
+        <XCircle size={28} className="text-ink/45" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">지금은 매칭을 신청할 수 없어요</h2>
+        <p className="text-[13px] text-ink/55">
+          매너온도가 기준보다 낮아요.
+          {mannerTemperature !== null && minimumTemperature !== null
+            ? ` 현재 ${mannerTemperature.toFixed(2)}도이고, ${minimumTemperature.toFixed(2)}도부터 신청할 수 있어요.`
+            : ''}
+        </p>
+      </div>
+      <p className="rounded-2xl bg-sand px-4 py-3 text-[13px] leading-5 text-ink/55">
+        매너온도는 만남을 끝까지 마치면 오르고, 시간이 지나도 조금씩 회복돼요.
+        자세한 값은 마이페이지에서 볼 수 있어요.
+      </p>
+      <div className="mt-1 flex w-full flex-col gap-2">
+        {festivalId !== null && (
+          <Link
+            to="/solo-course"
+            state={{ festivalId }}
+            className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+          >
+            솔로 코스 추천 보기
+          </Link>
+        )}
+        <Link
+          to="/mypage"
+          className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+        >
+          마이페이지에서 매너온도 보기
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function CancelledCard({
   reason,
   cooldownActive,

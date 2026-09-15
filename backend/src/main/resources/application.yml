@@ -55,6 +55,12 @@ app:
     checkin:
       # 체크인 유효 기간(1시간)은 매칭 자격 상한과 동일 값을 써야 하므로 설정으로 분리하지 않고
       # domain/checkin/CheckinValidityPolicy에 고정한다.
+      #
+      # radius-meters는 festivals.checkin_radius_meters(DB 컬럼, 축제별 기본값 500)와 별개다.
+      # 그 컬럼을 실제로 다르게 채우는 코드가 없어 모든 축제가 항상 500m였다. 그래서 축제별
+      # 값이 아니라 환경변수로 조절하는 전역 값으로 두고, FestivalCheckinService가 이 값만
+      # 검증에 쓴다.
+      radius-meters: ${FESTIVAL_CHECKIN_RADIUS_METERS:500}
       accuracy-threshold-meters: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:100}
       bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:false}
   tour-place:
@@ -82,6 +88,17 @@ app:
     # 실제 주소는 저장소에 넣지 않는다. 공개 저장소에 남으면 스팸 수집 대상이 된다.
     # 환경변수 SUPPORT_CONTACT_EMAIL로만 주입하고, 비어 있으면 안내에서 문의 문구를 숨긴다.
     contact-email: ${SUPPORT_CONTACT_EMAIL:}
+  push:
+    # Web Push(VAPID) 키(docs/32 3.4). 저장소에 실제 값을 넣지 않는다.
+    # 키 쌍이 비어 있으면 발송을 끈다 — local에서 키를 만들지 않아도 나머지 알림 경로
+    # (WebSocket·알림함)는 그대로 동작해야 한다.
+    #
+    # 키 생성: npx web-push generate-vapid-keys
+    vapid:
+      public-key: ${WEB_PUSH_VAPID_PUBLIC_KEY:}
+      private-key: ${WEB_PUSH_VAPID_PRIVATE_KEY:}
+      # push 서비스가 요구하는 연락처. mailto: 또는 https: 형식이다.
+      subject: ${WEB_PUSH_VAPID_SUBJECT:}
   admin:
     # 슈퍼관리자 ID/PW 로그인(docs/30). 셋 다 환경변수로만 주입하고 저장소에는 실제 값을
     # 넣지 않는다. username이나 password가 비어 있으면 계정을 만들지 않는다 —

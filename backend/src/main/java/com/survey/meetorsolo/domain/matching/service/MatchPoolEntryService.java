@@ -11,6 +11,7 @@ import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberReposito
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchPoolRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.policy.MannerTemperaturePolicy;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
@@ -64,6 +65,11 @@ public class MatchPoolEntryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.MATCHING_RESOURCE_NOT_FOUND));
         if (!Member.STATUS_ACTIVE.equals(member.getStatus())) {
             throw new BusinessException(ErrorCode.MATCHING_INVALID_REQUEST, "프로필을 완료한 활성 회원만 매칭을 신청할 수 있습니다.");
+        }
+        // 온도 제한은 회원 status를 바꾸지 않는다(docs/19 4.3). 조회와 문의는 그대로 되고
+        // 매칭 신청만 막힌다. 회복 경로는 만남 완료 보상과 시간 경과 회복 둘이다.
+        if (!MannerTemperaturePolicy.matchingAllowed(member.getMannerTemperature())) {
+            throw new BusinessException(ErrorCode.MATCHING_TEMPERATURE_RESTRICTED);
         }
         if (pools.existsActiveByMemberId(memberId)) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 진행 중인 match pool이 있습니다.");

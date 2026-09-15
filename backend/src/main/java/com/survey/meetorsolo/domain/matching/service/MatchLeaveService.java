@@ -109,7 +109,7 @@ public class MatchLeaveService {
         groups.flush();
         events.flush();
         publisher.publishEvent(new MatchingStateChangedEvent(
-                notified, cancelled ? "MATCH_CANCELLED" : "MEMBER_LEFT", now));
+                notified, cancelled ? "MATCH_CANCELLED" : "MEMBER_LEFT", now, memberId));
         // 그룹 snapshot을 돌려주지 않는다. 나간 사람은 더 이상 활성 참여자가 아니라 조회에서
         // 걸러지고, 화면도 이 응답을 받으면 상태방을 떠나므로 방 내용이 필요 없다.
         return new MatchCancellationResponse(

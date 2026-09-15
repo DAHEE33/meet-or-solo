@@ -51,6 +51,21 @@ public final class MannerTemperaturePolicy {
      */
     public static final BigDecimal MATCH_COMPLETED_DELTA = new BigDecimal("0.50");
 
+    /**
+     * 매칭을 신청할 수 있는 최소 온도({@code docs/19} 4.9 PR C).
+     *
+     * <p>이 값 <b>미만</b>이면 매칭 신청이 막힌다. 경계값({@code 30.00})은 허용한다.
+     *
+     * <p>차감량을 {@code 2.00}으로 낮춘 것이 이 제한의 전제다. 신고 확정 4건
+     * ({@code 36.5 - 8 = 28.5})이라야 여기에 닿으므로, 관리자 안전 알림(3건)이 <b>먼저</b> 뜨고
+     * 그다음 자동 제한이 걸린다. 순서가 뒤집히면 {@code docs/19} 4.3에서 확정한 "자동 제한은
+     * 회원 status를 바꾸지 않고 관리자 알림까지만"을 우회하게 된다.
+     *
+     * <p>회복 경로가 둘 다 살아 있어야 한다 — 만남 완료 보상과 시간 경과 회복. 없으면
+     * "신고 4건 → 매칭 금지 → 만남 불가 → 회복 불가" 데드락이 된다.
+     */
+    public static final BigDecimal MATCHING_MINIMUM = new BigDecimal("30.00");
+
     /** 시간 경과 회복 1회당 상승량. */
     public static final BigDecimal TIME_RECOVERY_DELTA = new BigDecimal("0.50");
 
@@ -64,6 +79,11 @@ public final class MannerTemperaturePolicy {
     public static final int TIME_RECOVERY_INTERVAL_DAYS = 30;
 
     private MannerTemperaturePolicy() {
+    }
+
+    /** 매칭을 신청할 수 있는 온도인지. 경계값({@link #MATCHING_MINIMUM})은 허용한다. */
+    public static boolean matchingAllowed(BigDecimal temperature) {
+        return temperature == null || temperature.compareTo(MATCHING_MINIMUM) >= 0;
     }
 
     /** 허용 범위 안의 값인지. 경계값은 포함한다. */

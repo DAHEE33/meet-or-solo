@@ -13,6 +13,7 @@ import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import com.survey.meetorsolo.global.geo.DistanceText;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -97,7 +98,7 @@ public class MatchArrivalService {
         groups.flush();
         events.flush();
         eventPublisher.publishEvent(new MatchingStateChangedEvent(
-                activeMemberIds, allArrived ? "ALL_ARRIVED" : "MEMBER_ARRIVED", now
+                activeMemberIds, allArrived ? "ALL_ARRIVED" : "MEMBER_ARRIVED", now, memberId
         ));
         return groupQueries.snapshot(group.getId(), memberId);
     }
@@ -126,7 +127,12 @@ public class MatchArrivalService {
             // - 테스트 계정: 그 계정만 면제한다. 같은 환경에서 일반 계정은 검증을 그대로 받는다.
             boolean testAccount = members.existsByIdAndTestAccountIsTrue(memberId);
             if (!arrivalProperties.bypassRadiusCheck() && !testAccount) {
-                throw new BusinessException(ErrorCode.MATCHING_ARRIVAL_OUT_OF_RANGE);
+                // 체크인과 같은 이유로 거리를 함께 알려 준다. 사유만 주면 사용자는 GPS 문제인지
+                // 자기가 정말 먼 것인지 구분할 수 없다(docs/32 3.1).
+                throw new BusinessException(
+                        ErrorCode.MATCHING_ARRIVAL_OUT_OF_RANGE,
+                        "만남 장소에서 약 %s 떨어져 있어요. %s 안에서 도착을 인증할 수 있어요."
+                                .formatted(DistanceText.of(distanceMeters), DistanceText.of(radiusMeters)));
             }
             log.warn("도착 반경 검증을 건너뛰고 도착을 인정했습니다(사유={}). "
                             + "memberId={}, groupId={}, distanceMeters={}, radiusMeters={}",

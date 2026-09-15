@@ -11,6 +11,7 @@ import {
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
 import { subscribeMatchingNotifications } from '../api/matchingNotificationHub';
 import { getCurrentPosition } from '../utils/geolocation';
+import type { MatchRoomAction } from '../utils/matchRoomError';
 
 export const MATCH_ROOM_FALLBACK_POLL_MS = 5_000;
 export const ARRIVAL_CHANGE_NOTICE_MS = 3_000;
@@ -22,6 +23,14 @@ export type MatchRoomState = {
   error: ApiClientError | Error | null;
   eventsError: ApiClientError | Error | null;
   actionError: ApiClientError | Error | null;
+  /**
+   * 어떤 버튼이 실패했는지. 여러 버튼이 `actionError` 한 자리를 함께 쓰므로 화면이 구분해야
+   * "도착 예정 시간을 저장하지 못했어요"가 도착 인증 실패에 뜨는 일이 없다(docs/32 3.1).
+   *
+   * 선택 필드로 둔 이유는 `arrivalChangeNotice`와 같다 — 화면 조립 테스트가 상태를 직접
+   * 만들어 쓰는데, 오류와 무관한 경우까지 이 값을 적게 하면 잡음만 늘어난다.
+   */
+  actionErrorSource?: MatchRoomAction | null;
   arrivalChangeNotice?: string | null;
   isSubmitting: boolean;
   cancellationResult?: MatchCancellationResult | null;
@@ -35,6 +44,7 @@ const INITIAL_STATE: MatchRoomState = {
   error: null,
   eventsError: null,
   actionError: null,
+  actionErrorSource: null,
   arrivalChangeNotice: null,
   isSubmitting: false,
   cancellationResult: null,
@@ -162,6 +172,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           error: null,
           eventsError: eventsFailed ? normalizeError(eventsResult.reason) : null,
           actionError: null,
+          actionErrorSource: null,
           arrivalChangeNotice: changedMember
             ? `${changedMember.nickname}님이 도착 시간을 변경하였어요.`
             : currentState.arrivalChangeNotice,
@@ -210,7 +221,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     }
     const controller = new AbortController();
     mutationAbortController = controller;
-    publish({ ...currentState, actionError: null, isSubmitting: true });
+    publish({ ...currentState, actionError: null, actionErrorSource: null, isSubmitting: true });
     const operation = dependencies.selectArrivalTime(arrivalMinutes, controller.signal)
       .then(async (group) => {
         if (stopped || controller.signal.aborted) return false;
@@ -220,6 +231,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           group,
           error: null,
           actionError: null,
+          actionErrorSource: null,
           isSubmitting: false,
         });
         await refreshEventsAfterMutation(controller, mutationGeneration);
@@ -230,6 +242,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
         publish({
           ...currentState,
           actionError: normalizeError(error),
+          actionErrorSource: 'ARRIVAL_TIME',
           isSubmitting: false,
         });
         return false;
@@ -248,7 +261,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     }
     const controller = new AbortController();
     mutationAbortController = controller;
-    publish({ ...currentState, actionError: null, isSubmitting: true });
+    publish({ ...currentState, actionError: null, actionErrorSource: null, isSubmitting: true });
     const operation = dependencies.arrive(controller.signal)
       .then(async (group) => {
         if (stopped || controller.signal.aborted) return false;
@@ -262,6 +275,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             events: [],
             error: null,
             actionError: null,
+            actionErrorSource: null,
             // 도착 요청과 만남 종료가 겹친 경우다. 전원 도착만으로는 완료되지 않으므로
             // 여기 도달하는 것은 만남 시간이 끝나 서버가 방을 닫은 뒤다(docs/19 4.11.2).
             terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
@@ -275,6 +289,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           group,
           error: null,
           actionError: null,
+          actionErrorSource: null,
           isSubmitting: false,
         });
         await refreshEventsAfterMutation(controller, mutationGeneration);
@@ -282,7 +297,12 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
       })
       .catch((error: unknown) => {
         if (stopped || controller.signal.aborted || isAbortError(error)) return false;
-        publish({ ...currentState, actionError: normalizeError(error), isSubmitting: false });
+        publish({
+          ...currentState,
+          actionError: normalizeError(error),
+          actionErrorSource: 'ARRIVE',
+          isSubmitting: false,
+        });
         return false;
       })
       .finally(() => {
@@ -300,7 +320,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     }
     const controller = new AbortController();
     mutationAbortController = controller;
-    publish({ ...currentState, actionError: null, isSubmitting: true });
+    publish({ ...currentState, actionError: null, actionErrorSource: null, isSubmitting: true });
     const operation = dependencies.cancelParticipation(reason, controller.signal)
       .then((result) => {
         if (stopped || controller.signal.aborted) return false;
@@ -311,6 +331,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           group: null,
           events: [],
           actionError: null,
+          actionErrorSource: null,
           cancellationResult: result,
           terminationNotice: result.groupContinues
             ? '참여 취소가 완료됐어요. 남은 멤버는 만남을 계속해요.'
@@ -321,7 +342,12 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
       })
       .catch((error: unknown) => {
         if (stopped || controller.signal.aborted || isAbortError(error)) return false;
-        publish({ ...currentState, actionError: normalizeError(error), isSubmitting: false });
+        publish({
+          ...currentState,
+          actionError: normalizeError(error),
+          actionErrorSource: 'CANCEL',
+          isSubmitting: false,
+        });
         return false;
       })
       .finally(() => {
@@ -342,7 +368,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     }
     const controller = new AbortController();
     mutationAbortController = controller;
-    publish({ ...currentState, actionError: null, isSubmitting: true });
+    publish({ ...currentState, actionError: null, actionErrorSource: null, isSubmitting: true });
     const operation = dependencies.leave(controller.signal)
       .then((result) => {
         if (stopped || controller.signal.aborted) return false;
@@ -354,6 +380,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           group: null,
           events: [],
           actionError: null,
+          actionErrorSource: null,
           cancellationResult: result,
           terminationNotice: result.groupContinues
             ? '먼저 나왔어요. 남은 멤버는 만남을 계속해요.'
@@ -364,7 +391,12 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
       })
       .catch((error: unknown) => {
         if (stopped || controller.signal.aborted || isAbortError(error)) return false;
-        publish({ ...currentState, actionError: normalizeError(error), isSubmitting: false });
+        publish({
+          ...currentState,
+          actionError: normalizeError(error),
+          actionErrorSource: 'LEAVE',
+          isSubmitting: false,
+        });
         return false;
       })
       .finally(() => {

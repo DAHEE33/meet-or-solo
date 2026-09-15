@@ -2,7 +2,7 @@ import { Bell } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  markAllRead,
+  markAllReadEverywhere,
   useNotifications,
   type StoredNotification,
 } from '../../notifications/notificationStore';
@@ -10,14 +10,14 @@ import { formatSeoulDateTime } from '../../utils/dateTime';
 
 export default function AppHeader() {
   const navigate = useNavigate();
-  const { items, unreadCount } = useNotifications();
+  const { items, unreadCount, retention } = useNotifications();
   const [open, setOpen] = useState(false);
 
   const toggle = () => {
     setOpen((previous) => {
       // 여는 순간 읽음으로 본다. 목록을 펼쳤는데 뱃지가 남아 있으면 무엇이 새 알림인지
-      // 구분할 방법이 없다.
-      if (!previous) markAllRead();
+      // 구분할 방법이 없다. 읽음은 서버에도 기록해 다른 기기에서 다시 뱃지가 뜨지 않게 한다.
+      if (!previous) void markAllReadEverywhere();
       return !previous;
     });
   };
@@ -81,11 +81,13 @@ export default function AppHeader() {
             </ul>
           )}
           {/*
-            1단계는 프론트 전용이라 목록이 최근 20건까지만 남고 기기마다 다르다. 그 한계를
-            숨기지 않고 적어둔다(docs/19 4.11.5).
+            보관 범위를 화면에 박아두지 않고 서버 값으로 적는다. 1단계에서 "이 기기에
+            보관해요"를 박아둔 탓에 서버 알림함이 생긴 뒤에도 문구가 남아 있었다(docs/32 3.3).
           */}
           <p className="border-t border-line px-4 py-2 text-[11px] text-ink/40">
-            최근 알림만 이 기기에 보관해요.
+            {retention
+              ? `최근 ${retention.count}건, ${retention.days}일까지 보관해요.`
+              : '최근 알림만 보여줘요.'}
           </p>
         </div>
       )}

@@ -82,7 +82,7 @@ public class MatchCancellationService {
         events.flush();
         publisher.publishEvent(new MatchingStateChangedEvent(
                 notified, group.getStatus().equals("CANCELLED")
-                        ? "MATCH_CANCELLED" : "MEMBER_CANCELLED", now));
+                        ? "MATCH_CANCELLED" : "MEMBER_CANCELLED", now, memberId));
         return response(group, currentCount);
     }
 

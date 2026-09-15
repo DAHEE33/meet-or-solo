@@ -75,6 +75,10 @@ const restriction = (active = false): MatchingRestriction => ({
     expiresAt: active ? '2026-07-27T12:05:00' : null,
     remainingSeconds: active ? 300 : 0,
   },
+  temperatureLimit: {
+    active: false,
+    minimumTemperature: 30,
+  },
   completionLock: {
     active: false,
     reason: null,
@@ -150,6 +154,8 @@ function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Pa
     terminationReason: null,
     completionLock: null,
     completionRemaining: 0,
+    mannerTemperature: 36.5,
+    minimumTemperature: 30,
     setGroupSize: vi.fn(),
     setAllowMinimum: vi.fn(),
     onStart: vi.fn(),
@@ -196,6 +202,38 @@ function text(node: ReactNode): string {
   if (!isValidElement(node)) return '';
   return text(node.props.children);
 }
+
+describe('매너온도 매칭 제한 화면', () => {
+  it('기준 온도와 회복 방법을 안내하고 솔로 코스는 열어 둔다', () => {
+    const tree = renderNode(MatchBody(bodyProps({
+      status: 'TEMPERATURE_RESTRICTED',
+      mannerTemperature: 28.5,
+      minimumTemperature: 30,
+      festivalId: 10,
+    })));
+    const content = text(tree);
+    expect(content).toContain('지금은 매칭을 신청할 수 없어요');
+    expect(content).toContain('28.50도');
+    expect(content).toContain('30.00도');
+    expect(content).toContain('만남을 끝까지 마치면 오르고');
+    expect(content).toContain('솔로 코스 추천 보기');
+  });
+
+  /**
+   * 낮은 온도는 곧 "신고를 받았다"이고, 화면에 적으면 같은 만남에 있던 사람 중 누가 신고했는지
+   * 좁힐 수 있다(docs/19 4.8 신고자 보호).
+   */
+  it('신고를 문구에 드러내지 않고 카운트다운도 두지 않는다', () => {
+    const content = text(renderNode(MatchBody(bodyProps({
+      status: 'TEMPERATURE_RESTRICTED',
+      mannerTemperature: 28.5,
+      minimumTemperature: 30,
+    }))));
+    expect(content).not.toContain('신고');
+    expect(content).not.toContain('재신청 가능');
+    expect(content).not.toContain('다시 신청하기');
+  });
+});
 
 describe('IDLE 상태의 현재 체크인 노출·취소', () => {
   it('체크인이 없으면 체크인하기 버튼만 표시하고 취소 버튼은 표시하지 않는다', () => {

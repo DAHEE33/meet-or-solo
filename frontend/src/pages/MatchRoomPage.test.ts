@@ -1,5 +1,7 @@
 import { isValidElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiClientError } from '../api/apiClient';
+import { GeolocationError } from '../utils/geolocation';
 import type { CurrentMatchGroup } from '../api/matching';
 import type { MatchRoomState } from '../hooks/useMatchRoom';
 import {
@@ -682,6 +684,7 @@ describe('MatchRoomContent', () => {
         error: null,
         eventsError: null,
         actionError: new Error('network'),
+        actionErrorSource: 'ARRIVAL_TIME',
         isSubmitting: true,
       },
       onRetry: vi.fn(),
@@ -732,6 +735,54 @@ describe('MatchRoomContent', () => {
       onSelectArrivalTime: vi.fn(),
     }));
     expect(elements(tree).some((element) => element.type === 'input' || element.type === 'textarea')).toBe(false);
+  });
+
+  // 도착 인증이 반경 밖으로 거절돼도 화면에는 아무 변화가 없었다. 안내 자리가 없었기
+  // 때문이다(docs/32 3.1).
+  it('도착 인증이 거절되면 거리가 담긴 서버 문구를 도착 확인 자리에 보여준다', () => {
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY',
+        group: { ...group(), currentMemberId: 1 },
+        events: [],
+        error: null,
+        eventsError: null,
+        actionError: new ApiClientError(
+          '만남 장소에서 약 1.2km 떨어져 있어요. 150m 안에서 도착을 인증할 수 있어요.',
+          409,
+          'MATCHING_ARRIVAL_OUT_OF_RANGE',
+          undefined,
+        ),
+        actionErrorSource: 'ARRIVE',
+        isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onArrive: vi.fn(),
+    }));
+    const content = text(tree);
+    expect(content).toContain('만남 장소에서 약 1.2km 떨어져 있어요.');
+    // 실패한 버튼이 아닌 자리에는 뜨지 않는다.
+    expect(content).not.toContain('도착 예정 시간을 저장하지 못했어요');
+  });
+
+  it('위치 권한이 거부되면 브라우저 안내를 그대로 도착 자리에 보여준다', () => {
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY',
+        group: { ...group(), currentMemberId: 1 },
+        events: [],
+        error: null,
+        eventsError: null,
+        actionError: new GeolocationError('위치 권한이 필요해요. 브라우저 설정에서 위치 권한을 허용해주세요.'),
+        actionErrorSource: 'ARRIVE',
+        isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onArrive: vi.fn(),
+    }));
+    expect(text(tree)).toContain('위치 권한이 필요해요.');
   });
 
   it('본인이 JOINED이면 도착 확인 UI를 제공하고 ARRIVED이면 숨긴다', () => {

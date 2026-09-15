@@ -91,9 +91,17 @@ KAKAO_CLIENT_SECRET
 NAVER_CLIENT_ID
 NAVER_CLIENT_SECRET
 TOURISM_API_KEY
-VAPID_PUBLIC_KEY
-VAPID_PRIVATE_KEY
+WEB_PUSH_VAPID_PUBLIC_KEY
+WEB_PUSH_VAPID_PRIVATE_KEY
+WEB_PUSH_VAPID_SUBJECT
 ```
+
+Web Push 키는 `VAPID_*`로 적어 두었으나 구현하면서 `WEB_PUSH_VAPID_*`로 확정했습니다
+(`app.push.vapid.*`, [docs/32](32_NEXT_WORK_PRIORITY_PLAN.md) 3.4). 두 값이 **모두** 있어야
+발송이 켜지고, 하나라도 비면 push만 꺼진 채 WebSocket 알림과 알림함은 그대로 동작합니다.
+
+**private key가 유출되면 우리 도메인 이름으로 누구나 push를 보낼 수 있습니다.** 공개키는
+브라우저에 그대로 들어가는 값이라 숨기지 않지만, private key는 서버 환경변수로만 주입합니다.
 
 실제 값은 GitHub Secrets에만 저장하고 repository file에는 넣지 않습니다.
 
@@ -107,7 +115,7 @@ UTF-8 기준 32바이트 이상의 서로 다른 난수 Secret을 dev/prod 환�
 ## 슈퍼관리자 ID/PW 로그인
 
 SSO를 유지한 채 `/admin/login` 진입 경로를 하나 더 둡니다(설계는
-[docs/30](30_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md)).
+[docs/30](30-2_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md)).
 
 - 슈퍼관리자도 `members` row 1건(`provider = 'LOCAL'`, `role = 'ADMIN'`)에 매핑합니다.
   로그인 성공 시 발급되는 session은 소셜 로그인과 완전히 같습니다.

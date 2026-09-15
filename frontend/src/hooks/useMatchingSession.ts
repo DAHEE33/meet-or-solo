@@ -29,6 +29,7 @@ export type MatchingUiStatus =
   | 'CANCELLED'
   | 'EXPIRED'
   | 'COOLDOWN'
+  | 'TEMPERATURE_RESTRICTED'
   | 'ERROR';
 
 export type MatchingSnapshot = {
@@ -153,6 +154,11 @@ export function deriveMatchingState(
   if (isCompletedCardVisible(restriction)) {
     return { status: 'COMPLETED', pool, proposal, group, restriction, error: null };
   }
+  // 쿨타임보다 먼저 본다. 쿨타임은 몇 분이면 풀리지만 온도 제한은 만남 완료나 시간 경과로만
+  // 풀린다. 카운트다운을 먼저 보여주고 그것이 끝난 뒤 다시 막히면 더 나쁘다(docs/32 3절 F).
+  if (restriction.temperatureLimit.active) {
+    return { status: 'TEMPERATURE_RESTRICTED', pool, proposal, group, restriction, error: null };
+  }
   if (restriction.cooldown.active) {
     const terminalStatus = pool?.status === 'MATCHED' ? 'CANCELLED'
       : (pool?.status === 'CANCELLED' || pool?.status === 'EXPIRED') ? pool.status
@@ -209,6 +215,7 @@ export function retrySourceAfterRefresh(
   return sameTerminalPool
     && !nextState.restriction?.cooldown.active
     && !nextState.restriction?.completionLock.active
+    && !nextState.restriction?.temperatureLimit.active
       ? retrySourcePoolId
       : null;
 }
@@ -221,6 +228,7 @@ export function canBeginRetry(state: MatchingSessionState, isSubmitting: boolean
     && state.pool !== null
     && !state.restriction?.cooldown.active
     && !state.restriction?.completionLock.active
+    && !state.restriction?.temperatureLimit.active
     && !isSubmitting;
 }
 

@@ -117,7 +117,8 @@ public class MatchProposalResponseService {
                         .map(MatchAttemptMember::getMemberId)
                         .toList(),
                 notificationReason(attempt, effective),
-                now
+                now,
+                memberId
         ));
         return new MatchProposalResponseResult(attempt.getId(), proposalId, effective, attempt.getStatus());
     }
