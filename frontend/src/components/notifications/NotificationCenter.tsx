@@ -4,7 +4,7 @@ import { subscribeMatchingNotifications } from '../../api/matchingNotificationHu
 import { isAlreadyVisible } from '../../notifications/notificationMessages';
 import {
   addNotification,
-  restoreNotifications,
+  syncNotifications,
   type StoredNotification,
 } from '../../notifications/notificationStore';
 
@@ -35,13 +35,20 @@ export default function NotificationCenter() {
   const [banner, setBanner] = useState<StoredNotification | null>(null);
 
   useEffect(() => {
-    restoreNotifications();
-  }, []);
-
-  useEffect(() => {
     if (!shouldConnect(location.pathname)) return undefined;
     return subscribeMatchingNotifications({
-      onConnected: () => {},
+      /*
+        연결이 붙는 시점에 서버 알림함을 받아온다(docs/32 3.3).
+
+        mount 시점이 아니라 여기인 이유는 로그인 때문이다. 이 컴포넌트는 App 최상단에 있어
+        로그인 화면에서도 마운트돼 있고, 그때 조회하면 인증이 없어 실패한 채로 끝난다.
+        소켓은 인증이 있어야 붙으므로 `onConnected`가 "지금 받아올 수 있다"는 신호다.
+
+        재연결에도 다시 받아오는 것이 맞다. 끊겨 있는 동안 온 알림이 그때 채워진다.
+      */
+      onConnected: () => {
+        void syncNotifications();
+      },
       onStateChanged: (notification) => {
         const added = addNotification(notification);
         // 재연결로 같은 알림이 다시 온 경우다. 목록에도 화면에도 다시 올리지 않는다.

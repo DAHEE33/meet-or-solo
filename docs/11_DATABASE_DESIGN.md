@@ -1146,6 +1146,34 @@ row가 신규 pool이나 후보 선점에 사용되지 않습니다.
 적용 전 공유 dev DB의 `flyway_schema_history`에서 `V26`이 비어 있는지 확인해야 합니다.
 `ddl-auto: validate`이므로 entity와 migration이 정확히 일치해야 부팅됩니다.
 
+### V39__add_notifications.sql / V40__add_push_subscriptions.sql
+
+회원 알림함과 Web Push 구독 테이블을 생성합니다. 설계 근거는
+`docs/32_NEXT_WORK_PRIORITY_PLAN.md` 3.3·3.4입니다.
+
+- `notifications` — 알림 한 줄. `member_id`, `reason`, `actor_member_id`, `occurred_at`,
+  `read_at`.
+- `push_subscriptions` — 브라우저 구독. `endpoint`가 구독의 신원이고 `p256dh`·`auth`는 발송
+  암호화 키입니다.
+
+주요 설계 판단:
+
+- **문구를 저장하지 않습니다.** `reason`만 남기고 문장과 이동 경로는 프론트가 정합니다
+  (WebSocket 1단계와 같은 구조). 문구를 서버가 저장하면 문구를 고칠 때 과거 알림이 옛 문장으로
+  남습니다.
+- `uq_notifications_member_reason_occurred` — 같은 알림을 두 번 쌓지 않습니다. 재연결이나 이벤트
+  재발행이 있어도 목록이 어지러워지지 않습니다. 1단계 프론트가 쓰던 중복 방지 키와 같은 조합입니다.
+- `actor_member_id` — 그 변화를 만든 사람. **행위자 본인에게는 알림을 남기지 않기 위한 값**이고,
+  스케줄러가 만든 변화(시간 초과·노쇼)는 `NULL`입니다.
+- FK는 `ON DELETE CASCADE`입니다. 알림과 구독은 감사 자료가 아니라 소모품이라 회원 행이
+  사라지면 함께 지웁니다(`reports`·`admin_actions`의 `RESTRICT`와 의도가 다릅니다).
+- `uq_push_subscriptions_endpoint` — 같은 브라우저가 다시 구독하면 새 행을 만들지 않고 주인을
+  바꿉니다. 한 기기에서 로그아웃하고 다른 계정으로 들어왔을 때 예전 주인에게 알림이 가면 안 됩니다.
+- **보관 정리에 스케줄러를 쓰지 않습니다.** 30일과 100건을 저장 시점에 함께 정리합니다. 알림이
+  생기지 않는 계정은 늘어날 것도 없고, 스케줄러를 하나 더 두면 꺼졌을 때 조용히 쌓입니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V39`·`V40`이 비어 있는지 확인해야 합니다.
+
 ### V31__add_member_inquiries.sql
 
 1:1 문의 센터 테이블 2개를 생성합니다. 설계 근거는 `docs/29_MEMBER_INQUIRY_DESIGN.md`입니다.

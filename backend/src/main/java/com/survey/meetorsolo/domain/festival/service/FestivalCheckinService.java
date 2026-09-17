@@ -15,6 +15,7 @@ import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
+import com.survey.meetorsolo.global.geo.DistanceText;
 import com.survey.meetorsolo.global.geo.GeoDistanceCalculator;
 import com.survey.meetorsolo.global.time.SeoulDateTime;
 import java.time.OffsetDateTime;
@@ -67,11 +68,6 @@ public class FestivalCheckinService {
         // 둘을 나눠 두면 dev 환경에서도 "반경 검증이 실제로 동작하는지"를 확인할 수 있다.
         boolean testAccount = memberRepository.existsByIdAndTestAccountIsTrue(memberId);
         boolean bypassRadiusCheck = properties.bypassRadiusCheck() || testAccount;
-        if (!bypassRadiusCheck
-                && request.accuracyMeters() != null
-                && request.accuracyMeters() > properties.accuracyThresholdMeters()) {
-            throw new BusinessException(ErrorCode.LOW_LOCATION_ACCURACY);
-        }
 
         long distanceMeters = GeoDistanceCalculator.metersBetween(
                 festival.getMapY(),
@@ -79,15 +75,35 @@ public class FestivalCheckinService {
                 request.latitude(),
                 request.longitude()
         );
-        if (!bypassRadiusCheck && distanceMeters > festival.getCheckinRadiusMeters()) {
-            throw new BusinessException(ErrorCode.CHECKIN_OUT_OF_RANGE);
+
+        // radiusMeters는 festivals.checkin_radius_meters(DB 컬럼)가 아니라 설정값이다.
+        // 그 컬럼을 축제마다 다르게 채우는 코드가 없어 모든 축제가 항상 같은 값이었고, 그래서
+        // 축제별 값이 아니라 환경변수(app.festival.checkin.radius-meters)로 조절하는 전역
+        // 값으로 뒀다(docs/32 3.1 후속).
+        int radiusMeters = properties.radiusMeters();
+
+        // 거리를 정확도보다 먼저 본다. 순서를 뒤집으면 실제 원인이 "현장에 없다"인 사람에게도
+        // "정확도가 낮다"가 뜬다. 실내·PC 측위는 정확도가 수백 m로 나오는 일이 흔해서, 반경 밖에
+        // 있는 사람은 사실상 항상 정확도 오류만 보게 되고 같은 자리에서 다시 누른다.
+        // 정확도 검사는 "반경 안에 있다고 판정된 좌표를 믿어도 되는가"를 보는 것이므로
+        // 거리 판정 뒤에 오는 것이 의미상으로도 맞다(docs/32 3.1).
+        if (!bypassRadiusCheck) {
+            if (distanceMeters > radiusMeters) {
+                throw new BusinessException(
+                        ErrorCode.CHECKIN_OUT_OF_RANGE,
+                        outOfRangeMessage(distanceMeters, radiusMeters));
+            }
+            if (request.accuracyMeters() != null
+                    && request.accuracyMeters() > properties.accuracyThresholdMeters()) {
+                throw new BusinessException(ErrorCode.LOW_LOCATION_ACCURACY);
+            }
         }
-        if (bypassRadiusCheck && distanceMeters > festival.getCheckinRadiusMeters()) {
+        if (bypassRadiusCheck && distanceMeters > radiusMeters) {
             log.warn(
                     "GPS 반경 검증을 건너뛰고 체크인을 허용했습니다(사유={}). "
                             + "memberId={}, festivalId={}, distanceMeters={}, radiusMeters={}",
                     testAccount ? "TEST_ACCOUNT" : "CONFIG_BYPASS",
-                    memberId, festivalId, distanceMeters, festival.getCheckinRadiusMeters()
+                    memberId, festivalId, distanceMeters, radiusMeters
             );
         }
 
@@ -155,6 +171,18 @@ public class FestivalCheckinService {
     public void cancelAllOnWithdrawal(Long memberId) {
         cancelAndPublish(memberId, festivalCheckinRepository.findAllByMemberIdAndStatus(
                 memberId, FestivalCheckinStatus.ACTIVE));
+    }
+
+    /**
+     * 반경 밖 거절 문구를 만든다. 거리를 함께 알려 주는 이유는 사용자가 "GPS가 이상한 것"과
+     * "내가 정말 먼 것"을 구분할 수 있어야 하기 때문이다.
+     *
+     * <p>좌표는 저장하지 않지만 거리는 이미 성공 응답({@code distanceMeters})으로 내보내고 있어
+     * 노출 범위가 넓어지지 않는다.
+     */
+    private static String outOfRangeMessage(long distanceMeters, int radiusMeters) {
+        return "축제에서 약 %s 떨어져 있어요. 체크인은 축제 반경 %s 안에서 할 수 있어요."
+                .formatted(DistanceText.of(distanceMeters), DistanceText.of(radiusMeters));
     }
 
     /**

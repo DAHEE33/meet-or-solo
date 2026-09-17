@@ -154,6 +154,8 @@ class MatchingControllerTest {
                 new MatchingRestrictionResponse.CooldownResponse(false, null, null, null, 0),
                 new MatchingRestrictionResponse.CompletionLockResponse(
                         true, "MATCH_VALIDITY", 24L, startsAt, startsAt.plusHours(1), 1_200),
+                new MatchingRestrictionResponse.TemperatureLimitResponse(
+                        false, new java.math.BigDecimal("30.00")),
                 startsAt.plusMinutes(40)
         ));
 
@@ -165,6 +167,8 @@ class MatchingControllerTest {
                 .andExpect(jsonPath("$.data.completionLock.reason").value("MATCH_VALIDITY"))
                 .andExpect(jsonPath("$.data.completionLock.groupId").value(24))
                 .andExpect(jsonPath("$.data.completionLock.remainingSeconds").value(1_200))
+                .andExpect(jsonPath("$.data.temperatureLimit.active").value(false))
+                .andExpect(jsonPath("$.data.temperatureLimit.minimumTemperature").value(30.00))
                 .andExpect(jsonPath("$.data.serverNow").value("2026-08-10T12:40:00+09:00"));
     }
 

@@ -14,8 +14,10 @@
   완료 판정을 도착 시점에서 확정 + 1시간으로 옮겼다. 도착 GPS 인증과 먼저 나가기, 앱 전역
   알림 1단계도 함께 들어갔다.
   4.12 테스트 계정 구현 완료(수동 검증 대기).
+  **4.9 PR C(30도 매칭 제한)와 4.11.5 알림 2·3단계(서버 알림함, Web Push) 구현 완료
+  (수동 검증 대기, [docs/32](32_NEXT_WORK_PRIORITY_PLAN.md) 8절).**
   **남은 항목은 4.7의 나머지(임베딩 재시도, 외부 호출 transaction 분리, 재동의 인프라),
-  4.9의 PR C(30도 매칭 제한)·D(후기), 4.11.5의 알림 2·3단계, 그리고 2절 표의 기본 통계다.**
+  4.9의 PR D(후기), 그리고 2절 표의 기본 통계다.**
 - 목적: 풀스택 A의 관광 API·솔로 코스 구현을 기다리지 않고 풀스택 B가 독립적으로
   진행할 관리자 신고 처리, 회원 제재, 안전 자동화와 회원 탈퇴 범위를 정리합니다.
 - 기준 문서: `meet-or-solo_planning.pdf` v5.0, `docs/05_MATCHING_POLICY.md`,
@@ -26,7 +28,9 @@
 - 다음 CLI 세션에서는 이 문서와 `docs/10_PROGRESS_LOG.md`를 함께 읽고
   미완료 단계부터 작업합니다.
 - **작업을 이어받는 사람은 [`docs/31_WBS10B_HANDOVER.md`](31_WBS10B_HANDOVER.md)를 먼저 봅니다.**
-  남은 작업 3개(알림 2·3단계, 30도 매칭 제한)와 착수 전에 정할 것이 정리돼 있습니다.
+  거기 적힌 남은 작업 3개(알림 2·3단계, 30도 매칭 제한)는
+  [`docs/32`](32_NEXT_WORK_PRIORITY_PLAN.md)에서 구현을 마쳤습니다. 무엇을 어떻게 정했는지는
+  `docs/32` 8절, 남은 확인 사항은 9절입니다.
 
 ## 2. 기획서 기준 전체 관리자 범위
 
@@ -732,7 +736,7 @@ query parameter로 넘기지 않은 이유는 URL·access log·브라우저 hist
 Web Push는 이 항목 범위 밖입니다. iOS Safari가 홈화면에 추가한 PWA만 push를
 지원해 축제 현장 사용자 상당수에 도달하지 못하는 문제도 함께 검토해야 합니다.
 
-### 4.9 manner temperature 회복과 매칭 제한 후속 — PR A 완료, PR B·C 미착수
+### 4.9 manner temperature 회복과 매칭 제한 후속 — PR A·B·C 완료, PR D 미착수
 
 덩치가 커서 3개 PR로 쪼갭니다.
 
@@ -740,7 +744,7 @@ Web Push는 이 항목 범위 밖입니다. iOS Safari가 홈화면에 추가한
 | --- | --- | --- | --- |
 | A | 관리자 온도 수동 조정 | `feature/wbs-10-b-admin-manner-temperature-adjust` | **완료**(수동 검증 대기) |
 | B | 온도 값 체계 + 상승 경로 2개 + 회원 노출 | `feature/wbs-10-b-manner-temperature-recovery` | **완료**(수동 검증 대기) |
-| C | 30도 매칭 제한 | `feature/wbs-10-b-matching-temperature-limit` | 미착수 |
+| C | 30도 매칭 제한 | `feature/wbs-10-b-matching-temperature-limit` | **완료**(수동 검증 대기, docs/32 8절) |
 | D | 후기 작성 기능(`member_reviews`) | `feature/wbs-10-b-member-review` | 미착수 |
 
 **PR B에서 순서가 바뀌었다.** 원래 후기(구 PR B)가 유일한 상승 경로였는데, 사용자 제안으로
@@ -829,6 +833,21 @@ status는 안 바뀌지만 매칭이 막히면 사용자에게는 사실상 정�
 이미 깎인 회원은 일괄 재계산하지 않는다. 과거 판정 이력을 되짚으면 그 사이 관리자가 손댄
 값과 충돌한다. 시간 경과 회복이 자동으로 끌어올리고, 급하면 PR A의 수동 조정으로 개별
 복구한다.
+
+#### PR C에서 확정한 노출 범위 (완료)
+
+착수 전에 정해야 했던 것은 **"제한에 걸린 사람에게 무엇을 보여줄 것인가"** 하나였다.
+
+| 항목 | 결정 | 이유 |
+| --- | --- | --- |
+| 사유 | **드러내지 않는다** | 낮은 온도는 곧 "신고를 받았다"이다. 화면에 적으면 같은 만남에 있던 사람 중 누가 신고했는지 좁힐 수 있다(4.8 신고자 보호) |
+| 카운트다운 | **두지 않는다** | 회복이 만남 완료와 시간 경과 두 경로에 달려 있어 확정된 해제 시각이 없다. 쿨타임처럼 남은 시간을 보여주면 지킬 수 없는 약속이 된다 |
+| 현재·기준 온도 | **보여준다** | 본인 온도는 PR B에서 이미 본인에게 노출한 값이다. 얼마나 모자란지를 알아야 회복을 가늠할 수 있다 |
+| 회복 방법 | **안내한다** | 만남 완료와 시간 경과. 이것이 없으면 "막혔다"만 남는다 |
+| 솔로 코스 | **열어 둔다** | 막힌 것은 매칭이지 서비스가 아니다 |
+
+쿨타임과 함께 걸리면 **온도 제한을 먼저** 보여준다. 2분 카운트다운이 끝난 뒤 다시 막히는 것이
+더 나쁘다.
 
 #### 회원 노출 (PR B 완료)
 
@@ -1124,7 +1143,7 @@ DB에 적용하지 않는다.* 지금 규칙(`docs/08`)은 "번호는 공유 dev
 
 | 항목 | 상태 |
 | --- | --- |
-| 회원 알림 | **미착수.** WebSocket으로 상태 변화 12종을 보내지만 구독처가 `/matching`과 `/match-room` 두 화면뿐이라, 홈에 있으면 아무것도 뜨지 않는다. `AppHeader`의 종 아이콘은 `onClick`이 없는 빈 버튼이다. 별도 설계가 필요하다 |
+| 회원 알림 | **1·2·3단계 완료**(수동 검증 대기). 1단계 앱 전역 WebSocket·배너·토스트·벨, 2단계 서버 알림함(`notifications`, `V39`), 3단계 Web Push(`push_subscriptions`, `V40`, service worker `injectManifest` 전환). 설계와 확정값은 [docs/32](32_NEXT_WORK_PRIORITY_PLAN.md) 3.3·3.4와 8절 |
 | 수동 검증 | 대기. 절차는 [`docs/30`](30_MATCHING_MANUAL_TEST_SCENARIOS.md)의 시나리오 A~O를 따른다. dev 배포 후 ①전원 도착 뒤 방 유지와 종료 예정 시각, ②1시간 뒤 완료와 온도 상승, ③노쇼 섞인 그룹의 종료, ④도착 없이 취소된 건의 신고 버튼 비활성화 |
 
 ### 4.12 테스트 계정 — 완료(수동 검증 대기)
@@ -1265,7 +1284,9 @@ feature/wbs-10-b-manner-temperature-recovery  — 완료 (4.9 PR B, 값 체계 +
 feature/wbs-10-b-consent-followup             — 완료 (PR #66, 4.7.1 동의 원문)
 feature/wbs-10-b-consent-view-gate            — 완료 (PR #69·#71, 4.7.1 동의 전 전문 확인)
 fix/wbs-10-b-match-completion-and-report-scope — 완료 (4.11, 완료 판정과 신고 범위)
-feature/wbs-10-b-matching-temperature-limit   — 미착수 (4.9 PR C, 30도 매칭 제한)
+feature/wbs-10-b-matching-temperature-limit   — 완료 (4.9 PR C, 30도 매칭 제한)
+feature/wbs-10-b-notification-inbox           — 완료 (4.11.5 알림 2단계, 서버 알림함)
+feature/wbs-10-b-web-push                     — 완료 (4.11.5 알림 3단계, Web Push)
 feature/wbs-10-b-member-review                — 미착수 (4.9 PR D, 후기 작성)
 ```
 

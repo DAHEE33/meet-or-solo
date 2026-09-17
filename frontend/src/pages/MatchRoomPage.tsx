@@ -15,6 +15,7 @@ import { useMatchRoom, type MatchRoomState } from '../hooks/useMatchRoom';
 import { useMatchBlock, type MatchBlockState, type MatchBlockTarget } from '../hooks/useMatchBlock';
 import { useMatchReport, type MatchReportState, type MatchReportTarget } from '../hooks/useMatchReport';
 import { formatSeoulDateTime } from '../utils/dateTime';
+import { describeMatchRoomError } from '../utils/matchRoomError';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
@@ -212,6 +213,7 @@ export function MatchRoomContent({
       eventsError={state.eventsError}
       isSubmitting={state.isSubmitting}
       actionError={state.actionError}
+      actionErrorSource={state.actionErrorSource}
       onRetry={onRetry}
       onSelectArrivalTime={onSelectArrivalTime}
       onArrive={onArrive ?? (() => Promise.resolve(false))}
@@ -256,6 +258,7 @@ export function CurrentGroupRoom({
   eventsError,
   isSubmitting,
   actionError,
+  actionErrorSource,
   onRetry,
   onSelectArrivalTime,
   onArrive,
@@ -281,6 +284,7 @@ export function CurrentGroupRoom({
   eventsError: Error | null;
   isSubmitting: boolean;
   actionError: Error | null;
+  actionErrorSource: MatchRoomState['actionErrorSource'];
   onRetry: () => void;
   onSelectArrivalTime: (minutes: ArrivalMinutes) => Promise<boolean>;
   onArrive: () => Promise<boolean>;
@@ -381,6 +385,15 @@ export function CurrentGroupRoom({
               <h2 id="arrival-confirm-title" className="text-[16px] font-bold text-ink">
                 축제 만남 장소에 도착했나요?
               </h2>
+              {/*
+                반경 밖 거절·위치 권한 거부가 여기 뜬다. 이 자리가 없어서 도착이 거절돼도
+                화면에는 아무 변화가 없었다(docs/32 3.1).
+              */}
+              {actionError && actionErrorSource === 'ARRIVE' && (
+                <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
+                  {describeMatchRoomError(actionError, 'ARRIVE')}
+                </p>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button type="button" disabled={isSubmitting} onClick={(event) => {
                   const details = event.currentTarget.closest('details');
@@ -422,6 +435,11 @@ export function CurrentGroupRoom({
               <p className="mt-1 text-[13px] text-ink/55">
                 이미 만남이 성사돼서 매너온도는 그대로 올라가요. 불이익은 없어요.
               </p>
+              {actionError && actionErrorSource === 'LEAVE' && (
+                <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
+                  {describeMatchRoomError(actionError, 'LEAVE')}
+                </p>
+              )}
               <div className="mt-4 grid gap-2">
                 <button
                   type="button"
@@ -451,6 +469,11 @@ export function CurrentGroupRoom({
                 취소 사유는 다른 멤버에게 공개되지 않아요.
                 {hasArrived ? ' 아직 만남이 성사되지 않아 참여 취소로 처리돼요.' : ''}
               </p>
+              {actionError && actionErrorSource === 'CANCEL' && (
+                <p role="alert" className="mt-3 rounded-2xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
+                  {describeMatchRoomError(actionError, 'CANCEL')}
+                </p>
+              )}
               <div className="mt-4 grid gap-2">
                 {CANCELLATION_OPTIONS.map((option) => (
                   <button
@@ -505,9 +528,9 @@ export function CurrentGroupRoom({
               다른 시간을 선택하거나 도착 완료를 눌러주세요. 같은 시간을 다시 선택해도 예정 시각은 연장되지 않아요.
             </p>
           )}
-          {actionError && (
+          {actionError && actionErrorSource === 'ARRIVAL_TIME' && (
             <p role="alert" className="rounded-xl bg-coral/10 px-3 py-2 text-[13px] text-coral">
-              도착 예정 시간을 저장하지 못했어요. 다시 선택해주세요.
+              {describeMatchRoomError(actionError, 'ARRIVAL_TIME')}
             </p>
           )}
           {canSelectArrivalTime ? (

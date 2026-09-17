@@ -4,11 +4,25 @@ export type GeolocationResult = {
   accuracyMeters: number;
 };
 
+/**
+ * 브라우저 위치 조회가 실패했을 때 던지는 오류.
+ *
+ * 일반 `Error`와 구분하는 이유는 문구 때문이다. 이 오류의 message는 사용자에게 그대로 보여 줄
+ * 안내(권한·시간 초과)이지만, fetch 실패 같은 일반 오류의 message는 `network`처럼 화면에
+ * 나가면 안 되는 값이다. 상태방·체크인 화면이 둘을 구분해야 한다(docs/32 3.1).
+ */
+export class GeolocationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeolocationError';
+  }
+}
+
 /** 브라우저 Geolocation API를 한 번만 호출해 현재 위치를 읽는다(연속 추적 없음). */
 export function getCurrentPosition(): Promise<GeolocationResult> {
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) {
-      reject(new Error('이 브라우저에서는 위치 확인을 지원하지 않아요.'));
+      reject(new GeolocationError('이 브라우저에서는 위치 확인을 지원하지 않아요.'));
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -19,7 +33,7 @@ export function getCurrentPosition(): Promise<GeolocationResult> {
           accuracyMeters: Math.round(position.coords.accuracy),
         });
       },
-      (error) => reject(new Error(geolocationErrorMessage(error))),
+      (error) => reject(new GeolocationError(geolocationErrorMessage(error))),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   });

@@ -57,11 +57,16 @@ class FestivalCheckinServiceTest {
     }
 
     private FestivalCheckinService service(boolean bypassRadiusCheck) {
+        return service(500, bypassRadiusCheck);
+    }
+
+    /** 반경을 바꿔가며 검증하는 테스트가 쓴다(FESTIVAL_CHECKIN_RADIUS_METERS, docs/32 3.1 후속). */
+    private FestivalCheckinService service(int radiusMeters, boolean bypassRadiusCheck) {
         return new FestivalCheckinService(
                 festivalRepository,
                 festivalCheckinRepository,
                 memberRepository,
-                new FestivalCheckinProperties(100, bypassRadiusCheck),
+                new FestivalCheckinProperties(radiusMeters, 100, bypassRadiusCheck),
                 eventPublisher
         );
     }
@@ -104,6 +109,68 @@ class FestivalCheckinServiceTest {
                         assertThat(((BusinessException) exception).getErrorCode())
                                 .isEqualTo(ErrorCode.CHECKIN_OUT_OF_RANGE));
         verify(festivalCheckinRepository, never()).save(any());
+    }
+
+    /**
+     * 순서가 바뀌면 이 검증이 깨진다. 실내·PC 측위는 정확도가 수백 m로 나오는 일이 흔해,
+     * 정확도를 먼저 보면 <b>반경 밖에 있는 사람은 사실상 항상 "정확도가 낮다"만 보게 된다.</b>
+     * 그러면 원인이 "현장에 없다"인데도 같은 자리에서 다시 누르게 된다(docs/32 3.1).
+     */
+    @Test
+    void 반경_밖이면서_정확도도_낮으면_정확도가_아니라_CHECKIN_OUT_OF_RANGE를_던진다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+
+        assertThatThrownBy(() -> service().checkIn(
+                1L, 10L,
+                new CheckInRequest(new BigDecimal("37.5000000000"), new BigDecimal("128.5000000000"), 900)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(exception ->
+                        assertThat(((BusinessException) exception).getErrorCode())
+                                .isEqualTo(ErrorCode.CHECKIN_OUT_OF_RANGE));
+        verify(festivalCheckinRepository, never()).save(any());
+    }
+
+    /** 사유만으로는 "GPS가 이상한 것"과 "내가 정말 먼 것"을 구분할 수 없어 거리를 함께 준다. */
+    @Test
+    void 반경_밖_거절_문구에_떨어진_거리와_반경이_들어간다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+
+        assertThatThrownBy(() -> service().checkIn(
+                1L, 10L,
+                new CheckInRequest(new BigDecimal("37.5000000000"), new BigDecimal("128.5000000000"), 20)
+        ))
+                .isInstanceOf(BusinessException.class)
+                // 기본 반경은 500m다. 거리는 km 단위로 환산돼 들어간다.
+                .hasMessageContaining("km")
+                .hasMessageContaining("500m");
+    }
+
+    /**
+     * festivals.checkin_radius_meters(DB 컬럼)가 아니라 설정값이 실제 검증에 쓰인다.
+     * 그 컬럼을 축제마다 다르게 채우는 코드가 없어 모든 축제가 항상 같은 값이었기
+     * 때문이다(docs/32 3.1 후속, FESTIVAL_CHECKIN_RADIUS_METERS).
+     */
+    @Test
+    void 반경은_축제_컬럼이_아니라_설정값을_따른다() {
+        Festival festival = festivalAt(10L, new BigDecimal("128.0000000000"), new BigDecimal("37.0000000000"));
+        when(festivalRepository.findById(10L)).thenReturn(Optional.of(festival));
+        when(festivalCheckinRepository.findAllByMemberIdAndStatus(1L, FestivalCheckinStatus.ACTIVE))
+                .thenReturn(List.of());
+        // 약 600m 떨어진 좌표. 기본 500m라면 거절되지만, 반경을 1000m로 넓히면 통과해야 한다.
+        CheckInRequest request = new CheckInRequest(
+                new BigDecimal("37.0054000000"), new BigDecimal("128.0000000000"), 20);
+
+        assertThatThrownBy(() -> service(500, false).checkIn(1L, 10L, request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(exception ->
+                        assertThat(((BusinessException) exception).getErrorCode())
+                                .isEqualTo(ErrorCode.CHECKIN_OUT_OF_RANGE));
+
+        FestivalCheckinResponse result = service(1_000, false).checkIn(1L, 10L, request);
+        assertThat(result.status()).isEqualTo(FestivalCheckinStatus.ACTIVE);
     }
 
     @Test

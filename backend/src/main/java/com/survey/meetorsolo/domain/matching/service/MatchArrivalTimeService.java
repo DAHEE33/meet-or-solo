@@ -79,7 +79,8 @@ public class MatchArrivalTimeService {
         eventPublisher.publishEvent(new MatchingStateChangedEvent(
                 activeMemberIds,
                 "ARRIVAL_TIME_SELECTED",
-                now
+                now,
+                memberId
         ));
         return requireSnapshot(memberId);
     }

@@ -28,6 +28,18 @@ public enum ErrorCode {
             "MATCHING_MEETING_POINT_NOT_READY",
             "선택한 축제의 만남 장소를 준비하고 있습니다."
     ),
+    /**
+     * 매너온도가 낮아 매칭을 신청할 수 없다(docs/19 4.9 PR C).
+     *
+     * <p>문구에 "신고"를 쓰지 않는다. 온도가 낮은 이유는 곧 신고를 받았다는 뜻이고, 그것을
+     * 그대로 적으면 같은 만남에 있던 사람 중 누가 신고했는지 좁힐 수 있다(docs/19 4.8
+     * 신고자 보호). 대신 회복 방법을 알려 준다.
+     */
+    MATCHING_TEMPERATURE_RESTRICTED(
+            HttpStatus.CONFLICT,
+            "MATCHING_TEMPERATURE_RESTRICTED",
+            "매너온도가 낮아 지금은 매칭을 신청할 수 없습니다."
+    ),
     MATCHING_ARRIVAL_DEADLINE_EXCEEDED(
             HttpStatus.CONFLICT,
             "MATCHING_ARRIVAL_DEADLINE_EXCEEDED",
@@ -94,7 +106,9 @@ public enum ErrorCode {
     OBJECT_STORAGE_ERROR(HttpStatus.BAD_GATEWAY, "OBJECT_STORAGE_ERROR", "이미지 저장소 처리에 실패했습니다."),
     NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "요청한 리소스를 찾을 수 없습니다."),
     CHECKIN_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "CHECKIN_OUT_OF_RANGE", "체크인 가능 범위를 벗어났습니다."),
-    LOW_LOCATION_ACCURACY(HttpStatus.BAD_REQUEST, "LOW_LOCATION_ACCURACY", "위치 정확도가 낮습니다. 다시 시도해 주세요."),
+    // 반경 안으로 판정된 좌표를 믿어도 되는지를 보는 검사다. "범위를 벗어났다"와 원인이 다르므로
+    // 문구도 섞이지 않게 쓴다(docs/32 3.1). 반경 밖인 사람에게는 CHECKIN_OUT_OF_RANGE가 나간다.
+    LOW_LOCATION_ACCURACY(HttpStatus.BAD_REQUEST, "LOW_LOCATION_ACCURACY", "현재 위치를 정확히 확인하지 못했습니다. 실내나 지하라면 밖에서 다시 시도해 주세요."),
     FESTIVAL_LOCATION_UNAVAILABLE(HttpStatus.BAD_REQUEST, "FESTIVAL_LOCATION_UNAVAILABLE", "좌표 정보가 없는 축제는 체크인할 수 없습니다."),
     INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", "서버 내부 오류가 발생했습니다.");
 

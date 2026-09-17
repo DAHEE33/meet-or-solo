@@ -29,6 +29,10 @@ const restriction = (active = false): MatchingRestriction => ({
     expiresAt: active ? '2026-07-27T12:05:00' : null,
     remainingSeconds: active ? 300 : 0,
   },
+  temperatureLimit: {
+    active: false,
+    minimumTemperature: 30,
+  },
   completionLock: {
     active: false,
     reason: null,
@@ -119,6 +123,13 @@ const state = (
     ...overrides,
   });
 
+/** 매너온도 제한이 걸린 restriction(docs/19 4.9 PR C). */
+const temperatureRestricted = (cooldownActive = false): MatchingRestriction => ({
+  ...restriction(cooldownActive),
+  mannerTemperature: 28.5,
+  temperatureLimit: { active: true, minimumTemperature: 30 },
+});
+
 const snapshot = (overrides: Partial<MatchingSnapshot> = {}): MatchingSnapshot => ({
   pool: null,
   proposal: null,
@@ -134,6 +145,25 @@ const observedState = (
 ) => deriveMatchingState(snapshot(overrides), sessionObservedPoolId);
 
 describe('deriveMatchingState', () => {
+  it('매너온도 제한은 전용 상태로 파생한다', () => {
+    expect(state({ restriction: temperatureRestricted() }).status).toBe('TEMPERATURE_RESTRICTED');
+  });
+
+  /**
+   * 쿨타임은 몇 분이면 풀리지만 온도 제한은 만남 완료나 시간 경과로만 풀린다. 카운트다운을
+   * 먼저 보여주고 끝난 뒤 다시 막히면 더 나쁘다.
+   */
+  it('쿨타임과 함께 걸리면 온도 제한을 먼저 보여준다', () => {
+    expect(state({ restriction: temperatureRestricted(true) }).status).toBe('TEMPERATURE_RESTRICTED');
+  });
+
+  /** 이미 진행 중인 매칭까지 가리지는 않는다. 막는 것은 새 신청이다. */
+  it('진행 중인 pool·제안·그룹은 온도 제한보다 우선한다', () => {
+    expect(state({ pool: pool('WAITING'), restriction: temperatureRestricted() }).status)
+      .toBe('WAITING');
+    expect(state({ group, restriction: temperatureRestricted() }).status).toBe('MATCHED');
+  });
+
   it('group을 다른 서버 상태보다 우선하여 MATCHED로 복원한다', () => {
     expect(
       state({ group, proposal: proposal('INITIAL_MATCH'), pool: pool('WAITING'), restriction: restriction(true) }).status,
@@ -291,6 +321,13 @@ describe('retry form reconciliation', () => {
   it('cooldown 없는 과거 terminal pool은 IDLE이므로 retry 진입 불가', () => {
     expect(canBeginRetry(state({ pool: pool('CANCELLED') }), false)).toBe(false);
     expect(canBeginRetry(state({ pool: pool('EXPIRED') }), false)).toBe(false);
+  });
+
+  it('매너온도 제한 중에는 retry form 진입과 유지를 모두 막는다', () => {
+    expect(canBeginRetry(state({ pool: pool('CANCELLED'), restriction: temperatureRestricted() }), false))
+      .toBe(false);
+    expect(retrySourceAfterRefresh(1, state({ pool: pool('CANCELLED'), restriction: temperatureRestricted() })))
+      .toBeNull();
   });
 
   it('cooldown/제출 중에는 retry form 진입을 차단한다', () => {
