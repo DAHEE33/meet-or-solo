@@ -382,8 +382,13 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           actionError: null,
           actionErrorSource: null,
           cancellationResult: result,
+          // 이미 만남이 성립했던 방은 마지막 인원이 나가도 groupContinues가 true로 온다
+          // (MatchGroupContinuationPolicy가 도착 이력으로 판정하기 때문에 취소로 보지 않는다).
+          // 그래서 "남은 멤버가 계속한다"는 문구는 실제로 남은 인원이 있을 때만 맞는다.
           terminationNotice: result.groupContinues
-            ? '먼저 나왔어요. 남은 멤버는 만남을 계속해요.'
+            ? (result.currentMemberCount > 0
+              ? '먼저 나왔어요. 남은 멤버는 만남을 계속해요.'
+              : '먼저 나왔어요. 마지막 인원이라 만남이 끝났어요.')
             : '먼저 나와 만남이 종료됐어요.',
           isSubmitting: false,
         });

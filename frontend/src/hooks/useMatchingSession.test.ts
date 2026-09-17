@@ -105,6 +105,7 @@ const group: CurrentMatchGroup = {
     { memberId: 1, nickname: 'member-a', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
     { memberId: 2, nickname: 'member-b', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
   ],
+  meetingHeld: false,
 };
 
 const state = (

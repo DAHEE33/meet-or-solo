@@ -49,6 +49,7 @@ const group = (status: CurrentMatchGroup['status'] = 'CONFIRMED'): CurrentMatchG
       arrivedAt: '2026-07-27T12:12:00+09:00',
     },
   ],
+  meetingHeld: false,
 });
 
 function renderNode(node: ReactNode): ReactNode {
@@ -328,6 +329,73 @@ describe('MatchRoomContent', () => {
     CANCELLATION_OPTIONS.forEach((option) => expect(content).toContain(option.label));
     expect(elements(tree).some((element) =>
       element.type === 'input' || element.type === 'textarea')).toBe(false);
+  });
+
+  // 상대가 먼저 나가면 현재 활성 참여자(group.members)에는 나 혼자만 남는다. meetingHeld를
+  // 그 목록에서 다시 세면 항상 1명이라 "만남 성립 전"으로 잘못 보이고, 이미 만난 사람에게
+  // 참여 취소(못 갈 것 같아요) 버튼만 뜬다. 서버가 내려주는 meetingHeld를 그대로 써야 한다.
+  it('상대가 먼저 나가 혼자 남아도 도착한 사람에게는 먼저 갈게요만 보인다', () => {
+    const current: CurrentMatchGroup = {
+      ...group(),
+      currentMemberId: 1,
+      meetingHeld: true,
+      members: [
+        {
+          memberId: 1,
+          nickname: '여행자A',
+          profileImageUrl: null,
+          status: 'ARRIVED',
+          arrivalMinutes: 0,
+          arrivalTimeSelectedAt: '2026-07-27T12:00:00+09:00',
+          arrivedAt: '2026-07-27T12:05:00+09:00',
+        },
+      ],
+    };
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY', group: current, events: [], error: null, eventsError: null,
+        actionError: null, isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onLeave: vi.fn(),
+      nowEpochMs: Date.parse('2026-07-27T12:10:00+09:00'),
+    }));
+    const content = text(tree);
+    expect(content).toContain('먼저 갈게요');
+    expect(content).not.toContain('못 갈 것 같아요');
+  });
+
+  it('meetingHeld가 false면 도착한 사람에게도 참여 취소만 보인다', () => {
+    const current: CurrentMatchGroup = {
+      ...group(),
+      currentMemberId: 1,
+      meetingHeld: false,
+      members: [
+        {
+          memberId: 1,
+          nickname: '여행자A',
+          profileImageUrl: null,
+          status: 'ARRIVED',
+          arrivalMinutes: 0,
+          arrivalTimeSelectedAt: '2026-07-27T12:00:00+09:00',
+          arrivedAt: '2026-07-27T12:05:00+09:00',
+        },
+      ],
+    };
+    const tree = renderNode(MatchRoomContent({
+      state: {
+        status: 'READY', group: current, events: [], error: null, eventsError: null,
+        actionError: null, isSubmitting: false,
+      },
+      onRetry: vi.fn(),
+      onSelectArrivalTime: vi.fn(),
+      onCancel: vi.fn(),
+      nowEpochMs: Date.parse('2026-07-27T12:10:00+09:00'),
+    }));
+    const content = text(tree);
+    expect(content).toContain('못 갈 것 같아요');
+    expect(content).not.toContain('먼저 갈게요');
   });
 
   it('상대 도착 시간 변경 snackbar를 하단 navigation 위 접근 가능한 status로 표시한다', () => {

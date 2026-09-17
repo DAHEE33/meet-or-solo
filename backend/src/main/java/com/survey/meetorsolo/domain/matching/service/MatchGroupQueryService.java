@@ -60,7 +60,8 @@ public class MatchGroupQueryService {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT);
         }
         return MatchGroupResponse.from(
-                group, participants, memberId, arrivalProperties.radiusMeters());
+                group, participants, memberId, arrivalProperties.radiusMeters(),
+                meetingHeld(group.getGroupId()));
     }
 
     public MatchGroupResponse snapshot(long groupId, long memberId) {
@@ -76,7 +77,18 @@ public class MatchGroupQueryService {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT);
         }
         return MatchGroupResponse.from(
-                group, participants, memberId, arrivalProperties.radiusMeters());
+                group, participants, memberId, arrivalProperties.radiusMeters(),
+                meetingHeld(groupId));
+    }
+
+    /**
+     * 활성 참여자 목록만으로는 만남 성립 여부를 다시 셀 수 없다 — 먼저 나간 사람이 빠지면
+     * 도착자가 다시 1명 이하로 보인다. {@code arrived_at}은 상태와 무관하게 남으므로 이걸로
+     * 판정한다({@code MatchGroupContinuationPolicy.meetingHeld}와 같은 기준).
+     */
+    private boolean meetingHeld(long groupId) {
+        return MatchMeetingWindowPolicy.isMeetingHeld(
+                (int) groupMembers.countArrivedByGroupId(groupId));
     }
 
     private void requireMember(long memberId) {
