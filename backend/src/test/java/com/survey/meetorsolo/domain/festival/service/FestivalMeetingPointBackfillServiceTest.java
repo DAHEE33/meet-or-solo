@@ -53,7 +53,7 @@ class FestivalMeetingPointBackfillServiceTest {
         FestivalMeetingPoint saved = captor.getValue();
         assertThat(saved.getFestivalId()).isEqualTo(10L);
         assertThat(saved.getKakaoPlaceId()).isEqualTo("AUTO-fixture-100");
-        assertThat(saved.getName()).isEqualTo("강릉 단오제 (자동 등록 기본 위치)");
+        assertThat(saved.getName()).isEqualTo("강릉 단오제");
         assertThat(saved.getAddress()).isEqualTo("강원특별자치도 강릉시 단오장길 1");
         assertThat(saved.getMapX()).isEqualTo(new BigDecimal("128.8961230000"));
         assertThat(saved.getMapY()).isEqualTo(new BigDecimal("37.7524560000"));
