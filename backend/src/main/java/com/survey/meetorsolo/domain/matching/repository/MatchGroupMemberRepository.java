@@ -147,6 +147,19 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
             """, nativeQuery = true)
     List<Long> findGroupIdsWithArrival(@Param("groupIds") List<Long> groupIds);
 
+    /**
+     * 만남 성립 여부(도착자 2명 이상)를 판정할 때 쓴다. 이탈·노쇼로 빠진 사람도 도착했던
+     * 사실은 남아야 하므로 상태와 무관하게 {@code arrived_at}만 본다
+     * ({@code MatchGroupContinuationPolicy.meetingHeld}와 같은 기준).
+     */
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM match_group_members
+            WHERE group_id = :groupId
+              AND arrived_at IS NOT NULL
+            """, nativeQuery = true)
+    long countArrivedByGroupId(@Param("groupId") long groupId);
+
     interface MatchHistoryMemberProjection {
         Long getGroupId();
         Long getMemberId();

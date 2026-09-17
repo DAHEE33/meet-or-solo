@@ -132,6 +132,7 @@ const group: CurrentMatchGroup = {
     { memberId: 1, nickname: 'member-a', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
     { memberId: 2, nickname: 'member-b', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
   ],
+  meetingHeld: false,
 };
 
 function bodyProps(overrides: Partial<Parameters<typeof MatchBody>[0]> = {}): Parameters<typeof MatchBody>[0] {

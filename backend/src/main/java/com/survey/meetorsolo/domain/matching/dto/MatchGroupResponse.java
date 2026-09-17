@@ -21,7 +21,8 @@ public record MatchGroupResponse(
         Long currentMemberId,
         MatchGroupFestivalResponse festival,
         MatchGroupMeetingPointResponse meetingPoint,
-        List<MatchGroupMemberResponse> members
+        List<MatchGroupMemberResponse> members,
+        boolean meetingHeld
 ) {
 
     private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
@@ -49,15 +50,25 @@ public record MatchGroupResponse(
                 null,
                 festival,
                 null,
-                members
+                members,
+                MatchMeetingWindowPolicy.isMeetingHeld((int) members.stream()
+                        .filter(member -> "ARRIVED".equals(member.status()))
+                        .count())
         );
     }
 
+    /**
+     * 나간 사람이 빠져 현재 활성 참여자만으로는 만남 성립 여부를 다시 셀 수 없다
+     * ({@code MatchGroupContinuationPolicy.meetingHeld}와 같은 기준). 그래서 이 값은 활성 인원
+     * 목록이 아니라 {@code meetingHeld}로 호출자가 직접 넘긴다 — 나가기 처리 뒤에도 도착 인원
+     * 2명 이상이었다는 사실이 유지되게 하기 위해서다.
+     */
     public static MatchGroupResponse from(
             ActiveGroupWithFestivalProjection group,
             List<MatchGroupMemberResponse> members,
             long currentMemberId,
-            int arrivalRadiusMeters
+            int arrivalRadiusMeters,
+            boolean meetingHeld
     ) {
         OffsetDateTime confirmedAt = group.getConfirmedAt()
                 .atZone(KOREA_ZONE)
@@ -80,7 +91,8 @@ public record MatchGroupResponse(
                 currentMemberId,
                 MatchGroupFestivalResponse.from(group),
                 MatchGroupMeetingPointResponse.from(group, arrivalRadiusMeters),
-                List.copyOf(members)
+                List.copyOf(members),
+                meetingHeld
         );
     }
 }

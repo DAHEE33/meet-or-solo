@@ -320,8 +320,10 @@ export function CurrentGroupRoom({
   const arrivalDeadlineReached = effectiveNowEpochMs >= Date.parse(group.arrivalDeadlineAt);
   const canSelectArrivalTime = canArrive && !arrivalDeadlineReached;
   const hasArrived = currentMember?.status === 'ARRIVED';
-  // 도착자가 2명 이상이면 이미 만남이 성립했다.
-  const meetingHeld = group.members.filter((member) => member.status === 'ARRIVED').length >= 2;
+  // 도착자가 2명 이상이면 이미 만남이 성립했다. `group.members`는 현재 활성 참여자만 담고
+  // 있어서, 상대가 먼저 나가 혼자 남으면 여기서 다시 세는 순간 항상 1명이 된다. 그래서
+  // 서버가 이탈자까지 포함해 판정한 값을 그대로 쓴다(docs/32류 후속 수정).
+  const meetingHeld = group.meetingHeld;
   // 나가는 경로가 만남 성립 여부로 갈린다(docs/19 4.11.3).
   //  - 성립 전: "못 갈 것 같아요"(참여 취소). 도착했더라도 마찬가지다. 도착 버튼을 눌렀다
   //    나가는 것만으로 취소 페널티를 피할 수 있으면, 오고 있는 사람에 대한 책임이 사라진다.

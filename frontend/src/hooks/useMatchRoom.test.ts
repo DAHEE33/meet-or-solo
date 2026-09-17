@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CurrentMatchGroup } from '../api/matching';
+import type { CurrentMatchGroup, MatchCancellationResult } from '../api/matching';
 import type {
   MatchingStateChangedNotification,
   MatchingWebSocketCallbacks,
@@ -32,6 +32,7 @@ const group: CurrentMatchGroup = {
     { memberId: 1, nickname: 'member-a', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
     { memberId: 2, nickname: 'member-b', profileImageUrl: null, status: 'JOINED', arrivalMinutes: null, arrivalTimeSelectedAt: null },
   ],
+  meetingHeld: false,
 };
 
 function deferred<T>() {
@@ -44,7 +45,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function harness(loadEvents = vi.fn().mockResolvedValue({ events: [] })) {
+function harness(
+  loadEvents = vi.fn().mockResolvedValue({ events: [] }),
+  leave?: (signal: AbortSignal) => Promise<MatchCancellationResult>,
+) {
   let callbacks: MatchingWebSocketCallbacks | null = null;
   const loads: Array<ReturnType<typeof deferred<CurrentMatchGroup | null>>> = [];
   const signals: AbortSignal[] = [];
@@ -79,6 +83,7 @@ function harness(loadEvents = vi.fn().mockResolvedValue({ events: [] })) {
       arrivals.push(request);
       return request.promise;
     }),
+    leave,
     connect: (nextCallbacks) => {
       callbacks = nextCallbacks;
       return disconnect;
@@ -412,6 +417,53 @@ describe('createMatchRoomSession', () => {
       terminationNotice: '만남이 끝났어요. 매너온도가 올랐어요.',
     });
     expect(test.scheduled.size).toBe(0);
+  });
+
+  it('먼저 나가기 뒤 남은 인원이 있으면 계속 진행 안내를 보여준다', async () => {
+    const leave = vi.fn(
+      (): Promise<MatchCancellationResult> => Promise.resolve({
+        groupId: group.groupId,
+        memberStatus: 'LEFT',
+        groupStatus: 'IN_PROGRESS',
+        groupContinues: true,
+        currentMemberCount: 1,
+      }),
+    );
+    const test = harness(undefined, leave);
+    test.loads[0].resolve(group);
+    await test.session.refresh();
+
+    await expect(test.session.leave()).resolves.toBe(true);
+    expect(test.states.at(-1)).toMatchObject({
+      status: 'EMPTY',
+      group: null,
+      terminationNotice: '먼저 나왔어요. 남은 멤버는 만남을 계속해요.',
+    });
+  });
+
+  // 만남이 이미 성립했던 방은 마지막 인원이 나가도 groupContinues가 true로 온다
+  // (MatchGroupContinuationPolicy가 취소로 보지 않기 때문). currentMemberCount가 0이면
+  // 실제로는 아무도 남지 않았으므로 "남은 멤버가 계속한다"는 문구를 쓰면 안 된다.
+  it('먼저 나가기가 마지막 인원이면 남은 멤버 문구 대신 종료 문구를 보여준다', async () => {
+    const leave = vi.fn(
+      (): Promise<MatchCancellationResult> => Promise.resolve({
+        groupId: group.groupId,
+        memberStatus: 'LEFT',
+        groupStatus: 'IN_PROGRESS',
+        groupContinues: true,
+        currentMemberCount: 0,
+      }),
+    );
+    const test = harness(undefined, leave);
+    test.loads[0].resolve(group);
+    await test.session.refresh();
+
+    await expect(test.session.leave()).resolves.toBe(true);
+    expect(test.states.at(-1)).toMatchObject({
+      status: 'EMPTY',
+      group: null,
+      terminationNotice: '먼저 나왔어요. 마지막 인원이라 만남이 끝났어요.',
+    });
   });
 
   it('MATCH_COMPLETED WebSocket 뒤 REST null이면 취소와 구분된 완료 안내를 만든다', async () => {

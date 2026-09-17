@@ -176,7 +176,7 @@ public class FestivalMeetingPointBackfillService {
 | 필드 | 값 | 이유 |
 |---|---|---|
 | `kakaoPlaceId` | `"AUTO-" + festival.contentId` | `festival_id + kakao_place_id` unique 제약을 만족하고, 실제 카카오 장소 검색으로 등록된 값이 아님을 접두어로 구분해 관리자 화면에서 "자동 생성됨" 표시에 활용할 수 있다. `contentId`는 관광공사 축제 고유 ID라 축제당 항상 유일하다. |
-| `name` | `festival.title + " (자동 등록 기본 위치)"` | 관리자가 목록에서 자동 생성 항목을 바로 인지하도록 표시를 남긴다. 이름은 이후 관리자가 언제든 `PUT`으로 바꿀 수 있다. |
+| `name` | `festival.title` 그대로 | 원래는 `festival.title + " (자동 등록 기본 위치)"`였으나, 이 표시가 참가자에게도 그대로 노출되는 만남 장소 이름이라 어색했다. 자동 생성 여부는 `kakaoPlaceId`의 `AUTO-` 접두어로 이미 구분되므로 이름에는 붙이지 않는다. 이름은 이후 관리자가 언제든 `PUT`으로 바꿀 수 있다. |
 | `address` | `festival.address`가 비어있지 않으면 그대로 사용, 없으면 `"주소 미확인 (관리자 확인 필요)"` | `chk_festival_meeting_points_address`가 빈 문자열을 거부하므로 fallback 문자열이 필요하다. |
 | `mapX`/`mapY` | `festival.mapX`/`festival.mapY` 그대로 | 이번 요구사항의 핵심 — "최초에는 축제 위치로 잡는다." |
 | `status` | `ACTIVE` | `ACTIVE` 후보가 없으면 매칭 자체가 열리지 않으므로(2.1절), 시딩의 존재 의미가 없어진다. |

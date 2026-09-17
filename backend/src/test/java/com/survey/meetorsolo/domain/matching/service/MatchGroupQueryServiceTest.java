@@ -209,9 +209,13 @@ class MatchGroupQueryServiceTest {
      *
      * <p>만남이 성립한 방은 상대가 먼저 나가도 만남 시간이 끝날 때까지 유지된다. 예전에는 이
      * 상태를 정합성 오류로 보고 거절해서, 남은 사람이 상태방을 열지도 못했다.
+     *
+     * <p>{@code meetingHeld}는 지금 활성 참여자(1명)가 아니라 이탈한 사람을 포함한 전체
+     * 도착자 수로 판정해야 한다. 그렇지 않으면 이미 만난 사람에게 "먼저 갈게요" 대신
+     * "못 갈 것 같아요"만 보이는 문맥 불일치가 생긴다.
      */
     @Test
-    void 상대가_먼저_나가_혼자_남아도_정상_반환한다() {
+    void 상대가_먼저_나가_혼자_남아도_정상_반환하고_만남_성립을_유지한다() {
         ActiveGroupWithFestivalProjection group = group(
                 10L,
                 20L,
@@ -224,11 +228,33 @@ class MatchGroupQueryServiceTest {
         when(groups.findActiveByMemberId(1L)).thenReturn(List.of(group));
         when(groupMembers.findActiveMembersWithProfileByGroupId(10L))
                 .thenReturn(List.of(participant));
+        // 이탈한 상대도 도착은 했었다 — arrived_at 2건이 남아 있다.
+        when(groupMembers.countArrivedByGroupId(10L)).thenReturn(2L);
 
         MatchGroupResponse response = service.currentGroup(1L);
 
         assertThat(response.currentMemberCount()).isEqualTo(1);
         assertThat(response.confirmedMemberCount()).isEqualTo(2);
+        assertThat(response.meetingHeld()).isTrue();
+    }
+
+    /** 아직 아무도 도착하지 않았으면 만남 성립도 아니다. */
+    @Test
+    void 도착자가_2명_미만이면_만남_미성립으로_반환한다() {
+        ActiveGroupWithFestivalProjection group = group(
+                10L, 20L, "CONFIRMED", 2,
+                OffsetDateTime.parse("2026-07-27T12:30:00+09:00")
+        );
+        ActiveGroupMemberProjection first = participant(100L, 1L, "member-a", null, "JOINED");
+        ActiveGroupMemberProjection second = participant(101L, 2L, "member-b", null, "JOINED");
+        when(groups.findActiveByMemberId(1L)).thenReturn(List.of(group));
+        when(groupMembers.findActiveMembersWithProfileByGroupId(10L))
+                .thenReturn(List.of(first, second));
+        when(groupMembers.countArrivedByGroupId(10L)).thenReturn(0L);
+
+        MatchGroupResponse response = service.currentGroup(1L);
+
+        assertThat(response.meetingHeld()).isFalse();
     }
 
     private ActiveGroupWithFestivalProjection group(
