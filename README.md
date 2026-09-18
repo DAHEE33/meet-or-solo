@@ -2,13 +2,29 @@
 
 강원도 축제 현장에서 혼자 방문한 사용자를 2~4인 소그룹으로 즉석 매칭하는 PWA 서비스입니다.
 
+## 네이버 OAuth 환경변수
+
+네이버 로그인은 backend의 `GET /api/auth/naver/login`, `GET /api/auth/naver/callback`을 사용합니다. frontend는 네이버 authorize URL을 직접 만들지 않습니다.
+
+```text
+NAVER_CLIENT_ID
+NAVER_CLIENT_SECRET
+NAVER_REDIRECT_URI
+NAVER_AUTHORIZATION_URI
+NAVER_TOKEN_URI
+NAVER_USER_INFO_URI
+NAVER_CONNECT_TIMEOUT
+NAVER_READ_TIMEOUT
+```
+
+local callback은 `http://localhost:8080/api/auth/naver/callback`입니다. dev는 현재 공개 도메인 없이 `http://<DEV_SERVER_HOST>:18080/api/auth/naver/callback` placeholder를 사용하며, prod URL은 운영 도메인이 확정된 뒤 정확히 등록합니다. 실제 Secret과 서버 주소는 저장소에 기록하지 않습니다.
+
 이 저장소는 모노레포 구조로 관리합니다.
 
 ```text
 meet-or-solo/
 ├─ .github/
 ├─ backend/
-├─ db/
 ├─ frontend/
 ├─ infra/
 ├─ docs/
@@ -41,10 +57,9 @@ meet-or-solo/
 - 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증
-- 관광공사 OpenAPI 실제 연동
 - GPS 체크인
 - 자동 매칭
-- WebSocket STOMP 이벤트 구현
+- WebSocket STOMP 기반 MatchRoom 상태 기능
 - 관리자 기능
 - Redis 구성
 - 운영 배포 자동화 완성
@@ -100,6 +115,16 @@ Backend/Frontend 공통 코드화 단계에서는 비즈니스 기능을 구현�
 현재 local 개발은 backend, PostgreSQL, Flyway, `/api/health`, frontend PWA 기본 스캐폴딩과 `/api/health` 연동 확인 화면을 기준으로 합니다.
 dev nginx/docker-compose 템플릿은 7단계에서 추가했고, GitHub Actions CI/dev CD 초안은 8단계에서 추가했습니다. `docker-compose.prod.yml`, prod nginx 설정, prod 배포 workflow는 아직 생성하지 않습니다.
 
+### 날짜·시간 기준
+
+- PostgreSQL 날짜 컬럼은 `TIMESTAMPTZ`를 유지하고 Database/Session timezone은 `Asia/Seoul`을 사용합니다.
+- JVM, Hibernate JDBC, Jackson, local/dev container의 timezone은 `Asia/Seoul`로 통일합니다.
+- REST API는 ISO-8601과 `+09:00` offset을 사용합니다.
+- 사용자 화면은 frontend 공통 formatter에서 동일한 절대 시점을 `yyyy-MM-dd HH:mm:ss` 형식으로 표시합니다.
+- 날짜에 9시간을 직접 더하지 않습니다.
+
+기존 local/dev DB의 기본 timezone은 각각 `scripts/set-local-db-timezone.sql`, `scripts/set-dev-db-timezone.sql`을 실행한 뒤 새 연결에서 확인합니다. 이 SQL은 기존 `TIMESTAMPTZ` 값을 변경하지 않습니다.
+
 ### 필요 도구
 
 - Java 17
@@ -127,7 +152,12 @@ POSTGRES_PASSWORD
 DB_HOST
 DB_PORT
 SPRING_PROFILES_ACTIVE
+TOURISM_API_KEY
 ```
+
+관광공사 서비스키 환경변수는 `TOURISM_API_KEY` **하나로 통일**합니다. 과거에는 local `.env`의 `TOURISM-API-KEY`와 표준 `TOUR_API_KEY`를 fallback으로 함께 읽었지만, 이름이 두 개면 어느 쪽이 비었는지 추적하기 어렵고 dev/prod에서 조용히 인증 실패로 이어졌습니다. 기존 `.env`를 쓰던 환경은 키 이름을 `TOURISM_API_KEY`로 바꿔야 합니다. 실제 키는 `.env`와 서버 Secret에만 두고 커밋하지 않습니다.
+
+축제 Scheduler는 profile별로 소유권을 고정합니다. `local`과 `prod`에서는 항상 비활성화하고, `dev`에서만 기본 활성화합니다. 따라서 local `.env`에는 `FESTIVAL_SYNC_ENABLED`를 두지 않습니다.
 
 `dev`와 `prod` profile은 다음 환경변수를 사용하도록 placeholder로만 구성되어 있습니다.
 
@@ -136,7 +166,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -205,7 +234,7 @@ set +a
 SPRING_PROFILES_ACTIVE=local ./gradlew bootRun
 ```
 
-Spring Boot 실행 시 Flyway가 `db/migration`의 migration을 적용합니다. 현재 `V1__init.sql`은 실제 도메인 테이블이 아니라 schema 검증용 placeholder 테이블만 생성합니다.
+Spring Boot 실행 시 Flyway가 `backend/src/main/resources/db/migration`의 migration을 classpath에서 적용합니다. Flyway location은 `classpath:db/migration` 기준이며, migration SQL은 backend jar 내부에 포함됩니다. 현재 `V1__init.sql`은 실제 도메인 테이블이 아니라 schema 검증용 placeholder 테이블만 생성합니다.
 
 실행 로그에서 `Flyway` 또는 `Migrating schema` 관련 메시지를 확인해 migration 적용 여부를 확인합니다.
 
@@ -231,6 +260,59 @@ curl http://localhost:8080/api/health
 ```
 
 4단계에서 backend `HealthController`는 공통 `ApiResponse` 포맷을 적용했습니다. 5단계에서 frontend `apiClient`, `ApiResponse<T>` 타입, `healthApi`, `HealthCheckPage`를 새 응답 구조에 맞게 수정했습니다.
+
+### 관광공사 `searchFestival2` 실제 호출 확인
+
+기본 test는 외부 네트워크를 사용하지 않고 mock 응답으로 client 계약을 검증합니다.
+
+TourAPI 연동 코드는 `backend/src/main/java/com/survey/meetorsolo/external/tourapi` 아래에서 `client`, `config`, `dto`, `exception`, `log`, `support` 책임으로 분리합니다. 외부 연동 기술 예외는 축제 service가 fallback 또는 비즈니스 예외 변환 여부를 결정할 때까지 `TourApiClientException`으로 유지합니다.
+
+```powershell
+cd backend
+.\gradlew.bat test --tests "com.survey.meetorsolo.external.tourapi.client.KoreaTourApiRestClientTest"
+```
+
+루트 `.env`의 `TOURISM_API_KEY`로 실제 강원도 축제 조회를 확인할 때만 live smoke test를 명시적으로 켭니다.
+
+```powershell
+cd backend
+$env:TOUR_API_LIVE_TEST='true'
+.\gradlew.bat test --tests "com.survey.meetorsolo.external.tourapi.client.TourApiLiveSmokeTest"
+Remove-Item Env:TOUR_API_LIVE_TEST
+```
+
+live smoke test는 `KorService2/searchFestival2`, 강원특별자치도 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`을 사용합니다. API Key와 전체 요청 URL은 로그에 남기지 않습니다.
+
+### 축제 DB 동기화 Scheduler
+
+축제 동기화는 `FestivalSyncScheduler → FestivalSyncService → TourApiClient → FestivalRepository/FestivalImageRepository` 순서로 실행됩니다. 사용자용 축제 조회는 관광공사 API를 직접 호출하지 않고 PostgreSQL의 `festivals`, `festival_images`를 조회합니다.
+
+축제 Scheduler는 `local=false`, `dev=true`, `prod=false`로 고정했습니다. 자동 동기화는 dev backend 한 인스턴스만 담당하며, local 실행은 dev와 같은 DB를 보더라도 관광공사 API를 자동 호출하지 않습니다. dev 서버 설정은 다음 값을 사용합니다.
+
+```text
+FESTIVAL_SYNC_ENABLED=true
+FESTIVAL_SYNC_INITIAL_DELAY=10s
+FESTIVAL_SYNC_FIXED_DELAY=6h
+FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS=3
+FESTIVAL_SYNC_RETRY_INITIAL_DELAY=1s
+FESTIVAL_SYNC_RETRY_MAX_DELAY=10s
+```
+
+Scheduler는 시작 후 최초 동기화를 시도하고 이후 실행 완료 시점부터 `fixedDelay`를 적용합니다. 네트워크 오류, HTTP 5xx, 429만 최대 3회(최초 호출 포함) 지수 지연으로 재시도하며 다른 4xx와 응답 형식 오류는 즉시 실패 처리합니다. 각 실제 호출 시도는 `tour_api_call_logs`에 성공 여부, HTTP status, 응답 시간, 결과 건수와 안전한 오류 분류를 저장합니다. API Key와 전체 URL은 저장하지 않습니다.
+
+전체 페이지를 모두 받은 경우에만 `content_id` 기준으로 단일 transaction upsert합니다. 같은 조회 기간·지역 범위에서 이번 정상 응답에 없는 기존 `ACTIVE` 축제는 `INACTIVE`로 변경하고, 운영자가 숨긴 `HIDDEN`은 유지합니다. `firstimage`, `firstimage2`는 축제별 대표 이미지로 저장·갱신하며 API 응답에서 이미지가 비면 기존 대표 이미지를 유지합니다. KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제는 `ENDED`로 정리합니다. API 호출 자체가 실패하면 기존 DB 데이터를 그대로 유지하며, 최초 실행부터 실패해 DB가 비어 있으면 `NO_DATA`, 기존 데이터가 있으면 `STALE_DATA`로 로그에 기록하고 다음 주기에 다시 실행합니다.
+
+### 축제 목록 API
+
+```text
+GET /api/festivals?page=0&size=20
+```
+
+- 인증 없이 조회 가능한 공개 API입니다.
+- `ACTIVE`이면서 KST 오늘 기준 종료되지 않은 축제만 반환합니다.
+- 정렬은 `eventStartDate`, `id` 오름차순입니다.
+- `size`는 1~100이며 기본값은 20입니다.
+- 응답에는 축제 기본 정보, 대표 원본/썸네일 URL, `page`, `size`, `totalElements`, `totalPages`, `hasNext`가 포함됩니다.
 
 ## 로컬 frontend 개발환경
 
@@ -287,10 +369,11 @@ npm run dev
 
 Vite dev server가 안내하는 URL로 접속하면 개발용 HealthCheck 화면이 표시됩니다.
 
-local 개발에서 frontend dev server는 `/api` 요청을 backend로 전달합니다.
+local 개발에서 frontend dev server는 `/api` 요청과 `/ws` WebSocket Upgrade를 backend로 전달합니다.
 
 ```text
 Browser -> http://localhost:5173/api -> Vite proxy -> http://localhost:8080/api
+Browser -> ws://localhost:5173/ws -> Vite ws proxy -> ws://localhost:8080/ws
 ```
 
 `frontend/vite.config.ts`의 proxy 설정을 바꾸면 `npm run dev`를 재시작해야 합니다.
@@ -334,7 +417,6 @@ DB_URL
 DB_USERNAME
 DB_PASSWORD
 CORS_ALLOWED_ORIGINS
-FLYWAY_LOCATIONS
 SERVER_PORT
 ```
 
@@ -363,7 +445,7 @@ infra/
 
 dev compose 구성:
 
-- `postgres`: `postgres:16-alpine`, compose 내부 network 전용, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` 환경변수 주입
+- `postgres`: `pgvector/pgvector:pg16`, compose 내부 network 전용, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` 환경변수 주입
 - `backend`: Spring Boot jar를 `/app/app.jar`로 mount해 실행, `SPRING_PROFILES_ACTIVE=dev`, `DB_URL`은 `postgres` service name 기준
 - `nginx`: `frontend/dist` 정적 파일 서빙, `/api` 요청을 `backend:8080`으로 reverse proxy, 외부 `18080` 포트만 publish
 
@@ -373,6 +455,8 @@ dev compose 구성:
 - 외부 직접 공개 금지: backend `8080`, PostgreSQL `5432`
 - 서버 내부 loopback 전용: PostgreSQL tunnel 목적지 `127.0.0.1:15432`
 - 기존 Ubuntu nginx 또는 다른 서비스가 host `80`을 사용할 수 있으므로 현재 meet-or-solo dev는 host `80`을 사용하지 않습니다.
+
+AI 임베딩용 `V11__add_member_preference_embeddings.sql`은 pgvector extension을 사용합니다. local/dev compose는 PostgreSQL 16 호환 `pgvector/pgvector:pg16` 이미지를 사용합니다. 기존 DB에서 전환할 때는 data volume을 삭제하지 않고 컨테이너만 재생성한 뒤 pgvector extension과 Flyway 적용 이력을 확인합니다.
 
 배포 산출물 기준:
 
@@ -434,7 +518,7 @@ workflow 동작 방향:
 
 1. backend를 Java 17로 `bootJar -x test` 빌드합니다.
 2. frontend를 Node.js 20으로 `npm ci`, `npm run build` 합니다.
-3. `backend/app.jar`, `frontend/dist`, `infra/docker/docker-compose.dev.yml`, `infra/nginx/default.dev.conf`, `db/migration`을 배포 패키지로 묶습니다.
+3. `backend/app.jar`, `frontend/dist`, `infra/docker/docker-compose.dev.yml`, `infra/nginx/default.dev.conf`를 배포 패키지로 묶습니다.
 4. GitHub Secrets의 SSH 정보로 dev 서버에 패키지를 업로드합니다.
 5. `DEV_DEPLOY_PATH`에서 압축을 풀고 서버 `.env` 존재 여부를 확인합니다.
 6. 서버 `.env`가 있으면 `docker compose --env-file .env -f infra/docker/docker-compose.dev.yml up -d`를 실행하는 초안입니다.
@@ -623,7 +707,32 @@ health endpoint를 확인합니다.
 curl http://localhost:8080/api/health
 ```
 
-Flyway는 Spring Boot 실행 시 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다. 현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이며, 실제 서비스 테이블은 9-2단계에서 `V2`, `V3`, `V4` 파일로 추가합니다. DB 설계 기준은 [docs/11_DATABASE_DESIGN.md](docs/11_DATABASE_DESIGN.md)를 따릅니다.
+Flyway는 Spring Boot 실행 시 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다. 표준 migration 위치는 `backend/src/main/resources/db/migration`이며 Spring Boot/Flyway 기본 classpath 경로인 `classpath:db/migration`을 사용합니다. 현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이며, 실제 서비스 테이블은 `V2`, `V3`, `V4` 파일로 추가되어 있습니다. DB 설계 기준은 [docs/11_DATABASE_DESIGN.md](docs/11_DATABASE_DESIGN.md)를 따릅니다.
+
+backend jar에 migration SQL이 포함되는지 확인합니다.
+
+```bash
+cd backend
+./gradlew clean build -x test
+jar tf build/libs/*.jar | grep db/migration
+```
+
+기대 결과:
+
+```text
+BOOT-INF/classes/db/migration/V1__init.sql
+BOOT-INF/classes/db/migration/V2__create_core_tables.sql
+BOOT-INF/classes/db/migration/V3__create_matching_tables.sql
+BOOT-INF/classes/db/migration/V4__create_safety_admin_recommendation_tables.sql
+```
+
+dev 서버 재배포 후 backend 로그에서 Flyway 인식 여부를 확인합니다.
+
+```bash
+docker logs meet-or-solo-backend-dev --tail=300
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i flyway
+docker logs meet-or-solo-backend-dev 2>&1 | grep -i "migrating schema"
+```
 
 PostgreSQL 컨테이너에 접속해 Flyway 적용 이력을 확인합니다.
 
@@ -635,7 +744,22 @@ docker exec -it meet-or-solo-postgres-local psql -U <LOCAL_DB_USERNAME> -d <LOCA
 select * from flyway_schema_history;
 ```
 
-이미 적용된 `V1`, `V2` 같은 migration 파일은 수정하지 않습니다. 변경이 필요하면 `V3`, `V4`처럼 새 migration 파일을 추가합니다.
+dev DB에서 Flyway 적용 이력과 테이블 목록은 아래 SQL로 확인합니다.
+
+```sql
+select installed_rank, version, description, script, success
+from flyway_schema_history
+order by installed_rank;
+```
+
+```sql
+select table_schema, table_name
+from information_schema.tables
+where table_schema not in ('pg_catalog', 'information_schema')
+order by table_schema, table_name;
+```
+
+이미 적용된 `V1`~`V4` migration 파일은 수정하지 않습니다. 변경이 필요하면 `V5__...sql`처럼 새 migration 파일을 추가합니다. 루트 `db/migration`은 더 이상 사용하지 않으며, dev 배포 시 migration SQL을 별도로 서버에 복사하거나 mount하지 않습니다.
 
 ### 아직 구현하지 않은 기능
 
@@ -645,10 +769,9 @@ select * from flyway_schema_history;
 - 실제 서비스 화면
 - Kakao OAuth2 로그인
 - JWT 인증/인가
-- 관광공사 OpenAPI 실제 연동
 - GPS 체크인
 - 자동 매칭
-- WebSocket STOMP 상태 동기화
+- MatchRoom WebSocket STOMP 상태 동기화
 - 관리자 기능
 - Redis 구성
 - 테스트 코드 추가

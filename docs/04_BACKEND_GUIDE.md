@@ -1,5 +1,31 @@
 # 백엔드 가이드
 
+## Proposal 조기 종료와 matching 시각 계약
+
+- 최초 proposal 응답은 attempt를 먼저 잠그고 proposal, attempt member, 정렬된 pool 순서로
+  처리한다. 응답마다 목표 인원과 최소 2인 가능성을 다시 계산하며 조기 종료 미응답자는
+  비귀책 `EXCLUDED` 처리한다.
+- 최신 pool 응답의 `terminationReason`은 회원 본인의 proposal/member 상태에서만 파생하며
+  상대 identity·응답·제한 정보를 포함하지 않는다.
+- restriction의 `serverNow`는 cooldown 및 완료 제한 remainingSeconds를 계산한 같은 `Clock`
+  값이다. 같은 attempt와 round의 proposal deadline 불일치는 응답 transaction에서 거부한다.
+
+## 만남 장소 확정 transaction
+
+축제 만남 장소는 기존 proposal 응답 transaction 안에서 확정합니다. 잠금 순서는
+attempt, proposal, attempt member, 정렬된 pool, festival이며 festival row lock 뒤
+활성 후보 조회와 기존 snapshot group 수 계산을 수행합니다.
+
+## 네이버 OAuth 로그인
+
+- 기존 Kakao OAuth와 같은 `domain/auth`의 회원 조회, JWT, Refresh Token 발급 흐름을 사용한다.
+- 회원은 이메일이 아니라 `(provider, provider_user_id)`로 식별한다.
+- 네이버 `response.id`만 필수 식별값이며 선택 프로필 값의 null은 정상 처리한다.
+- OAuth state는 provider별 HttpOnly callback 전용 쿠키로 5분간 보관하고 callback에서 즉시 제거한다.
+- 네이버 외부 API는 connect/read timeout을 명시하며 token, code, secret, 프로필 원문을 로그에 남기지 않는다.
+- Refresh Token은 회원당 1개를 유지하고 재로그인 시 원문이 아닌 hash와 만료시각을 rotation한다.
+- OAuth email은 nullable, non-unique 참고 정보로만 저장하며 회원 식별이나 계정 병합에 사용하지 않는다.
+
 ## 백엔드 방향
 
 백엔드는 Spring Boot 기반 서비스입니다. 비즈니스 규칙, 영속성, 보안, 매칭 상태, 상태 동기화를 담당합니다.
@@ -10,6 +36,13 @@
 - `/ws` 하위 WebSocket STOMP endpoint
 - Scheduler 기반 background job
 - Flyway 기반 DB schema 관리
+
+## 회원 프로필 validation
+
+- 닉네임은 `2~12자`로 제한한다.
+- 닉네임은 한글, 영문 대소문자, 숫자만 허용한다.
+- 공백, 이모지, 특수문자는 backend validation에서 거절한다.
+- frontend 입력 제한과 관계없이 backend의 `UpdateMemberProfileRequest` validation을 최종 기준으로 둔다.
 
 ## 패키지 방향
 
@@ -43,6 +76,94 @@ com.survey.meetorsolo
 └─ domain
 ```
 
+## 한국관광공사 TourAPI Client
+
+풀스택 A의 관광 API 연동은 `external/tourapi`에 둡니다. 현재 첫 오퍼레이션은 국문 `KorService2`의 `searchFestival2`입니다.
+
+```text
+external/tourapi
+├─ client      # 외부 호출 인터페이스와 RestClient 구현
+├─ config      # 설정값과 전용 RestClient bean
+├─ dto         # 관광공사 요청·응답 계약
+├─ exception   # 외부 연동 기술 예외와 오류 분류
+├─ log         # 실제 API 호출 시도 이력 저장
+└─ support     # JSON/XML 응답 해석
+```
+
+- HTTP client는 기존 Spring MVC 의존성의 `RestClient`를 사용합니다.
+- 공통 파라미터인 `serviceKey`, `MobileOS`, `MobileApp`, `_type=json`은 client가 추가합니다.
+- 서비스키 환경변수는 `TOURISM_API_KEY` 하나입니다. local·dev·prod가 같은 이름을 씁니다. 과거의 `TOURISM-API-KEY`/`TOUR_API_KEY` 이중 fallback은 제거했습니다 — 이름이 둘이면 어느 쪽이 비었는지 추적할 수 없어 조용한 인증 실패를 만듭니다.
+- 서비스키는 URI에 한 번만 인코딩하며 로그, 예외 메시지, `tour_api_call_logs`에 저장하지 않습니다.
+- 성공 JSON의 `resultCode=0000`을 확인하고, 공공데이터포털이 HTTP 200으로 반환할 수 있는 XML 오류 응답도 구분합니다.
+- `searchFestival2`의 실패를 빈 목록으로 바꾸지 않습니다. 정상 0건만 빈 목록으로 반환하고, 외부 API 실패는 `TourApiClientException`으로 전달합니다.
+- 기술 오류의 기본 메시지는 `TourApiErrorType`에 모으고, 원격 오류 코드와 HTTP status는 `TourApiClientException`의 별도 필드로 보존합니다.
+- `TourApiClientException`은 client 경계의 기술 예외입니다. 축제 service가 캐시 fallback, 재시도 또는 `BusinessException` 변환 여부를 결정합니다.
+- 공통 client는 한 페이지 조회만 담당합니다. 전체 페이지 순회, DB upsert, 마지막 정상 데이터 유지와 Scheduler는 축제 domain이 담당합니다.
+- 공통 client는 물리적인 호출 시도마다 `tour_api_call_logs`를 별도 transaction으로 저장합니다. 로그 저장 실패는 원래 API 성공/실패 결과를 덮어쓰지 않습니다.
+- 호출 이력에는 operation, 안전한 요청 식별값, HTTP status, 성공 여부, 응답 시간, 결과 건수, 오류 분류만 기록하며 API Key, 전체 URL, 응답 본문, 원본 예외 메시지는 기록하지 않습니다.
+- 강원도 축제 조회 시 법정동 시도 코드 `51`과 분류 `EV/EV01`을 사용하되, 해당 필터는 공통 client가 아니라 호출하는 service가 결정합니다.
+
+실제 API smoke test는 기본 test 실행에서 제외하고 `TOUR_API_LIVE_TEST=true`일 때만 실행합니다.
+
+## 축제 데이터 동기화
+
+축제 화면 API는 관광공사 API를 사용자 요청마다 호출하지 않고 PostgreSQL의 `festivals`를 조회하는 방향으로 구성합니다. 관광공사 API 호출은 `FestivalSyncScheduler`가 `FestivalSyncService`를 통해 수행합니다.
+
+```text
+FestivalSyncScheduler
+  → FestivalSyncService
+  → TourApiClient.searchFestivals
+  → FestivalSyncMapper
+  → FestivalSyncWriter
+  → FestivalRepository / FestivalImageRepository
+  → PostgreSQL festivals / festival_images
+```
+
+- `FestivalSyncService`는 설정된 기간의 `searchFestival2` 전체 페이지를 먼저 메모리에 수집합니다.
+- 한 페이지라도 실패하거나 페이지 계약이 불완전하면 `FestivalSyncWriter`를 호출하지 않습니다.
+- 전체 페이지 수신 후에만 `FestivalSyncWriter`의 단일 transaction으로 `content_id` 기준 upsert합니다.
+- 전체 페이지 수신에 성공하면 같은 조회 기간·지역 범위에서 응답에 없는 기존 `ACTIVE` 축제를 `INACTIVE`로 변경합니다. 매핑이 실패한 항목도 유효한 `contentId`가 응답에 있으면 누락으로 판단하지 않습니다.
+- `firstimage`, `firstimage2`는 축제별 `display_order=0` 대표 이미지로 저장·갱신합니다. 이미지 URL은 HTTP/HTTPS만 허용하며 응답에서 이미지가 누락되면 마지막 정상 이미지를 유지합니다.
+- 성공한 동기화 transaction에서는 KST 오늘보다 `event_end_date`가 지난 `ACTIVE/INACTIVE` 축제를 `ENDED`로 일괄 정리합니다. 종료 당일은 `ACTIVE`로 유지하고 운영자가 숨긴 `HIDDEN`은 변경하지 않습니다.
+- 동기화 실패 시 기존 `festivals` row를 삭제하거나 변경하지 않습니다. 기존 row가 있으면 `STALE_DATA`, 하나도 없으면 `NO_DATA` 상태로 Scheduler 로그에 기록하고 다음 주기에 다시 시도합니다.
+- Scheduler는 `fixedDelay`를 사용하므로 한 인스턴스 안에서 이전 실행이 끝난 뒤 다음 실행 시간을 계산합니다.
+- Scheduler 소유권은 `local=false`, `dev=true`, `prod=false`입니다. local과 dev가 같은 DB를 사용하더라도 자동 동기화는 dev backend 한 인스턴스만 수행합니다.
+- 네트워크 오류, HTTP 5xx, 429는 페이지별로 최대 3회(최초 호출 포함) 재시도합니다. 기본 지연은 1초, 2초의 지수 증가이며 최대 10초로 제한합니다.
+- 인증/권한, 그 외 HTTP 4xx, 설정 오류, 잘못된 응답은 재시도하지 않습니다. 재시도를 모두 소진하면 전체 동기화를 실패 처리하여 기존 DB 데이터를 유지합니다.
+- 기본 조회 조건은 KST 오늘 기준 이전 30일부터 이후 365일까지, 강원 법정동 시도 코드 `51`, 축제 분류 `EV/EV01`, 페이지 크기 100입니다.
+- API가 정상 0건을 반환하면 row를 삭제하지 않고 같은 조회 기간·지역 범위의 기존 `ACTIVE` 축제를 `INACTIVE`로 변경합니다. 최초 실행도 0건이면 DB는 빈 상태로 유지됩니다.
+- API가 정상 0건이어도 기존 데이터의 종료 상태 정리를 먼저 수행하며 `HIDDEN`, `ENDED`는 누락 비교로 변경하지 않습니다.
+
+## 축제 목록 조회 API
+
+`GET /api/festivals?page=0&size=20`은 사용자 요청마다 관광공사 API를 호출하지 않고 PostgreSQL 캐시만 조회합니다.
+
+- 공개 API이며 현재 Security 설정에서 별도 인증을 요구하지 않습니다.
+- `status=ACTIVE`이고 `event_end_date`가 null이거나 KST 오늘 이상인 축제만 조회합니다.
+- `event_start_date`, `id` 오름차순으로 고정 정렬합니다.
+- `page`는 0 이상, `size`는 1~100으로 검증합니다.
+- 목록과 대표 이미지는 두 번의 일괄 query로 조회하여 축제별 이미지 N+1 query를 만들지 않습니다.
+- 응답은 공통 `ApiResponse<FestivalListResponse>` 형식이며 목록 항목에는 `id`, `contentId`, 제목, 주소, 지역 코드, 행사 기간, 상태, 원본/썸네일 URL을 포함합니다.
+- 종료 상태 Scheduler 반영이 지연되더라도 조회 query에서 종료일을 한 번 더 확인하여 지난 축제를 노출하지 않습니다.
+
+주요 환경변수:
+
+```text
+FESTIVAL_SYNC_ENABLED
+FESTIVAL_SYNC_INITIAL_DELAY
+FESTIVAL_SYNC_FIXED_DELAY
+FESTIVAL_SYNC_PAGE_SIZE
+FESTIVAL_SYNC_MAX_PAGES
+FESTIVAL_SYNC_LOOKBACK_DAYS
+FESTIVAL_SYNC_LOOKAHEAD_DAYS
+FESTIVAL_SYNC_REGION_CODE
+FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1
+FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2
+FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS
+FESTIVAL_SYNC_RETRY_INITIAL_DELAY
+FESTIVAL_SYNC_RETRY_MAX_DELAY
+```
+
 ## 공통 응답 포맷
 
 REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
@@ -72,6 +193,77 @@ REST API 응답은 `ApiResponse`로 감싸는 것을 기본으로 합니다.
 ```
 
 현재 공통 구조는 MVP 수준으로 유지합니다. trace id, error detail, debug field 같은 운영 확장 필드는 필요해질 때 별도 승인 후 추가합니다.
+
+## current match group 조회
+
+현재 `PUT /api/matching/groups/me/current/arrival`은 body와 식별자를 받지 않고
+인증 회원의 group/member를 `group row -> member row` 순서로 잠급니다. 최초
+도착이면 group을 IN_PROGRESS로 전환하고 갱신된 전체 snapshot을 반환합니다.
+도착은 `now < confirmedAt + 30분`에서만 허용하고 deadline 정각부터는
+NO_SHOW Scheduler 판정 대상으로 넘깁니다.
+
+후속 단말 위치 확인에서는 신고 완료와 위치정보 약관·동의 적용을 전제로 이
+API가 브라우저에서 측정한 위도·경도, 정확도와 측정 시각을 받습니다. Backend는
+인증 회원의 group snapshot에 저장된 만남 포인트와의 거리를 직접 계산하고,
+정확도·측정값 유효시간·도착 허용 반경을 모두 만족할 때만 기존 상태 전이를
+수행합니다. 클라이언트가 계산한 거리나 `verified` 값은 받거나 신뢰하지
+않습니다. 원본 사용자 좌표는 DB, event와 log에 저장하지 않고 요청 처리 후
+폐기합니다. GPS 조작 가능성이 남으므로 허위 도착 분쟁은 신고와 운영 검토로
+보완합니다.
+
+`PUT /api/matching/groups/me/current/cancellation`은 회원/group 식별자를 받지
+않고 `SCHEDULE_CHANGED`, `TRANSPORTATION_ISSUE`, `OTHER` 중 하나만 받습니다.
+취소 상세 사유는 다른 회원에게 공개하지 않으며 성공 응답은 group 유지 여부와
+현재 유효 인원 수를 제공합니다.
+
+`GET /api/matching/groups/me/current`는 path, query, body의 회원/group 식별자를
+받지 않고 `access_token` HttpOnly cookie의 로그인 회원만 기준으로 조회합니다.
+응답은 기존 group 필드와 함께 `festivals`의 최소 summary 및 active member의
+공개 상태를 제공합니다.
+
+- group: `groupId`, `festivalId`, `status`, `confirmedMemberCount`, `confirmedAt`
+- festival: `festivalId`, `title`, `address`, `eventStartDate`, `eventEndDate`
+- meeting point(후속): 장소 ID, 장소명, 주소, 좌표와 단말 확인 반경 안내
+- member: `memberId`, `nickname`, `profileImageUrl`, `status`
+
+group/festival projection 1회와 member/profile projection 1회로 조회해 N+1을
+방지합니다. current group이 없으면 `200 OK`, `data:null`이고 정합성 충돌은
+`MATCHING_CONFLICT`입니다.
+
+### 정상 완료 후 재매칭 제한 계약
+
+MVP의 체크인과 확정 매칭 유효시간은 기존 기획서의 2시간에서 각각 1시간으로
+조정합니다. 정상 완료 group은 active current-group에서 계속 제외하되, 신규
+pool 신청과 restriction 조회에서는 로그인 회원의 최근 `COMPLETED` group을
+확인합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + 1시간
+```
+
+현재 시각이 이 값보다 이르면 신규 pool 신청을 거절하고 restriction 응답에
+종료 시각과 남은 초를 제공합니다. 이 제한은 귀책 penalty가 아니므로
+`match_cooldowns`에 정상 완료 row를 추가하지 않고 완료 group 이력에서
+파생하는 방향을 우선합니다. 새 active group이 있으면 기존 active group 제한을
+가장 먼저 적용합니다. 완료 횟수 최대 3회 같은 별도 횟수 제한은 MVP에 추가하지
+않습니다.
+
+구현은 최근 `COMPLETED` group과 로그인 회원의 `COMPLETED` member 관계만
+조회하고 `confirmed_at + 1시간`을 계산합니다. restriction 응답의
+`completionLock`은 `active`, `reason=MATCH_VALIDITY`, `groupId`, `startsAt`,
+`expiresAt`, `remainingSeconds`를 제공하며 귀책 cooldown과 별도입니다. 신규 pool
+신청은 active pool/group 검증을 먼저 적용한 뒤 cooldown과 완료 제한을 검증하고,
+완료 제한 중에는 `MATCHING_COMPLETION_LOCKED`를 반환합니다. 정확한 경계에서는
+제한이 종료됩니다.
+
+도착 예정 시간은
+`PUT /api/matching/groups/me/current/arrival-time`에서 변경합니다. request에는
+`arrivalMinutes`만 포함하며 신규 요청은 `5`, `10`, `20`, `25`만 허용합니다.
+DB CHECK와 조회 DTO/parser는 기존 row/event 호환을 위해 `0`, `30`도 계속
+허용하지만 신규 PUT API에서는 거절합니다. 서버는
+인증 회원의 active group과 member를 직접 찾고 group row, group member row
+순서로 잠급니다. 실제 변경은 member update와 `match_events` insert를 같은
+transaction에서 처리하고 알림은 `AFTER_COMMIT`에만 전송합니다.
 
 ## 공통 예외 처리
 
@@ -172,19 +364,72 @@ Migration 파일은 영속 데이터에 영향을 주므로 신중히 검토합�
 
 Spring Boot 실행 시 Flyway는 `flyway_schema_history` 테이블을 확인하고, 아직 적용되지 않은 migration SQL을 자동 실행합니다.
 
-현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration입니다. 실제 서비스 테이블은 이후 `V2`, `V3` 파일로 추가합니다.
+표준 migration 위치는 `backend/src/main/resources/db/migration`입니다. Spring Boot/Flyway 기본 classpath 경로인 `classpath:db/migration`을 사용하며, migration SQL은 backend jar에 포함됩니다. dev 배포 시 migration SQL을 별도로 서버에 복사하거나 컨테이너에 mount하지 않습니다.
+
+현재 `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration입니다. 실제 서비스 테이블은 `V2`, `V3`, `V4` 파일로 추가되어 있습니다.
 
 DB volume을 초기화하면 `flyway_schema_history`도 함께 사라집니다. DB 초기화 후에는 Spring Boot를 다시 실행해야 Flyway migration이 적용됩니다.
 
 `flyway_schema_history`가 없으면 먼저 backend를 `local` profile로 실행합니다. Spring Boot 시작 과정에서 Flyway가 migration을 적용하고 `flyway_schema_history`를 다시 생성합니다.
 
-이미 적용된 `V1`, `V2` 같은 migration 파일은 수정하지 않습니다. 변경이 필요하면 `V3`, `V4`처럼 새 migration 파일을 추가합니다.
+이미 적용된 `V1`~`V4` migration 파일은 수정하지 않습니다. 변경이 필요하면 `V5__...sql`처럼 새 migration 파일을 추가합니다.
 
-실제 서비스 테이블은 `V2`, `V3` 등 새 migration으로 추가합니다. `V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이므로 불필요하게 수정하지 않습니다.
+`V1__init.sql`은 DB/Flyway 연결 확인용 초기 migration이므로 불필요하게 수정하지 않습니다. 루트 `db/migration`은 더 이상 사용하지 않습니다.
 
 ## PostgreSQL
 
 PostgreSQL은 MVP의 단일 신뢰 원천입니다.
+
+## 프로필 이미지 Object Storage
+
+- `members.profile_image_url`은 Kakao/Naver OAuth가 제공한 외부 URL 용도로 유지합니다.
+- `V9__add_member_profile_image_object_key.sql`은 직접 업로드한 이미지의 object key를 저장하는 nullable `profile_image_object_key`를 추가합니다.
+- object key 형식은 `{OCI_OBJECT_STORAGE_PROFILE_PREFIX}/{memberId}/{uuid}.{extension}`이며 local 기본값은 `profiles/local`입니다.
+- `POST /api/members/me/profile-image`는 인증 cookie와 multipart `file`을 받아 JPEG, PNG, WEBP 및 최대 크기를 검증합니다. MIME 타입과 파일 시그니처를 함께 확인합니다.
+- 새 object 업로드와 DB flush가 성공한 뒤 transaction commit 시 기존 object를 삭제합니다. DB transaction이 rollback되면 새 object를 정리합니다.
+- `GET /api/members/me`의 `profileImageUrl`은 직접 업로드 object가 있으면 `/api/members/me/profile-image`, 없으면 OAuth URL, 둘 다 없으면 `null`입니다.
+- `GET /api/members/me/profile-image`는 본인 object key만 조회해 private bucket의 bytes를 `no-store` 응답으로 중계합니다.
+- Object Storage 장애 응답에는 endpoint, access key, secret key, object key 같은 내부 정보를 노출하지 않습니다.
+- OCI S3 Compatibility API는 `aws-chunked` content encoding을 지원하지 않으므로 S3 client의 `chunkedEncodingEnabled`를 `false`, `requestChecksumCalculation`을 `WHEN_REQUIRED`로 설정합니다.
+
+## 회원 탈퇴
+
+정책과 결정 근거는 [관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md) 4.4를 따릅니다.
+여기에는 구현 위치만 적습니다.
+
+| 진입점 | 서비스 |
+| --- | --- |
+| `DELETE /api/members/me` | `MemberWithdrawalService.withdrawSelf` |
+| `POST /api/admin/members/{memberId}/forced-withdrawal` | `AdminMemberService.forceWithdraw` → `withdrawByAdmin` |
+
+- 두 경로가 `MemberWithdrawalService`의 같은 코어를 공유하지만 진입점을 분리합니다. `BAN`은
+  되돌릴 수 있고 강제 탈퇴는 익명화라 되돌릴 수 없으므로 `AdminMemberActionType`에 넣지 않습니다.
+- 물리 삭제하지 않습니다. `members` 참조 FK 31개가 전부 `ON DELETE RESTRICT`입니다.
+- 진행 중 매칭은 `MemberWithdrawalMatchCleanupService`가 정리합니다.
+  `Propagation.MANDATORY`라 탈퇴 transaction 밖에서는 실행되지 않습니다.
+  기존 `MatchCancellationService`/`MatchPoolCancellationService`는 재사용하지 않습니다.
+  전자는 도착 마감이 지나면 예외를 던지고 후자는 쿨타임·penalty를 매겨, 탈퇴가 실패합니다.
+- 프로필 이미지 실물은 commit 이후 삭제합니다. `ObjectStorageService.delete`가 null과 저장소
+  장애를 모두 무시하므로 삭제 실패로 탈퇴가 되돌아가지 않습니다.
+- 재가입 판정은 `MemberRejoinPolicy`가 `AuthService`의 OAuth upsert 안에서 처리합니다.
+  **프로필 갱신보다 먼저** 판정해야 합니다. 순서가 바뀌면 재가입이 거부된 회원의 익명화된
+  프로필이 OAuth 응답으로 다시 채워집니다.
+- 재가입 거부는 `MemberSanctionException`(`MEMBER_REJOIN_BLOCKED`)으로 던집니다.
+  `GlobalExceptionHandler`가 `ErrorCode`가 아니라 예외 타입에만 걸려 있어, 안내 cookie와
+  `403` body 경로를 수정 없이 재사용합니다.
+- 쿨오프 값은 `MemberRejoinCooldownPolicy.COOLDOWN`(7일) 상수입니다. 환경변수가 아닙니다.
+- 새 활동 endpoint를 만들면 `SuspendedActivityPolicy`에 분류해야 합니다.
+  `DELETE /api/members/me`는 개인정보 권리라 `ALLOWED`에 있습니다.
+
+### 날짜·시간 저장 및 API 기준
+
+- Flyway의 기존 `TIMESTAMPTZ` 컬럼을 유지합니다.
+- Entity의 `OffsetDateTime` 값은 `Asia/Seoul` 기준 `+09:00` offset으로 생성합니다.
+- JVM 기본 timezone과 `hibernate.jdbc.time_zone`을 `Asia/Seoul`로 고정합니다.
+- HikariCP가 연결을 만들 때 `SET TIME ZONE 'Asia/Seoul'`을 실행해 애플리케이션 DB session 기준도 고정합니다.
+- Jackson은 `Asia/Seoul` 기준 ISO-8601 문자열과 `+09:00` offset을 사용하며 epoch timestamp로 직렬화하지 않습니다.
+- frontend는 API의 절대 시점을 KST 형식으로 렌더링할 뿐 9시간을 수동으로 더하지 않습니다.
+- PostgreSQL server/session timezone은 Flyway migration으로 관리하지 않고 local/dev compose의 `postgres -c timezone=Asia/Seoul`과 기존 DB용 수동 `ALTER DATABASE` script로 관리합니다.
 
 관리 대상:
 
@@ -232,6 +477,13 @@ GET /api/health
 
 ## 추후 보안 기능
 
+### JWT 만료시간 설정
+
+- `JWT_ACCESS_TOKEN_EXPIRES_MINUTES`는 DB에 저장하지 않는 Access Token의 JWT `exp`와 cookie 수명을 설정합니다.
+- `JWT_REFRESH_TOKEN_EXPIRES_MINUTES`는 DB `refresh_tokens.expires_at`과 Refresh Token cookie 수명을 설정합니다.
+- dev/prod의 Access Token 기본값은 30분이고 Refresh Token 기본값 `20160`분은 14일입니다. 현재 local 기본값과 개인 `.env`는 만료 동작 확인을 위해 Access Token과 Refresh Token을 각각 30분으로 설정합니다.
+- 만료시간 변경은 기존 token에 소급 적용되지 않으므로 backend 재시작 후 다시 로그인해 token을 재발급해야 합니다.
+
 1단계 이후 구현 예정:
 
 - Spring Security 설정
@@ -248,6 +500,16 @@ GET /api/health
 WebSocket STOMP는 상태 동기화 전용입니다.
 
 자유 채팅 기능으로 확장하지 않습니다.
+
+현재 matching WebSocket 계약:
+
+- handshake endpoint는 `/ws`입니다.
+- `access_token` HttpOnly cookie를 검증해 회원 ID 기반 `Principal`을 설정합니다.
+- client는 본인의 `/user/queue/matching`만 구독할 수 있습니다.
+- client `SEND` endpoint는 제공하지 않습니다.
+- DB transaction에서는 내부 application event만 발행하고 실제 STOMP 알림은 `AFTER_COMMIT`에 전송합니다.
+- payload는 상태 변경 이유와 발생 시각만 포함하며, client는 수신 후 REST로 최종 상태를 복원합니다.
+- 단일 instance의 Spring simple broker를 사용하며 Redis나 외부 message broker를 추가하지 않습니다.
 
 Scheduler 예정 작업:
 
@@ -297,3 +559,77 @@ Redis는 MVP 1단계에 추가하지 않습니다.
 - 매칭 대기열 최적화
 
 Redis를 명시적으로 도입하기 전까지 backend는 Redis 전용 동작에 의존하지 않습니다.
+
+## Current group events 조회
+
+- `GET /api/matching/groups/me/current/events`는 HttpOnly `access_token`의 회원을 기준으로 current active group event만 조회합니다.
+- path/query/body에서 `memberId`, `groupId`를 받지 않으며 active group 부재는 `200 data:null`입니다.
+- 최신 50건을 선택해 `created_at ASC, id ASC` 순서로 반환하고 raw JSON payload는 DTO에 포함하지 않습니다.
+- actor는 event member가 같은 active group의 active member일 때만 `memberId`, `nickname`을 공개합니다.
+- `ARRIVAL_TIME_SELECTED`는 허용된 `arrivalMinutes`만 파싱하며 malformed event는 해당 항목만 제외합니다.
+- `MATCH_CONFIRMED` 저장은 group/member 확정과 같은 transaction이며 event insert 실패 시 확정도 rollback됩니다.
+
+## 찜(북마크)과 댓글·좋아요
+
+설계 근거는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`입니다. 패키지는
+`domain/content/{support,bookmark,comment,engagement}`이며 축제와 관광지가 같은 코드를 공유합니다.
+
+### 공개 조회의 optional 인증
+
+- `GET /api/{festivals|spots}/{id}/engagement`와 `GET /api/{festivals|spots}/{id}/comments`는
+  **비로그인과 만료·무효 쿠키에서도 `200`** 입니다. `OptionalMemberResolver`가 쿠키 부재·공백·파싱
+  실패를 모두 `null`로 바꾸고 예외를 던지지 않습니다.
+- 이것은 편의가 아니라 필수 제약입니다. frontend `apiClient`가 모든 `401`을 `/login` 전역
+  리다이렉트로 처리하므로, 이 두 endpoint가 `401`을 주면 비로그인 사용자가 공개 상세 화면을 열기만
+  해도 로그인 화면으로 튕깁니다.
+- 기존 controller의 `memberId(accessToken)` helper(쿠키 없으면 `UNAUTHORIZED`)는 쓰기 endpoint에만
+  씁니다. 두 방식을 혼동하면 위 사고가 재발합니다.
+- `engagement` 응답의 `viewer.loggedIn`·`viewer.admin`이 화면의 로그인 분기와 관리자 숨김 버튼
+  노출 근거입니다. 관리자 판정을 위해 별도 요청을 만들지 않습니다.
+
+### 좋아요 카운터 정합성
+
+- `content_comments.like_count`는 비정규화 카운터이고, **`content_comment_likes`의 INSERT/DELETE가
+  실제로 1행에 영향을 준 경우에만** 증감합니다(`insert ... on conflict do nothing` 후 affected
+  rows 확인). 이것이 멱등성과 카운터 정합성을 동시에 만족시키는 지점입니다.
+- `like_count = like_count ± 1`은 PostgreSQL row-level lock으로 직렬화되어 lost update가 없습니다.
+- 감소는 `where like_count > 0` 가드와 DB `chk_content_comments_like_count`가 음수를 이중으로
+  막습니다.
+- 카운터 update는 native `@Modifying` 쿼리이고 `clearAutomatically`로 persistence context를
+  비우므로, 응답에 담을 실제 카운트는 update 후 다시 읽습니다.
+- 찜 등록도 같은 방식입니다. 충돌 대상을 지정하지 않는 `on conflict do nothing`이
+  `uq_content_bookmarks_member_festival`과 `uq_content_bookmarks_member_place` 두 partial unique
+  index를 함께 커버합니다.
+
+### 상태 전이와 멱등성
+
+- 댓글 삭제·숨김·재공개는 모두 조건부 `update`의 affected rows로 판단합니다. 작성자 삭제는
+  `status = 'VISIBLE'`인 본인 댓글만 전환하고, affected가 0이면 이미 삭제된 것으로 보고 그대로
+  `204`(멱등)입니다. 존재하지만 작성자가 다르면 `FORBIDDEN`입니다.
+- 관리자 재공개는 `HIDDEN`만 되돌립니다. 작성자가 삭제한 `DELETED`는 되살리지 않으며, 응답의
+  `changed = false`가 그 사실을 알려줍니다.
+- `status`와 `deleted_at`은 `chk_content_comments_deleted_at`으로 짝이 강제되므로 모든 전이가
+  두 컬럼을 함께 씁니다.
+
+### 조회 규칙
+
+- 목록 정렬은 `id desc`입니다. `created_at`이 아니라 `id`인 이유는 동시 삽입 tie-break가 필요 없고
+  `status = 'VISIBLE'` partial index가 그대로 적중하기 때문입니다.
+- 축제용·관광지용 쿼리를 `:festivalId is null or ...` 형태로 합치지 않습니다. 합치면 위 partial
+  index를 타지 못합니다.
+- 내 좋아요 여부는 `comment_id in (:ids)` 한 번으로 조회해 N+1을 만들지 않습니다.
+- 내 찜 목록은 `HIDDEN` 대상을 제외하고 `INACTIVE`·종료 대상은 남깁니다. 축제 대표 이미지는
+  `festival_images`에서 `FestivalQueryService.representativeImages`와 같은 방식으로 채웁니다.
+- **`Festival` entity의 지역 필드명은 `areaCode`입니다.** 응답 DTO에서만 `regionCode`로 노출되므로
+  JPQL에서 `festival.regionCode`를 쓰면 런타임에 실패합니다.
+
+### 쓰기 제약
+
+- 정지·차단·비활성 회원의 신규 작성은 기존 `MemberAccessInterceptor`가 `/api/**`에서 자동으로
+  막습니다. 별도 구현하지 않습니다.
+- `PROFILE_REQUIRED` 회원은 댓글을 쓸 수 없습니다. 닉네임이 없어 표시할 이름이 없습니다.
+- 도배 완화는 같은 회원의 마지막 댓글로부터 5초이며 초과 시 `429`입니다. 삭제된 댓글도 기준에
+  포함하므로 삭제로 우회할 수 없습니다. 동시 요청 2건은 둘 다 통과할 수 있는 완화책이며,
+  엄격한 차단은 회원 단위 advisory lock이 필요해 MVP 범위에서 제외했습니다.
+- 응답에 `memberId`와 프로필 이미지를 담지 않습니다. 삭제 버튼 노출은 `mine` boolean으로만
+  판단합니다.

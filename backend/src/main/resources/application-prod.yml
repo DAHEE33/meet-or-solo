@@ -9,13 +9,96 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
-    locations: ${FLYWAY_LOCATIONS}
+    locations: classpath:db/migration
+    # 운영 DB는 빈 상태에서 V1부터 순서대로 적용한다. 개발 DB를 복사하지 않으므로
+    # baseline이 필요 없다. true로 두면 이미 테이블이 있는 DB를 "적용된 것으로 간주"해
+    # 초기 migration을 건너뛴다.
     baseline-on-migrate: false
 
 logging:
   level:
     root: info
 
+server:
+  # 운영 요청은 호스트 nginx -> compose nginx -> backend 순으로 두 번 proxy된다.
+  # 이 설정이 없으면 Spring은 요청을 항상 평문 http로 본다.
+  #
+  # 이 값을 켜면 X-Forwarded-* header를 신뢰한다는 뜻이다. backend 8080은 host에
+  # publish하지 않고 compose network 안의 nginx만 접근하므로 외부에서 header를 위조해
+  # 넣을 경로가 없다. 포트를 공개하게 되면 이 설정을 다시 검토한다.
+  forward-headers-strategy: framework
+
 app:
+  festival:
+    sync:
+      # 운영 DB는 빈 상태로 시작하므로 축제 데이터도 비어 있다. 기본은 꺼 두고,
+      # 초기 적재 회차에만 환경변수로 켠다(docs/07 운영 수동 배포 절차 4절).
+      #
+      # 상시로 켜면 dev와 운영이 TourAPI 일일 호출 한도를 함께 쓴다는 점을 고려한다.
+      enabled: ${FESTIVAL_SYNC_ENABLED:false}
+    checkin:
+      # 운영에서는 환경 전체의 GPS 반경·정확도 검증 우회를 **끌 수 없게 고정한다.**
+      # 환경변수로 열어 두면 dev compose의 기본값(true)을 그대로 복사해 온 .env 한 줄로
+      # 운영의 위치 검증이 통째로 꺼진다.
+      #
+      # 현장에 가지 않고 확인해야 하면 /admin/members에서 그 계정을 테스트 계정으로
+      # 지정한다(members.test_account). 계정 단위 면제라 일반 계정은 검증을 그대로 받는다.
+      bypass-radius-check: false
+  tour-place:
+    sync:
+      enabled: ${TOUR_PLACE_SYNC_ENABLED:false}
+  matching:
+    scheduler:
+      # 공통 기본값은 false다. 운영에서 꺼지면 제안 timeout(30초), 노쇼 처리, 배치 매칭이
+      # 기동하지 않아 서비스 핵심이 멈춘다. prod 기본을 true로 올린다.
+      enabled: ${MATCHING_SCHEDULER_ENABLED:true}
+    no-show-scheduler:
+      enabled: ${MATCHING_NO_SHOW_SCHEDULER_ENABLED:true}
+    arrival:
+      # 체크인과 같은 이유로 운영에서는 고정한다.
+      bypass-radius-check: false
+  member:
+    # 시간 경과 매너온도 회복(docs/19 4.9). 공통 기본값은 false다.
+    # 꺼지면 30도 매칭 제한에 걸린 회원이 시간이 지나도 풀리지 않는다.
+    manner-temperature-recovery-scheduler-enabled: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_ENABLED:true}
+  inquiry:
+    # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화(docs/29 5.6). 공통 기본값은 false다.
+    # 개인정보 보관 정책과 직결되므로 운영 기본을 true로 둔다.
+    retention-scheduler-enabled: ${INQUIRY_RETENTION_SCHEDULER_ENABLED:true}
+  admin:
+    member:
+      suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:true}
+  object-storage:
+    endpoint: ${OCI_OBJECT_STORAGE_ENDPOINT}
+    region: ${OCI_OBJECT_STORAGE_REGION}
+    access-key: ${OCI_OBJECT_STORAGE_ACCESS_KEY}
+    secret-key: ${OCI_OBJECT_STORAGE_SECRET_KEY}
+    bucket: ${OCI_OBJECT_STORAGE_BUCKET:meet-or-solo-assets}
+    profile-prefix: ${OCI_OBJECT_STORAGE_PROFILE_PREFIX:profiles/prod}
+    max-file-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
+  frontend:
+    base-url: ${FRONTEND_BASE_URL}
+  auth:
+    cookie-secure: ${AUTH_COOKIE_SECURE:true}
+  profile:
+    encryption-key: ${PROFILE_ENCRYPTION_KEY}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  oauth:
+    kakao:
+      client-id: ${KAKAO_CLIENT_ID}
+      client-secret: ${KAKAO_CLIENT_SECRET}
+      redirect-uri: ${KAKAO_REDIRECT_URI}
+    naver:
+      client-id: ${NAVER_CLIENT_ID}
+      client-secret: ${NAVER_CLIENT_SECRET}
+      redirect-uri: ${NAVER_REDIRECT_URI}
+      authorization-uri: ${NAVER_AUTHORIZATION_URI:https://nid.naver.com/oauth2.0/authorize}
+      token-uri: ${NAVER_TOKEN_URI:https://nid.naver.com/oauth2.0/token}
+      user-info-uri: ${NAVER_USER_INFO_URI:https://openapi.naver.com/v1/nid/me}
+      connect-timeout: ${NAVER_CONNECT_TIMEOUT:3s}
+      read-timeout: ${NAVER_READ_TIMEOUT:5s}
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-expires-minutes: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES:30}
+    refresh-token-expires-minutes: ${JWT_REFRESH_TOKEN_EXPIRES_MINUTES:20160}

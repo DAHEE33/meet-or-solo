@@ -1,11 +1,21 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: meet-or-solo-postgres-local
+    command: ["postgres", "-c", "timezone=Asia/Seoul"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Asia/Seoul}
+      PGTZ: ${PGTZ:-Asia/Seoul}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET}
+      KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_REPORT_CURSOR_HMAC_SECRET: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
+      JWT_ACCESS_TOKEN_EXPIRES_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES}
+      JWT_REFRESH_TOKEN_EXPIRES_MINUTES: ${JWT_REFRESH_TOKEN_EXPIRES_MINUTES}
     ports:
       - "5432:5432"
     volumes:

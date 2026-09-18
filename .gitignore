@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !infra/env/.env.dev.example
+!infra/env/.env.prod.example
 frontend/.env
 frontend/.env.*
 !frontend/.env.local.example
@@ -32,6 +33,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.vite/
+*.tsbuildinfo
 
 # Database local files
 db/data/
@@ -51,3 +53,14 @@ pgdata/
 # Temporary
 tmp/
 temp/
+
+.pnpm-store/
+
+# 로컬 확인용 캡처 화면 (저장소에 커밋하지 않는다)
+screen/
+
+# Claude Code 다음 작업 프롬프트 (개인 작업용, 매 작업마다 덮어씀)
+docs/NEXT_PROMPT.md
+
+# Claude Code 작업 완료 보고 (개인 작업용, 매 작업마다 덮어씀)
+docs/DONE_PROMPT.md

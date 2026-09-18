@@ -1,0 +1,81 @@
+# dev 도메인의 TLS를 끊는 "호스트 nginx" 설정 예시입니다.
+#
+# 이 파일은 compose 안의 nginx(`infra/nginx/default.dev.conf`)와 다릅니다.
+# compose nginx는 TLS 없이 host `18080`에만 붙고, 실제 도메인 인증서는 Oracle VM에 직접
+# 설치된 nginx가 처리합니다. 그 호스트 nginx 설정이 저장소에 없었기 때문에 `/ws` location이
+# 누락돼도 아무도 알아채지 못했고, WebSocket handshake가 400으로 끊겼습니다.
+#
+# 증상: 브라우저 콘솔에
+#   WebSocket connection to 'wss://<DEV_DOMAIN>/ws' failed:
+#   Error during WebSocket handshake: Unexpected response code: 400
+# 원인: `Upgrade`/`Connection` header가 전달되지 않으면 Spring이 handshake를 400으로 거절합니다.
+#       `/ws`가 `location /`로 떨어져 정적 파일로 처리돼도 같은 결과입니다.
+#
+# 적용:
+#   1. `<DEV_DOMAIN>`과 인증서 경로를 실제 값으로 바꾼다.
+#   2. `/etc/nginx/sites-available/`에 두고 `sites-enabled/`로 symlink한다.
+#   3. `sudo nginx -t && sudo systemctl reload nginx`
+#
+# 실제 도메인, IP, 인증서 경로는 저장소에 커밋하지 않습니다.
+
+upstream meet_or_solo_dev {
+    # compose nginx가 publish한 host port. `docker-compose.dev.yml`의 `18080:80`과 맞춥니다.
+    server 127.0.0.1:18080;
+}
+
+server {
+    listen 80;
+    server_name <DEV_DOMAIN>;
+
+    # Certbot 갱신 경로만 열어 두고 나머지는 HTTPS로 보냅니다.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name <DEV_DOMAIN>;
+
+    ssl_certificate     /etc/letsencrypt/live/<DEV_DOMAIN>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<DEV_DOMAIN>/privkey.pem;
+
+    # WebSocket(STOMP) 상태 동기화 전용 경로입니다. 자유 채팅이 아닙니다.
+    # `location /`보다 먼저 선언해야 하며, Upgrade header를 그대로 넘겨야 합니다.
+    location /ws {
+        proxy_pass http://meet_or_solo_dev;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # STOMP heartbeat는 10초지만, 유휴 연결이 기본 60초에 끊기지 않도록 넉넉히 둡니다.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location /api/ {
+        proxy_pass http://meet_or_solo_dev;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://meet_or_solo_dev;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

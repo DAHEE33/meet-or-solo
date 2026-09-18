@@ -1,0 +1,251 @@
+# meet-or-solo 운영(prod) Docker Compose.
+#
+# dev(`docker-compose.dev.yml`)와 **같은 Oracle VM에서 동시에** 돌린다. 그래서 project name,
+# 컨테이너명, network, host 포트, 데이터 경로가 dev와 하나도 겹치면 안 된다. 하나라도 겹치면
+# 운영 컨테이너가 개발 컨테이너를 덮어쓰거나 같은 데이터 디렉터리를 두 프로세스가 연다.
+#
+# 실행 위치는 운영 앱 폴더다(`/home/ubuntu/meet-or-solo-prod`).
+#   docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+#
+# 절차 전체는 docs/07_DEPLOYMENT.md의 '운영 수동 배포 절차'를 따른다.
+
+name: meet-or-solo-prod
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: meet-or-solo-postgres-prod
+    command: ["postgres", "-c", "timezone=Asia/Seoul"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-Asia/Seoul}
+      PGTZ: ${PGTZ:-Asia/Seoul}
+    volumes:
+      # 운영 앱 폴더 기준 상대경로다. 폴더가 `/home/ubuntu/meet-or-solo-prod`이므로
+      # dev의 `/home/ubuntu/meet-or-solo/data/postgres`와 물리적으로 분리된다.
+      - ../../data/postgres:/var/lib/postgresql/data
+    # 운영 DB는 host 포트를 publish하지 않는다.
+    #
+    # 관리자가 DB에 붙어야 하면 포트를 여는 대신 아래 두 가지를 쓴다(docs/07 운영 수동 배포 절차 7절).
+    #   1) 컨테이너 안에서 바로: docker exec -it meet-or-solo-postgres-prod psql -U <USER> -d <DB>
+    #   2) 임시 loopback publish가 꼭 필요하면 아래 주석을 잠깐 열고 작업 후 다시 닫는다.
+    #      25432는 dev(15432)·병원(15433)과 겹치지 않게 고른 번호다.
+    # ports:
+    #   - "127.0.0.1:25432:5432"
+    networks:
+      - meet-or-solo-prod
+    healthcheck:
+      # pg_isready는 pgvector/pgvector:pg16 이미지에 포함돼 있다(2-2 검증 완료).
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # 실부하 측정 전 초기값이다. 근거와 조정 기준은 docs/07 운영 수동 배포 절차 10절에 있다.
+    mem_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: eclipse-temurin:17-jre-jammy
+    container_name: meet-or-solo-backend-prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    command: ["java", "-jar", "/app/app.jar"]
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: ${DB_URL}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      TZ: ${TZ:-Asia/Seoul}
+      # heap 상한을 주지 않으면 컨테이너 메모리의 1/4을 기본으로 잡는다. mem_limit과 함께
+      # 명시해야 dev backend와 같은 VM에서 서로를 밀어내지 않는다.
+      JAVA_TOOL_OPTIONS: "-Duser.timezone=Asia/Seoul -Xms256m -Xmx768m"
+
+      # --- 도메인 경계 ---------------------------------------------------------
+      # 브라우저가 실제로 여는 origin을 그대로 적는다. REST CORS뿐 아니라 WebSocket
+      # handshake origin 검사에도 같은 값이 쓰인다(WebSocketConfig). 빠지면 handshake가 403이다.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      # 운영은 HTTPS이므로 true다. false면 secure 속성 없이 cookie가 나간다.
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+
+      # --- 암호화 / 인증 -------------------------------------------------------
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TOKEN_EXPIRES_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES:-30}
+      JWT_REFRESH_TOKEN_EXPIRES_MINUTES: ${JWT_REFRESH_TOKEN_EXPIRES_MINUTES:-20160}
+      # 기본값이 없다. 비면 backend가 기동에 실패한다(의도된 설계, docs/06).
+      ADMIN_REPORT_CURSOR_HMAC_SECRET: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
+
+      # --- 슈퍼관리자 ID/PW 로그인(docs/30-2) ----------------------------------
+      # 둘 다 있어야 SuperAdminAccountBootstrap이 계정을 만든다. 비면 /admin/login으로
+      # 들어갈 수 없고, 그러면 회원 관리·테스트 계정 지정 경로가 통째로 막힌다.
+      ADMIN_LOCAL_USERNAME: ${ADMIN_LOCAL_USERNAME}
+      ADMIN_LOCAL_PASSWORD: ${ADMIN_LOCAL_PASSWORD}
+      ADMIN_LOCAL_NICKNAME: ${ADMIN_LOCAL_NICKNAME:-슈퍼관리자}
+
+      # --- OAuth ---------------------------------------------------------------
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET}
+      KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI}
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET}
+      NAVER_REDIRECT_URI: ${NAVER_REDIRECT_URI}
+
+      # --- Object Storage (프로필 이미지) --------------------------------------
+      OCI_OBJECT_STORAGE_ENDPOINT: ${OCI_OBJECT_STORAGE_ENDPOINT}
+      OCI_OBJECT_STORAGE_REGION: ${OCI_OBJECT_STORAGE_REGION}
+      OCI_OBJECT_STORAGE_ACCESS_KEY: ${OCI_OBJECT_STORAGE_ACCESS_KEY}
+      OCI_OBJECT_STORAGE_SECRET_KEY: ${OCI_OBJECT_STORAGE_SECRET_KEY}
+      OCI_OBJECT_STORAGE_BUCKET: ${OCI_OBJECT_STORAGE_BUCKET}
+      # dev와 같은 bucket을 쓰더라도 prefix는 나눈다. 같은 prefix면 개발 업로드가
+      # 운영 파일과 한 곳에 섞인다.
+      OCI_OBJECT_STORAGE_PROFILE_PREFIX: ${OCI_OBJECT_STORAGE_PROFILE_PREFIX:-profiles/prod}
+      # nginx의 client_max_body_size와 함께 올려야 실제로 커진다(docs/07 운영 수동 배포 절차 5절).
+      PROFILE_IMAGE_MAX_SIZE: ${PROFILE_IMAGE_MAX_SIZE:-5MB}
+
+      # --- 한국관광공사 TourAPI ------------------------------------------------
+      TOURISM_API_KEY: ${TOURISM_API_KEY}
+      TOUR_API_BASE_URL: ${TOUR_API_BASE_URL:-https://apis.data.go.kr/B551011/KorService2}
+      TOUR_API_MOBILE_OS: ${TOUR_API_MOBILE_OS:-ETC}
+      TOUR_API_MOBILE_APP: ${TOUR_API_MOBILE_APP:-SoloIn}
+      TOUR_API_CONNECT_TIMEOUT: ${TOUR_API_CONNECT_TIMEOUT:-3s}
+      TOUR_API_READ_TIMEOUT: ${TOUR_API_READ_TIMEOUT:-10s}
+
+      # --- 축제·관광지 동기화 --------------------------------------------------
+      # application-prod.yml 기본값은 둘 다 false다. 운영 DB는 빈 상태로 시작하므로
+      # **초기 적재 회차에만** true로 올려 채우고, 이후 정기 동기화 정책은 docs/07 운영 수동 배포 절차 4절에서
+      # 정한다. 켜 두면 dev와 운영이 같은 TourAPI 일일 호출량을 함께 쓴다.
+      FESTIVAL_SYNC_ENABLED: ${FESTIVAL_SYNC_ENABLED:-false}
+      TOUR_PLACE_SYNC_ENABLED: ${TOUR_PLACE_SYNC_ENABLED:-false}
+      FESTIVAL_SYNC_INITIAL_DELAY: ${FESTIVAL_SYNC_INITIAL_DELAY:-30s}
+      FESTIVAL_SYNC_FIXED_DELAY: ${FESTIVAL_SYNC_FIXED_DELAY:-6h}
+      FESTIVAL_SYNC_PAGE_SIZE: ${FESTIVAL_SYNC_PAGE_SIZE:-100}
+      FESTIVAL_SYNC_MAX_PAGES: ${FESTIVAL_SYNC_MAX_PAGES:-100}
+      FESTIVAL_SYNC_LOOKBACK_DAYS: ${FESTIVAL_SYNC_LOOKBACK_DAYS:-30}
+      FESTIVAL_SYNC_LOOKAHEAD_DAYS: ${FESTIVAL_SYNC_LOOKAHEAD_DAYS:-365}
+      FESTIVAL_SYNC_REGION_CODE: ${FESTIVAL_SYNC_REGION_CODE:-51}
+      FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1:-EV}
+      FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2:-EV01}
+      TOUR_PLACE_SYNC_INITIAL_DELAY: ${TOUR_PLACE_SYNC_INITIAL_DELAY:-60s}
+      TOUR_PLACE_SYNC_FIXED_DELAY: ${TOUR_PLACE_SYNC_FIXED_DELAY:-12h}
+      TOUR_PLACE_SYNC_REGION_CODE: ${TOUR_PLACE_SYNC_REGION_CODE:-51}
+
+      # --- 매칭 Scheduler ------------------------------------------------------
+      # application.yml 공통 기본값은 false다. application-prod.yml에서 prod 기본을 true로
+      # 올려 두었지만, 어느 쪽이 켜졌는지 한 파일에서 보이도록 여기서도 명시한다.
+      # 꺼지면 제안 timeout(30초)·노쇼 처리·배치 매칭이 기동하지 않는다.
+      MATCHING_SCHEDULER_ENABLED: ${MATCHING_SCHEDULER_ENABLED:-true}
+      MATCHING_NO_SHOW_SCHEDULER_ENABLED: ${MATCHING_NO_SHOW_SCHEDULER_ENABLED:-true}
+      MATCHING_SCHEDULER_FIXED_DELAY: ${MATCHING_SCHEDULER_FIXED_DELAY:-5s}
+      MATCHING_STALE_TIMEOUT: ${MATCHING_STALE_TIMEOUT:-30s}
+      MATCHING_PROPOSAL_TIMEOUT: ${MATCHING_PROPOSAL_TIMEOUT:-30s}
+      MATCHING_SCHEDULER_BATCH_SIZE: ${MATCHING_SCHEDULER_BATCH_SIZE:-20}
+      # 두 값의 합이 1이 아니면 기동 시점에 실패한다(PairCompatibilityScorer).
+      MATCHING_SCORING_JACCARD_WEIGHT: ${MATCHING_SCORING_JACCARD_WEIGHT:-0.70}
+      MATCHING_SCORING_EMBEDDING_WEIGHT: ${MATCHING_SCORING_EMBEDDING_WEIGHT:-0.30}
+
+      # 체크인·도착 반경. 운영은 실제 현장 값을 쓴다.
+      FESTIVAL_CHECKIN_RADIUS_METERS: ${FESTIVAL_CHECKIN_RADIUS_METERS:-500}
+      MATCHING_ARRIVAL_RADIUS_METERS: ${MATCHING_ARRIVAL_RADIUS_METERS:-150}
+      #
+      # ⚠ FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK와 MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK는
+      #   운영 compose에 **일부러 넣지 않는다.** dev compose는 체크인 우회 기본값이 true라서
+      #   그 줄을 복사해 오면 운영에서 GPS 반경 검증이 통째로 꺼진다. application-prod.yml이
+      #   두 값을 false로 고정하므로 .env에 써 넣어도 켜지지 않는다.
+      #   현장에 가지 않고 확인해야 하면 /admin/members의 테스트 계정(members.test_account)을
+      #   쓴다. 계정 단위 면제라 같은 환경의 일반 계정은 검증을 그대로 받는다.
+
+      # --- 기타 스케줄러 -------------------------------------------------------
+      # 공통 기본값이 false라 넘기지 않으면 운영에서 조용히 꺼진다.
+      ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:-true}
+      # 시간 경과 매너온도 회복(docs/19 4.9). 꺼지면 30도 매칭 제한에 걸린 회원이 풀리지 않는다.
+      MANNER_TEMPERATURE_RECOVERY_SCHEDULER_ENABLED: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_ENABLED:-true}
+      # 1:1 문의 보관 기간 경과분 익명화(docs/29 5.6). 개인정보 보관 정책과 직결된다.
+      INQUIRY_RETENTION_SCHEDULER_ENABLED: ${INQUIRY_RETENTION_SCHEDULER_ENABLED:-true}
+
+      # --- 취향 임베딩 / 문의 --------------------------------------------------
+      # 비면 임베딩 등록이 항상 EMBEDDING_API_FAILED로 실패한다.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      # 비면 제재 안내에서 문의 문구를 숨긴다.
+      SUPPORT_CONTACT_EMAIL: ${SUPPORT_CONTACT_EMAIL:-}
+
+      # --- Web Push (docs/32 3.4) ----------------------------------------------
+      # 코드는 이미 있다(WebPushSender, src/sw.ts). 키 쌍이 비면 **push 발송만** 꺼지고
+      # WebSocket 알림과 서버 알림함은 그대로 동작한다. 운영에서 push를 쓰려면 채운다.
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-}
+    volumes:
+      - ../../backend/app.jar:/app/app.jar:ro
+    # host에 publish하지 않는다. compose network 안에서 nginx만 접근한다.
+    expose:
+      - "8080"
+    networks:
+      - meet-or-solo-prod
+    healthcheck:
+      # curl은 eclipse-temurin:17-jre-jammy에 포함돼 있다(2-2 검증 완료).
+      #
+      # ⚠ /api/health는 고정 문자열을 돌려주는 controller다. DB나 Flyway 상태를 보지 않는다.
+      #   이 healthcheck는 "JVM이 떠서 HTTP를 받는다"까지만 증명한다. DB 연결과 migration
+      #   성공 확인은 docs/07 운영 수동 배포 절차 3절의 별도 절차로 한다.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Flyway migration이 도는 첫 기동은 느리다. 이 시간 동안의 실패는 unhealthy로 세지 않는다.
+      start_period: 90s
+    mem_limit: 1500m
+    cpus: "1.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: meet-or-solo-nginx-prod
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # ⚠ 반드시 loopback 바인딩이다. dev는 "18080:80"으로 모든 인터페이스에 열려 있지만,
+      #   운영은 호스트 nginx(TLS)만 통과시킨다. "28080:80"으로 쓰면 TLS와 접근 제한을
+      #   건너뛴 평문 경로가 외부에 열린다.
+      - "127.0.0.1:28080:80"
+    volumes:
+      - ../../frontend/dist:/usr/share/nginx/html:ro
+      - ../nginx/default.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - meet-or-solo-prod
+    healthcheck:
+      # wget은 nginx:1.27-alpine(busybox)에 포함돼 있다(2-2 검증 완료).
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  meet-or-solo-prod:
+    name: meet-or-solo-prod

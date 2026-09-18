@@ -1,8 +1,8 @@
 # 데이터베이스 설계
 
-이 문서는 9-1단계 실제 서비스 DB 테이블 설계 검토/확정 결과를 기록합니다.
+이 문서는 실제 서비스 DB 테이블 설계와 이후 추가된 Flyway migration 반영 내용을 기록합니다.
 
-이번 단계에서는 Flyway migration SQL을 생성하지 않습니다. 이미 적용된 `db/migration/V1__init.sql`은 수정하지 않으며, 다음 9-2단계에서 이 문서를 기준으로 `V2` 이후 migration을 새로 추가합니다.
+이미 적용된 migration은 수정하지 않고, 스키마 변경은 다음 버전의 Flyway migration으로 추가합니다.
 
 ## 1. 설계 범위
 
@@ -15,6 +15,7 @@
 - 관광공사 축제/장소 캐시
 - GPS 체크인 결과
 - PostgreSQL 기반 매칭 상태
+- 회원 자연어 취향과 임베딩
 - 제한형 상태 동기화 이벤트
 - 패널티/쿨다운
 - 차단/신고/평가/관리자 조치
@@ -22,9 +23,6 @@
 
 이번 단계에서 하지 않는 작업:
 
-- Flyway SQL 파일 생성
-- `db/migration/V2~` 파일 생성
-- `V1__init.sql` 수정
 - backend/frontend 코드 수정
 - nginx, docker-compose, GitHub Actions 수정
 - 실제 DB migration 적용
@@ -42,6 +40,8 @@
 - 원본 GPS 좌표는 저장하지 않는다.
 - 자유 채팅 테이블은 만들지 않는다.
 - Redis 없이 PostgreSQL의 `status`, `expires_at`, `locked_at`, transaction lock, partial unique index로 상태를 관리한다.
+- 매칭 후보 선점은 최종 후보 `match_pools` row에만 `SELECT ... FOR UPDATE SKIP LOCKED`를 짧게 적용한다.
+- `lock_token`, `locked_at`은 낙관적 락이 아니라 선점 실행 추적과 stale lock 복구를 위한 보조 정보다.
 - 관광공사 OpenAPI 원본 응답은 감사와 캐시 보강이 필요한 테이블에 한해 `raw_data JSONB`로 저장할 수 있다.
 
 ## 3. 테이블 분류
@@ -50,12 +50,13 @@
 
 | 영역 | 테이블 |
 | --- | --- |
-| 회원/인증 | `members`, `member_consents`, `refresh_tokens` |
+| 회원/인증 | `members`, `member_travel_styles`, `member_preference_embeddings`, `member_consents`, `refresh_tokens` |
 | 관광/축제 | `festivals`, `festival_images`, `tour_places`, `tour_api_call_logs` |
 | 체크인 | `festival_checkins` |
 | 매칭 | `user_blocks`, `match_pools`, `match_attempts`, `match_attempt_members`, `match_proposals`, `match_responses`, `match_groups`, `match_group_members`, `match_events`, `match_cooldowns`, `match_penalty_events` |
-| 안전/운영 | `member_reviews`, `reports`, `admin_actions` |
+| 안전/운영 | `member_reviews`, `reports`, `admin_actions`, `admin_safety_alerts` |
 | 추천/솔로 | `solo_courses`, `solo_course_places`, `recommendation_click_logs` |
+| 콘텐츠 참여 | `content_bookmarks`, `content_comments`, `content_comment_likes` |
 
 ### 추후 분리 가능 테이블
 
@@ -65,7 +66,7 @@
 | `member_profile_images` | MVP는 `members.profile_image_url`로 시작한다. 이미지 변경 이력이 필요하면 분리한다. |
 | `match_group_cancellations` | MVP는 `match_events`와 `match_group_members.cancelled_at`로 표현한다. 상세 통계가 필요하면 분리한다. |
 | `web_push_subscriptions` | Web Push 구현 단계에서 추가한다. 이번 DB 설계에는 테이블 후보만 별도 보류한다. |
-| `inquiries` | 1:1 문의 센터 구현 시 추가한다. MVP 안전 기능의 핵심은 `reports`와 `admin_actions`다. |
+| ~~`inquiries`~~ | **보류 해제.** `V31`로 `inquiries`와 `inquiry_messages`를 추가했다. 설계는 `docs/29_MEMBER_INQUIRY_DESIGN.md`. |
 | `api_batch_runs` | 초기에는 `tour_api_call_logs`로 수동/스케줄 호출 기록을 관리한다. 배치 단위 추적이 필요하면 분리한다. |
 
 ### 제외 테이블
@@ -128,9 +129,24 @@ V4 이름은 기존 제안의 `safety-admin`에 추천/솔로 코스가 함께 �
 ACTIVE
 PROFILE_REQUIRED
 SUSPENDED
+BANNED
 WITHDRAWN
 DELETED
 ```
+
+`BANNED`는 `V19`에서 추가한 영구 제한 상태다.
+
+### members.sanction_reason_code
+
+`V27`에서 추가한 **사용자 노출용** 제재 사유 code다. 값 목록은
+`admin_actions.reason_code`와 같다(`COMMUNITY_GUIDELINE`, `HARASSMENT`, `NO_SHOW_ABUSE`,
+`FRAUD_OR_SCAM`, `SAFETY_RISK`, `ADMIN_CORRECTION`, `OTHER`).
+
+- `chk_members_sanction_reason_presence`가 `SUSPENDED`/`BANNED`일 때만 값이 있도록 강제한다.
+  정지 해제·만료 복구에서 사유를 지우지 않으면 update가 거부된다.
+- `admin_actions.reason`(관리자 자유 입력 note)과 분리된 값이다. 자유 입력에는 신고 건수처럼
+  신고자를 추정할 수 있는 내용이 들어갈 수 있어 사용자에게 노출하지 않는다. 자세한 내용은
+  `docs/06_SECURITY_POLICY.md`의 제재 안내 조회 token 절과 `docs/19` 4.8을 따른다.
 
 ### members.role
 
@@ -176,6 +192,21 @@ TIMEOUT
 EXPIRED
 ```
 
+### match_proposals.proposal_type
+
+```text
+INITIAL_MATCH
+INSUFFICIENT_MEMBERS_CONFIRMATION
+```
+
+### member_preference_embeddings.embedding_status
+
+```text
+PENDING
+COMPLETED
+FAILED
+```
+
 ### match_responses.response
 
 ```text
@@ -218,6 +249,21 @@ MANUAL_PENALTY
 DATA_CORRECTION
 ```
 
+`UNSUSPEND`는 `V20`에서 추가했다.
+
+### admin_safety_alerts.status
+
+```text
+OPEN
+ACKNOWLEDGED
+CLOSED
+```
+
+- `OPEN`: 누적 임계 도달로 생성된 미확인 알림이다.
+- `ACKNOWLEDGED`: 관리자가 확인했으나 아직 조치하지 않은 상태다.
+- `CLOSED`: 관리자가 해당 회원을 `SUSPEND` 또는 `BAN`해 조치가 끝난 상태다.
+  제재 transaction에서 함께 전환한다.
+
 ## 6. 테이블별 설계안
 
 ### members
@@ -225,7 +271,7 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | Kakao OAuth 기반 회원과 프로필, 서비스 상태를 관리한다. |
-| 주요 컬럼 | `id`, `provider`, `provider_user_id`, `nickname`, `profile_image_url`, `gender_encrypted`, `age_range_encrypted`, `manner_temperature`, `penalty_score`, `role`, `status`, `last_login_at`, `withdrawn_at`, `created_at`, `updated_at` |
+| 주요 컬럼 | `id`, `provider`, `provider_user_id`, `nickname`, `profile_image_url`, `profile_image_object_key`, `gender_encrypted`, `age_range_encrypted`, `manner_temperature`, `penalty_score`, `role`, `status`, `last_login_at`, `withdrawn_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | 없음 |
 | 상태값 | `status`, `role` |
@@ -235,16 +281,50 @@ DATA_CORRECTION
 | 개인정보/보안 | 성별/연령대는 암호화 저장 전제로 `BYTEA` 후보를 사용한다. 탈퇴 시 닉네임/이미지/민감정보를 익명화한다. |
 | MVP 필수 | 필수 |
 
+### member_travel_styles
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 프로필 설정에서 선택한 여행 스타일을 안정적인 코드값으로 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `style_code`, `created_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, 기존 회원 FK 정책과 동일하게 `ON DELETE RESTRICT` 적용 |
+| 상태값 | `RELAXED`, `ACTIVE`, `FOOD`, `PHOTO`, `CULTURE` |
+| CHECK | 허용된 `style_code`만 저장한다. |
+| UNIQUE | `(member_id, style_code)` |
+| INDEX | `idx_member_travel_styles_member_id` |
+| 개인정보/보안 | 화면 표시 문구가 아닌 코드값만 저장하며 성별·연령대 암호화 정책과 분리한다. |
+| MVP 필수 | 필수 |
+
+### member_preference_embeddings
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 입력한 최신 자연어 여행 취향과 외부 임베딩 API로 생성한 벡터를 회원 레벨에서 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `preference_text`, `embedding`, `embedding_model`, `embedding_status`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, 기존 회원 FK 정책과 동일하게 `ON DELETE RESTRICT` 적용 |
+| 상태값 | `PENDING`, `COMPLETED`, `FAILED` |
+| CHECK | 공백만 있는 `preference_text` 금지, `COMPLETED`이면 `embedding`, `embedding_model` 필수 |
+| UNIQUE | `member_id` |
+| INDEX | `idx_member_preference_embeddings_status` |
+| 개인정보/보안 | 외부 API 전송 전 AI 처리와 국외 이전 동의 여부를 확인한다. 원문 보관 기간과 탈퇴·취향 삭제 시 삭제 정책을 적용한다. |
+| MVP 필수 | AI 임베딩 기능 사용 시 필수 |
+
+`member_travel_styles`는 `RELAXED`, `ACTIVE`, `FOOD`, `PHOTO`, `CULTURE` 같은 정형 코드 점수에 사용합니다. `member_preference_embeddings`는 자연어 의미 유사도 점수에 사용하며, 둘 중 하나가 다른 하나를 대체하지 않습니다.
+
+회원이 `preference_text`를 최초 입력하거나 실제 수정했을 때만 임베딩을 생성합니다. 매칭풀 진입이나 Scheduler 실행 때마다 외부 API를 다시 호출하지 않습니다. 취향 미입력 또는 임베딩 실패 시 정형 코드 점수만으로 매칭을 계속합니다.
+
 ### member_consents
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 서비스 약관, 개인정보, 위치정보 동의 이력을 관리한다. |
+| 목적 | 서비스 약관, 개인정보, 위치정보, AI 처리와 국외 이전 동의 이력을 관리한다. |
 | 주요 컬럼 | `id`, `member_id`, `consent_type`, `version`, `agreed`, `agreed_at`, `revoked_at`, `created_at` |
 | PK | `id` |
 | FK | `member_id -> members.id` |
 | 상태값 | `consent_type` |
-| CHECK | `consent_type IN ('TERMS','PRIVACY','LOCATION','MARKETING')` |
+| CHECK | `consent_type IN ('TERMS','PRIVACY','LOCATION','MARKETING','AI_PROCESSING','OVERSEAS_TRANSFER')` |
 | UNIQUE | `(member_id, consent_type, version)` |
 | INDEX | `idx_member_consents_member_id`, `idx_member_consents_type` |
 | 개인정보/보안 | 법적 증빙 목적의 최소 이력만 저장한다. |
@@ -269,7 +349,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인/매칭 기준점으로 사용한다. |
+| 목적 | 관광공사 OpenAPI 축제 데이터를 캐시하고 체크인 및 만남 장소 후보 검색 기준점으로 사용한다. |
 | 주요 컬럼 | `id`, `content_id`, `content_type_id`, `title`, `address`, `area_code`, `sigungu_code`, `event_start_date`, `event_end_date`, `map_x`, `map_y`, `checkin_radius_meters`, `meeting_radius_meters`, `status`, `last_synced_at`, `raw_data`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | 없음 |
@@ -279,6 +359,23 @@ DATA_CORRECTION
 | INDEX | `idx_festivals_period`, `idx_festivals_status`, `idx_festivals_area`, `idx_festivals_content_id` |
 | 개인정보/보안 | 공공데이터 캐시이며 개인정보 없음. 원천 데이터 임의 수정 여부를 구분할 수 있도록 `raw_data`를 둔다. |
 | MVP 필수 | 필수 |
+
+`GET /api/matching/groups/me/current`의 읽기 전용 상태방 summary는 이 테이블의
+`id`, `title`, `address`, `event_start_date`, `event_end_date`만 사용합니다.
+기존 `match_groups.festival_id` FK로 join할 수 있어 MatchRoomPage 작업에서는
+신규 migration을 추가하지 않았습니다.
+
+`map_x`, `map_y`는 축제 공식 좌표이며 실제 만남 장소를 뜻하지 않습니다.
+`meeting_radius_meters`는 주변 만남 장소 후보 검색 범위로 사용하고 단말 위치
+확인 반경과 분리합니다. 단말 확인 반경은 Backend 정책값으로 관리하고 current
+group 응답에는 사용자 안내에 필요한 값만 제공합니다.
+
+`V15`에서 `festival_meeting_points`를 추가했습니다. 축제 FK, Kakao 장소 ID,
+장소명, 주소, 좌표, `ACTIVE/INACTIVE`, 배정 순서와 생성·수정 시각을 관리합니다.
+좌표 범위와 음수 배정 순서를 CHECK로 거부하고 축제별 Kakao 장소 ID를 unique로
+보장합니다. 활성 후보는 partial index로 `assignment_order, id` 순서로 조회합니다.
+선택값은 기존 `match_groups.meeting_*`와 신규 nullable
+`meeting_place_address`에 snapshot으로 복사합니다.
 
 ### festival_images
 
@@ -374,7 +471,7 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | Scheduler 또는 신규 진입 트리거가 만든 후보 그룹 시도를 저장한다. |
+| 목적 | Scheduler 또는 향후 application-level `POOL_ENTRY` 실행 경로가 만든 후보 그룹 시도를 저장한다. `POOL_ENTRY`는 현재 미구현이며 PostgreSQL DB trigger가 아니다. |
 | 주요 컬럼 | `id`, `festival_id`, `target_group_size`, `status`, `score`, `created_by`, `started_at`, `expires_at`, `confirmed_at`, `failed_reason`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `festival_id -> festivals.id` |
@@ -404,16 +501,18 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 각 후보 사용자에게 보낸 30초 매칭 제안 상태를 저장한다. |
-| 주요 컬럼 | `id`, `attempt_id`, `member_id`, `status`, `sent_at`, `expires_at`, `responded_at`, `created_at`, `updated_at` |
+| 목적 | 각 후보 사용자에게 보낸 최초 매칭 제안과 인원 미달 재확인 제안 상태를 저장한다. |
+| 주요 컬럼 | `id`, `attempt_id`, `member_id`, `proposal_type`, `proposal_round`, `status`, `sent_at`, `expires_at`, `responded_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `match_proposals.status` |
-| CHECK | `expires_at > sent_at`, `responded_at IS NULL OR responded_at >= sent_at`, `status IN (...)` |
-| UNIQUE | `(attempt_id, member_id)` |
-| INDEX | `idx_match_proposals_member_status`, `idx_match_proposals_expires_status`, `idx_match_proposals_attempt_status` |
+| CHECK | `proposal_type IN (...)`, `proposal_round > 0`, `expires_at > sent_at`, `responded_at IS NULL OR responded_at >= sent_at`, `status IN (...)` |
+| UNIQUE | `(attempt_id, member_id, proposal_round)` |
+| INDEX | `idx_match_proposals_member_status`, `idx_match_proposals_expires_status`, `idx_match_proposals_attempt_status`, `idx_match_proposals_attempt_type_round` |
 | 개인정보/보안 | 제안 자체에는 메시지 본문을 저장하지 않는다. |
 | MVP 필수 | 필수 |
+
+동일 후보 구성에서 인원 미달 재확인이 필요하면 `attempt_id`는 유지하고 새로운 `proposal_id`와 다음 `proposal_round`를 생성합니다. 새로운 상대를 탐색하는 완전한 재매칭에서는 기존 attempt를 종료하고 새로운 `attempt_id`를 생성합니다.
 
 ### match_responses
 
@@ -442,7 +541,7 @@ DATA_CORRECTION
 | CHECK | `confirmed_member_count BETWEEN 2 AND 4`, `status IN (...)` |
 | UNIQUE | `attempt_id` |
 | INDEX | `idx_match_groups_festival_status`, `idx_match_groups_status_confirmed_at` |
-| 개인정보/보안 | 만남 포인트는 축제 공식 좌표 또는 공공 장소 기준으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
+| 개인정보/보안 | 축제 좌표 주변에서 확정한 실제 POI를 group snapshot으로 저장한다. 사용자 실시간 위치는 저장하지 않는다. |
 | MVP 필수 | 필수 |
 
 ### match_group_members
@@ -450,15 +549,50 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 확정 그룹의 참여자 상태, 도착 예정 시간, 도착 인증 상태를 저장한다. |
-| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `created_at`, `updated_at` |
+| 주요 컬럼 | `id`, `group_id`, `member_id`, `status`, `allow_minimum_two`, `arrival_minutes`, `arrival_time_selected_at`, `arrived_at`, `cancelled_at`, `cancel_reason`, `no_show_at`, `created_at`, `updated_at` |
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `member_id -> members.id` |
-| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
-| CHECK | `arrival_minutes IN (0,5,10,20,30)`, `status IN (...)` |
+| 상태값 | `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`, `COMPLETED`, `CANCELLED`, `NO_SHOW`, `LEFT` |
+| CHECK | `arrival_minutes IN (0,5,10,20,25,30)`, `status IN (...)`, `cancel_reason IN ('SCHEDULE_CHANGED','TRANSPORTATION_ISSUE','OTHER')` |
 | UNIQUE | `(group_id, member_id)`, active 상태의 `member_id` partial unique index 후보 |
 | INDEX | `idx_match_group_members_member_status`, `idx_match_group_members_group_status` |
 | 개인정보/보안 | 취소 사유는 구조화된 버튼 값만 저장한다. |
 | MVP 필수 | 필수 |
+
+도착 예정 시간 선택은 기존 컬럼만 사용합니다. `JOINED` 또는
+`ARRIVAL_TIME_SELECTED`인 로그인 member row를 잠근 뒤 `status`,
+`arrival_minutes`, `arrival_time_selected_at`, `updated_at`을 갱신합니다.
+같은 값 반복은 row와 event를 갱신하지 않습니다. `V13`은 기존 row/event의
+`0`, `30`을 유지하면서 신규 `25`를 저장할 수 있도록 CHECK만 교체합니다.
+신규 PUT API는 이 DB 호환 집합과 별도로 `5`, `10`, `20`, `25`만 허용합니다.
+
+도착 완료는 기존 `arrived_at`, group `started_at`과 `MEMBER_ARRIVED`를 사용하고,
+마지막 유효 회원 도착에서는 group `completed_at`, member `COMPLETED`,
+`MATCH_COMPLETED`를 같은 transaction에서 기록합니다. terminal member는 보존합니다.
+
+정상 완료 후 재매칭 제한은 신규 상태나 active member index 점유로 표현하지
+않습니다. `COMPLETED` member는 계속 active index에서 제외하고 다음 값을 완료
+group에서 파생합니다.
+
+```text
+completion_lock_expires_at = match_groups.confirmed_at + INTERVAL '1 hour'
+```
+
+정상 완료는 귀책 사유가 아니므로 `match_cooldowns`에 `COMPLETED` reason을
+추가하지 않는 방향을 우선합니다. restriction 조회와 pool 신청 검증에서 최근
+완료 group의 유효시간을 확인합니다. 별도 최대 3회 카운터나 체크인별 횟수
+컬럼은 MVP에 추가하지 않습니다. restriction 조회와 pool 신청 검증은 이 파생값을
+사용하도록 구현했으며 정상 완료에 대한 `match_cooldowns` row는 생성하지 않습니다.
+
+단말 위치 확인을 추가하더라도 원본 사용자 위도·경도, 계산 거리와 `verified`
+컬럼은 추가하지 않습니다. Backend가 요청의 좌표로 거리를 일회성 계산하고 원본
+위치정보를 폐기한 뒤 기존 도착 상태와 시각만 저장합니다.
+
+`V14`는 group 확정 당시 pool의 `allow_minimum_two`를 member snapshot으로
+저장합니다. 기존 row는 group attempt, attempt member와 pool 관계로
+결정적으로 backfill하며 매핑할 수 없는 row가 있으면 임의 값으로 채우지 않고
+migration을 실패시킵니다. 확정 후 취소와 NO_SHOW는 각각 `cancelled_at`,
+`no_show_at`과 구조화된 상태/event를 사용합니다.
 
 ### match_events
 
@@ -469,8 +603,8 @@ DATA_CORRECTION
 | PK | `id` |
 | FK | `group_id -> match_groups.id`, `attempt_id -> match_attempts.id`, `member_id -> members.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MATCH_CANCELLED','SAFETY_REMINDER')` |
-| UNIQUE | 없음 |
+| CHECK | `event_type IN ('MATCH_PROPOSED','MATCH_ACCEPTED','MATCH_REJECTED','MATCH_TIMEOUT','MATCH_INSUFFICIENT_MEMBERS','MATCH_CONFIRMED','ARRIVAL_TIME_SELECTED','MEMBER_ARRIVED','MEMBER_CANCELLED','MEMBER_NO_SHOW','MATCH_CANCELLED','MATCH_COMPLETED','SAFETY_REMINDER')` |
+| UNIQUE | group당 `MATCH_COMPLETED` 1건 partial unique index |
 | INDEX | `idx_match_events_group_created_at`, `idx_match_events_attempt_created_at`, `idx_match_events_member_created_at`, `idx_match_events_type_created_at` |
 | 개인정보/보안 | `payload JSONB`에는 token, GPS 원본 좌표, 민감정보를 저장하지 않는다. |
 | MVP 필수 | 필수 |
@@ -480,12 +614,12 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 거절/미응답/취소 후 재매칭 제한 시간을 관리한다. |
-| 주요 컬럼 | `id`, `member_id`, `reason`, `starts_at`, `expires_at`, `created_at` |
+| 주요 컬럼 | `id`, `member_id`, `reason`, `status`, `starts_at`, `expires_at`, `related_proposal_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id` |
-| 상태값 | `reason` |
+| FK | `member_id -> members.id`, `related_proposal_id -> match_proposals.id` |
+| 상태값 | `reason`, `status` |
 | CHECK | `expires_at > starts_at`, `reason IN ('REJECT','TIMEOUT','CANCEL','NO_SHOW','REPORT')` |
-| UNIQUE | active 상태의 `member_id` partial unique index 후보 |
+| UNIQUE | active 상태의 `member_id` partial unique index, nullable `related_proposal_id` partial unique index |
 | INDEX | `idx_match_cooldowns_member_expires`, `idx_match_cooldowns_expires_at` |
 | 개인정보/보안 | 사유는 구조화된 코드만 저장한다. |
 | MVP 필수 | 필수 |
@@ -494,13 +628,13 @@ DATA_CORRECTION
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. |
-| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `reason`, `related_group_id`, `related_attempt_id`, `created_at` |
+| 목적 | 패널티 점수 증감 이력을 저장하고 자정/2시간 감소 정책의 근거로 사용한다. `manner_temperature` 차감 이력도 같은 row에 기록한다. |
+| 주요 컬럼 | `id`, `member_id`, `event_type`, `score_delta`, `manner_temperature_delta`, `reason`, `related_group_id`, `related_attempt_id`, `related_proposal_id`, `related_pool_id`, `related_report_id`, `created_at` |
 | PK | `id` |
-| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id` |
+| FK | `member_id -> members.id`, `related_group_id -> match_groups.id`, `related_attempt_id -> match_attempts.id`, `related_proposal_id -> match_proposals.id`, `related_report_id -> reports.id` |
 | 상태값 | `event_type` |
-| CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','DECAY','ADMIN_ADJUST')` |
-| UNIQUE | 없음 |
+| CHECK | `event_type IN ('TIMEOUT','CANCEL','NO_SHOW','REPORT_CONFIRMED','ADMIN_ADJUST','DECAY','POOL_CANCEL')`, `score_delta <> 0` |
+| UNIQUE | nullable `related_proposal_id`, `related_pool_id`, `related_report_id` 각각의 partial unique index |
 | INDEX | `idx_match_penalty_events_member_created_at`, `idx_match_penalty_events_type_created_at` |
 | 개인정보/보안 | 운영 이력은 30일 후 삭제 또는 집계 전환 후보로 둔다. |
 | MVP 필수 | 필수 |
@@ -540,21 +674,46 @@ DATA_CORRECTION
 | 항목 | 내용 |
 | --- | --- |
 | 목적 | 신고 처리, 제재, 수동 패널티, 데이터 보정 등 관리자 조치 이력을 남긴다. |
-| 주요 컬럼 | `id`, `admin_member_id`, `target_member_id`, `report_id`, `action_type`, `reason`, `metadata`, `created_at` |
+| 주요 컬럼 | `id`, `admin_member_id`, `target_member_id`, `report_id`, `action_type`, `reason_code`, `reason`, `metadata`, `idempotency_key`, `created_at` |
 | PK | `id` |
 | FK | `admin_member_id -> members.id`, `target_member_id -> members.id`, `report_id -> reports.id` |
 | 상태값 | `admin_actions.action_type` |
-| CHECK | `action_type IN (...)` |
-| UNIQUE | 없음 |
+| CHECK | `action_type IN (...)`, `reason_code IS NULL OR reason_code IN (...)` |
+| UNIQUE | nullable `idempotency_key` partial unique index (`V19`) |
 | INDEX | `idx_admin_actions_admin_created_at`, `idx_admin_actions_target_created_at`, `idx_admin_actions_report` |
 | 개인정보/보안 | 관리자 사유와 metadata에는 Secret, token, GPS 원본 좌표를 저장하지 않는다. |
 | MVP 필수 | 필수 |
+
+`admin_member_id`가 `NOT NULL`이므로 관리자 없이 발생하는 자동 처리 이력은 이
+table에 담을 수 없다. 신고 누적 자동 알림은 `admin_safety_alerts`를 사용한다.
+
+### admin_safety_alerts
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 유효 신고 누적 임계 도달을 관리자에게 알리는 경량 queue다. 임계를 돌파한 시점과 관리자 확인 여부를 남긴다. |
+| 주요 컬럼 | `id`, `reported_member_id`, `alert_type`, `trigger_report_id`, `valid_report_count`, `status`, `handled_admin_id`, `handled_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `reported_member_id -> members.id`, `trigger_report_id -> reports.id`, `handled_admin_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `admin_safety_alerts.status` |
+| CHECK | `alert_type IN ('REPORT_THRESHOLD')`, `status IN ('OPEN','ACKNOWLEDGED','CLOSED')`, `valid_report_count > 0`, `OPEN`이면 `handled_admin_id`/`handled_at`이 `NULL`이고 그 외에는 둘 다 `NOT NULL` |
+| UNIQUE | `trigger_report_id` unique. 같은 신고를 다시 판정해도 알림은 1건이다. |
+| INDEX | `idx_admin_safety_alerts_status_created_at`, `idx_admin_safety_alerts_member_created_at` |
+| 개인정보/보안 | 신고자 identity와 신고 상세를 저장하지 않는다. 관리자만 조회하며 피신고 회원 API에 노출하지 않는다. |
+| MVP 필수 | 필수 |
+
+- `trigger_report_id` unique가 자동 알림의 멱등성 원인 key다.
+- 관리자 확인은 `OPEN -> ACKNOWLEDGED`, 제재 완료는 `-> CLOSED`로 전환한다.
+  `handled_admin_id`에는 확인 또는 제재를 수행한 관리자를 기록한다.
+- 같은 회원에게 `OPEN` 알림이 있는 동안은 새 알림을 생성하지 않는다.
+- 누적 카운트를 회원 컬럼으로 저장하지 않는다. 30일 window 집계는 조회 시점에
+  계산하고, 이 table의 `valid_report_count`는 돌파 당시 snapshot으로만 사용한다.
 
 ### solo_courses
 
 | 항목 | 내용 |
 | --- | --- |
-| 목적 | 매칭 실패 후 제공하는 솔로 45분 코스 추천 결과를 저장한다. |
+| 목적 | 매칭 실패 후 전환한 솔로 코스 추천 결과를 저장하기 위해 설계했다. |
 | 주요 컬럼 | `id`, `member_id`, `festival_id`, `source_attempt_id`, `title`, `status`, `created_at`, `expires_at` |
 | PK | `id` |
 | FK | `member_id -> members.id`, `festival_id -> festivals.id`, `source_attempt_id -> match_attempts.id` |
@@ -563,7 +722,7 @@ DATA_CORRECTION
 | UNIQUE | 없음 |
 | INDEX | `idx_solo_courses_member_status`, `idx_solo_courses_festival_created_at` |
 | 개인정보/보안 | 추천 결과는 서비스 사용 이력이다. 과도한 장기 보관을 피한다. |
-| MVP 필수 | 필수 |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
 
 ### solo_course_places
 
@@ -578,7 +737,7 @@ DATA_CORRECTION
 | UNIQUE | `(solo_course_id, display_order)`, `(solo_course_id, tour_place_id)` |
 | INDEX | `idx_solo_course_places_course_order` |
 | 개인정보/보안 | 추천 근거는 구조화된 짧은 코드 또는 문구로 제한한다. |
-| MVP 필수 | 필수 |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
 
 ### recommendation_click_logs
 
@@ -593,7 +752,134 @@ DATA_CORRECTION
 | UNIQUE | 없음 |
 | INDEX | `idx_recommendation_click_logs_member_clicked_at`, `idx_recommendation_click_logs_festival_clicked_at`, `idx_recommendation_click_logs_source_clicked_at` |
 | 개인정보/보안 | 행동 로그는 분석 목적의 최소 필드만 저장하고 장기 보관 정책을 별도로 둔다. |
+| MVP 필수 | 아니다. V4에 선반영했으나 MVP 범위에서는 사용하지 않는다(아래 `추천/솔로 3개 테이블의 현재 상태` 참고). |
+
+### 추천/솔로 3개 테이블의 현재 상태
+
+`solo_courses`, `solo_course_places`, `recommendation_click_logs` 세 테이블은 V4에 생성되어 있지만
+**backend에서 읽지도 쓰지도 않습니다.** Entity와 Repository 자체가 없고 dev DB도 0건입니다.
+
+`GET /api/festivals/{id}/solo-course`는 요청마다 `SoloCourseService`가 코스를 즉석 계산해서 응답하고
+결과를 저장하지 않습니다. 사용자가 코스를 다시 꺼내 보는 기능(저장된 코스 목록, 이어보기)이 없고
+관리자 화면도 이 데이터를 참조하지 않으므로, 저장은 순수하게 전환율 통계 용도입니다.
+
+MVP 단계에서는 그 통계를 볼 화면도 볼 사람도 없어 **저장하지 않기로 결정했습니다.**
+근거와 재검토 조건은 `docs/26_MATCH_FAILURE_SOLO_COURSE_LINK_DESIGN.md` 4장에 있습니다.
+
+다시 필요해지면 테이블과 `solo_courses.source_attempt_id` FK가 그대로 남아 있어 새 migration 없이
+Entity와 저장 시점만 추가하면 됩니다. 다만 **전환 이력은 소급 생성이 불가능하므로** 도입 시점부터의
+데이터만 쌓입니다.
+
+### 솔로 코스 예산값
+
+이 문서 초안의 "45분 코스"는 구현되지 않았습니다. 실제 값은 `SoloCourseStayPolicy`의
+`HALF` 240분 / `FULL` 480분입니다.
+
+45분은 현재 상수 조합으로는 성립하지 않습니다. 체류시간 최소값이 문화시설 45분이고
+`walkMinutes()`가 최소 1분을 보장하므로 `1 + 45 = 46 > 45`가 되어 어떤 후보도 예산을 통과하지 못하고
+항상 빈 코스가 나옵니다. 설계 근거는 `docs/23_SOLO_COURSE_ITINERARY_DESIGN.md` 3.2절입니다.
+
+### content_bookmarks
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 회원이 축제 또는 관광지를 찜(북마크)한 상태를 저장한다. |
+| 주요 컬럼 | `id`, `member_id`, `festival_id`, `tour_place_id`, `created_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, `festival_id -> festivals.id`, `tour_place_id -> tour_places.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | 없음 |
+| CHECK | `chk_content_bookmarks_target`: `(festival_id IS NOT NULL) <> (tour_place_id IS NOT NULL)` — 대상은 정확히 하나 |
+| UNIQUE | `uq_content_bookmarks_member_festival`, `uq_content_bookmarks_member_place` partial unique index 2개 |
+| INDEX | `idx_content_bookmarks_member_created_at` |
+| 개인정보/보안 | 찜은 개인 데이터다. 공개 찜 수는 제공하지 않고 본인 조회만 허용한다. 탈퇴 시 물리 삭제한다. |
 | MVP 필수 | 필수 |
+
+`user_blocks`와 같은 구조다 — `(소유자, 대상)` unique pair, `created_at`만, 해제는 물리 삭제.
+partial unique index 2개가 동시 요청 중복을 DB에서 흡수한다. 설계 근거는
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 3.2절이다.
+
+### content_comments
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 축제·관광지에 대한 공개 댓글을 저장한다. `like_count`는 조회 성능을 위한 비정규화 카운터다. |
+| 주요 컬럼 | `id`, `member_id`, `festival_id`, `tour_place_id`, `body`, `like_count`, `status`, `deleted_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id`, `festival_id -> festivals.id`, `tour_place_id -> tour_places.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `status`: `VISIBLE`, `DELETED`(작성자 삭제), `HIDDEN`(관리자 숨김) |
+| CHECK | 대상 정확히 하나, `char_length(btrim(body)) BETWEEN 1 AND 500`, `like_count >= 0`, `status IN (...)`, `(status = 'VISIBLE') = (deleted_at IS NULL)` |
+| UNIQUE | 없음 |
+| INDEX | `idx_content_comments_festival_visible`, `idx_content_comments_place_visible`(둘 다 `status = 'VISIBLE'` partial index), `idx_content_comments_member_created_at` |
+| 개인정보/보안 | 공개 콘텐츠이므로 본문을 암호화하지 않는다(`member_reviews.comment_encrypted`와 반대). 응답에 `memberId`와 프로필 이미지를 노출하지 않는다. |
+| MVP 필수 | 필수 |
+
+`deleted_at` 단독 soft delete가 아니라 `status` 상태 머신 + 시점 컬럼 조합이다. 저장소의 기존
+관용구이며, `(status = 'VISIBLE') = (deleted_at IS NULL)` 짝 CHECK는 V25 `admin_safety_alerts`와
+같은 방식이다. 목록 정렬 키는 `created_at`이 아니라 `id DESC`다.
+
+### content_comment_likes
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 댓글 좋아요를 저장한다. `content_comments.like_count` 정합성의 원본이다. |
+| 주요 컬럼 | `id`, `comment_id`, `member_id`, `created_at` |
+| PK | `id` |
+| FK | `comment_id -> content_comments.id`, `member_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | 없음 |
+| CHECK | 없음. 자기 댓글 좋아요는 허용한다 |
+| UNIQUE | `uq_content_comment_likes_pair (comment_id, member_id)` |
+| INDEX | `idx_content_comment_likes_member` |
+| 개인정보/보안 | 누가 좋아요를 눌렀는지는 공개하지 않는다. 응답은 총 개수와 본인 여부만 담는다. |
+| MVP 필수 | 필수 |
+
+`uq_content_comment_likes_pair`가 멱등성의 근원이다. **카운터는 이 테이블의 INSERT/DELETE가
+실제로 행에 영향을 준 경우에만 움직인다**(`ON CONFLICT DO NOTHING` 후 affected rows 확인).
+`like_count = like_count ± 1`은 PostgreSQL row lock으로 직렬화되어 lost update가 없고,
+`like_count >= 0` CHECK와 `WHERE like_count > 0` 가드가 음수를 이중으로 막는다. 정합성 복구
+쿼리는 `docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md` 8.3절에 있다.
+
+### inquiries
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 1:1 문의 스레드 1건의 상태와 목록·badge용 파생값을 담는다. |
+| 주요 컬럼 | `id`, `member_id`, `category`, `title`, `status`, `priority`, `last_message_at`, `last_answered_at`, `member_read_at`, `closed_at`, `anonymized_at`, `created_at`, `updated_at` |
+| PK | `id` |
+| FK | `member_id -> members.id` `ON DELETE RESTRICT` |
+| 상태값 | `status`: `RECEIVED`/`IN_PROGRESS`/`ANSWERED`/`CLOSED`, `priority`: `NORMAL`/`URGENT` |
+| CHECK | `category IN ('SANCTION_APPEAL','ACCOUNT','MATCHING','FESTIVAL_DATA','BUG','ETC')`, `title` 1~100자, `(status = 'CLOSED') = (closed_at IS NOT NULL)`, `status <> 'ANSWERED' OR last_answered_at IS NOT NULL`, `anonymized_at IS NULL OR status = 'CLOSED'` |
+| UNIQUE | 없음. 같은 회원이 같은 제목으로 여러 건 등록할 수 있다 |
+| INDEX | `idx_inquiries_member_created_at`, `idx_inquiries_status_created_at`, `idx_inquiries_open`(partial), `idx_inquiries_retention`(partial) |
+| 개인정보/보안 | 제목에도 개인정보가 들어올 수 있어 보관 정책 대상이다. 관리자와 작성자 본인만 조회한다. |
+| MVP 필수 | 중요 |
+
+`priority`는 **사용자가 지정할 수 없다.** 사용자가 고르게 하면 사실상 전부 `URGENT`로 들어와
+우선순위가 무의미해진다. 등록 요청은 이 필드를 받지 않고 관리자 `PATCH`만 변경한다.
+
+관리자 목록 정렬 키는 `(created_at DESC, id DESC)`이며 **`priority`를 `ORDER BY`에 넣지
+않는다.** 넣으면 cursor payload에도 그 값이 들어가야 하고, 정렬 키와 cursor 키가 어긋나면
+페이지 경계에서 항목이 중복·누락된다(`docs/29` 5.7).
+
+### inquiry_messages
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 문의 스레드의 발화 1건. 사용자 문의와 관리자 답변을 같은 테이블에 담는다. |
+| 주요 컬럼 | `id`, `inquiry_id`, `author_type`, `author_member_id`, `body`, `created_at` |
+| PK | `id` |
+| FK | `inquiry_id -> inquiries.id`, `author_member_id -> members.id` 모두 `ON DELETE RESTRICT` |
+| 상태값 | `author_type`: `USER`/`ADMIN` |
+| CHECK | `author_type IN ('USER','ADMIN')`, `body` 1~2000자 |
+| UNIQUE | 없음 |
+| INDEX | `idx_inquiry_messages_inquiry`, `idx_inquiry_messages_author_created_at` |
+| 개인정보/보안 | 본문은 평문이다. 관리자와 작성자 본인만 조회하고 로그에 남기지 않는다. |
+| MVP 필수 | 중요 |
+
+`author_type`을 따로 두는 이유는 `author_member_id != inquiries.member_id`로 관리자를
+유추하면 관리자가 자기 문의에 답할 때 판정이 깨지기 때문이다.
+
+사용자 응답에는 관리자 `memberId`·닉네임을 담지 않는다. 화면은 `author_type`만 보고 "운영팀"으로
+표시하며 관리자 개인을 특정할 이유가 없다.
 
 ## 7. 매칭 흐름과 DB 표현
 
@@ -602,16 +888,18 @@ DATA_CORRECTION
 3. 사용자가 희망 인원, 태그, `allow_minimum_two`를 선택하면 `match_pools`에 `WAITING` row를 만든다.
 4. `match_pools`는 active 상태의 사용자 중복 진입을 partial unique index로 막는다.
 5. Scheduler는 같은 `festival_id`, `WAITING`, `search_expires_at > now()` 조건으로 후보를 조회한다.
-6. 후보 조회는 구현 단계에서 `SELECT ... FOR UPDATE SKIP LOCKED`를 사용한다.
+6. 후보 조회는 구현 단계에서 `SELECT ... FOR UPDATE SKIP LOCKED`를 사용하며, 최종 후보 `match_pools` row만 짧게 잠근다.
 7. 차단 관계는 `user_blocks`에서 양방향으로 제외한다.
-8. 후보가 정해지면 `match_attempts`, `match_attempt_members`, `match_proposals`를 생성한다.
-9. 각 proposal은 `sent_at`, `expires_at`으로 30초 응답 제한을 표현한다.
+8. 후보가 정해지면 `match_attempts`, `match_attempt_members`, `INITIAL_MATCH` 유형의 `match_proposals`를 생성한다.
+9. 각 proposal은 `proposal_round`, `sent_at`, `expires_at`으로 질문 회차와 30초 응답 제한을 표현한다.
 10. 사용자의 수락/거절/타임아웃은 `match_responses`와 `match_proposals.status`로 저장한다.
 11. 응답 중복은 `(proposal_id, member_id)` unique constraint로 막는다.
-12. 최소 2명 이상 수락하고 정책을 만족하면 `match_groups`, `match_group_members`를 생성한다.
-13. active group 중복 참여는 `match_group_members.member_id` partial unique index 후보로 막는다.
-14. 상태 변경은 `match_events`에 append-only로 기록한다.
-15. 거절, 타임아웃, 확정 후 취소, 노쇼는 `match_penalty_events`와 `match_cooldowns`에 기록한다.
+12. 목표 인원 미달이지만 최소 2명이 수락하면 같은 attempt에 `INSUFFICIENT_MEMBERS_CONFIRMATION` 유형의 다음 round proposal을 생성한다.
+13. 인원 미달 재확인은 새로운 `proposal_id`를 사용하고, 기존 attempt 실패 후 새로운 상대를 찾는 재매칭만 새로운 `attempt_id`를 사용한다.
+14. 최소 2명 이상이 최종 진행에 동의하면 `match_groups`, `match_group_members`를 생성한다.
+15. active group 중복 참여는 `match_group_members.member_id` partial unique index 후보로 막는다.
+16. 상태 변경은 `match_events`에 append-only로 기록한다.
+17. 거절, 타임아웃, 확정 후 취소, 노쇼는 `match_penalty_events`와 `match_cooldowns`에 기록한다.
 
 ## 8. 주요 제약조건과 인덱스 요약
 
@@ -620,25 +908,31 @@ DATA_CORRECTION
 - `members.provider IN ('KAKAO')`
 - `members.role IN ('USER','ADMIN')`
 - `members.manner_temperature BETWEEN 0 AND 100`
+- `member_travel_styles.style_code IN ('RELAXED','ACTIVE','FOOD','PHOTO','CULTURE')`
+- `member_preference_embeddings.embedding_status IN ('PENDING','COMPLETED','FAILED')`
 - `match_pools.preferred_group_size IN (2,3,4)`
 - `match_pools.search_expires_at > match_pools.entered_at`
 - `match_attempts.target_group_size IN (2,3,4)`
+- `match_proposals.proposal_type IN ('INITIAL_MATCH','INSUFFICIENT_MEMBERS_CONFIRMATION')`
+- `match_proposals.proposal_round > 0`
 - `match_proposals.expires_at > match_proposals.sent_at`
 - `match_groups.confirmed_member_count BETWEEN 2 AND 4`
-- `match_group_members.arrival_minutes IN (0,5,10,20,30)`
+- `match_group_members.arrival_minutes IN (0,5,10,20,25,30)`
 - `reports.reporter_member_id <> reports.reported_member_id`
 - `festival_checkins.distance_meters >= 0`
 
 ### 주요 UNIQUE constraint 후보
 
 - `members(provider, provider_user_id)`
+- `member_travel_styles(member_id, style_code)`
+- `member_preference_embeddings(member_id)`
 - `refresh_tokens(token_hash)`
 - `festivals(content_id)`
 - `tour_places(content_id)`
 - `festival_images(festival_id, origin_image_url)`
 - `user_blocks(blocker_member_id, blocked_member_id)`
 - `match_attempt_members(attempt_id, member_id)`
-- `match_proposals(attempt_id, member_id)`
+- `match_proposals(attempt_id, member_id, proposal_round)`
 - `match_responses(proposal_id, member_id)`
 - `match_groups(attempt_id)`
 - `match_group_members(group_id, member_id)`
@@ -652,11 +946,15 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - active 상태의 `match_pools(member_id)`
 - active 상태의 `match_group_members(member_id)`
 - active 상태의 `match_cooldowns(member_id)`
+- `festival_id IS NOT NULL`인 `content_bookmarks(member_id, festival_id)`
+- `tour_place_id IS NOT NULL`인 `content_bookmarks(member_id, tour_place_id)`
 
 ### 주요 조회 인덱스 후보
 
 - `match_pools(festival_id, status, search_expires_at)`
 - `match_proposals(expires_at, status)`
+- `match_proposals(attempt_id, proposal_type, proposal_round)`
+- `member_preference_embeddings(embedding_status)`
 - `match_attempts(festival_id, status)`
 - `match_events(group_id, created_at)`
 - `user_blocks(blocker_member_id)`
@@ -665,6 +963,9 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - `reports(status, created_at)`
 - `tour_api_call_logs(operation_name, called_at)`
 - `recommendation_click_logs(source, clicked_at)`
+- `VISIBLE`인 `content_comments(festival_id, id DESC)`
+- `VISIBLE`인 `content_comments(tour_place_id, id DESC)`
+- `content_bookmarks(member_id, created_at DESC, id DESC)`
 
 ## 9. 개인정보와 보안 고려사항
 
@@ -675,19 +976,245 @@ PostgreSQL migration 작성 시 partial unique index로 표현한다.
 - Refresh Token은 원문이 아니라 hash만 저장한다.
 - API Key, OAuth secret, DB password, SSH Key는 DB와 문서에 저장하지 않는다.
 - `match_events.payload`, `admin_actions.metadata`, `tour_api_call_logs`에는 Secret과 원본 GPS 좌표를 넣지 않는다.
-- 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN` 또는 `DELETED`로 변경한다.
+- 탈퇴 시 `members`의 개인정보 컬럼은 즉시 익명화하고 상태를 `WITHDRAWN`으로 변경한다.
+  `nickname`도 `NULL`로 지운다(`V30`). 표시 문구(`탈퇴한 회원`)는 `members`를 join하는 조회
+  SQL이 `status = 'WITHDRAWN'`일 때 만들어 낸다. 문구를 컬럼에 두면 재가입한 계정이 그 값을
+  들고 살아나고, 표시 문구가 곧 익명화 여부를 뜻하는 상태 flag가 된다.
+  익명화 누락은 `V28`의 `chk_members_withdrawn_anonymized`(`V30`이 `nickname`을 검사 대상에
+  추가)가 DB 수준에서 거부하고, `V30`의 `chk_members_nickname_not_withdrawn_label`이 어떤
+  상태에서도 그 문구가 컬럼에 저장되는 것을 막는다.
+- `provider_user_id`는 탈퇴 시에도 익명화하지 않는다. 7일 재가입 쿨오프 판정에 필요하다.
+- 탈퇴 시점의 제재 상태는 `withdrawn_*` 스냅샷 컬럼에 남긴다. `V19`의
+  `chk_members_suspension_period`와 `V27`의 `chk_members_sanction_reason_presence`가 제재
+  상태가 아닌 회원에게 그 값이 남는 것을 금지하므로 기존 제재 컬럼을 재사용할 수 없다.
+- `member_consents`는 탈퇴 시에도 row를 남기고 `revoked_at`만 기록한다. 동의를 받았다는 사실이
+  개인정보 처리 근거의 증빙이다.
 - 패널티/매칭 이벤트 등 운영 로그는 30일 보관 후 삭제 또는 집계 전환 정책을 별도 구현한다.
+- `preference_text`를 외부 임베딩 API로 보내기 전에 `AI_PROCESSING`, `OVERSEAS_TRANSFER` 동의와 고지 요건을 확인한다.
+- 임베딩 요청에는 취향 문장 외의 OAuth 식별자, 닉네임, 성별, 연령대 등 불필요한 개인정보를 포함하지 않는다.
+- 회원 탈퇴 또는 취향 삭제 시 `preference_text`와 `embedding`도 삭제한다. 탈퇴는
+  `MemberWithdrawalService`가 `member_preference_embeddings` row를 물리 삭제한다.
 
-## 10. 9-2단계 SQL 생성 대상
+## 10. Flyway migration 이력
 
-다음 단계에서 생성할 Flyway SQL 파일 후보:
+### V30__store_null_nickname_for_withdrawn_member.sql
+
+탈퇴 회원의 `nickname`을 컬럼에 저장하지 않는다.
+
+`V28`이 넣은 표시 문구를 `NULL`로 되돌리고, 살아 있는 회원에 남은 문구도 함께 지운다(재가입은
+했지만 OAuth 닉네임이 없어 문구가 남은 계정). 표시 문구는 조회 SQL이 `status`로 만든다.
+
+- `chk_members_withdrawn_anonymized`를 재생성해 `nickname IS NULL`을 검사 대상에 추가한다.
+  `V28`은 "표시용 고정 문구로 덮으므로 NULL 검사 대상이 아니다"라며 예외로 뒀다.
+- `chk_members_nickname_not_withdrawn_label` 신규 — 어떤 상태에서도 `탈퇴한 회원`을 닉네임
+  컬럼에 저장할 수 없다. 탈퇴 회원의 문구 회귀와, 살아 있는 회원이 그 문구로 위장하는 것을
+  동시에 막는다.
+
+`V28`을 고치지 않고 새 번호로 분리한 이유는 `V28`이 이미 공유 dev DB에 적용되어 수정하면
+Flyway checksum 검증이 깨지기 때문이다(`V29`와 같은 사정).
+
+### V29__allow_withdrawn_cancel_reason.sql
+
+`match_group_members.cancel_reason`에 `WITHDRAWN`을 허용한다.
+
+`V14`의 `chk_match_group_members_cancel_reason`은 사용자가 직접 고르는 취소 사유
+(`MatchCancellationReason`: `SCHEDULE_CHANGED`/`TRANSPORTATION_ISSUE`/`OTHER`)만 허용했다.
+탈퇴는 사용자가 고른 사유가 아니라 계정 삭제의 부수 효과라 목록에 없었고, **그룹에 속한
+회원이 탈퇴하면 이 제약 위반으로 탈퇴 자체가 실패했다.** 통합 테스트로 발견했다.
+
+`OTHER`로 뭉개지 않고 별도 값을 둔다. 감사 이력에서 "본인이 사정상 취소"와 "계정이 사라져
+이탈"을 구분할 수 없으면 노쇼·패널티 분석이 흐려진다.
+
+`V28`에 넣지 않고 새 번호로 분리한 이유는 `V28`이 이미 공유 dev DB에 적용되어 수정하면
+Flyway checksum 검증이 깨지기 때문이다.
+
+### V28__add_member_withdrawal.sql
+
+회원 탈퇴와 관리자 강제 탈퇴(`docs/19` 4.4).
+
+- `members`에 탈퇴 스냅샷 5개 추가: `withdrawn_from_status`, `withdrawn_by_admin`,
+  `withdrawn_rejoin_blocked`, `withdrawn_suspended_until`, `withdrawn_sanction_reason_code`
+- `chk_members_withdrawal_snapshot` — 탈퇴가 아니면 스냅샷이 하나도 남을 수 없다
+- `chk_members_withdrawn_anonymized` — 탈퇴 회원에게 개인정보가 남으면 거부한다
+- `chk_members_withdrawn_from_status`, `chk_members_withdrawn_sanction_reason_code` — 값 목록
+- `chk_members_withdrawn_suspension_snapshot` — 잔여 정지 기간은 정지 중 탈퇴에서만 생긴다
+- `chk_admin_actions_type`에 `FORCED_WITHDRAWAL` 추가(`V20`과 같은 방식)
+
+기존 `chk_members_suspension_period`와 `chk_members_sanction_reason_presence`는 건드리지
+않았다. 완화하면 정지 해제와 만료 복구의 버그를 잡아온 불변식이 함께 헐거워진다.
+
+
+### V18__add_match_opponent_exclusions.sql
+
+`match_opponent_exclusions`는 영구 안전 차단인 `user_blocks`와 분리된 check-in 범위의 재추천 제외 이력입니다.
+
+| 컬럼 | 역할 |
+| --- | --- |
+| `lower_member_id`, `higher_member_id` | member ID 오름차순으로 정규화한 양방향 pair |
+| `lower_checkin_id`, `higher_checkin_id` | 각 member 위치에 대응하는 proposal 당시 check-in |
+| `rejected_by_member_id` | 내부 감사용 명시적 거절 회원 |
+| `source_proposal_id` | round 1 명시적 REJECT 원본 |
+| `created_at` | 생성 시각 |
+
+- `lower_member_id < higher_member_id`, rejector pair 포함, 동일 check-in pair unique와 source proposal/member pair unique를 DB에서 강제한다.
+- member와 check-in에는 `ON DELETE RESTRICT` FK를 사용한다. 회원 또는 check-in을 실제 삭제하려면 관련 exclusion의 보존·익명화 정책을 먼저 적용해야 한다.
+- 기존 `festival_checkins`에 `(id, member_id)` 복합 unique를 추가하는 것은 PK와 중복되고 기존 schema 영향이 커서 복합 FK는 추가하지 않았다. Service가 attempt member → pool을 통해 check-in을 얻고 `festival_checkins.id/member_id/festival_id` 소유 관계를 저장 전에 검증한다.
+- 적용 여부는 현재 후보 두 pool의 member/check-in 정규화 조합과 row가 정확히 일치하는지로 판단한다. 과거 row는 새 check-in에 적용되지 않는다.
+- 즉시 삭제 Scheduler는 두지 않는다. 감사·문제 분석 보존 기간과 삭제 시점은 match event 및 개인정보 보존 정책과 함께 후속 확정한다.
+
+### V25__add_report_safety_automation.sql
+
+`docs/19_ADMIN_MEMBER_SAFETY_ROADMAP.md` 4.3 신고 누적·안전 자동화용 schema입니다.
+번호는 저장소 파일 목록뿐 아니라 공유 dev DB의 `flyway_schema_history`도 확인해
+확정합니다. 미병합 브랜치가 먼저 선점한 번호는 저장소에서 보이지 않습니다.
+
+| 변경 | 내용 |
+| --- | --- |
+| `match_penalty_events.related_report_id` | 유효 판정 신고 1건당 penalty event 1건을 강제하는 멱등성 원인 key. `reports.id` FK `RESTRICT` + partial unique index |
+| `match_penalty_events.manner_temperature_delta` | `NUMERIC(5,2)` nullable. 실제 적용된 매너온도 차감량을 기록한다. 하한 clamp로 차감이 줄어든 경우 줄어든 값을 저장한다 |
+| `admin_safety_alerts` | 신규 table. 6장 설계안 참고 |
+
+- `score_delta <> 0` CHECK이 있어 penalty 없는 온도 차감만 저장할 수는 없다.
+  현재 정책은 penalty `+5`와 온도 `-5.00`을 항상 함께 적용하므로 문제가 없다.
+- 기존 row의 `related_report_id`와 `manner_temperature_delta`는 `NULL`로 남긴다.
+  소급 적용하지 않는다.
+- `match_cooldowns`는 변경하지 않는다. 신고 기반 cooldown을 만들지 않기 때문이다.
+
+이미 적용된 migration은 변경하지 않고 다음 버전으로 추가한다.
 
 ```text
-db/migration/V2__create_core_tables.sql
-db/migration/V3__create_matching_tables.sql
-db/migration/V4__create_safety_admin_recommendation_tables.sql
+backend/src/main/resources/db/migration/V2__create_core_tables.sql
+backend/src/main/resources/db/migration/V3__create_matching_tables.sql
+backend/src/main/resources/db/migration/V4__create_safety_admin_recommendation_tables.sql
+backend/src/main/resources/db/migration/V5__create_member_travel_styles.sql
+backend/src/main/resources/db/migration/V6__allow_naver_oauth_provider.sql
+backend/src/main/resources/db/migration/V7__single_refresh_token_and_member_email.sql
+backend/src/main/resources/db/migration/V8__add_member_intro.sql
+backend/src/main/resources/db/migration/V9__add_member_profile_image_object_key.sql
+backend/src/main/resources/db/migration/V10__add_matching_proposal_rounds.sql
+backend/src/main/resources/db/migration/V11__add_member_preference_embeddings.sql
+backend/src/main/resources/db/migration/V12__add_matching_penalty_cooldown_idempotency.sql
+backend/src/main/resources/db/migration/V13__allow_25_arrival_minutes.sql
+backend/src/main/resources/db/migration/V14__add_match_room_cancellation_no_show.sql
+backend/src/main/resources/db/migration/V15__add_festival_meeting_points.sql
+backend/src/main/resources/db/migration/V16__complete_match_rooms.sql
+backend/src/main/resources/db/migration/V17__enforce_one_hour_checkin_validity.sql
+backend/src/main/resources/db/migration/V18__add_match_opponent_exclusions.sql
+backend/src/main/resources/db/migration/V19__add_admin_member_sanctions.sql
+backend/src/main/resources/db/migration/V20__allow_unsuspend_action_type.sql
+backend/src/main/resources/db/migration/V21__add_pool_cancel_cooldown_support.sql
+backend/src/main/resources/db/migration/V22__add_festival_tourplace_query_indexes.sql
+backend/src/main/resources/db/migration/V23__add_tour_place_region_codes.sql
+backend/src/main/resources/db/migration/V24__add_match_attempt_member_score_breakdown.sql
 ```
 
-9-2단계에서는 이 문서를 기준으로 실제 DDL, FK, CHECK constraint, UNIQUE constraint, index를 작성한다.
+`V19`~`V24`는 이 목록이 `V18`까지만 유지되던 동안 추가된 migration이라 4.3 작업에서
+함께 반영했습니다.
 
-`V1__init.sql`은 이미 적용된 migration이므로 수정하지 않는다.
+기존 migration은 수정하지 않는다. penalty/cooldown의 원인 proposal 기반
+멱등성은 `V12`에서 추가했고, `V13`은
+`chk_match_group_members_arrival_minutes`를 안전하게 교체해
+`NULL 또는 0,5,10,20,25,30`을 허용한다. 기존 `0`, `30` row를 변환하지 않는다.
+
+`V16`은 완료 member/event CHECK와 group별 완료 event unique index를 추가하고
+active member index를 `JOINED`, `ARRIVAL_TIME_SELECTED`, `ARRIVED`로 유지한다.
+기존 `COMPLETED` group은 누락 `completed_at`, 비종료 member와 누락 완료 event를
+backfill하되 `CANCELLED`, `NO_SHOW`, `LEFT`는 보존한다.
+
+`V17`은 기존 `ACTIVE` check-in 중 `checked_in_at + 1시간`을 넘는 `expires_at`을
+1시간 경계로 줄이고, 보정 후 이미 만료된 row를 `EXPIRED`로 전환해 partial unique
+index 점유를 해제합니다. 신규 컬럼이나 constraint는 추가하지 않습니다. 운영
+matching SQL도 저장값과 정책 상한 중 이른 시각을 사용하므로 잘못된 장기 만료
+row가 신규 pool이나 후보 선점에 사용되지 않습니다.
+
+`V11`은 `CREATE EXTENSION IF NOT EXISTS vector`와 `VECTOR(1536)` 컬럼을 포함합니다. 따라서 Flyway 실행 전에 local/dev/prod PostgreSQL 실행 이미지에 pgvector extension 파일이 설치될 수 있는지 확인해야 합니다. extension이 없는 일반 PostgreSQL 이미지에서는 migration이 실패합니다.
+
+### V26__add_content_bookmarks_comments.sql
+
+찜(북마크)과 공개 댓글·좋아요를 위한 신규 테이블 3개를 생성합니다. 설계 근거는
+`docs/27_CONTENT_BOOKMARK_COMMENT_DESIGN.md`입니다.
+
+- `content_bookmarks` — 회원별 축제/관광지 찜. partial unique index 2개로 중복을 DB에서 흡수.
+- `content_comments` — 공개 댓글. `status` 상태 머신(`VISIBLE`/`DELETED`/`HIDDEN`) +
+  비정규화 `like_count`.
+- `content_comment_likes` — 댓글 좋아요. `(comment_id, member_id)` unique가 멱등성의 근원.
+
+기존 테이블과 constraint는 변경하지 않고 신규 생성만 합니다. 대상(축제/관광지) 표현은
+`target_type` + `target_id`가 아니라 nullable FK 2개 + `정확히 하나` CHECK이며,
+`recommendation_click_logs`의 기존 방식을 따르되 CHECK를 `OR`에서 배타적 조건으로 조였습니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V26`이 비어 있는지 확인해야 합니다.
+`ddl-auto: validate`이므로 entity와 migration이 정확히 일치해야 부팅됩니다.
+
+### V39__add_notifications.sql / V40__add_push_subscriptions.sql
+
+회원 알림함과 Web Push 구독 테이블을 생성합니다. 설계 근거는
+`docs/32_NEXT_WORK_PRIORITY_PLAN.md` 3.3·3.4입니다.
+
+- `notifications` — 알림 한 줄. `member_id`, `reason`, `actor_member_id`, `occurred_at`,
+  `read_at`.
+- `push_subscriptions` — 브라우저 구독. `endpoint`가 구독의 신원이고 `p256dh`·`auth`는 발송
+  암호화 키입니다.
+
+주요 설계 판단:
+
+- **문구를 저장하지 않습니다.** `reason`만 남기고 문장과 이동 경로는 프론트가 정합니다
+  (WebSocket 1단계와 같은 구조). 문구를 서버가 저장하면 문구를 고칠 때 과거 알림이 옛 문장으로
+  남습니다.
+- `uq_notifications_member_reason_occurred` — 같은 알림을 두 번 쌓지 않습니다. 재연결이나 이벤트
+  재발행이 있어도 목록이 어지러워지지 않습니다. 1단계 프론트가 쓰던 중복 방지 키와 같은 조합입니다.
+- `actor_member_id` — 그 변화를 만든 사람. **행위자 본인에게는 알림을 남기지 않기 위한 값**이고,
+  스케줄러가 만든 변화(시간 초과·노쇼)는 `NULL`입니다.
+- FK는 `ON DELETE CASCADE`입니다. 알림과 구독은 감사 자료가 아니라 소모품이라 회원 행이
+  사라지면 함께 지웁니다(`reports`·`admin_actions`의 `RESTRICT`와 의도가 다릅니다).
+- `uq_push_subscriptions_endpoint` — 같은 브라우저가 다시 구독하면 새 행을 만들지 않고 주인을
+  바꿉니다. 한 기기에서 로그아웃하고 다른 계정으로 들어왔을 때 예전 주인에게 알림이 가면 안 됩니다.
+- **보관 정리에 스케줄러를 쓰지 않습니다.** 30일과 100건을 저장 시점에 함께 정리합니다. 알림이
+  생기지 않는 계정은 늘어날 것도 없고, 스케줄러를 하나 더 두면 꺼졌을 때 조용히 쌓입니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V39`·`V40`이 비어 있는지 확인해야 합니다.
+
+### V31__add_member_inquiries.sql
+
+1:1 문의 센터 테이블 2개를 생성합니다. 설계 근거는 `docs/29_MEMBER_INQUIRY_DESIGN.md`입니다.
+
+- `inquiries` — 스레드 헤더. `status` 상태 머신(`RECEIVED`/`IN_PROGRESS`/`ANSWERED`/`CLOSED`)과
+  목록·badge용 비정규화 값(`last_message_at`, `last_answered_at`, `member_read_at`).
+- `inquiry_messages` — 스레드 발화. 사용자 문의와 관리자 답변을 `author_type`으로 구분.
+
+주요 설계 판단:
+
+- **본문은 평문**입니다(`docs/29` 3.1). 비공개 1:1이지만 암호화하면 관리자 키워드 검색이
+  불가능해지고 이 저장소가 의존하는 `char_length` CHECK 제약도 걸 수 없습니다.
+- **미확인 답변 여부를 컬럼으로 저장하지 않습니다.** `last_answered_at`과 `member_read_at` 비교로
+  조회 시점에 계산합니다. boolean 컬럼을 두면 `content_comments.like_count`와 같은 카운터
+  정합성 문제를 새로 만듭니다.
+- `chk_inquiries_closed_at`은 `content_comments.chk_content_comments_deleted_at`과 같은
+  관용구로 상태와 시점 컬럼을 묶어 고정합니다.
+- `anonymized_at`은 보관 기간(종결 후 1년) 경과 익명화의 재처리를 막는 원인 key입니다.
+- `SAFETY` 카테고리를 두지 않습니다 — 신고자 보호 제약과 충돌하고 구조화 신고 경로가 이미
+  있습니다(`docs/29` 3.4).
+
+기존 테이블과 constraint는 변경하지 않고 신규 생성만 합니다. `admin_actions.action_type`
+CHECK도 건드리지 않았습니다 — 문의 답변은 회원 제재가 아니므로 그 table에 기록하지 않습니다.
+
+적용 전 공유 dev DB의 `flyway_schema_history`에서 `V31`이 비어 있는지 확인해야 합니다.
+
+**번호는 저장소 파일 목록이 아니라 공유 dev DB의 `flyway_schema_history`를 기준으로 정합니다.**
+이 마이그레이션은 처음 `V28`로 만들었는데, 협업자가 저장소에 push하지 않은 채 공유 dev DB에
+`V28`~`V30`을 먼저 적용해 둔 상태여서 Flyway가 checksum 충돌로 부팅을 막았습니다. push되지
+않은 마이그레이션은 저장소에 보이지 않으므로 파일 목록만으로는 다음 번호를 알 수 없습니다.
+
+## `user_blocks` 조회·해제 접근 규칙
+
+- 목록은 `user_blocks.blocker_member_id = :authenticated_member_id`로 제한하고
+  `members.id = blocked_member_id`를 조인해 nickname과 profile image만 조회한다.
+- 정렬은 `created_at DESC, id DESC`이며 `id`는 tie-breaker로만 사용하고 API에 노출하지 않는다.
+- 해제 SQL은 `DELETE FROM user_blocks WHERE blocker_member_id = ? AND blocked_member_id = ?`로
+  물리 삭제한다. 삭제 건수는 서비스/API 계약으로 전달하지 않는다.
+- 기존 unique/check/FK/index와 migration은 변경하지 않는다. soft delete와 감사 테이블은
+  이번 MVP 범위가 아니다.
+- 차단 해제는 정규화 member pair의 `pg_advisory_xact_lock`을 얻은 같은 transaction에서
+  위 DELETE를 수행한다. 이는 schema 변경이 아니며 기존 migration을 수정하지 않는다.
+- pair lock을 준수하는 차단 생성·해제와 proposal 생성 경로 사이만 직렬화한다. DB 직접
+  쓰기처럼 lock 규칙을 우회하는 미래 경로는 보장하지 않는다.

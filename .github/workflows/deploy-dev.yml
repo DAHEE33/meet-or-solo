@@ -35,8 +35,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # VITE_ 변수는 build 시점에 번들로 인라인된다. 서버 .env에 넣어도 반영되지 않으므로
+      # build가 실행되는 이 자리에서 주입해야 한다.
       - name: Build frontend dist
         working-directory: frontend
+        env:
+          VITE_KAKAO_MAPS_APP_KEY: ${{ secrets.VITE_KAKAO_MAPS_APP_KEY }}
         run: |
           npm ci
           npm run build
@@ -47,7 +51,6 @@ jobs:
           mkdir -p deploy-package/frontend
           mkdir -p deploy-package/infra/docker
           mkdir -p deploy-package/infra/nginx
-          mkdir -p deploy-package/db
 
           JAR_PATH="$(find backend/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*plain.jar' | head -n 1)"
           if [ -z "$JAR_PATH" ]; then
@@ -59,7 +62,6 @@ jobs:
           cp -R frontend/dist deploy-package/frontend/dist
           cp infra/docker/docker-compose.dev.yml deploy-package/infra/docker/docker-compose.dev.yml
           cp infra/nginx/default.dev.conf deploy-package/infra/nginx/default.dev.conf
-          cp -R db/migration deploy-package/db/migration
 
           tar -czf deploy-dev.tar.gz -C deploy-package .
 

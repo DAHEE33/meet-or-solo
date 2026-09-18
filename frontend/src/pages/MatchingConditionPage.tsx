@@ -1,0 +1,1223 @@
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { CheckCircle2, Loader2, RefreshCw, Users, XCircle } from 'lucide-react';
+import { ApiClientError } from '../api/apiClient';
+import type { CurrentCheckinResponse } from '../api/checkin';
+import type { CurrentMatchGroup, MatchingRestriction, MatchTerminationReason } from '../api/matching';
+import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
+import {
+  preferencePromptCopy,
+  resolvePreferenceState,
+  shouldPromptBeforeApply,
+  type PreferenceState,
+} from '../components/preference/preferenceStatus';
+import MobileLayout from '../components/layout/MobileLayout';
+import PageHeader from '../components/layout/PageHeader';
+import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
+import { useMemberSanction } from '../hooks/useMemberSanction';
+import PrimaryButton from '../components/common/PrimaryButton';
+import { useCurrentCheckin } from '../hooks/useCurrentCheckin';
+import { useMatchingSession, type MatchingUiStatus } from '../hooks/useMatchingSession';
+import { formatSeoulDateTime } from '../utils/dateTime';
+import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverClock';
+import { positiveInteger, readNumberFromLocationState } from '../utils/positiveInteger';
+import MannerTemperatureBadge from '../components/member/MannerTemperatureBadge';
+import { enablePush } from '../push/webPush';
+
+function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
+  const [remaining, setRemaining] = useState(0);
+  const previousRef = useRef<{ deadlineKey: string; seconds: number } | null>(null);
+  useEffect(() => {
+    if (!deadlineIso) {
+      previousRef.current = null;
+      setRemaining(0);
+      return;
+    }
+    const key = deadlineKey ?? deadlineIso;
+    const tick = () => {
+      const next = stabilizeRemainingSeconds(
+        previousRef.current,
+        key,
+        remainingSeconds(deadlineIso, serverOffsetMs),
+      );
+      previousRef.current = { deadlineKey: key, seconds: next };
+      setRemaining(next);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [deadlineIso, deadlineKey, serverOffsetMs]);
+  return remaining;
+}
+
+const fmt = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+export function resolveFestivalId(
+  locationState: unknown,
+  terminalPoolFestivalId?: number | null,
+  isDevelopment = import.meta.env.DEV,
+  developmentFestivalId = import.meta.env.VITE_DEV_FESTIVAL_ID,
+): number | null {
+  const fromLocation = readNumberFromLocationState(locationState, 'festivalId');
+  if (fromLocation !== null) return fromLocation;
+  const fromTerminalPool = positiveInteger(terminalPoolFestivalId);
+  if (fromTerminalPool !== null) return fromTerminalPool;
+  return isDevelopment ? positiveInteger(developmentFestivalId) : null;
+}
+
+/**
+ * "체크인하기" 이동 목적지를 계산한다. festivalId를 알고 있으면(=이미 이 축제로 매칭을 시도하다가
+ * 체크인이 필요하다는 응답을 받은 경우) CheckInPage가 바로 그 축제로 체크인할 수 있게 state로
+ * 함께 넘긴다.
+ *
+ * festivalId를 모르면 CheckInPage가 할 수 있는 일이 없다 — 어느 축제로 체크인할지 알 수 없다.
+ * 예전에는 "먼저 체크인할 축제를 골라주세요" 안내를 한 단계 더 보여줬는데, 사용자가 결국
+ * 축제를 고르러 가야 하므로 곧바로 축제·관광 탐색으로 보낸다.
+ */
+export function checkInNavigationTarget(
+  festivalId: number | null,
+): { to: string; state?: { festivalId: number } } {
+  return festivalId !== null ? { to: '/check-in', state: { festivalId } } : { to: '/spots' };
+}
+
+export function submitPoolEntry(
+  enterPool: (
+    festivalId: number,
+    preferredGroupSize: 2 | 3 | 4,
+    allowMinimumTwo: boolean,
+  ) => Promise<boolean>,
+  festivalId: number | null,
+  preferredGroupSize: 2 | 3 | 4,
+  allowMinimumTwo: boolean,
+): Promise<boolean> | null {
+  return festivalId === null
+    ? null
+    : enterPool(festivalId, preferredGroupSize, allowMinimumTwo);
+}
+
+/**
+ * 재신청 흐름에서 pool entry가 거절됐을 때 폼 위에 띄울 한 줄을 만든다.
+ *
+ * 이 흐름은 화면 상태를 `ERROR`로 바꾸지 않고 폼을 열어 둔 채 error만 담기 때문에
+ * (`stateAfterPoolEntryFailure`), 이 문구가 없으면 버튼이 먹통인 것으로 보인다.
+ * 폼은 그대로 두고 다시 누를 수 있게 하는 것이 목적이라 전용 오류 화면으로 전환하지 않는다.
+ */
+export function poolEntryErrorMessage(error: ApiClientError | Error | null): string | null {
+  if (error === null) return null;
+  return error instanceof ApiClientError
+    ? error.message
+    : '신청을 보내지 못했어요. 잠시 후 다시 눌러주세요.';
+}
+
+export function readMatchRoomNotice(locationState: unknown): string | null {
+  return locationState
+    && typeof locationState === 'object'
+    && 'matchRoomNotice' in locationState
+    && typeof locationState.matchRoomNotice === 'string'
+      ? locationState.matchRoomNotice
+      : null;
+}
+
+export function consumeMatchRoomNotice(locationState: unknown): unknown {
+  if (!locationState || typeof locationState !== 'object' || !('matchRoomNotice' in locationState)) {
+    return locationState;
+  }
+  const { matchRoomNotice: _consumedNotice, ...remainingState } = locationState;
+  return Object.keys(remainingState).length > 0 ? remainingState : null;
+}
+
+export default function MatchingConditionPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [groupSize, setGroupSize] = useState<2 | 3 | 4>(3);
+  const [allowMinimum, setAllowMinimum] = useState(false);
+  const [matchRoomNotice, setMatchRoomNotice] = useState(() => readMatchRoomNotice(location.state));
+  const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
+  /** 이 화면에 머무는 동안 안내를 이미 띄웠는지. 재신청마다 반복해서 띄우지 않는다. */
+  const [preferencePrompted, setPreferencePrompted] = useState(false);
+  const [preferencePromptOpen, setPreferencePromptOpen] = useState(false);
+  const {
+    state,
+    isSubmitting,
+    isRetryFormOpen,
+    refresh,
+    beginRetry,
+    enterPool,
+    respond,
+    cancelSearch,
+    serverOffsetMs,
+  } = useMatchingSession();
+  const {
+    state: checkinState,
+    refresh: refreshCheckin,
+    cancel: cancelCheckin,
+    isCancelling: isCancellingCheckin,
+  } = useCurrentCheckin();
+  const sanction = useMemberSanction();
+  const currentCheckin = checkinState.status === 'loaded' ? checkinState.checkin : null;
+  const [isCancelCheckinDialogOpen, setIsCancelCheckinDialogOpen] = useState(false);
+  const [cancelCheckinFailed, setCancelCheckinFailed] = useState(false);
+  const retryableTerminal = isRetryFormOpen
+    && (state.status === 'CANCELLED' || state.status === 'EXPIRED' || state.status === 'COMPLETED');
+  const terminalPoolFestivalId = retryableTerminal ? state.pool?.festivalId : null;
+  // 실제 GPS 체크인 조회 결과가 있으면 그것이 navigation state/개발 fallback보다 우선한다 —
+  // 새로고침이나 다른 경로로 들어와도 실제 체크인 상태를 반영해야 한다.
+  const navigationFestivalId = resolveFestivalId(location.state, terminalPoolFestivalId);
+  const festivalId = currentCheckin?.festivalId ?? navigationFestivalId;
+
+  const searchDeadline = state.status === 'WAITING' ? state.pool?.searchExpiresAt : undefined;
+  const proposalDeadline =
+    state.status === 'INITIAL_PROPOSAL' || state.status === 'INSUFFICIENT_MEMBERS_PROPOSAL'
+      ? state.proposal?.expiresAt
+      : undefined;
+  const cooldownDeadline = state.restriction?.cooldown.active ? state.restriction.cooldown.expiresAt : undefined;
+  const completionDeadline = state.restriction?.completionLock.expiresAt;
+  const searchRemaining = useCountdown(searchDeadline, serverOffsetMs, `search:${state.pool?.poolId ?? ''}:${searchDeadline ?? ''}`);
+  const responseRemaining = useCountdown(
+    proposalDeadline,
+    serverOffsetMs,
+    `proposal:${state.proposal?.attemptId ?? ''}:${state.proposal?.proposalRound ?? ''}:${proposalDeadline ?? ''}`,
+  );
+  const cooldownRemaining = useCountdown(cooldownDeadline, serverOffsetMs, `cooldown:${cooldownDeadline ?? ''}`);
+  const completionRemaining = useCountdown(completionDeadline, serverOffsetMs, `completion:${completionDeadline ?? ''}`);
+
+  // 취향 상태는 안내에만 쓰는 부가 정보다. 실패해도 매칭 흐름을 막지 않는다.
+  useEffect(() => {
+    let cancelled = false;
+    preferenceEmbeddingApi.get()
+      .then((embedding) => {
+        if (!cancelled) setPreferenceState(resolvePreferenceState(embedding));
+      })
+      .catch(() => {
+        if (!cancelled) setPreferenceState('UNAVAILABLE');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (readMatchRoomNotice(location.state) === null) return;
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: consumeMatchRoomNotice(location.state),
+    });
+  }, [location.hash, location.pathname, location.search, location.state, navigate]);
+
+  useEffect(() => {
+    const deadlineExpired =
+      (searchDeadline && searchRemaining === 0) ||
+      (proposalDeadline && responseRemaining === 0) ||
+      (cooldownDeadline && cooldownRemaining === 0) ||
+      (state.restriction?.completionLock.active && completionDeadline && completionRemaining === 0);
+    if (deadlineExpired) void refresh();
+  }, [
+    cooldownDeadline,
+    cooldownRemaining,
+    completionDeadline,
+    completionRemaining,
+    proposalDeadline,
+    refresh,
+    responseRemaining,
+    searchDeadline,
+    searchRemaining,
+  ]);
+
+  const hasFestival = festivalId !== null;
+  const cooldownActive = state.restriction?.cooldown.active === true;
+  const completionLockActive = state.restriction?.completionLock.active === true;
+  // 온도 제한은 화면 상태로도 갈리지만(TEMPERATURE_RESTRICTED), 신청 버튼도 함께 막는다.
+  // 상태 파생과 버튼 조건이 어긋나면 눌리는데 서버가 거절하는 버튼이 남는다.
+  const temperatureRestricted = state.restriction?.temperatureLimit.active === true;
+  const canApply = hasFestival && !isSubmitting && !cooldownActive && !completionLockActive
+    && !temperatureRestricted;
+  const startPool = () => {
+    /*
+      알림 권한을 여기서 한 번 묻는다(docs/32 3.4). 앱을 켜자마자 묻는 것은 무엇에 쓰는지
+      모르는 채 결정하게 만들고, 매칭 제안은 응답 시간이 30초라 화면을 닫아도 알림이 닿아야
+      하는 유일한 지점이다. 실패해도 신청은 그대로 진행한다 — push는 세 번째 경로일 뿐이다.
+    */
+    void enablePush();
+    void submitPoolEntry(enterPool, festivalId, groupSize, allowMinimum);
+  };
+  const onStart = () => {
+    setMatchRoomNotice(null);
+    // 취향이 없거나 분석에 실패했으면 한 번만 안내한다. 신청 자체를 막지는 않는다.
+    if (shouldPromptBeforeApply(preferenceState, preferencePrompted)) {
+      setPreferencePrompted(true);
+      setPreferencePromptOpen(true);
+      return;
+    }
+    startPool();
+  };
+  const onPreferenceSkip = () => {
+    setPreferencePromptOpen(false);
+    startPool();
+  };
+  const onPreferenceInput = () => {
+    setPreferencePromptOpen(false);
+    // 취향을 저장하면 매칭 화면으로 돌아올 수 있도록 출발지를 함께 넘긴다.
+    navigate('/profile/edit', { state: { returnTo: '/matching' } });
+  };
+  const onRetry = () => {
+    setMatchRoomNotice(null);
+    // 재신청 화면으로 돌아가기 전에 체크인을 다시 읽는다. mount 이후 체크인이 만료됐거나 다른
+    // 축제로 바뀌었으면 festivalId가 어긋나 "자동 매칭 신청"이 눌리지 않거나 backend에서
+    // 거절된다.
+    void refreshCheckin();
+    beginRetry();
+  };
+  const onRequestCancelCheckin = () => {
+    setCancelCheckinFailed(false);
+    setIsCancelCheckinDialogOpen(true);
+  };
+  const onCloseCancelCheckinDialog = () => {
+    if (isCancellingCheckin) return;
+    setIsCancelCheckinDialogOpen(false);
+  };
+  const onConfirmCancelCheckin = async () => {
+    const success = await cancelCheckin();
+    if (success) {
+      setIsCancelCheckinDialogOpen(false);
+    } else {
+      setCancelCheckinFailed(true);
+    }
+  };
+
+  return (
+    <MobileLayout>
+      <PageHeader title="자동 매칭" noBack />
+      <main className="flex flex-col gap-5 px-5 pb-10 pt-1">
+        {matchRoomNotice && (
+          <p role="status" className="rounded-2xl bg-coral/10 px-4 py-3 text-[14px] font-semibold text-coral">
+            {matchRoomNotice}
+          </p>
+        )}
+        {/*
+          정지 회원에게 매칭 흐름을 그리지 않는다. 지난 완료 매칭이 남아 있으면 "매칭 완료"
+          카드가 떠서 "다시 매칭하기"밖에 길이 없는데, 새 매칭 신청이 403으로 막혀 화면에서
+          빠져나갈 수 없다. `completionLock.groupId`는 새 pool에 들어가야 비워지기 때문이다.
+        */}
+        {/*
+          매너온도는 상태와 무관하게 항상 보여준다. IdleForm 안에 두면 대기·완료 화면에서
+          사라져, 정작 "왜 온도가 올랐지"를 확인하고 싶은 완료 직후에 보이지 않는다.
+          제재 안내 화면에서는 감춘다 — 그 화면의 목적은 제재 사유 전달이다.
+        */}
+        {!sanction.notice && state.restriction && (
+          <div className="flex justify-end">
+            <MannerTemperatureBadge temperature={state.restriction.mannerTemperature} compact />
+          </div>
+        )}
+        {sanction.notice ? (
+          <AccountRestrictionNotice notice={sanction.notice} />
+        ) : (
+        <MatchBody
+          status={state.status}
+          error={state.error}
+          isRetryFormOpen={isRetryFormOpen}
+          group={state.group}
+          groupSize={
+            retryableTerminal
+              ? state.pool?.preferredGroupSize ?? groupSize
+              : state.status === 'IDLE' ? groupSize
+              : state.pool?.preferredGroupSize ?? state.proposal?.targetGroupSize ?? groupSize
+          }
+          allowMinimum={allowMinimum}
+          hasFestival={hasFestival}
+          currentCheckin={currentCheckin}
+          festivalId={festivalId}
+          canApply={canApply}
+          isSubmitting={isSubmitting}
+          searchRemaining={searchRemaining}
+          responseRemaining={responseRemaining}
+          cooldownRemaining={cooldownRemaining}
+          cooldownActive={cooldownActive}
+          terminationReason={state.pool?.terminationReason ?? null}
+          completionLock={state.restriction?.completionLock ?? null}
+          completionRemaining={completionRemaining}
+          mannerTemperature={state.restriction?.mannerTemperature ?? null}
+          minimumTemperature={state.restriction?.temperatureLimit.minimumTemperature ?? null}
+          setGroupSize={setGroupSize}
+          setAllowMinimum={setAllowMinimum}
+          onStart={onStart}
+          onAccept={() => void respond('ACCEPT')}
+          onDecline={() => void respond('REJECT')}
+          onStartWithCurrent={() => void respond('ACCEPT')}
+          onCancelProposal={() => void respond('CANCEL_CURRENT_MEMBERS')}
+          onCancelSearch={() => void cancelSearch()}
+          onRetry={onRetry}
+          onErrorRetry={() => void refresh()}
+          onGoCheckIn={() => {
+            const target = checkInNavigationTarget(festivalId);
+            navigate(target.to, target.state ? { state: target.state } : undefined);
+          }}
+          onEnterRoom={() => navigate('/match-room')}
+          onRequestCancelCheckin={onRequestCancelCheckin}
+        />
+        )}
+      </main>
+      {isCancelCheckinDialogOpen && currentCheckin && (
+        <CancelCheckinDialog
+          festivalName={currentCheckin.festivalName}
+          submitting={isCancellingCheckin}
+          error={cancelCheckinFailed}
+          onClose={onCloseCancelCheckinDialog}
+          onConfirm={() => void onConfirmCancelCheckin()}
+        />
+      )}
+      {preferencePromptOpen && (
+        <PreferenceGuideDialog
+          state={preferenceState}
+          onSkip={onPreferenceSkip}
+          onGoInput={onPreferenceInput}
+          onDismiss={() => setPreferencePromptOpen(false)}
+        />
+      )}
+    </MobileLayout>
+  );
+}
+
+/**
+ * 매칭 신청 전 취향 입력 안내.
+ *
+ * 신청을 막는 창이 아니라 한 번 물어보는 창이다. 취향 없이도 여행 스타일 태그로 매칭이
+ * 정상 동작하므로 `건너뛰고 신청`은 항상 제공한다.
+ */
+export function PreferenceGuideDialog({
+  state,
+  onSkip,
+  onGoInput,
+  onDismiss,
+}: {
+  state: PreferenceState;
+  onSkip: () => void;
+  onGoInput: () => void;
+  onDismiss: () => void;
+}) {
+  const copy = preferencePromptCopy(state);
+  if (!copy) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={onDismiss}>
+      <div
+        className="flex w-full max-w-sm flex-col gap-4 rounded-3xl bg-white p-6"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="취향 입력 안내"
+      >
+        <h3 className="text-center text-[16px] font-bold text-ink">{copy.title}</h3>
+        <p className="text-center text-[13px] leading-relaxed text-ink/55">{copy.body}</p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onSkip}
+            className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55"
+          >
+            {copy.skipLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onGoInput}
+            className="flex-1 rounded-2xl bg-coral py-3 text-[15px] font-bold text-white"
+          >
+            {copy.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface MatchBodyProps {
+  status: MatchingUiStatus;
+  error: ApiClientError | Error | null;
+  isRetryFormOpen: boolean;
+  group: CurrentMatchGroup | null;
+  groupSize: number;
+  allowMinimum: boolean;
+  hasFestival: boolean;
+  currentCheckin: CurrentCheckinResponse | null;
+  festivalId: number | null;
+  canApply: boolean;
+  isSubmitting: boolean;
+  searchRemaining: number;
+  responseRemaining: number;
+  cooldownRemaining: number;
+  cooldownActive: boolean;
+  terminationReason?: MatchTerminationReason | null;
+  completionLock: MatchingRestriction['completionLock'] | null;
+  completionRemaining: number;
+  /** 본인 매너온도와 매칭 기준 온도(docs/19 4.9 PR C). */
+  mannerTemperature: number | null;
+  minimumTemperature: number | null;
+  setGroupSize: (size: 2 | 3 | 4) => void;
+  setAllowMinimum: (allow: boolean) => void;
+  onStart: () => void;
+  onAccept: () => void;
+  onDecline: () => void;
+  onStartWithCurrent: () => void;
+  onCancelProposal: () => void;
+  onCancelSearch: () => void;
+  onRetry: () => void;
+  onErrorRetry: () => void;
+  onGoCheckIn: () => void;
+  onEnterRoom: () => void;
+  onRequestCancelCheckin: () => void;
+}
+
+export function MatchBody(props: MatchBodyProps) {
+  const { status } = props;
+  if (status === 'LOADING') {
+    return <LoadingSkeleton />;
+  }
+  const retryableTerminal =
+    props.isRetryFormOpen
+    && (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COMPLETED');
+  if (status === 'IDLE' || retryableTerminal) {
+    return (
+      <IdleForm
+        groupSize={props.groupSize}
+        allowMinimum={props.allowMinimum}
+        hasFestival={props.hasFestival}
+        currentCheckin={props.currentCheckin}
+        canApply={props.canApply}
+        /*
+          예전에는 재신청 흐름(retryableTerminal)에서만 이 문구를 띄웠다. 그런데 최초 신청도
+          실패하면 화면 상태를 바꾸지 않고 error만 담기 때문에(stateAfterPoolEntryFailure),
+          버튼은 눌리는데 아무 일도 일어나지 않는 것으로 보였다. 흐름을 가리지 않고 띄운다.
+        */
+        entryErrorMessage={poolEntryErrorMessage(props.error)}
+        setGroupSize={props.setGroupSize}
+        setAllowMinimum={props.setAllowMinimum}
+        onStart={props.onStart}
+        onGoCheckIn={props.onGoCheckIn}
+        onRequestCancelCheckin={props.onRequestCancelCheckin}
+      />
+    );
+  }
+  if (status === 'WAITING' || status === 'LOCKED') {
+    return (
+      <SearchingCard
+        locked={status === 'LOCKED'}
+        remaining={props.searchRemaining}
+        groupSize={props.groupSize}
+        disabled={props.isSubmitting}
+        onCancel={props.onCancelSearch}
+      />
+    );
+  }
+  if (status === 'INITIAL_PROPOSAL' || status === 'INSUFFICIENT_MEMBERS_PROPOSAL') {
+    const partial = status === 'INSUFFICIENT_MEMBERS_PROPOSAL';
+    return (
+      <ProposalCard
+        partial={partial}
+        groupSize={props.groupSize}
+        remaining={props.responseRemaining}
+        disabled={props.isSubmitting}
+        onAccept={partial ? props.onStartWithCurrent : props.onAccept}
+        onCancel={partial ? props.onCancelProposal : props.onDecline}
+      />
+    );
+  }
+  if (status === 'RESPONSE_PENDING') return <ResponsePendingCard />;
+  if (status === 'MATCHED' && props.group) {
+    return <ConfirmedCard group={props.group} onEnterRoom={props.onEnterRoom} />;
+  }
+  if (status === 'COMPLETED' && props.completionLock) {
+    return (
+      <CompletedCard
+        expiresAt={props.completionLock.expiresAt}
+        active={props.completionLock.active}
+        remaining={props.completionRemaining}
+        currentCheckin={props.currentCheckin}
+        onRetry={props.onRetry}
+        onRequestCancelCheckin={props.onRequestCancelCheckin}
+      />
+    );
+  }
+  if (status === 'TEMPERATURE_RESTRICTED') {
+    return (
+      <TemperatureRestrictedCard
+        mannerTemperature={props.mannerTemperature}
+        minimumTemperature={props.minimumTemperature}
+        festivalId={props.festivalId}
+      />
+    );
+  }
+  if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'COOLDOWN') {
+    const reason = terminationMessage(props.terminationReason ?? null)
+      ?? (status === 'COOLDOWN'
+        ? '잠시 후 다시 매칭을 신청할 수 있어요'
+        : status === 'EXPIRED'
+          ? '이번 매칭을 진행할 수 없어요.'
+          : '이번 매칭을 진행할 수 없어요.');
+    return (
+      <CancelledCard
+        reason={reason}
+        cooldownActive={props.cooldownActive}
+        cooldownRemaining={props.cooldownRemaining}
+        festivalId={props.festivalId}
+        onRetry={props.onRetry}
+      />
+    );
+  }
+  if (status === 'ERROR') {
+    return (
+      <ErrorCard
+        error={props.error}
+        onRetry={props.onErrorRetry}
+        onGoCheckIn={props.onGoCheckIn}
+      />
+    );
+  }
+  return null;
+}
+
+export function countdownSeconds(deadlineIso: string, nowMs = Date.now()): number {
+  return Math.max(0, Math.ceil((new Date(deadlineIso).getTime() - nowMs) / 1000));
+}
+
+export function terminationMessage(reason: MatchTerminationReason | null): string | null {
+  switch (reason) {
+    case 'SELF_REJECTED': return '매칭 제안을 거절했어요.';
+    case 'NON_FAULT_TERMINATED': return '이번 매칭을 진행할 수 없어 종료됐어요.';
+    case 'SELF_TIMEOUT': return '응답 시간이 지나 매칭이 종료됐어요.';
+    case 'SYSTEM_TERMINATED': return '이번 매칭을 진행할 수 없어요.';
+    default: return null;
+  }
+}
+
+function CompletedCard({
+  expiresAt,
+  active,
+  remaining,
+  currentCheckin,
+  onRetry,
+  onRequestCancelCheckin,
+}: {
+  expiresAt: string | null;
+  active: boolean;
+  remaining: number;
+  currentCheckin: CurrentCheckinResponse | null;
+  onRetry: () => void;
+  onRequestCancelCheckin: () => void;
+}) {
+  const remainingMinutes = Math.max(1, Math.ceil(remaining / 60));
+  return (
+    <>
+    <CheckinSummaryCard checkin={currentCheckin} onRequestCancel={onRequestCancelCheckin} />
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal/10">
+        <CheckCircle2 size={30} className="text-teal" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">만남이 완료됐어요</h2>
+        <p className="text-[13px] text-ink/55">모든 참여자가 도착했어요.</p>
+      </div>
+      <div className="w-full rounded-2xl bg-sand px-4 py-3 text-left">
+        <p className="text-[12px] text-ink/50">매칭 유효 종료 시각</p>
+        <p className="mt-1 text-[14px] font-semibold text-ink">{formatSeoulDateTime(expiresAt)}</p>
+      </div>
+      {active ? (
+        <span className="rounded-full bg-teal/10 px-4 py-2 text-[13px] font-semibold text-teal tabular-nums">
+          새로운 매칭은 {remainingMinutes}분 후 신청할 수 있어요. ({fmt(remaining)})
+        </span>
+      ) : (
+        <p className="text-[13px] text-ink/55">새로운 매칭을 신청할 수 있어요.</p>
+      )}
+      <PrimaryButton disabled={active} onClick={onRetry} className="mt-1">
+        다시 매칭하기
+      </PrimaryButton>
+    </section>
+    </>
+  );
+}
+
+/**
+ * 현재 체크인 상태 줄. 체크인이 없으면 아무것도 그리지 않는다.
+ *
+ * 신청 화면과 완료 화면이 함께 쓴다. 완료 card만 뜨는 동안에도 체크인이 살아 있을 수 있는데,
+ * 예전에는 이 줄이 `IdleForm` 안에만 있어서 완료 상태에서는 체크인 만료 시각도, 취소 버튼도
+ * 화면에서 사라졌다.
+ */
+function CheckinSummaryCard({
+  checkin,
+  onRequestCancel,
+}: {
+  checkin: CurrentCheckinResponse | null;
+  onRequestCancel: () => void;
+}) {
+  if (!checkin) return null;
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-[13px] font-semibold text-ink">
+          {checkin.festivalName ?? '체크인된 축제'}에 체크인됨
+        </span>
+        <span className="text-[12px] text-ink/50">
+          {formatSeoulDateTime(checkin.expiresAt)} 만료
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onRequestCancel}
+        className="shrink-0 rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink/60"
+      >
+        체크인 취소
+      </button>
+    </div>
+  );
+}
+
+// ── 1. 신청 전 ─────────────────────────────────────────
+function IdleForm({
+  groupSize,
+  allowMinimum,
+  hasFestival,
+  currentCheckin,
+  canApply,
+  entryErrorMessage,
+  setGroupSize,
+  setAllowMinimum,
+  onStart,
+  onGoCheckIn,
+  onRequestCancelCheckin,
+}: {
+  groupSize: number;
+  allowMinimum: boolean;
+  hasFestival: boolean;
+  currentCheckin: CurrentCheckinResponse | null;
+  canApply: boolean;
+  entryErrorMessage: string | null;
+  setGroupSize: (size: 2 | 3 | 4) => void;
+  setAllowMinimum: (allow: boolean) => void;
+  onStart: () => void;
+  onGoCheckIn: () => void;
+  onRequestCancelCheckin: () => void;
+}) {
+  return (
+    <>
+      {!hasFestival && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+          <p className="text-[13px] leading-relaxed text-ink/65">
+            매칭은 현재 축제/행사 현장에서만 가능해요. 먼저 체크인을 해주세요.
+          </p>
+          <button
+            type="button"
+            onClick={onGoCheckIn}
+            className="shrink-0 rounded-xl bg-ink px-3 py-2 text-[13px] font-semibold text-white"
+          >
+            체크인하기
+          </button>
+        </div>
+      )}
+      <CheckinSummaryCard checkin={currentCheckin} onRequestCancel={onRequestCancelCheckin} />
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[17px] font-bold text-ink">희망 인원</h2>
+        <div className="grid grid-cols-3 gap-2">
+          {([2, 3, 4] as const).map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => setGroupSize(size)}
+              className={`rounded-2xl border-2 py-3 text-[15px] font-bold transition-colors ${
+                groupSize === size ? 'border-coral bg-coral/10 text-coral' : 'border-line bg-white text-ink/60'
+              }`}
+            >
+              {size}명
+            </button>
+          ))}
+        </div>
+      </section>
+      {/*
+        이 옵션은 세 자리에서 쓰인다(docs/05).
+        ① 그룹을 만들 때 희망 인원이 안 모이면 더 적은 인원으로 묶을지 — 켜야 묶인다
+        ② 제안이 나간 뒤 일부가 빠졌을 때 남은 인원으로 계속할지
+        ③ 확정된 그룹이 2명으로 줄었을 때 유지할지
+        예전에는 ①에서 이 값을 읽지 않아, 3명을 희망한 두 사람이 동의해도 매칭되지 않았다.
+      */}
+      <section className="flex items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[14px] font-semibold text-ink">인원이 적어도 진행</span>
+          <span className="text-[12px] leading-relaxed text-ink/50">
+            희망 인원이 안 모이면 2명이라도 매칭하고, 도중에 빠져도 계속해요
+          </span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={allowMinimum}
+          onClick={() => setAllowMinimum(!allowMinimum)}
+          className={`flex h-7 w-12 shrink-0 items-center self-center rounded-full px-1 transition-colors ${
+            allowMinimum ? 'bg-coral' : 'bg-line'
+          }`}
+        >
+          <span
+            className={`block h-5 w-5 rounded-full bg-white transition-transform ${
+              allowMinimum ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </section>
+      {/*
+        재신청 흐름에서 신청이 거절되면 화면 상태는 그대로 두고 error만 담긴다
+        (`stateAfterPoolEntryFailure`). 이 한 줄이 없으면 버튼을 눌러도 아무 일도 일어나지 않는
+        것으로 보인다.
+      */}
+      {entryErrorMessage && (
+        <p role="status" className="rounded-2xl bg-coral/10 px-4 py-3 text-[13px] font-semibold text-coral">
+          {entryErrorMessage}
+        </p>
+      )}
+      <PrimaryButton disabled={!canApply} onClick={onStart}>
+        자동 매칭 신청
+      </PrimaryButton>
+    </>
+  );
+}
+
+// ── 2·3. WAITING / LOCKED ─────────────────────────────
+function SearchingCard({
+  locked,
+  remaining,
+  groupSize,
+  disabled,
+  onCancel,
+}: {
+  locked: boolean;
+  remaining: number;
+  groupSize: number;
+  disabled: boolean;
+  onCancel: () => void;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <>
+      <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+        <div className={`flex h-16 w-16 items-center justify-center rounded-full ${locked ? 'bg-ink/10' : 'bg-coral/10'}`}>
+          <Loader2 size={28} className={`animate-spin ${locked ? 'text-ink/50' : 'text-coral'}`} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-[17px] font-bold text-ink">
+            {locked ? '함께할 분을 확정하고 있어요' : '주변 여행자를 찾고 있어요'}
+          </h2>
+          <p className="text-[13px] text-ink/55">
+            {locked ? '거의 다 됐어요, 잠시만 기다려주세요' : `목표 인원 ${groupSize}명 기준으로 탐색 중`}
+          </p>
+        </div>
+        {!locked && (
+          <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/60 tabular-nums">
+            남은 탐색 시간 {fmt(remaining)}
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setConfirmOpen(true)}
+          className="mt-1 text-[13px] font-semibold text-ink/40 underline underline-offset-2 disabled:opacity-40"
+        >
+          매칭 취소
+        </button>
+      </section>
+      {confirmOpen && (
+        <CancelConfirmDialog
+          onConfirm={() => { setConfirmOpen(false); onCancel(); }}
+          onDismiss={() => setConfirmOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function CancelConfirmDialog({ onConfirm, onDismiss }: { onConfirm: () => void; onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={onDismiss}>
+      <div
+        className="flex w-full max-w-sm flex-col gap-4 rounded-3xl bg-white p-6"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="매칭 취소 확인"
+      >
+        <h3 className="text-center text-[16px] font-bold text-ink">매칭 탐색을 취소할까요?</h3>
+        <p className="text-center text-[13px] text-ink/55">
+          취소하면 잠시 후 다시 신청할 수 있어요.
+        </p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55"
+          >
+            돌아가기
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 rounded-2xl bg-coral py-3 text-[15px] font-bold text-white"
+          >
+            취소하기
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 4·5. 매칭 제안 (정원 / 미달) ───────────────────────
+function ProposalCard({
+  partial,
+  groupSize,
+  remaining,
+  disabled,
+  onAccept,
+  onCancel,
+}: {
+  partial: boolean;
+  groupSize: number;
+  remaining: number;
+  disabled: boolean;
+  onAccept: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex items-center gap-2">
+        <Users size={18} className="text-coral" />
+        <h2 className="text-[17px] font-bold text-ink">
+          {partial ? '인원이 조금 부족해요' : '매칭 상대를 찾았어요'}
+        </h2>
+      </div>
+      <p className="text-[13px] leading-relaxed text-ink/65">
+        {partial
+          ? '최소 인원 이상이 모였어요. 현재 인원으로 시작할까요?'
+          : `목표 인원 ${groupSize}명이 모였어요. 함께 떠나볼까요?`}
+      </p>
+      <div className="flex items-center justify-between rounded-xl bg-sand px-3 py-2">
+        <span className="text-[12px] text-ink/50">응답 제한시간</span>
+        <span className="text-[13px] font-bold text-ink tabular-nums">{fmt(remaining)}</span>
+      </div>
+      <div className="flex gap-2.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onCancel}
+          className="flex-1 rounded-2xl border border-line bg-white py-3 text-[15px] font-bold text-ink/55 active:bg-sand disabled:opacity-50"
+        >
+          취소
+        </button>
+        <PrimaryButton className="flex-1" disabled={disabled} onClick={onAccept}>
+          {partial ? '현재 인원으로 시작' : '수락'}
+        </PrimaryButton>
+      </div>
+    </section>
+  );
+}
+
+// ── 6. 응답 대기 ───────────────────────────────────────
+function ResponsePendingCard() {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal/10">
+        <CheckCircle2 size={28} className="text-teal" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">내 응답을 보냈어요</h2>
+        <p className="text-[13px] text-ink/55">다른 참여자의 응답을 기다리고 있어요. 곧 확정돼요.</p>
+      </div>
+      <Loader2 size={20} className="animate-spin text-ink/30" />
+    </section>
+  );
+}
+
+// ── 7. 매칭 확정 ───────────────────────────────────────
+function ConfirmedCard({ group, onEnterRoom }: { group: CurrentMatchGroup; onEnterRoom: () => void }) {
+  const time = group.confirmedAt
+    ? new Date(group.confirmedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+    : '';
+  return (
+    <section className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 size={20} className="text-teal" />
+        <h2 className="text-[17px] font-bold text-ink">매칭이 확정됐어요</h2>
+      </div>
+      <p className="text-[13px] text-ink/55">
+        {group.confirmedMemberCount}명 확정 · {time}
+      </p>
+      <div className="flex flex-col gap-2.5">
+        {group.members.map((member) => (
+          <div key={member.memberId} className="flex items-center gap-3 rounded-2xl bg-sand p-3">
+            {member.profileImageUrl ? (
+              <img
+                src={member.profileImageUrl}
+                alt=""
+                className="h-11 w-11 rounded-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-coral/15 text-[14px] font-bold text-coral">
+                {member.nickname.slice(0, 1)}
+              </div>
+            )}
+            <span className="text-[14px] font-semibold text-ink">{member.nickname}</span>
+          </div>
+        ))}
+      </div>
+      <PrimaryButton onClick={onEnterRoom}>상태방 들어가기</PrimaryButton>
+    </section>
+  );
+}
+
+// ── 8. CANCELLED / EXPIRED / cooldown ─────────────────
+/**
+ * 매너온도가 낮아 매칭이 막힌 상태(docs/19 4.9 PR C).
+ *
+ * <p><b>신고를 문구에 쓰지 않는다.</b> 온도가 낮은 이유는 곧 "신고를 받았다"이고, 그것을
+ * 화면에 적으면 같은 만남에 있던 사람 중 누가 신고했는지 좁힐 수 있다(docs/19 4.8 신고자 보호).
+ *
+ * <p><b>카운트다운도 두지 않는다.</b> 회복은 만남 완료 보상과 시간 경과 두 경로에 달려 있어
+ * 확정된 해제 시각이 없다. 쿨타임처럼 남은 시간을 보여주면 지킬 수 없는 약속이 된다. 대신
+ * 기준 온도와 회복 방법을 적는다 — 본인 온도는 이미 본인에게 보이는 값이다.
+ *
+ * <p>솔로 코스는 그대로 열어 둔다. 막힌 것은 매칭이지 서비스가 아니다.
+ */
+function TemperatureRestrictedCard({
+  mannerTemperature,
+  minimumTemperature,
+  festivalId,
+}: {
+  mannerTemperature: number | null;
+  minimumTemperature: number | null;
+  festivalId: number | null;
+}) {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ink/10">
+        <XCircle size={28} className="text-ink/45" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">지금은 매칭을 신청할 수 없어요</h2>
+        <p className="text-[13px] text-ink/55">
+          매너온도가 기준보다 낮아요.
+          {mannerTemperature !== null && minimumTemperature !== null
+            ? ` 현재 ${mannerTemperature.toFixed(2)}도이고, ${minimumTemperature.toFixed(2)}도부터 신청할 수 있어요.`
+            : ''}
+        </p>
+      </div>
+      <p className="rounded-2xl bg-sand px-4 py-3 text-[13px] leading-5 text-ink/55">
+        매너온도는 만남을 끝까지 마치면 오르고, 시간이 지나도 조금씩 회복돼요.
+        자세한 값은 마이페이지에서 볼 수 있어요.
+      </p>
+      <div className="mt-1 flex w-full flex-col gap-2">
+        {festivalId !== null && (
+          <Link
+            to="/solo-course"
+            state={{ festivalId }}
+            className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+          >
+            솔로 코스 추천 보기
+          </Link>
+        )}
+        <Link
+          to="/mypage"
+          className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+        >
+          마이페이지에서 매너온도 보기
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function CancelledCard({
+  reason,
+  cooldownActive,
+  cooldownRemaining,
+  festivalId,
+  onRetry,
+}: {
+  reason: string;
+  cooldownActive: boolean;
+  cooldownRemaining: number;
+  festivalId: number | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ink/10">
+        <XCircle size={28} className="text-ink/45" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">매칭이 종료됐어요</h2>
+        <p className="text-[13px] text-ink/55">{reason}</p>
+      </div>
+      {cooldownActive && (
+        <span className="rounded-full bg-sand px-4 py-1.5 text-[13px] font-semibold text-ink/50 tabular-nums">
+          {fmt(cooldownRemaining)} 후 재신청 가능
+        </span>
+      )}
+      {/* 솔로 코스로 갈지 재매칭을 기다릴지는 사용자가 고른다. cooldown이 있으면 재신청만 잠기고
+          솔로 코스는 계속 열려 있다 — docs/05 `매칭 실패 후 솔로 코스 전환 정책`. */}
+      <div className="mt-1 flex w-full flex-col gap-2">
+        <PrimaryButton disabled={cooldownActive} onClick={onRetry}>
+          다시 신청하기
+        </PrimaryButton>
+        {festivalId !== null && (
+          <Link
+            to="/solo-course"
+            state={{ festivalId }}
+            className="flex w-full items-center justify-center rounded-2xl border border-ink/15 bg-white py-3.5 text-[15px] font-bold text-ink transition-transform active:scale-[0.99]"
+          >
+            솔로 코스 추천 보기
+          </Link>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── 9. 네트워크 오류 ───────────────────────────────────
+function ErrorCard({
+  error,
+  onRetry,
+  onGoCheckIn,
+}: {
+  error: ApiClientError | Error | null;
+  onRetry: () => void;
+  onGoCheckIn: () => void;
+}) {
+  const requiresCheckIn = error instanceof ApiClientError
+    && error.code === 'MATCHING_INVALID_REQUEST'
+    && error.message.includes('체크인');
+  const meetingPointNotReady = error instanceof ApiClientError
+    && error.code === 'MATCHING_MEETING_POINT_NOT_READY';
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 text-center shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-coral/10">
+        <RefreshCw size={28} className="text-coral" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h2 className="text-[17px] font-bold text-ink">
+          {requiresCheckIn
+            ? '축제 체크인이 필요해요'
+            : meetingPointNotReady ? '만남 장소 준비 중이에요' : '요청을 처리하지 못했어요'}
+        </h2>
+        <p className="text-[13px] text-ink/55">
+          {error?.message ?? '진행 중이던 매칭 정보는 유지돼요. 다시 시도해주세요.'}
+        </p>
+      </div>
+      {!meetingPointNotReady && (
+        <PrimaryButton onClick={requiresCheckIn ? onGoCheckIn : onRetry}>
+          {requiresCheckIn ? '체크인하기' : '다시 시도'}
+        </PrimaryButton>
+      )}
+    </section>
+  );
+}
+
+// ── 체크인 취소 확인 dialog ────────────────────────────
+export function handleCancelCheckinDialogKeyDown(
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
+  focusables: HTMLElement[],
+  activeElement: Element | null,
+  submitting: boolean,
+  onClose: () => void,
+) {
+  if (event.key === 'Escape' && !submitting) {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  if (event.key !== 'Tab' || focusables.length === 0) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function CancelCheckinDialog({
+  festivalName,
+  submitting,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  festivalName: string | null;
+  submitting: boolean;
+  error: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled)'));
+    focusables()[0]?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      handleCancelCheckinDialogKeyDown(event, focusables(), document.activeElement, submitting, onClose);
+    };
+    document.addEventListener('keydown', keydown);
+    return () => document.removeEventListener('keydown', keydown);
+  }, [onClose, submitting]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/45 sm:items-center sm:p-5">
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancel-checkin-title"
+        aria-describedby="cancel-checkin-description"
+        className="w-full max-w-[430px] rounded-t-3xl bg-white p-5 sm:rounded-3xl"
+      >
+        <h2 id="cancel-checkin-title" className="text-lg font-bold text-ink">
+          {festivalName ?? '체크인'} 체크인을 취소할까요?
+        </h2>
+        <p id="cancel-checkin-description" className="mt-1 text-sm text-ink/60">
+          취소하면 이 축제에서 매칭을 신청할 수 없고, 다시 참여하려면 현장에서 재체크인해야 해요.
+        </p>
+        {error && (
+          <p role="alert" aria-live="assertive" className="mt-3 rounded-2xl bg-coral/10 p-3 text-sm text-coral">
+            체크인을 취소하지 못했어요. 다시 시도해주세요.
+          </p>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onClose}
+            className="rounded-2xl border border-line py-3 disabled:opacity-50"
+          >
+            닫기
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onConfirm}
+            className="rounded-2xl bg-coral py-3 font-bold text-white disabled:opacity-50"
+          >
+            {submitting ? '취소 처리 중...' : '체크인 취소'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ── 10. 초기 로딩 skeleton ──────────────────────────────
+function LoadingSkeleton() {
+  return (
+    <section className="flex flex-col items-center gap-4 rounded-3xl bg-white p-8 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
+      <div className="h-16 w-16 animate-pulse rounded-full bg-sand" />
+      <div className="flex w-full flex-col items-center gap-2">
+        <div className="h-5 w-40 animate-pulse rounded-lg bg-sand" />
+        <div className="h-4 w-56 animate-pulse rounded-lg bg-sand" />
+      </div>
+      <div className="h-10 w-full animate-pulse rounded-2xl bg-sand" />
+    </section>
+  );
+}

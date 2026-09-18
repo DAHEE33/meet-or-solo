@@ -39,15 +39,41 @@
 
 Redis는 초기 개발환경과 MVP 초기 `docker-compose`에 추가하지 않습니다.
 
+## 프로필 이미지 Object Storage 환경변수
+
+프로필 이미지는 private OCI Object Storage bucket `meet-or-solo-assets`에 S3 compatible API로 저장합니다. frontend는 OCI에 직접 접근하지 않고 backend의 multipart API만 호출합니다.
+
+- `OCI_OBJECT_STORAGE_ENDPOINT`: `<namespace>.compat.objectstorage.<region>.oraclecloud.com` 형식의 endpoint
+- `OCI_OBJECT_STORAGE_REGION`: OCI region
+- `OCI_OBJECT_STORAGE_ACCESS_KEY`, `OCI_OBJECT_STORAGE_SECRET_KEY`: OCI Customer Secret Key 자격 증명
+- `OCI_OBJECT_STORAGE_BUCKET`: 기본값 `meet-or-solo-assets`
+- `OCI_OBJECT_STORAGE_PROFILE_PREFIX`: local 기본값 `profiles/local`, dev 예시 `profiles/dev`
+- `PROFILE_IMAGE_MAX_SIZE`: 기본값 `5MB`
+
+실제 자격 증명은 개인 `.env` 또는 서버 `.env`에서만 주입합니다. 저장소의 example 파일에는 placeholder만 둡니다. local profile은 실행 작업 디렉터리 차이를 고려해 `.env`와 `../.env`를 optional config로 읽습니다. local에서 실제 OCI bucket을 사용하려면 `.env.example`을 복사한 루트 `.env`에 값을 설정하고 backend를 재시작합니다.
+
+## 날짜·시간 환경 기준
+
+- local/dev PostgreSQL과 backend container는 `TZ=Asia/Seoul`을 사용합니다.
+- local/dev PostgreSQL은 container 실행 시 `postgres -c timezone=Asia/Seoul`을 적용해 기존 volume을 사용하는 경우에도 server와 신규 session의 기본 표시 timezone을 KST로 고정합니다.
+- PostgreSQL client session은 `PGTZ=Asia/Seoul`을 사용합니다.
+- backend JVM, Hibernate JDBC, Jackson 및 PostgreSQL 애플리케이션 session도 `Asia/Seoul`로 통일합니다.
+- 기존 local/dev DB에는 각각 `ALTER DATABASE meet_or_solo_local SET timezone TO 'Asia/Seoul';`, `ALTER DATABASE meet_or_solo_dev SET timezone TO 'Asia/Seoul';`을 수동 실행하고 재접속합니다.
+- IntelliJ Database 등 이미 연결된 client session은 설정 변경 전 timezone을 유지할 수 있으므로 datasource 연결을 끊고 다시 연결한 뒤 `SHOW TIME ZONE;`이 `Asia/Seoul`인지 확인합니다.
+- `TIMESTAMPTZ`의 기존 값을 UPDATE하거나 9시간을 더하지 않습니다. timezone 변경은 동일한 절대 시점의 조회 표현만 `+09:00`으로 바꿉니다.
+- prod는 실제 운영 DB 이름과 환경을 확인한 후 동일 정책을 별도로 적용합니다.
+
 예정 서비스:
 
 ```text
 postgres:
-  image: postgres
+  image: pgvector/pgvector:pg16
   port: 5432
 ```
 
 로컬 개발에서는 `5432`를 열 수 있지만, 운영에서는 PostgreSQL을 외부에 공개하지 않습니다.
+
+local/dev compose는 PostgreSQL 16과 pgvector extension 파일을 포함하는 `pgvector/pgvector:pg16` 이미지를 사용합니다. 기존 `postgres:16-alpine` 컨테이너에서 전환할 때는 data volume을 삭제하지 않고 컨테이너만 재생성합니다. 재기동 후 `vector.control` 파일, `CREATE EXTENSION vector`, Flyway `V11__add_member_preference_embeddings.sql` 적용 여부를 확인합니다.
 
 ## local/dev/prod 환경 역할
 
@@ -55,13 +81,24 @@ profile 기준:
 
 - `local`: 각 팀원의 개인 PC에서 Docker PostgreSQL로 개발하고 빠르게 확인하는 환경이다.
 - `dev`: Oracle Cloud VM에 배포하는 개발/시연용 공유 환경이다.
-- `prod`: 추후 제출/운영 단계에서 별도 DB, 별도 도메인, 별도 디렉터리 또는 외부 DB 서비스로 분리할 운영 후보 환경이다.
+- `prod`: 같은 Oracle Cloud VM에서 `dev`와 **분리해 함께 운영**하는 환경이다. 별도 앱 경로, 별도 DB와 계정, 별도 도메인, 별도 compose project를 쓴다.
 
 `local`은 개인 개발 편의를 위해 `application-local.yml`에 fallback 기본값을 둘 수 있습니다.
 
 `dev`와 `prod`는 서버 환경이므로 환경변수 주입을 원칙으로 합니다. 실제 DB URL, 계정, 비밀번호, 서버 IP, 도메인은 저장소에 기록하지 않습니다.
 
-현재는 Oracle Cloud VM 리소스와 작업 안정성을 고려해 `dev`만 VM에 배포하는 방향으로 준비합니다. 6단계에서는 실제 서버 접속이나 배포 자동화를 수행하지 않고 dev 서버와 dev DB 구성 기준만 문서화합니다. `prod`는 추후 제출/운영 필요가 생기면 분리합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
+초기에는 Oracle Cloud VM 리소스를 고려해 `dev`만 VM에 배포했습니다. 운영 배포 기반이 필요해지면서 같은 VM에 `prod`를 추가하는 방향으로 전환했습니다. 두 환경을 같은 VM에서 함께 띄우되 앱 경로, DB와 계정, 데이터 경로, compose project와 network, host 포트, 로그, 환경변수를 전부 분리합니다.
+
+| 항목 | dev | prod |
+| --- | --- | --- |
+| 앱 경로 | `/home/ubuntu/meet-or-solo` | `/home/ubuntu/meet-or-solo-prod` |
+| compose project | `meet-or-solo-dev` | `meet-or-solo-prod` |
+| 웹 host 포트 | `18080` | `127.0.0.1:28080` |
+| DB | `meet_or_solo_dev` | `meet_or_solo_prod` (별도 계정) |
+| DB host 포트 | `127.0.0.1:15432` | publish 없음. 필요 시 임시로 `127.0.0.1:25432` |
+| 기준 브랜치 | `dev` | `main` |
+
+운영 DB는 빈 DB에서 Flyway migration으로 구성하고 dev DB 전체를 복사하지 않습니다. 운영 배포 구성과 수동 배포 절차는 [docs/07](07_DEPLOYMENT.md)을 따릅니다.
 
 기능 분업 전에 `dev` 서버와 `dev` DB를 구축하는 이유:
 
@@ -75,9 +112,9 @@ Docker Compose 방향:
 
 - `docker-compose.local.yml`: 로컬 PostgreSQL과 개발 편의 구성
 - `infra/docker/docker-compose.dev.yml`: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 dev 배포 초안
-- prod 배포용 docker-compose: 추후 제출/운영 단계에서 dev와 분리해 별도 작성
+- `infra/docker/docker-compose.prod.yml`: 같은 Oracle VM에서 dev와 분리해 운영하는 prod 배포 구성
 
-현재까지는 local PostgreSQL 중심의 최소 구성과 dev 배포 템플릿만 사용합니다. prod docker-compose와 GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
+운영 CD(GitHub Actions 자동 배포)는 아직 만들지 않습니다. `main` 기준 수동 배포를 먼저 검증합니다.
 
 dev compose의 nginx는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 host `18080`을 container `80`에 매핑합니다. dev 서버 검증은 `http://<DEV_SERVER_HOST>:18080` 또는 서버 내부 `curl http://localhost:18080/api/health`를 기준으로 합니다.
 
@@ -180,10 +217,81 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 | `DB_USERNAME` | PostgreSQL dev DB 사용자 |
 | `DB_PASSWORD` | PostgreSQL dev DB 비밀번호 |
 | `CORS_ALLOWED_ORIGINS` | dev frontend origin 허용 목록. dev 서버 기준은 `http://<DEV_SERVER_HOST>:18080` |
-| `FLYWAY_LOCATIONS` | Flyway migration 위치. 기본 후보는 `filesystem:../db/migration` |
 | `SERVER_PORT` | backend 실행 포트. 기본 후보는 `8080` |
+| `ADMIN_REPORT_CURSOR_HMAC_SECRET` | 관리자 신고 목록 opaque cursor 전용 HMAC-SHA256 서명 키. UTF-8 기준 32바이트 이상 |
+| `SUPPORT_CONTACT_EMAIL` | 제재 안내에 표시하는 고객센터 이메일(`docs/19` 4.8). 비어 있으면 안내에서 문의 문구를 숨긴다. 실제 주소는 저장소에 기록하지 않는다 |
+| `OPENAI_API_KEY` | 취향 전격 분석 임베딩 호출 key. 비어 있으면 기동은 되지만 임베딩이 항상 `API_KEY_MISSING`으로 실패한다. 실제 값은 저장소에 기록하지 않는다 |
 
 예시 값에는 실제 IP, 실제 도메인, 실제 계정, 실제 비밀번호를 넣지 않습니다.
+`SUPPORT_CONTACT_EMAIL`도 같은 이유로 저장소에 실제 주소를 넣지 않습니다. Secret은 아니지만
+공개 저장소 이력에 남으면 스팸 수집 대상이 되므로 `.env`와 배포 환경변수로만 주입합니다.
+로컬에서 제재 안내의 문의 문구를 보려면 `.env`에 이 값을 넣고 backend를 재시작해야 합니다.
+`ADMIN_REPORT_CURSOR_HMAC_SECRET`은 JWT 서명 키와 다른 난수 Secret을 dev/prod에 각각
+주입하며 실제 값은 repository와 문서에 기록하지 않습니다. 이 키를 회전하면 기존에 발급한
+관리자 신고 목록 cursor는 무효화될 수 있습니다.
+
+## 취향 임베딩 실패 진단
+
+취향 전격 분석(`POST /api/members/me/preference-embedding`)은 실패해도 회원 흐름을 막지
+않습니다. 취향 원문은 저장되고 상태만 `FAILED`가 됩니다. 그래서 "왜 실패했는지"는 화면이
+아니라 아래 세 곳에서 확인합니다.
+
+### 1. 관리자 진단 endpoint
+
+`GET /api/admin/diagnostics/embedding` (관리자 계정 필요)
+
+회원 데이터를 쓰지 않고 고정 문장 하나로 OpenAI 왕복만 시켜봅니다. 실패해도 200이며
+응답에 실패 이유가 담깁니다.
+
+| 필드 | 뜻 |
+| --- | --- |
+| `ok` | 임베딩을 실제로 받아왔는지 |
+| `reason` | 실패 이유(`EmbeddingFailureReason`). 성공이면 `null` |
+| `apiKeyPresent` | API key가 주입돼 있는지. 값 자체는 담지 않는다 |
+| `model` | 호출에 쓴 모델 |
+| `dimensions` | 받아온 벡터 차원. 성공이면 `1536` |
+| `elapsedMs` | 왕복 시간. 타임아웃 판정을 눈으로 확인할 때 쓴다 |
+
+### 2. DB
+
+```sql
+SELECT member_id, embedding_status, embedding_error_reason, embedding_model,
+       (embedding IS NOT NULL) AS has_vector, updated_at
+FROM member_preference_embeddings
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+`embedding_error_reason`은 실패 상태에서만 값이 있습니다(V32). 매칭 점수에 실제로 반영됐는지는
+`match_attempt_members`의 `jaccard_score` / `cosine_score` / `embedding_applied`로 확인하며,
+절차는 `scripts/verify-embedding-score.sql`에 있습니다. dev DB 접속은
+`scripts/start-dev-db-tunnel.ps1`로 터널을 올린 뒤 `localhost:15432`로 합니다.
+
+### 3. backend 로그
+
+```text
+임베딩 생성 실패. memberId=..., reason=..., error=...
+OpenAI Embedding API 실패. reason=..., status=...
+OpenAI Embedding API 실패. reason=..., cause=..., message=...
+```
+
+### 실패 이유별 확인 순서
+
+| reason | 뜻 | 먼저 볼 것 |
+| --- | --- | --- |
+| `API_KEY_MISSING` | key가 주입되지 않음 | 배포 환경변수에 `OPENAI_API_KEY`가 실렸는지 |
+| `UNAUTHORIZED` | 401/403 | key 값 자체, 그리고 호출 IP가 차단되지 않았는지 |
+| `RATE_LIMITED` | 429 | 사용량 한도 |
+| `TIMEOUT` | 응답 지연 | `OPENAI_READ_TIMEOUT`, 서버 네트워크 |
+| `CONNECT_FAILED` | 연결 실패 | DNS, 아웃바운드 차단, TLS |
+| `INVALID_RESPONSE` | 응답 형식·차원 불일치 | 모델 이름(`OPENAI_EMBEDDING_MODEL`) |
+| `UNKNOWN` | 분류되지 않은 예외 | 로그의 `error=` 원문 |
+
+`.env`를 Windows에서 편집해 서버로 옮기면 값 끝에 `CR`이 남아 `Bearer sk-...
+`가 되고
+헤더 자체가 거절됩니다. 키를 "제대로 넣었는데 실패하는" 대표 경로라서 backend가 기동 시
+앞뒤 공백과 줄바꿈을 제거하고 경고를 남깁니다. 키가 비어 있어도 기동은 성공합니다 —
+임베딩 실패가 서비스를 막지 않는다는 원칙 때문입니다.
 
 ## 로컬 실행 순서
 
@@ -209,7 +317,7 @@ cd backend
 ./gradlew bootRun
 ```
 
-Spring Boot `bootRun`은 `.env`를 자동으로 읽지 않습니다. Git Bash에서 `source .env`를 했다면 같은 Git Bash 터미널에서 `./gradlew bootRun`까지 실행해야 합니다. PowerShell과 Git Bash의 환경변수는 서로 공유되지 않습니다.
+Spring Boot local profile은 루트 `.env`를 optional config로 읽습니다. 환경변수로 같은 이름의 값을 별도 주입하면 환경변수가 우선합니다. `.env` 값을 변경한 뒤에는 backend를 재시작해야 합니다.
 
 PowerShell에서 실행할 경우 `application-local.yml` fallback 기본값으로 실행하거나, PowerShell 환경변수를 직접 설정합니다.
 
@@ -372,15 +480,32 @@ frontend 화면에서 404가 나면 `frontend/vite.config.ts`의 Vite proxy 설�
 
 Flyway는 초기부터 사용합니다.
 
-예정 위치:
+표준 위치:
 
 ```text
-db/migration/
+backend/src/main/resources/db/migration/
 ```
 
-또는 Spring Boot classpath migration 위치를 사용할 수 있습니다. 실제 구현 전 어떤 방식을 사용할지 문서에 명시해야 합니다.
+Spring Boot/Flyway 기본 classpath 경로인 `classpath:db/migration`을 사용합니다. migration SQL은 backend jar에 포함되므로 dev 배포 시 별도 디렉터리로 서버에 복사하거나 컨테이너에 mount하지 않습니다. 루트 `db/migration`은 더 이상 사용하지 않습니다.
 
-초기 migration은 최소화합니다. 비즈니스 테이블을 과도하게 만들지 않습니다.
+이미 적용된 `V1`~`V4` migration 파일은 내용과 파일명을 수정하지 않습니다. 이후 schema 변경은 `V5__...sql`처럼 새 migration 파일로 추가합니다.
+
+backend jar 내부 migration 포함 여부는 아래 명령으로 확인합니다.
+
+```bash
+cd backend
+./gradlew clean build -x test
+jar tf build/libs/*.jar | grep db/migration
+```
+
+기대 결과:
+
+```text
+BOOT-INF/classes/db/migration/V1__init.sql
+BOOT-INF/classes/db/migration/V2__create_core_tables.sql
+BOOT-INF/classes/db/migration/V3__create_matching_tables.sql
+BOOT-INF/classes/db/migration/V4__create_safety_admin_recommendation_tables.sql
+```
 
 ## `/api/health` 확인 방법 예정
 

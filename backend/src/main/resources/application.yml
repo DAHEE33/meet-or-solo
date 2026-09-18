@@ -3,8 +3,143 @@ spring:
     name: meet-or-solo-backend
   profiles:
     default: local
+  datasource:
+    hikari:
+      connection-init-sql: SET TIME ZONE 'Asia/Seoul'
   jpa:
     open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Seoul
+  jackson:
+    time-zone: Asia/Seoul
+    serialization:
+      write-dates-as-timestamps: false
+      write-dates-with-context-time-zone: true
+  servlet:
+    multipart:
+      max-file-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
+      max-request-size: ${PROFILE_IMAGE_MAX_SIZE:5MB}
 
 server:
   port: ${SERVER_PORT:8080}
+
+app:
+  tour-api:
+    base-url: ${TOUR_API_BASE_URL:https://apis.data.go.kr/B551011/KorService2}
+    # 환경변수 이름은 TOURISM_API_KEY 하나로 통일한다. 과거에는 local .env의
+    # TOURISM-API-KEY와 표준 TOUR_API_KEY를 fallback으로 함께 읽었는데, 이름이 두 개면
+    # 어느 쪽이 비었는지 추적하기 어렵고 dev/prod에서 조용히 인증 실패로 이어졌다.
+    service-key: ${TOURISM_API_KEY:}
+    mobile-os: ${TOUR_API_MOBILE_OS:ETC}
+    mobile-app: ${TOUR_API_MOBILE_APP:SoloIn}
+    connect-timeout: ${TOUR_API_CONNECT_TIMEOUT:3s}
+    read-timeout: ${TOUR_API_READ_TIMEOUT:10s}
+  festival:
+    sync:
+      initial-delay: ${FESTIVAL_SYNC_INITIAL_DELAY:10s}
+      fixed-delay: ${FESTIVAL_SYNC_FIXED_DELAY:6h}
+      page-size: ${FESTIVAL_SYNC_PAGE_SIZE:100}
+      max-pages: ${FESTIVAL_SYNC_MAX_PAGES:100}
+      lookback-days: ${FESTIVAL_SYNC_LOOKBACK_DAYS:30}
+      lookahead-days: ${FESTIVAL_SYNC_LOOKAHEAD_DAYS:365}
+      region-code: ${FESTIVAL_SYNC_REGION_CODE:51}
+      classification-system-1: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_1:EV}
+      classification-system-2: ${FESTIVAL_SYNC_CLASSIFICATION_SYSTEM_2:EV01}
+      retry-max-attempts: ${FESTIVAL_SYNC_RETRY_MAX_ATTEMPTS:3}
+      retry-initial-delay: ${FESTIVAL_SYNC_RETRY_INITIAL_DELAY:1s}
+      retry-max-delay: ${FESTIVAL_SYNC_RETRY_MAX_DELAY:10s}
+    detail-info:
+      cache-ttl: ${FESTIVAL_DETAIL_INFO_CACHE_TTL:1h}
+    checkin:
+      # 체크인 유효 기간(1시간)은 매칭 자격 상한과 동일 값을 써야 하므로 설정으로 분리하지 않고
+      # domain/checkin/CheckinValidityPolicy에 고정한다.
+      #
+      # radius-meters는 festivals.checkin_radius_meters(DB 컬럼, 축제별 기본값 500)와 별개다.
+      # 그 컬럼을 실제로 다르게 채우는 코드가 없어 모든 축제가 항상 500m였다. 그래서 축제별
+      # 값이 아니라 환경변수로 조절하는 전역 값으로 두고, FestivalCheckinService가 이 값만
+      # 검증에 쓴다.
+      radius-meters: ${FESTIVAL_CHECKIN_RADIUS_METERS:500}
+      accuracy-threshold-meters: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:100}
+      bypass-radius-check: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:false}
+  tour-place:
+    sync:
+      initial-delay: ${TOUR_PLACE_SYNC_INITIAL_DELAY:20s}
+      fixed-delay: ${TOUR_PLACE_SYNC_FIXED_DELAY:12h}
+      page-size: ${TOUR_PLACE_SYNC_PAGE_SIZE:100}
+      max-pages: ${TOUR_PLACE_SYNC_MAX_PAGES:100}
+      region-code: ${TOUR_PLACE_SYNC_REGION_CODE:51}
+      content-type-ids: ${TOUR_PLACE_SYNC_CONTENT_TYPE_IDS:12,14,28,39}
+      batch-size: ${TOUR_PLACE_SYNC_BATCH_SIZE:500}
+      retry-max-attempts: ${TOUR_PLACE_SYNC_RETRY_MAX_ATTEMPTS:3}
+      retry-initial-delay: ${TOUR_PLACE_SYNC_RETRY_INITIAL_DELAY:1s}
+      retry-max-delay: ${TOUR_PLACE_SYNC_RETRY_MAX_DELAY:10s}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    connect-timeout: ${OPENAI_CONNECT_TIMEOUT:5s}
+    read-timeout: ${OPENAI_READ_TIMEOUT:10s}
+  support:
+    # 제재 안내에 표시하는 고객센터 이메일. 문의센터 화면(docs/19 4.5)이 보류 상태라
+    # 이메일이 현재 유일한 문의 경로다.
+    #
+    # 실제 주소는 저장소에 넣지 않는다. 공개 저장소에 남으면 스팸 수집 대상이 된다.
+    # 환경변수 SUPPORT_CONTACT_EMAIL로만 주입하고, 비어 있으면 안내에서 문의 문구를 숨긴다.
+    contact-email: ${SUPPORT_CONTACT_EMAIL:}
+  push:
+    # Web Push(VAPID) 키(docs/32 3.4). 저장소에 실제 값을 넣지 않는다.
+    # 키 쌍이 비어 있으면 발송을 끈다 — local에서 키를 만들지 않아도 나머지 알림 경로
+    # (WebSocket·알림함)는 그대로 동작해야 한다.
+    #
+    # 키 생성: npx web-push generate-vapid-keys
+    vapid:
+      public-key: ${WEB_PUSH_VAPID_PUBLIC_KEY:}
+      private-key: ${WEB_PUSH_VAPID_PRIVATE_KEY:}
+      # push 서비스가 요구하는 연락처. mailto: 또는 https: 형식이다.
+      subject: ${WEB_PUSH_VAPID_SUBJECT:}
+  admin:
+    # 슈퍼관리자 ID/PW 로그인(docs/30). 셋 다 환경변수로만 주입하고 저장소에는 실제 값을
+    # 넣지 않는다. username이나 password가 비어 있으면 계정을 만들지 않는다 —
+    # 기본 계정을 자동 생성하면 운영에 예측 가능한 아이디·비밀번호가 생긴다.
+    local:
+      username: ${ADMIN_LOCAL_USERNAME:}
+      password: ${ADMIN_LOCAL_PASSWORD:}
+      nickname: ${ADMIN_LOCAL_NICKNAME:슈퍼관리자}
+    report:
+      cursor-hmac-secret: ${ADMIN_REPORT_CURSOR_HMAC_SECRET}
+    member:
+      suspension-scheduler-enabled: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:false}
+      suspension-scheduler-fixed-delay: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_FIXED_DELAY:60000}
+  member:
+    # 시간 경과 매너온도 회복 스케줄러(docs/19 4.9).
+    # 회복 주기(30일)와 상승량은 정책 값이라 설정으로 빼지 않고
+    # MannerTemperaturePolicy에 고정한다. 여기서는 실행 여부와 점검 간격만 다룬다.
+    manner-temperature-recovery-scheduler-enabled: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_ENABLED:false}
+    manner-temperature-recovery-scheduler-fixed-delay: ${MANNER_TEMPERATURE_RECOVERY_SCHEDULER_FIXED_DELAY:3600000}
+  inquiry:
+    # 1:1 문의 보관 기간(종결 후 1년) 경과분 익명화 스케줄러(docs/29 5.6).
+    # 보관 기간 자체는 정책 값이라 설정으로 빼지 않고 InquiryRetentionService.RETENTION_PERIOD에
+    # 고정한다. 여기서는 실행 여부와 주기만 다룬다.
+    retention-scheduler-enabled: ${INQUIRY_RETENTION_SCHEDULER_ENABLED:false}
+    retention-scheduler-fixed-delay: ${INQUIRY_RETENTION_SCHEDULER_FIXED_DELAY:3600000}
+  matching:
+    scoring:
+      # 태그 Jaccard 대 임베딩 코사인 유사도 가중치. 두 값의 합은 1이어야 한다.
+      jaccard-weight: ${MATCHING_SCORING_JACCARD_WEIGHT:0.70}
+      embedding-weight: ${MATCHING_SCORING_EMBEDDING_WEIGHT:0.30}
+    scheduler:
+      enabled: ${MATCHING_SCHEDULER_ENABLED:false}
+      fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:5s}
+      stale-timeout: ${MATCHING_STALE_TIMEOUT:30s}
+      proposal-timeout: ${MATCHING_PROPOSAL_TIMEOUT:30s}
+      batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}
+    no-show-scheduler:
+      enabled: ${MATCHING_NO_SHOW_SCHEDULER_ENABLED:false}
+    arrival:
+      # 만남 장소 핀에서 이 거리 안이면 도착으로 인정한다. 화면에도 같은 값이 안내된다.
+      radius-meters: ${MATCHING_ARRIVAL_RADIUS_METERS:150}
+      # 환경 전체를 끄는 스위치다. 체크인과 마찬가지로 어느 환경에서도 기본은 false이고,
+      # 현장에 가지 않고 확인해야 하면 members.test_account로 계정 단위 면제를 쓴다.
+      bypass-radius-check: ${MATCHING_ARRIVAL_BYPASS_RADIUS_CHECK:false}

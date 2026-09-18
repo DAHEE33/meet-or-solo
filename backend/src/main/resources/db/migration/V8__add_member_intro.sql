@@ -1,0 +1,2 @@
+ALTER TABLE members
+    ADD COLUMN intro VARCHAR(160);

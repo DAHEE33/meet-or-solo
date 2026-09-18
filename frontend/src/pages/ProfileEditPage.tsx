@@ -1,0 +1,466 @@
+import { useEffect, useState, type ChangeEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import {
+  memberProfileApi,
+  type AgeRange,
+  type Gender,
+  type TravelStyleCode,
+} from '../api/memberProfile';
+import {
+  preferenceEmbeddingApi,
+  isConsentRequired,
+  type EmbeddingStatus,
+} from '../api/preferenceEmbedding';
+import {
+  hasAllAiConsents,
+  memberConsentApi,
+  type MemberConsent,
+} from '../api/memberConsents';
+import Chip from '../components/common/Chip';
+import AiConsentSection, {
+  EMPTY_AI_CONSENT_DRAFT,
+  isAiConsentComplete,
+  type AiConsentDraft,
+} from '../components/consent/AiConsentSection';
+import PreferenceInputSection from '../components/preference/PreferenceInputSection';
+import {
+  preferenceSaveNotice,
+  preferenceStateOf,
+  preferenceStatusLabel,
+  preferenceStatusTone,
+  readPreferenceReturnTo,
+} from '../components/preference/preferenceStatus';
+import {
+  EMPTY_PREFERENCE_DRAFT,
+  PREFERENCE_TEXT_MAX_LENGTH,
+  buildPreferenceText,
+  isPreferenceDraftComplete,
+  parsePreferenceText,
+  type PreferenceDraft,
+} from '../components/preference/preferenceText';
+import PrimaryButton from '../components/common/PrimaryButton';
+import MobileLayout from '../components/layout/MobileLayout';
+import PageHeader from '../components/layout/PageHeader';
+import { NICKNAME_MAX_LENGTH, NICKNAME_RULE_MESSAGE, validateNickname } from '../utils/nickname';
+import Spinner, { LoadingState } from '../components/common/Spinner';
+
+const TRAVEL_STYLES: { code: TravelStyleCode; label: string }[] = [
+  { code: 'RELAXED', label: '느긋하게' },
+  { code: 'ACTIVE', label: '액티브' },
+  { code: 'FOOD', label: '맛집탐방' },
+  { code: 'PHOTO', label: '사진위주' },
+  { code: 'CULTURE', label: '문화답사' },
+];
+const GENDERS: { value: Gender; label: string }[] = [
+  { value: 'FEMALE', label: '여성' },
+  { value: 'MALE', label: '남성' },
+  { value: 'OTHER', label: '기타/선택 안 함' },
+];
+const AGE_RANGES: { value: AgeRange; label: string }[] = [
+  { value: '10S', label: '10대' },
+  { value: '20S', label: '20대' },
+  { value: '30S', label: '30대' },
+  { value: '40S', label: '40대' },
+  { value: '50S', label: '50대' },
+  { value: '60_PLUS', label: '60대 이상' },
+];
+
+export default function ProfileEditPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  /** 매칭 신청 화면의 안내에서 넘어왔으면 돌아갈 경로. 직접 들어왔으면 null이다. */
+  const returnTo = readPreferenceReturnTo(location.state);
+  const [nickname, setNickname] = useState('');
+  const [email, setEmail] = useState('');
+  const [intro, setIntro] = useState('');
+  const [gender, setGender] = useState<Gender | ''>('');
+  const [ageRange, setAgeRange] = useState<AgeRange | ''>('');
+  const [styles, setStyles] = useState<TravelStyleCode[]>([]);
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [prefDraft, setPrefDraft] = useState<PreferenceDraft>(EMPTY_PREFERENCE_DRAFT);
+  const [prefStatus, setPrefStatus] = useState<EmbeddingStatus | null>(null);
+  const [prefHasData, setPrefHasData] = useState(false);
+  const [prefLoading, setPrefLoading] = useState(true);
+  const [prefSaving, setPrefSaving] = useState(false);
+  const [prefError, setPrefError] = useState<string | null>(null);
+  const [prefSaved, setPrefSaved] = useState(false);
+  /** 서버에 기록된 동의 여부. null이면 아직 조회 전이다. */
+  const [hasAiConsent, setHasAiConsent] = useState<boolean | null>(null);
+  const [aiConsentDraft, setAiConsentDraft] = useState<AiConsentDraft>(EMPTY_AI_CONSENT_DRAFT);
+  /** 저장 직후 안내. 분석 상태에 따라 성공/실패 문구가 갈린다. */
+  const saveNotice = prefStatus !== null ? preferenceSaveNotice(prefStatus) : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    memberProfileApi.getMine().then((profile) => {
+      if (cancelled) return;
+      setNickname(profile.nickname ?? '');
+      setEmail(profile.email ?? '');
+      setIntro(profile.intro ?? '');
+      setGender(profile.gender ?? '');
+      setAgeRange(profile.ageRange ?? '');
+      setStyles(profile.travelStyles.map((style) => style.code));
+      setProfileImageUrl(profile.profileImageUrl);
+      setIsLoading(false);
+    }).catch(() => {
+      if (!cancelled) {
+        setErrorMessage('프로필 정보를 불러오지 못했습니다.');
+        setIsLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      preferenceEmbeddingApi.get(),
+      memberConsentApi.getAiConsents(),
+    ])
+      .then(([emb, consents]: [Awaited<ReturnType<typeof preferenceEmbeddingApi.get>>, MemberConsent[]]) => {
+        if (cancelled) return;
+        setHasAiConsent(hasAllAiConsents(consents));
+        if (!emb) return;
+        setPrefDraft(parsePreferenceText(emb.preferenceText));
+        setPrefStatus(emb.embeddingStatus);
+        setPrefHasData(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPrefError('취향 정보를 불러오지 못했습니다.');
+      })
+      .finally(() => { if (!cancelled) setPrefLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+  }, [imagePreviewUrl]);
+
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setErrorMessage(null);
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setErrorMessage('JPEG, PNG, WEBP 이미지만 선택할 수 있습니다.');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage('프로필 이미지는 5MB 이하만 업로드할 수 있습니다.');
+      event.target.value = '';
+      return;
+    }
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  };
+
+  const toggleStyle = (style: TravelStyleCode) => {
+    setErrorMessage(null);
+    setStyles((current) => {
+      if (current.includes(style)) return current.filter((item) => item !== style);
+      if (current.length >= 3) {
+        setErrorMessage('여행 스타일은 최대 3개까지 선택할 수 있습니다.');
+        return current;
+      }
+      return [...current, style];
+    });
+  };
+
+  const handleSave = async () => {
+    const nicknameError = validateNickname(nickname);
+    if (nicknameError) {
+      setErrorMessage(nicknameError);
+      return;
+    }
+    if (!gender || !ageRange || styles.length === 0) {
+      setErrorMessage('닉네임, 성별, 연령대, 여행 스타일을 모두 입력해 주세요.');
+      return;
+    }
+    setIsSaving(true);
+    setErrorMessage(null);
+    try {
+      await memberProfileApi.complete({
+        nickname: nickname.trim(),
+        email: email.trim() || null,
+        intro: intro.trim() || null,
+        gender,
+        ageRange,
+        travelStyles: styles,
+      });
+      if (imageFile) await memberProfileApi.uploadImage(imageFile);
+      navigate('/mypage', { replace: true });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '프로필 저장에 실패했습니다.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePrefSave = async () => {
+    const preferenceText = buildPreferenceText(prefDraft);
+    if (!isPreferenceDraftComplete(prefDraft)) {
+      setPrefError('가이드 두 문항을 모두 답해 주세요.');
+      return;
+    }
+    if (preferenceText.length > PREFERENCE_TEXT_MAX_LENGTH) {
+      setPrefError(`${PREFERENCE_TEXT_MAX_LENGTH}자 이하로 줄여 주세요.`);
+      return;
+    }
+    if (!hasAiConsent && !isAiConsentComplete(aiConsentDraft)) {
+      setPrefError('위 두 가지 항목에 모두 동의해 주세요.');
+      return;
+    }
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      // 아직 동의가 기록되지 않았으면 저장 직전에 함께 기록한다.
+      if (!hasAiConsent) {
+        await memberConsentApi.agree('AI_PROCESSING');
+        await memberConsentApi.agree('OVERSEAS_TRANSFER');
+        setHasAiConsent(true);
+      }
+      const result = await preferenceEmbeddingApi.createOrUpdate(preferenceText);
+      setPrefStatus(result.embeddingStatus);
+      setPrefHasData(true);
+      // 프로필 저장과 달리 화면을 떠나지 않는다. 위쪽 프로필 입력이 아직 저장되지 않았을 수 있다.
+      setPrefSaved(true);
+    } catch (err) {
+      if (isConsentRequired(err)) {
+        // 다른 기기에서 철회했을 수 있다. 에러 문구 대신 동의 입력을 다시 보여준다.
+        setHasAiConsent(false);
+        setAiConsentDraft(EMPTY_AI_CONSENT_DRAFT);
+        setPrefError('취향 분석 동의가 필요해요. 아래 두 항목에 동의하면 저장할 수 있어요.');
+      } else {
+        setPrefError(err instanceof Error ? err.message : '저장에 실패했습니다.');
+      }
+    } finally {
+      setPrefSaving(false);
+    }
+  };
+
+  const handlePrefDelete = async () => {
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      await preferenceEmbeddingApi.delete();
+      setPrefDraft(EMPTY_PREFERENCE_DRAFT);
+      setPrefStatus(null);
+      setPrefHasData(false);
+    } catch (err) {
+      setPrefError(err instanceof Error ? err.message : '삭제에 실패했습니다.');
+    } finally {
+      setPrefSaving(false);
+    }
+  };
+
+  /** 동의를 철회하면 서버가 저장된 취향 글과 분석 결과를 함께 삭제한다. */
+  const handleConsentRevoke = async () => {
+    const confirmed = window.confirm(
+      '동의를 철회하면 저장한 취향 글도 함께 삭제돼요. 계속할까요?',
+    );
+    if (!confirmed) return;
+
+    setPrefSaving(true);
+    setPrefError(null);
+    setPrefSaved(false);
+    try {
+      await memberConsentApi.revoke('AI_PROCESSING');
+      await memberConsentApi.revoke('OVERSEAS_TRANSFER');
+      setHasAiConsent(false);
+      setAiConsentDraft(EMPTY_AI_CONSENT_DRAFT);
+      setPrefDraft(EMPTY_PREFERENCE_DRAFT);
+      setPrefStatus(null);
+      setPrefHasData(false);
+    } catch (err) {
+      setPrefError(err instanceof Error ? err.message : '동의 철회에 실패했습니다.');
+    } finally {
+      setPrefSaving(false);
+    }
+  };
+
+  const inputClass =
+    'rounded-2xl border border-line bg-white px-4 py-3.5 text-[15px] text-ink outline-none placeholder:text-ink/35 focus:border-coral';
+
+  return (
+    <MobileLayout showTabBar={false}>
+      <PageHeader title="프로필 수정" />
+      <main className="flex flex-col gap-6 px-5 pb-10 pt-2">
+        {isLoading ? <LoadingState className="py-10" message="프로필을 불러오는 중이에요" /> : <>
+          <section className="flex flex-col items-center gap-3">
+            {imagePreviewUrl || profileImageUrl ? (
+              <img
+                src={imagePreviewUrl ?? profileImageUrl ?? undefined}
+                alt="프로필 이미지 미리보기"
+                className="h-24 w-24 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-coral/10 text-2xl font-bold text-coral">
+                {nickname.slice(0, 1) || '?'}
+              </div>
+            )}
+            <label className="cursor-pointer rounded-xl border border-line bg-white px-4 py-2 text-sm font-semibold text-ink/65 active:bg-sand">
+              이미지 선택
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleImageChange}
+                className="sr-only"
+              />
+            </label>
+            <p className="text-center text-xs text-ink/45">JPEG, PNG, WEBP · 최대 5MB</p>
+          </section>
+          <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
+            닉네임
+            <input
+              value={nickname}
+              onChange={(event) => setNickname(event.target.value)}
+              maxLength={NICKNAME_MAX_LENGTH}
+              className={inputClass}
+            />
+            <span className="text-xs font-normal text-ink/45">{NICKNAME_RULE_MESSAGE}</span>
+          </label>
+          <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
+            이메일 <span className="text-xs font-normal text-ink/45">비워 두어도 괜찮아요.</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={255} placeholder="등록된 이메일이 없습니다." className={inputClass} />
+          </label>
+          <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
+            한 줄 소개 <span className="text-xs font-normal text-ink/45">여행 취향을 짧게 소개해 주세요.</span>
+            <input value={intro} onChange={(event) => setIntro(event.target.value)} maxLength={160} placeholder="아직 작성한 소개가 없습니다." className={inputClass} />
+          </label>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-[17px] font-bold text-ink">성별</h2>
+            <div className="grid grid-cols-3 gap-2">{GENDERS.map((option) => (
+              <button key={option.value} type="button" onClick={() => setGender(option.value)} className={`rounded-2xl border px-2 py-3 text-sm font-semibold ${gender === option.value ? 'border-coral bg-coral/10 text-coral' : 'border-line bg-white text-ink/60'}`}>{option.label}</button>
+            ))}</div>
+          </section>
+          <label className="flex flex-col gap-3 text-[17px] font-bold text-ink">
+            연령대
+            <select value={ageRange} onChange={(event) => setAgeRange(event.target.value as AgeRange | '')} className={inputClass}>
+              <option value="">연령대를 선택해 주세요</option>
+              {AGE_RANGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-[17px] font-bold text-ink">나의 여행 스타일</h2>
+            <p className="-mt-2 text-[13px] text-ink/50">1~3개 선택해 주세요.</p>
+            <div className="flex flex-wrap gap-2">{TRAVEL_STYLES.map((style) => (
+              <Chip key={style.code} label={style.label} selected={styles.includes(style.code)} onClick={() => toggleStyle(style.code)} />
+            ))}</div>
+          </section>
+          {errorMessage && <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{errorMessage}</p>}
+          <PrimaryButton onClick={handleSave} disabled={isSaving}>{isSaving ? '저장 중...' : '수정 내용 저장'}</PrimaryButton>
+
+          {/* 취향 전격 분석 */}
+          <section className="flex flex-col gap-3 border-t border-line pt-6">
+            {prefLoading ? (
+              <Spinner size="sm" />
+            ) : (
+              <>
+                {returnTo && !prefSaved && (
+                  <p className="rounded-2xl bg-sand px-4 py-3 text-[13px] leading-relaxed text-ink/60">
+                    취향을 저장하면 매칭 화면으로 돌아갈 수 있어요.
+                  </p>
+                )}
+                {!hasAiConsent && (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <h2 className="text-[17px] font-bold text-ink">취향 전격 분석</h2>
+                      <p className="text-[13px] text-ink/50">
+                        먼저 아래 두 가지에 동의하면 취향을 저장할 수 있어요.
+                      </p>
+                    </div>
+                    <AiConsentSection
+                      value={aiConsentDraft}
+                      onChange={(draft) => { setAiConsentDraft(draft); setPrefError(null); }}
+                      disabled={prefSaving}
+                    />
+                  </>
+                )}
+                <PreferenceInputSection
+                  value={prefDraft}
+                  onChange={(draft) => { setPrefDraft(draft); setPrefError(null); setPrefSaved(false); }}
+                  title={!hasAiConsent ? null : undefined}
+                  disabled={prefSaving || !(hasAiConsent || isAiConsentComplete(aiConsentDraft))}
+                />
+                <div className="flex items-center gap-2">
+                  {prefStatus && (
+                    <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${
+                      preferenceStatusTone(preferenceStateOf(prefStatus))
+                    }`}>
+                      {preferenceStatusLabel(preferenceStateOf(prefStatus))}
+                    </span>
+                  )}
+                  <span className="flex-1" />
+                  {prefHasData && (
+                    <button type="button" onClick={handlePrefDelete} disabled={prefSaving}
+                      className="text-[13px] text-ink/40 underline active:text-coral disabled:opacity-40">
+                      삭제
+                    </button>
+                  )}
+                  <button type="button" onClick={handlePrefSave} disabled={prefSaving}
+                    className="rounded-xl bg-coral px-4 py-2 text-[13px] font-semibold text-white active:bg-coral/80 disabled:opacity-40">
+                    {prefSaving ? '저장 중...' : hasAiConsent ? '저장' : '동의하고 저장'}
+                  </button>
+                </div>
+                {hasAiConsent && (
+                  <button type="button" onClick={handleConsentRevoke} disabled={prefSaving}
+                    className="self-start text-[12px] text-ink/40 underline active:text-coral disabled:opacity-40">
+                    취향 분석 동의 철회하기
+                  </button>
+                )}
+                {prefError && (
+                  <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{prefError}</p>
+                )}
+                {prefSaved && !prefError && saveNotice && (
+                  // 저장 자체는 200이어도 분석이 실패했을 수 있다. 성공 문구로 덮으면 곧바로 매칭
+                  // 화면에서 "취향 분석에 실패했어요" 안내가 떠서 두 화면이 서로 다른 말을 한다.
+                  <div
+                    className={`flex flex-col gap-2.5 rounded-2xl px-4 py-3.5 ${
+                      saveNotice.failed ? 'bg-coral/10' : 'bg-teal/10'
+                    }`}
+                  >
+                    <p role="status" className={`text-sm ${saveNotice.failed ? 'text-coral' : 'text-teal'}`}>
+                      {saveNotice.failed
+                        ? saveNotice.text
+                        : returnTo ? saveNotice.text : '저장했어요. 이 화면에서 계속 고칠 수 있어요.'}
+                    </p>
+                    {saveNotice.failed && (
+                      <button
+                        type="button"
+                        onClick={handlePrefSave}
+                        disabled={prefSaving}
+                        className="rounded-xl border border-coral/40 py-2.5 text-[14px] font-bold text-coral active:bg-coral/10 disabled:opacity-40"
+                      >
+                        {prefSaving ? '다시 분석 중...' : '다시 분석하기'}
+                      </button>
+                    )}
+                    {returnTo && (
+                      // 매칭하려다 들어온 사람은 저장 후 원래 하려던 일로 돌아갈 수 있어야 한다.
+                      // 분석이 실패해도 매칭은 정상 진행되므로 실패해도 이 길을 막지 않는다.
+                      <button
+                        type="button"
+                        onClick={() => navigate(returnTo, { replace: true })}
+                        className="rounded-xl bg-coral py-2.5 text-[14px] font-bold text-white active:bg-coral/80"
+                      >
+                        매칭 신청하러 가기
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </>}
+      </main>
+    </MobileLayout>
+  );
+}

@@ -1,0 +1,289 @@
+package com.survey.meetorsolo.domain.auth.controller;
+
+import com.survey.meetorsolo.domain.auth.dto.AuthTokenResponse;
+import com.survey.meetorsolo.domain.auth.service.AuthCookieFactory;
+import com.survey.meetorsolo.domain.auth.service.AuthService;
+import com.survey.meetorsolo.domain.auth.service.SanctionNoticeCookieService;
+import com.survey.meetorsolo.domain.member.dto.MemberSanctionNotice;
+import com.survey.meetorsolo.domain.member.service.MemberAccessPolicy;
+import com.survey.meetorsolo.domain.member.service.MemberSanctionException;
+import com.survey.meetorsolo.global.response.ApiResponse;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Duration;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.ResponseCookie;
+import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class AuthController {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+    private static final String KAKAO_STATE_COOKIE = "oauth_state";
+    private static final String NAVER_STATE_COOKIE = "oauth_state_naver";
+    private static final String ACCESS_TOKEN_COOKIE = "access_token";
+    private static final String REFRESH_TOKEN_COOKIE = "refresh_token";
+    private static final Duration OAUTH_STATE_TTL = Duration.ofMinutes(5);
+
+    private final AuthService authService;
+    private final MemberAccessPolicy memberAccessPolicy;
+    private final SanctionNoticeCookieService sanctionNoticeCookies;
+    private final String frontendBaseUrl;
+    private final boolean secureCookies;
+    private final AuthCookieFactory cookies;
+
+    public AuthController(
+            AuthService authService,
+            MemberAccessPolicy memberAccessPolicy,
+            SanctionNoticeCookieService sanctionNoticeCookies,
+            @Value("${app.frontend.base-url}") String frontendBaseUrl,
+            @Value("${app.auth.cookie-secure}") boolean secureCookies
+    ) {
+        this.authService = authService;
+        this.memberAccessPolicy = memberAccessPolicy;
+        this.sanctionNoticeCookies = sanctionNoticeCookies;
+        this.frontendBaseUrl = frontendBaseUrl.replaceAll("/+$", "");
+        this.secureCookies = secureCookies;
+        this.cookies = new AuthCookieFactory(secureCookies);
+    }
+
+    @GetMapping("/api/auth/kakao/login")
+    public ResponseEntity<Void> kakaoLogin() {
+        String state = UUID.randomUUID().toString();
+        URI authorizeUri = authService.getKakaoAuthorizeUri(state);
+        return ResponseEntity
+                .status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, authorizeUri.toString())
+                .header(HttpHeaders.SET_COOKIE, oauthStateCookie(KAKAO_STATE_COOKIE, state, "/api/auth/kakao/callback").toString())
+                .build();
+    }
+
+    @GetMapping("/api/auth/kakao/callback")
+    public ResponseEntity<Void> kakaoCallback(
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String state,
+            @RequestParam(required = false) String error,
+            @CookieValue(name = KAKAO_STATE_COOKIE, required = false) String expectedState
+    ) {
+        if (error != null || code == null || code.isBlank() || !matchesState(expectedState, state)) {
+            return redirectFailure("invalid_callback", KAKAO_STATE_COOKIE, "/api/auth/kakao/callback");
+        }
+
+        try {
+            AuthTokenResponse tokenResponse = authService.loginWithKakao(code);
+            String destination = MemberStatusRedirect.destination(tokenResponse.memberStatus());
+            return ResponseEntity
+                    .status(HttpStatus.FOUND)
+                    .header(HttpHeaders.LOCATION, frontendBaseUrl + destination)
+                    .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                            ACCESS_TOKEN_COOKIE,
+                            tokenResponse.accessToken(),
+                            Duration.ofSeconds(tokenResponse.accessTokenExpiresInSeconds())
+                    ).toString())
+                    .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                            REFRESH_TOKEN_COOKIE,
+                            tokenResponse.refreshToken(),
+                            Duration.ofSeconds(tokenResponse.refreshTokenExpiresInSeconds())
+                    ).toString())
+                    .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(KAKAO_STATE_COOKIE, "/api/auth/kakao/callback").toString())
+                    .build();
+        } catch (MemberSanctionException exception) {
+            return redirectSanctioned(exception, KAKAO_STATE_COOKIE, "/api/auth/kakao/callback");
+        } catch (RuntimeException exception) {
+            log.warn("Kakao OAuth callback failed: {}", exception.getClass().getSimpleName());
+            return redirectFailure("oauth_failed", KAKAO_STATE_COOKIE, "/api/auth/kakao/callback");
+        }
+    }
+
+    @GetMapping("/api/auth/naver/login")
+    public ResponseEntity<Void> naverLogin() {
+        String state = UUID.randomUUID().toString();
+        URI authorizeUri = authService.getNaverAuthorizeUri(state);
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, authorizeUri.toString())
+                .header(HttpHeaders.SET_COOKIE, oauthStateCookie(
+                        NAVER_STATE_COOKIE, state, "/api/auth/naver/callback").toString())
+                .build();
+    }
+
+    @PostMapping("/api/auth/refresh")
+    public ResponseEntity<Void> refresh(
+            @CookieValue(name = REFRESH_TOKEN_COOKIE, required = false) String refreshToken
+    ) {
+        AuthTokenResponse tokenResponse = authService.refresh(refreshToken);
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                        ACCESS_TOKEN_COOKIE,
+                        tokenResponse.accessToken(),
+                        Duration.ofSeconds(tokenResponse.accessTokenExpiresInSeconds())).toString())
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(
+                        REFRESH_TOKEN_COOKIE,
+                        tokenResponse.refreshToken(),
+                        Duration.ofSeconds(tokenResponse.refreshTokenExpiresInSeconds())).toString())
+                .build();
+    }
+
+    /**
+     * 로그아웃은 인증 여부와 무관하게 항상 204와 cookie 만료 헤더를 반환하는 멱등 endpoint다.
+     * 토큰이 없거나 만료·변조되었으면 refresh token 폐기만 생략하고 cookie는 그대로 지운다.
+     * cookie 속성은 발급 때와 동일해야 브라우저가 실제로 삭제하므로 tokenCookie(...)를 재사용한다.
+     */
+    @PostMapping("/api/auth/logout")
+    public ResponseEntity<Void> logout(
+            @CookieValue(name = ACCESS_TOKEN_COOKIE, required = false) String accessToken
+    ) {
+        authService.logout(accessToken);
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, expiredTokenCookie(ACCESS_TOKEN_COOKIE).toString())
+                .header(HttpHeaders.SET_COOKIE, expiredTokenCookie(REFRESH_TOKEN_COOKIE).toString())
+                .build();
+    }
+
+    @GetMapping("/api/auth/naver/callback")
+    public ResponseEntity<Void> naverCallback(
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String state,
+            @RequestParam(required = false) String error,
+            @CookieValue(name = NAVER_STATE_COOKIE, required = false) String expectedState
+    ) {
+        if (error != null || code == null || code.isBlank() || !matchesState(expectedState, state)) {
+            return redirectFailure("invalid_callback", NAVER_STATE_COOKIE, "/api/auth/naver/callback");
+        }
+        try {
+            return redirectSuccess(authService.loginWithNaver(code, state), NAVER_STATE_COOKIE,
+                    "/api/auth/naver/callback");
+        } catch (MemberSanctionException exception) {
+            return redirectSanctioned(exception, NAVER_STATE_COOKIE, "/api/auth/naver/callback");
+        } catch (RuntimeException exception) {
+            log.warn("Naver OAuth callback failed: {}", exception.getClass().getSimpleName());
+            return redirectFailure("oauth_failed", NAVER_STATE_COOKIE, "/api/auth/naver/callback");
+        }
+    }
+
+    private ResponseEntity<Void> redirectSuccess(
+            AuthTokenResponse tokenResponse,
+            String stateCookieName,
+            String callbackPath
+    ) {
+        String destination = MemberStatusRedirect.destination(tokenResponse.memberStatus());
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, frontendBaseUrl + destination)
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(ACCESS_TOKEN_COOKIE, tokenResponse.accessToken(),
+                        Duration.ofSeconds(tokenResponse.accessTokenExpiresInSeconds())).toString())
+                .header(HttpHeaders.SET_COOKIE, tokenCookie(REFRESH_TOKEN_COOKIE, tokenResponse.refreshToken(),
+                        Duration.ofSeconds(tokenResponse.refreshTokenExpiresInSeconds())).toString())
+                .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(stateCookieName, callbackPath).toString())
+                .build();
+    }
+
+    private boolean matchesState(String expectedState, String actualState) {
+        if (expectedState == null || actualState == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expectedState.getBytes(StandardCharsets.UTF_8),
+                actualState.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    /**
+     * 제재 회원의 로그인 시도.
+     *
+     * <p>기존에는 {@code catch (RuntimeException)}이 제재 예외를 삼켜 {@code oauth_failed}로
+     * 보냈고, 로그인 화면은 "잠시 후 다시 시도해 주세요"라는 틀린 안내를 띄웠다. 302에는 body가
+     * 없으므로 사유·기간은 notice cookie로 넘기고 화면이 조회 endpoint로 읽는다.
+     */
+    private ResponseEntity<Void> redirectSanctioned(
+            MemberSanctionException exception,
+            String stateCookieName,
+            String callbackPath
+    ) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity
+                .status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, frontendBaseUrl + "/login?oauthError=account_restricted")
+                .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(stateCookieName, callbackPath).toString());
+        if (exception.getMemberId() != null) {
+            builder.header(HttpHeaders.SET_COOKIE,
+                    sanctionNoticeCookies.issue(exception.getMemberId()).toString());
+        }
+        return builder.build();
+    }
+
+    /**
+     * 제재 사유·기간 조회. notice cookie를 가진 요청만 응답한다.
+     *
+     * <p>session이 아니므로 이 endpoint 외에는 아무것도 열어주지 않는다. 제재가 이미 해제되었거나
+     * 만료된 회원은 {@code data}가 {@code null}로 나가고, 화면은 안내를 띄우지 않는다.
+     */
+    @GetMapping("/api/auth/sanction-notice")
+    public ResponseEntity<ApiResponse<MemberSanctionNotice>> sanctionNotice(
+            @CookieValue(name = SanctionNoticeCookieService.COOKIE_NAME, required = false) String noticeToken
+    ) {
+        if (noticeToken == null || noticeToken.isBlank()) {
+            return ResponseEntity.ok(ApiResponse.<MemberSanctionNotice>success(null));
+        }
+        MemberSanctionNotice notice =
+                memberAccessPolicy.findSanctionNotice(sanctionNoticeCookies.readMemberId(noticeToken));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, sanctionNoticeCookies.expire().toString())
+                .body(ApiResponse.success(notice));
+    }
+
+    private ResponseEntity<Void> redirectFailure(String reason, String stateCookieName, String callbackPath) {
+        return ResponseEntity
+                .status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, frontendBaseUrl + "/login?oauthError=" + reason)
+                .header(HttpHeaders.SET_COOKIE, clearOauthStateCookie(stateCookieName, callbackPath).toString())
+                .build();
+    }
+
+    private ResponseCookie oauthStateCookie(String name, String state, String callbackPath) {
+        return ResponseCookie.from(name, state)
+                .httpOnly(true)
+                .secure(secureCookies)
+                .sameSite("Lax")
+                .path(callbackPath)
+                .maxAge(OAUTH_STATE_TTL)
+                .build();
+    }
+
+    private ResponseCookie clearOauthStateCookie(String name, String callbackPath) {
+        return ResponseCookie.from(name, "")
+                .httpOnly(true)
+                .secure(secureCookies)
+                .sameSite("Lax")
+                .path(callbackPath)
+                .maxAge(Duration.ZERO)
+                .build();
+    }
+
+    /**
+     * session cookie 속성은 {@link AuthCookieFactory} 한 곳에 둔다. 관리자 ID/PW 로그인
+     * (docs/30)이 같은 cookie를 발급하고 이 controller의 로그아웃이 그것까지 지우므로,
+     * 속성이 두 곳에 있으면 한쪽만 바뀌었을 때 로그아웃이 조용히 실패한다.
+     */
+    private ResponseCookie tokenCookie(String name, String value, Duration maxAge) {
+        return cookies.token(name, value, maxAge);
+    }
+
+    private ResponseCookie expiredTokenCookie(String name) {
+        return cookies.expired(name);
+    }
+
+    private static final class MemberStatusRedirect {
+        private static String destination(String status) {
+            return "PROFILE_REQUIRED".equals(status) || "PENDING".equals(status) ? "/signup" : "/";
+        }
+    }
+}
