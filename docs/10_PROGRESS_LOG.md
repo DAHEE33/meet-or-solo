@@ -6802,3 +6802,122 @@ frontend `tsc -b`·테스트 797건·운영 빌드, `docker compose config`, `ng
 5단계에서 `main` 기준으로 첫 배포를 **수동으로 1회** 한다.
 절차는 [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차'를 따른다.
 운영 CD는 그 절차가 성공한 뒤에 만든다.
+
+## [운영 환경 5단계] main 기준 첫 운영 배포
+
+배포 버전: `fac9eea` (origin/main)
+절차: [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차'
+
+운영 서버에서 서비스가 처음 동작했다. 기존 dev·병원·study는 그대로 유지했다.
+
+### 빌드 — worktree로 분리
+
+`git worktree`로 `main` 전용 작업 공간을 따로 만들었다.
+
+```
+C:/dev/meet-or-solo        작업 브랜치 (문서)
+C:/dev/meet-or-solo-build  fac9eea (detached) ← 운영 빌드 전용
+```
+
+**이유가 있다.** 원래 폴더의 `frontend/.env.local`에는 개발용 Kakao 지도 키와 이메일이
+값으로 들어 있다. 거기서 운영 빌드를 돌리면 `.env.production`에 빠뜨린 키가 개발용 값으로
+채워진다. Vite 5.4.21로 확인한 결과 같은 키는 `.env.production`이 이기지만, **한쪽에만
+있는 키는 살아남는다.** worktree에는 `.env.local`이 없어서(gitignore 대상) 이 문제가
+구조적으로 사라진다.
+
+번들 검증: 문의 이메일·Kakao 키 포함, `localhost`·개발 도메인 흔적 없음.
+jar 검증: migration 40개(`V1`~`V40`), `application-prod.yml` 포함.
+
+### 기동 순서를 나눴다
+
+postgres → backend → nginx 순으로 하나씩 올렸다. 한 번에 올리면 실패 원인을 구분하기
+어렵다. 특히 빈 DB에 migration 40개가 처음 적용되는 구간이라 따로 확인했다.
+
+`data/postgres`는 `ubuntu` 소유 빈 폴더로 두었고, 첫 기동 때 컨테이너 entrypoint가
+uid 999(`lxd`로 표시) `0700`으로 스스로 정리했다. 예상대로다.
+
+### 결과
+
+컨테이너 3개 healthy. migration 40/40 성공, 실패 0건. `admin_credentials` 1건
+(`mos_admin` 생성됨). GPS 우회 환경변수 없음, 스케줄러 5종 전부 `true`.
+nginx는 `127.0.0.1:28080`에만 바인딩.
+
+`/api/health`는 고정 문자열이라 DB를 보지 않으므로, `GET /api/festivals`로 DB 연결을
+따로 확인했다.
+
+### 초기 데이터 적재
+
+`FESTIVAL_SYNC_ENABLED`·`TOUR_PLACE_SYNC_ENABLED`를 `true`로 올려 한 번 채운 뒤
+`false`로 되돌리고 `--force-recreate` 했다. 축제 21건, 관광지 3806건(강원 지역코드 51).
+TourAPI 일일 호출 한도를 dev와 같은 키로 나눠 쓰기 때문에 적재 후 바로 껐다.
+
+### 백업·복원 검증
+
+`backup-prod-db.sh`로 덤프 1건 생성, `restore-prod-db.sh`로 검증 성공.
+실행별 고유 임시 DB에 복원해 테이블 41개·Flyway 40 success·festivals 21을 확인하고
+임시 DB를 정리했다. 운영 DB는 열지 않았다.
+
+외부 보관은 미구성이다(`PROD_BACKUP_REMOTE` 없음).
+
+## [운영 환경 6단계] 운영 도메인·HTTPS 연결
+
+### 착수 전 조회에서 드러난 것
+
+- `/etc/nginx/sites-available/meetorsolo.kr`는 **이름만 운영 도메인이고 내용은 dev용**이었다
+  (`server_name dev.meetorsolo.kr`, `proxy_pass 127.0.0.1:18080`). 건드리지 않았다.
+- `meetorsolo.kr` 인증서가 **이미 있고 81일 유효**했다. 처음 운영 도메인으로 설정했다가
+  dev로 바꾸면서 인증서만 남은 것이다. 새로 발급하지 않고 재사용했다.
+- ⚠ **`server_name meetorsolo.kr`인 블록이 하나도 없었다.** certbot이
+  `authenticator = nginx` 방식이라 갱신 시 그 도메인의 server block을 찾아 인증 경로를
+  임시로 끼워 넣는데, 찾을 블록이 없었다. **자동 갱신이 실패할 상황이었고 이번 작업으로
+  함께 해결됐다.**
+- 그래서 `https://meetorsolo.kr` 접속은 dev 인증서가 반환돼 TLS 단계에서 실패하고 있었다.
+
+### 작업
+
+`/etc/nginx/sites-available/meet-or-solo-prod`를 **새 파일로** 만들고 symlink로 활성화했다.
+기존 dev·study 설정은 읽지도 않았다.
+
+- `upstream` → `127.0.0.1:28080`
+- `:80`은 301 redirect, `:443`은 기존 인증서 재사용
+- `client_max_body_size 6m` (앱 상한 5MB와 맞춤)
+- `/ws`를 `location /`보다 먼저, `Upgrade` 전달, `proxy_read_timeout 3600s`
+- `X-Robots-Tag: noindex, nofollow`
+
+`/.well-known/acme-challenge/` location은 두지 않았다. `authenticator = nginx`가
+갱신 시 스스로 끼워 넣기 때문이다.
+
+**Basic Auth는 적용하지 않기로 했다.** 일반 고객이 운영 주소로 바로 접속하고, 회원 인증과
+관리자 권한 검사는 앱 기능(JWT cookie, `/admin/login`, `MemberAccessInterceptor`)이
+담당한다.
+
+### 검증
+
+| 항목 | 결과 |
+| --- | --- |
+| `https://<운영도메인>/api/health` | 정상 |
+| `/` | 200 |
+| HTTP → HTTPS | 301 |
+| `/api/festivals` | 축제 16건 조회. 도메인부터 DB까지 전 구간 확인 |
+| `X-Robots-Tag` | 적용됨 |
+| `certbot renew --dry-run` | **성공.** 자동 갱신이 동작함 |
+| dev / study | 각 200. 영향 없음 |
+| 컨테이너 | 8개 전부 정상 |
+
+### WebSocket 검증 방법을 바로잡았다
+
+`docs/07`에 "`101`이면 정상"이라고 적어뒀는데 이 앱에는 맞지 않는다. handshake에서
+로그인 쿠키를 검사하므로(`WebSocketAuthenticationInterceptor`) **쿠키 없는 `curl`에는
+`200` + 빈 응답이 정상**이다. 인터셉터가 handshake만 중단하고 응답 코드는 200으로 남긴다.
+
+운영에서 `200`이 나와 dev와 비교했더니 dev도 동일하게 `200`이었다. 응답 본문이 비어 있는지
+(backend까지 감) HTML인지(SPA로 떨어짐)로 구분해야 한다. `docs/07` 두 곳과 확인 목록을
+이 기준으로 고쳤다.
+
+### 공개 출시 시 되돌릴 항목
+
+- **`X-Robots-Tag: noindex, nofollow` 제거.** 남겨두면 검색에 영원히 잡히지 않는다.
+
+### 남은 것
+
+7단계 실기기 검증 — OAuth 로그인, PWA 설치, Web Push, 매칭 화면의 WebSocket 실동작.

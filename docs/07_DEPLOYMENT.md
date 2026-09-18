@@ -248,7 +248,16 @@ curl -i -o /dev/null -w '%{http_code}
 '   -H 'Connection: Upgrade' -H 'Upgrade: websocket'   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='   -H 'Origin: https://<DEV_DOMAIN>' https://<DEV_DOMAIN>/ws
 ```
 
-`101`이면 정상입니다. `400`이면 Upgrade header가 전달되지 않은 것이고, `403`이면 `CORS_ALLOWED_ORIGINS`에 해당 origin이 없는 것입니다.
+이 앱은 WebSocket handshake에서 로그인 쿠키를 검사합니다(`WebSocketAuthenticationInterceptor`). 그래서 **쿠키 없이 `curl`로 보내면 `101`이 아니라 `200` + 빈 응답**이 정상입니다. 인터셉터가 handshake만 중단하고 응답 코드는 200으로 남기기 때문입니다.
+
+| 응답 | 뜻 |
+| --- | --- |
+| `200` + **빈 응답** | 정상. nginx가 `/ws`를 backend까지 전달했고 인증에서 막힌 것 |
+| `200` + **HTML** | `location /`로 떨어져 SPA 화면이 반환된 것. nginx 설정 문제 |
+| `400` | 어느 한쪽 nginx에서 `Upgrade` header가 전달되지 않음 |
+| `403` | `CORS_ALLOWED_ORIGINS`에 그 origin이 없음 |
+
+즉 이 명령으로 확인하는 것은 **"nginx가 경로를 제대로 넘기는가"**까지입니다. 실제 WebSocket 동작은 브라우저로 로그인한 뒤 매칭 화면을 열어 확인합니다.
 
 ### dev 서버 환경변수 예시
 
@@ -467,7 +476,16 @@ curl -i -o /dev/null -w '%{http_code}\n' \
   -H 'Origin: https://<PROD_DOMAIN>' https://<PROD_DOMAIN>/ws
 ```
 
-`101` 정상, `400`이면 어느 한쪽 nginx에서 `Upgrade` header가 빠진 것, `403`이면 `CORS_ALLOWED_ORIGINS`에 그 origin이 없는 것입니다.
+이 앱은 handshake에서 로그인 쿠키를 검사하므로, 쿠키 없는 `curl`에는 **`200` + 빈 응답이 정상**입니다.
+
+| 응답 | 뜻 |
+| --- | --- |
+| `200` + 빈 응답 | 정상. `/ws`가 backend까지 전달됐고 인증에서 막힌 것 |
+| `200` + HTML | SPA 화면으로 떨어진 것. nginx 설정 문제 |
+| `400` | `Upgrade` header 미전달 |
+| `403` | `CORS_ALLOWED_ORIGINS`에 origin 없음 |
+
+실제 동작 확인은 브라우저 로그인 후 매칭 화면에서 합니다.
 
 ### 4. 초기 데이터 적재와 정기 동기화
 
@@ -856,7 +874,7 @@ docker logs meet-or-solo-nginx-prod --tail=100
 | 1 | 컨테이너 3개가 healthy | 2 |
 | 2 | Flyway `success = true`, 마지막 버전 확인 | 3 |
 | 3 | `/api/festivals` 응답 | 3 |
-| 4 | WebSocket 101 | 3 |
+| 4 | WebSocket `/ws` 전달 (쿠키 없는 curl은 200 + 빈 응답이 정상) | 3 |
 | 5 | GPS 우회 환경변수 없음 | 5 |
 | 6 | `AUTH_COOKIE_SECURE=true`, cookie에 Secure | 5 |
 | 7 | 5MB 근처 이미지 업로드 성공 | 5 |
