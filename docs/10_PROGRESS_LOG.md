@@ -6740,3 +6740,120 @@ Testcontainers 기반 backend 통합 테스트는 실행하지 않았다. 공유
 
 `codex/prod-environment` → `dev` PR, `dev` 검증 후 `dev` → `main` PR.
 push와 PR 생성은 아직 하지 않았다.
+
+## [매칭] 즉시 조합 경로 제거와 scheduler 배치 통일
+
+브랜치: `fix/wbs-10-b-matching-scheduler-only` (`origin/dev` 8b25ba0 기준)
+
+### 발견 경위
+
+개발계에서 테스터 5명으로 취향 임베딩이 매칭에 반영되는지 확인하려 했다. 전원 같은 여행스타일
+태그, 희망 인원 2명으로 맞추고 취향 문장만 다르게 입력했는데, 결과가 취향과 무관하게 "먼저
+누른 두 사람끼리" 묶였다. T1·T3가 먼저 신청해 짝이 되고 T2·T4가 나중에 신청해 짝이 됐다.
+
+### 원인
+
+조합 경로가 둘이었고, 즉시 경로가 점수가 개입할 여지를 없앴다.
+
+| 위치 | 내용 |
+| --- | --- |
+| `MatchPoolEntryService:110` | pool 저장 직후 `MatchingPoolEnteredEvent` 발행 |
+| `MatchingPoolEnteredEventHandler:22` | `@TransactionalEventListener(AFTER_COMMIT)`으로 즉시 조합 실행 |
+
+즉시 경로는 **유효한 조합이 처음 생기는 순간 소진**시킨다. 그래서 대기 후보가 2명을 넘지
+못했고, 가능한 조합이 1개면 `MatchGroupComposer`가 정렬해서 고를 대상이 없다. 점수는
+계산·저장만 됐다. `MATCHING_SCHEDULER_ENABLED`와 무관하게 항상 동작했고 끄는 플래그도 없었다.
+
+함께 확인된 것:
+
+- 최소 궁합 점수 임계값이 없다. 점수는 조합 간 순위만 가리고 그 순위도 인원 수보다 뒤다.
+- `MatchPoolRepository`의 pool entry claim 쿼리에만 `preferred_group_size` 버킷 필터가
+  남아 있었다. `MatchGroupComposer` 주석이 "없앴다"고 적은 그 버킷이고,
+  `findSchedulerClaimablePoolsForUpdate`에는 없어 두 경로의 후보 집합 정의가 달랐다.
+- `docs/05` 매칭 흐름 3번은 이미 "Scheduler가 eligible pool entry를 조회한다"였다.
+  즉시 경로는 정책 문서에 없었다. 이번 작업은 새 정책 도입이 아니라 코드를 문서에 맞추는 것이다.
+
+### 원인을 하나로 단정하지 않았다
+
+관찰된 현상은 위 구조로 설명되지만, 그것이 임베딩 생성·저장·조회가 정상이라는 증명은 아니다.
+`PairCompatibilityScorer.scoreDetailed()`는 한쪽이라도 임베딩이 없으면 **경고 없이** Jaccard
+점수만 쓰고 `embedding_applied = false`로 남긴다(`EmbeddingScorer.score()`가 null 반환).
+즉 참가자 일부의 임베딩이 `COMPLETED`가 아니었어도 같은 증상이 나온다. 두 가설은 배타적이지
+않다. 그래서 검증을 두 개로 나눠 `docs/30` 7절에 남겼다. 이번 변경은 구조 쪽만 해소한다.
+
+### 변경
+
+| 구분 | 내용 |
+| --- | --- |
+| 삭제 (main) | `MatchingPoolEnteredEvent`, `MatchingPoolEnteredEventHandler`, `PoolEntryMatchingOrchestrationService`, `PoolEntryMatchPoolClaimService` |
+| 삭제 (repository) | `findPoolEntryClaimablePoolsForUpdate` 67줄 — `preferred_group_size` 버킷 필터가 함께 사라졌다 |
+| 수정 | `MatchPoolEntryService` 이벤트 발행 제거, `MatchPoolCheckinCancellationService` 주석 참조 정리 |
+| 유지 | `MatchAttempt.CREATED_BY_POOL_ENTRY` 상수와 `V3` CHECK 제약 — 기존 attempt에 `POOL_ENTRY` 값이 남아 있어 제거하면 조회가 깨진다. migration은 추가하지 않았다 |
+| 설정 | `application.yml`의 `MATCHING_SCHEDULER_ENABLED` 기본값 `false` → `true` |
+| 설정 | `.env.dev.example`, `.env.prod.example`의 `MATCHING_SCHEDULER_FIXED_DELAY` `5s` → `10s` |
+
+`application.yml`의 `fixed-delay` 기본값은 `5s`로 두었다. 승인 범위에 없던 변경이라 건드리지
+않았다. 환경변수를 주지 않는 로컬만 5초 창으로 돈다.
+
+### 기본값을 true로 바꾼 이유
+
+`MATCHING_SCHEDULER_ENABLED`는 `@ConditionalOnProperty(havingValue = "true")`로 스케줄러
+3개(`MatchingScheduler`, `MatchProposalTimeoutScheduler`, `MatchMeetingCloseScheduler`)를
+함께 켜고 끈다. 즉시 경로가 없어진 뒤 이 값이 `false`면 매칭이 성사되지 않고, proposal이
+닫히지 않아 회원 pool이 `PROPOSED`에 남아 재신청까지 막힌다. 테스트 32개 파일이
+`app.matching.scheduler.enabled=false`를 직접 지정하고 있어 기본값 변경에 영향받지 않는다.
+
+### 테스트
+
+`MatchGroupComposerTest`에 임베딩을 넣는 케이스가 **하나도 없었다.** 이번 버그가 아무도 모르게
+존재할 수 있었던 이유다. 3건을 추가했다.
+
+| 테스트 | 검증 |
+| --- | --- |
+| `태그가_같고_희망_인원이_2명이면_코사인이_가장_높은_pair를_고른다` | 후보 3명, 태그 고정, 임베딩만 다름 → 코사인 최고 pair 선택, 1명 남음. **이번 변경의 회귀 방지선** |
+| `전원이_3인을_허용하면_궁합_점수보다_인원_수가_먼저다` | 인원 우선 규칙을 별도로 고정 |
+| `임베딩_미보유_후보가_섞여도_조합에서_제외하지_않는다` | fallback 후보도 조합 대상 |
+
+첫 번째 테스트는 희망 인원을 전원 2명으로 고정하는 것이 전제다. 3인을 허용하면 인원 우선
+규칙이 먼저 걸려 점수 검증이 되지 않는다. fallback 단위 검증은
+`PairCompatibilityScorerTest`에 이미 있어 중복하지 않았다.
+
+삭제한 테스트 5건:
+
+- `MatchingPoolEnteredEventHandlerTest`, `MatchingPoolEnteredEventIntegrationTest`,
+  `MatchingPoolEnteredAfterCommitTransactionIntegrationTest`
+- `PoolEntryMatchingOrchestrationServiceTest`, `PoolEntryMatchingOrchestrationServiceIntegrationTest`
+  — 스케줄러 경로 테스트(`MatchingOrchestrationServiceTest`,
+  `MatchingOrchestrationServiceIntegrationTest`, `SchedulerMatchPoolClaimServiceIntegrationTest`,
+  `MatchPoolClaimServiceIntegrationTest`)가 이미 같은 경로를 덮고 있어 흡수할 것이 없었다.
+
+`MatchingThreeMemberScenarioIntegrationTest`에서 pool entry 경로 테스트를 걷어내고 클래스
+주석을 고쳤다. `MatchingSchedulerPropertiesTest`는 `enabled` 기본값 `false`를 단정하고
+있어 `true`로 고쳤고, override 검증은 기본값과 같은 방향이면 증명이 되지 않으므로 `false`
+방향으로 바꿨다.
+
+### 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| `docs/02` | "매칭 Scheduler 플래그" 절 신설 — 플래그 하나가 켜고 끄는 스케줄러 3개, `false`의 실제 영향, `fixed-delay` 주기별 영향 표 |
+| `docs/05` | 후보 수집 주기 추가, "조합 경로는 scheduler 하나뿐이다", "궁합 점수가 결과를 바꾸는 조건" — 임계값이 없다는 점과 그 결과를 정책 한계로 명시 |
+| `docs/30` | 7절 신설 — 취향 임베딩 검증 2건(정상 여부 / 선택 반영 여부), 희망 인원 2명 고정 전제, 과대 해석 금지 |
+| `docs/32` | 항목 G 추가와 10절 |
+
+### 남은 한계
+
+수집 주기는 후보가 모일 **기회**를 주지만 보장하지 않는다. 그 시간에 두 명만 모이면 여전히 그
+둘이 매칭된다. 밀도의 한계가 아니라 **임계값 없이 지금 가능한 조합을 즉시 선택하는 현재 정책의
+결과**다. 임계값이나 "더 나은 상대를 기다리는" 정책을 두면 후보가 적을 때 선택을 유보할 수
+있으나 둘 다 이번 범위가 아니다. 실사용 점수 분포를 확보한 뒤 판단한다.
+
+임베딩 코사인은 **입력한 취향 문장의 의미적 유사도**이고 실제 궁합이나 만남 만족도를 검증한
+점수가 아니다. 만족도와의 관계 검증(후속 경로 후보: `member_reviews`·매너온도 변화와 당시
+`match_attempt_members.cosine_score`의 상관)은 이번 범위가 아니다.
+
+### 다음
+
+`docs/30` 7절의 선행 검증 2건이 남아 있다. 검증 1은 dev DB 터널이 필요하고, 검증 2는 테스터
+3명 이상이 같은 수집 주기 안에 신청해야 한다. 운영 7단계 실기기 검증은 이 작업과 무관하게
+별도로 남아 있다.

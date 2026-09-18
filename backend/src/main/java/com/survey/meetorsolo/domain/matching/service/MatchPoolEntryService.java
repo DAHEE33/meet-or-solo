@@ -5,7 +5,6 @@ import com.survey.meetorsolo.domain.festival.repository.FestivalMeetingPointRepo
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
-import com.survey.meetorsolo.domain.matching.event.MatchingPoolEnteredEvent;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
@@ -19,7 +18,6 @@ import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,7 +31,6 @@ public class MatchPoolEntryService {
     private final MatchGroupMemberRepository groupMembers;
     private final MatchGroupRepository groups;
     private final MatchCompletionLockPolicy completionLocks;
-    private final ApplicationEventPublisher eventPublisher;
     private final FestivalMeetingPointRepository meetingPoints;
 
     public MatchPoolEntryService(
@@ -44,7 +41,6 @@ public class MatchPoolEntryService {
             MatchGroupMemberRepository groupMembers,
             MatchGroupRepository groups,
             MatchCompletionLockPolicy completionLocks,
-            ApplicationEventPublisher eventPublisher,
             FestivalMeetingPointRepository meetingPoints
     ) {
         this.clock = clock;
@@ -54,7 +50,6 @@ public class MatchPoolEntryService {
         this.groupMembers = groupMembers;
         this.groups = groups;
         this.completionLocks = completionLocks;
-        this.eventPublisher = eventPublisher;
         this.meetingPoints = meetingPoints;
     }
 
@@ -106,12 +101,13 @@ public class MatchPoolEntryService {
                 now.plusSeconds(60)
         );
         try {
+            // 조합은 scheduler tick에서만 수행한다(docs/05 매칭 흐름 3번).
+            //
+            // 예전에는 여기서 MatchingPoolEnteredEvent를 발행해 신청 커밋 직후 즉시 조합했다.
+            // 그러면 유효한 조합이 처음 생기는 순간 바로 소진돼 대기 후보가 2명을 넘지 못했고,
+            // 조합이 1개뿐이라 궁합 점수가 순위에 개입할 수 없었다. 결과적으로 취향 임베딩이
+            // 매칭 결과를 바꾸지 못하고 먼저 신청한 사람끼리 묶였다.
             MatchPool savedPool = pools.saveAndFlush(pool);
-            eventPublisher.publishEvent(new MatchingPoolEnteredEvent(
-                    savedPool.getId(),
-                    savedPool.getMemberId(),
-                    savedPool.getFestivalId()
-            ));
             return MatchPoolResponse.from(savedPool);
         } catch (DataIntegrityViolationException exception) {
             throw new BusinessException(ErrorCode.MATCHING_CONFLICT, "이미 진행 중인 match pool이 있습니다.");
