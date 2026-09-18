@@ -6740,3 +6740,65 @@ Testcontainers 기반 backend 통합 테스트는 실행하지 않았다. 공유
 
 `codex/prod-environment` → `dev` PR, `dev` 검증 후 `dev` → `main` PR.
 push와 PR 생성은 아직 하지 않았다.
+
+## [운영 환경 4단계 완료] 운영 설정을 main에 반영
+
+브랜치 흐름: `codex/prod-environment` → `dev`(PR #79) → `main`(PR #80)
+
+운영 환경 구성 파일이 운영 기준 브랜치 `main`에 반영됐다.
+**실제 운영 배포는 하지 않았다.** 5단계에서 수동으로 진행한다.
+
+### 병합 결과
+
+| 항목 | 값 |
+| --- | --- |
+| `origin/main` | `fac9eea` Merge pull request #80 from DAHEE33/dev |
+| `origin/dev` | `8b25ba0` Merge pull request #79 |
+| 병합 규모 | 239 커밋. `main`의 직전 커밋이 `chore: dev 브랜치 자동 배포 설정`이라 사실상 `main`의 첫 실질 반영이다 |
+
+`main`에 운영 설정이 전부 들어간 것을 확인했다 — compose, nginx 설정 2종,
+`.env.prod.example`, 스크립트 4종, `.gitattributes`, `application-prod.yml`,
+`frontend/.env.production.example`. migration은 `V40`, 파일 40개로 변동이 없다.
+
+### 의도하지 않은 배포가 없음을 확인
+
+workflow 파일은 `ci.yml`과 `deploy-dev.yml` 둘뿐이다.
+
+| workflow | 트리거 | main 병합 시 |
+| --- | --- | --- |
+| `ci.yml` | push/PR → `dev`, `main` | 실행됨. 빌드만 하고 서버에 접속하지 않는다 |
+| `deploy-dev.yml` | push → `dev` **만** | 실행되지 않는다 |
+| 운영 배포 workflow | — | **존재하지 않는다** |
+
+즉 `main` 병합으로 어떤 서버도 바뀌지 않았다.
+
+### 검증 상태 — 무엇이 확인됐고 무엇이 아닌지
+
+**확인됨**: `Deploy Dev` workflow 성공(#79 병합 커밋), backend 컴파일,
+frontend `tsc -b`·테스트 797건·운영 빌드, `docker compose config`, `nginx -t`,
+`bash -n` 4건, `test-restore-prod-db.sh` 40건, 필수 환경변수 누락 0건.
+
+**아직 확인되지 않음**
+
+| 항목 | 이유 |
+| --- | --- |
+| **dev 사이트 수동 기능 확인** | 자동 배포 성공만 확인했다. 로그인·매칭·체크인 등 실제 동작은 아직 확인하지 않았다 |
+| **backend 통합 테스트(Testcontainers)** | 공유 dev DB에 연결하지 않는다는 작업 경계 때문에 미실행 |
+| 운영 환경 실제 기동 | 운영 DB·컨테이너를 만들지 않았다 |
+
+"배포 파이프라인이 통과했다"와 "기능이 동작한다"는 다른 말이다. 5단계 전에 dev에서
+수동 확인을 한 번 하는 편이 낫다.
+
+### 서버 상태
+
+3단계에서 준비한 그대로다. `/home/ubuntu/meet-or-solo-prod/`에 폴더 구조와 `.env`(600,
+자리표시자 0개), 운영 스크립트 3종이 있고 `/home/ubuntu/backups/meet-or-solo-prod/`(700)가
+있다. 운영 DB와 컨테이너는 아직 없다.
+
+**서버 `.env`에 추가할 항목은 없다.** 최신 코드에 새 환경변수·스케줄러·migration이 없다.
+
+### 다음
+
+5단계에서 `main` 기준으로 첫 배포를 **수동으로 1회** 한다.
+절차는 [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차'를 따른다.
+운영 CD는 그 절차가 성공한 뒤에 만든다.
