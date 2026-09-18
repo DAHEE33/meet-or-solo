@@ -18,6 +18,16 @@ describe('MyPage', () => {
     expect(html).toContain('href="/mypage/blocks"');
   });
 
+  /**
+   * 회귀 방지: 마이페이지에 소셜 계정으로 관리자 화면에 들어가는 링크가 있었다.
+   * 관리자 진입은 `/admin/login`의 로컬 계정 하나로만 연다(서버도 같이 막는다).
+   */
+  it('관리자 기능 진입 링크를 그리지 않는다', () => {
+    const html = renderToStaticMarkup(<MemoryRouter><MyPage /></MemoryRouter>);
+    expect(html).not.toContain('관리자 기능');
+    expect(html).not.toContain('href="/admin"');
+  });
+
   it('로그아웃은 링크가 아니라 API를 호출하는 button으로 그린다', () => {
     // jsdom이 없어 클릭을 재현할 수 없으므로 마크업 수준에서 navigate 전용 link가 아님을 확인한다.
     // 실제 호출 계약은 api/auth.test.ts가 검증한다.

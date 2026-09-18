@@ -25,8 +25,9 @@ export type AdminMemberDetail = AdminMemberListItem & {
   /** 관리자 매너온도 수동 조정 이력. 제재 이력과 성격이 달라 목록을 나눠 둔다(docs/19 4.9). */
   mannerTemperatureAdjustments: Array<{ actionId: number; beforeTemperature: number; afterTemperature: number; reasonCode: AdminMemberActionReasonCode; reasonNote: string | null; createdAt: string }>;
 };
+/** 역할(USER/ADMIN) 조건은 없다. 서버가 관리자 계정을 항상 빼고 내린다. */
 export type AdminMemberFilters = {
-  query: string; status: AdminMemberStatus | ''; role: 'USER' | 'ADMIN' | '';
+  query: string; status: AdminMemberStatus | '';
   /** true면 테스트 계정만 조회한다. false는 "제외"가 아니라 "조건 없음"이다. */
   testAccount: boolean;
 };
@@ -68,7 +69,6 @@ function query(filters: AdminMemberFilters, cursor: string | null, size: number)
   const value = new URLSearchParams();
   if (filters.query) value.set('query', filters.query);
   if (filters.status) value.set('status', filters.status);
-  if (filters.role) value.set('role', filters.role);
   if (filters.testAccount) value.set('testAccount', 'true');
   if (cursor) value.set('cursor', cursor);
   value.set('size', String(size));

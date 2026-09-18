@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { adminMembersApi, type AdminMemberActionRequest, type AdminMemberDetail, type AdminMemberFilters, type AdminMemberForcedWithdrawalRequest, type AdminMemberListItem, type AdminMemberMannerTemperatureRequest, type AdminMemberPage, type AdminMemberTestAccountRequest } from '../api/adminMembers';
 
-export const EMPTY_ADMIN_MEMBER_FILTERS: AdminMemberFilters = { query: '', status: '', role: 'USER', testAccount: false };
+export const EMPTY_ADMIN_MEMBER_FILTERS: AdminMemberFilters = { query: '', status: '', testAccount: false };
 export type AdminMembersState = {
   status: 'LOADING' | 'READY' | 'ERROR'; items: AdminMemberListItem[]; filters: AdminMemberFilters;
   pageIndex: number; hasNext: boolean; detail: AdminMemberDetail | null; selectedMemberId: number | null;

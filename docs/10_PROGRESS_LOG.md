@@ -6803,3 +6803,69 @@ migration 없음(기존 테이블만 읽는다). `SecurityConfig`·`WebMvcConfig
   전부 Docker 미설치로 인한 통합 테스트 환경 실패다(41개 클래스 전수 확인, 다른 원인 0건).
   `AdminDashboardIntegrationTest`도 같은 이유로 로컬에서 실행되지 않았다 — **DB가 있는
   환경에서 확인이 필요하다.**
+
+## [관리자] 진입 경로 일원화와 회원 목록 역할 filter 제거, 메뉴 순서 변경
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+설계 갱신: `docs/30-2_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md` 8절
+
+사용자 요청 3건을 한 번에 처리했다. 세 건이 같은 흐름에서 나왔다 — 관리자 계정이 로컬
+하나로 정리되면 역할로 걸러 볼 이유가 사라진다.
+
+### 1. SSO 관리자 진입 제거 (서버까지)
+
+| 계층 | 변경 |
+| --- | --- |
+| `AdminAuthorizationService` | `role='ADMIN'` + `provider='LOCAL'`을 함께 요구한다 |
+| `FestivalMeetingPointAdminService` | 자체 `requireAdmin`을 없애고 공통 서비스에 위임한다 |
+| `MyPage` | "관리자 기능" 링크와 `GET /api/admin/me` 조회를 제거한다 |
+
+- **화면만 막지 않았다.** 링크를 지워도 URL을 아는 사람은 그대로 들어온다. 소셜 계정에
+  `role='ADMIN'`을 붙이면 관리자 화면이 열리는 상태가 남으면 경로를 없앴다고 할 수 없다.
+- **`FestivalMeetingPointAdminService`에 구멍이 있었다.** 이 서비스만 자체 `requireAdmin`을
+  갖고 있어 역할만 보고 통과시켰다. 공통 판정으로 옮기지 않았으면 소셜 관리자가 만남 장소를
+  그대로 고칠 수 있었다. 제재 판정(`requireAccessible`)이 함께 걸리는 것도 이득이다.
+- **사유를 갈라 알리지 않는다.** 소셜 ADMIN도 일반 회원과 같은 `403 FORBIDDEN`이다. 구분하면
+  어느 계정이 관리자 역할을 갖고 있는지가 응답으로 드러난다.
+
+### 2. 회원 목록 역할 filter 제거
+
+`/admin/members`의 USER/ADMIN select를 없앴다. 요청·필터·cursor fingerprint에서 `role`을 걷어냈다.
+
+**관리자를 목록에서 빼는 조건은 서버로 옮겼다.** `AdminMemberRepository.findPage`가 항상
+`role='USER'`를 건다. 화면 filter의 기본값이 이미 `USER`여서 관리자 계정은 원래 보이지
+않았는데, filter만 지우면 관리자 계정이 목록에 새로 나타난다. 그건 filter 제거가 의도한
+변화가 아니고, 관리자는 제재·매너온도 조정 대상도 아니라 목록에 둘 이유가 없다.
+
+목록 행의 `{role} · {status}` 표기에서도 role을 뺐다. DTO의 `role`은 남겼다 — 회원 상세의
+제재 버튼이 `role === 'USER'`로 노출을 가르는 안전장치다.
+
+### 3. 관리자 메뉴 순서
+
+`대시보드 → 신고 → 회원 → 만남 장소 → 문의`를
+**`대시보드 → 회원 → 만남 장소 → 문의 → 신고`**로 바꿨다.
+
+### 통합 테스트 fixture 수정
+
+관리자 자격에 provider 조건이 생기면서, `provider='KAKAO'`로 관리자를 만들던 통합 테스트가
+전부 403이 된다. 5개 클래스의 fixture를 `LOCAL`로 고쳤다(`AdminMemberIntegrationTest`,
+`MemberWithdrawalIntegrationTest`는 helper가 role을 보고 provider를 고르게, 나머지 3개는
+`UPDATE ... SET role='ADMIN', provider='LOCAL'`).
+
+### 테스트
+
+- Backend: `AdminAuthorizationServiceTest`에 "소셜 계정은 ADMIN 역할이어도 403" 1건 추가(6건),
+  `FestivalMeetingPointAdminServiceTest`를 공통 판정 위임에 맞게 수정(2건).
+  `AdminMemberIntegrationTest`의 `list` 호출 4곳에서 role 인자 제거.
+- Frontend: `AdminNav.test.ts`에 메뉴 순서 1건 추가, badge 순서 기대값 수정.
+  `MyPage.test.tsx`에 "관리자 기능 링크를 그리지 않는다" 1건 추가(회귀 방지).
+  `adminMembers.test.ts`·`useAdminMembers.test.ts`에서 role filter 제거.
+- 회귀: frontend **813건 전체 통과**, `tsc -b` 통과. backend 748건 중 35건 실패인데
+  **전부 Docker 미설치로 인한 컨테이너·컨텍스트 로드 실패다**(실패 메시지 전수 확인, 다른 원인 0건).
+
+### 확인이 필요한 것
+
+`provider='LOCAL'` 조건은 통합 테스트로만 실제 검증되는데 이 PC에서는 돌지 않는다.
+**dev 배포 후 `/admin/login` 로그인이 여전히 되는지 한 번 확인해야 한다.** 운영/dev DB의
+관리자 계정이 소셜 계정이라면 그 계정은 더 이상 관리자 화면에 들어갈 수 없다 —
+`ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`로 만든 계정이 있는지 먼저 봐야 한다.

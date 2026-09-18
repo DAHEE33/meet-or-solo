@@ -3,10 +3,9 @@ package com.survey.meetorsolo.domain.festival.service;
 import com.survey.meetorsolo.domain.festival.dto.*;
 import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPoint;
 import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
+import com.survey.meetorsolo.domain.admin.service.AdminAuthorizationService;
 import com.survey.meetorsolo.domain.festival.repository.FestivalMeetingPointRepository;
 import com.survey.meetorsolo.domain.festival.repository.FestivalRepository;
-import com.survey.meetorsolo.domain.member.entity.Member;
-import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
 import java.util.List;
@@ -15,13 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class FestivalMeetingPointAdminService {
-    private final MemberRepository members;
+    private final AdminAuthorizationService authorization;
     private final FestivalRepository festivals;
     private final FestivalMeetingPointRepository points;
 
-    public FestivalMeetingPointAdminService(MemberRepository members, FestivalRepository festivals,
-            FestivalMeetingPointRepository points) {
-        this.members = members;
+    public FestivalMeetingPointAdminService(AdminAuthorizationService authorization,
+            FestivalRepository festivals, FestivalMeetingPointRepository points) {
+        this.authorization = authorization;
         this.festivals = festivals;
         this.points = points;
     }
@@ -72,12 +71,15 @@ public class FestivalMeetingPointAdminService {
         return point;
     }
 
+    /**
+     * 자체 구현 대신 공통 {@link AdminAuthorizationService}에 맡긴다.
+     *
+     * <p>여기에만 검사를 따로 두면 관리자 자격 규칙이 갈라진다. 실제로 관리자 진입을
+     * 로컬 계정으로 한정할 때 이 경로만 열려 있었다 — 소셜 계정에 role만 올리면
+     * 만남 장소를 그대로 고칠 수 있었다. 제재 판정이 함께 걸리는 것도 이득이다.
+     */
     private void requireAdmin(long adminId) {
-        Member member = members.findById(adminId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-        if (!Member.ROLE_ADMIN.equals(member.getRole())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN);
-        }
+        authorization.requireAdmin(adminId);
     }
 
     private BusinessException notFound() {
