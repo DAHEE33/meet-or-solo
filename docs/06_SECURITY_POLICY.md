@@ -45,6 +45,29 @@ Nginx /    -> frontend static dist
 - backend `8080`
 - 추후 Redis 도입 시 Redis port
 
+### dev/prod 동시 운영 시 포트 경계
+
+같은 Oracle VM에서 `dev`와 `prod`를 함께 띄웁니다. 포트 정책은 두 환경이 다릅니다.
+
+| 대상 | dev | prod |
+| --- | --- | --- |
+| compose nginx | `18080` (모든 인터페이스) | `127.0.0.1:28080` (**loopback 전용**) |
+| backend `8080` | publish 없음 | publish 없음 |
+| PostgreSQL | `127.0.0.1:15432` (SSH tunnel용) | **publish 없음** |
+
+- 운영 compose nginx는 반드시 loopback에만 바인딩합니다. `0.0.0.0`으로 열면 TLS와 초기 접근 제한을 건너뛴 평문 경로가 외부에 생깁니다.
+- 운영 DB는 평소 host 포트를 열지 않습니다. 관리자 접속은 컨테이너 내부 `psql`을 우선하고, GUI 도구가 꼭 필요하면 `127.0.0.1:25432`로 임시 publish한 뒤 SSH tunnel로 접속하고 작업 후 다시 닫습니다.
+- Oracle Cloud Ingress에 `25432`를 열지 않습니다.
+
+### 미완성 서비스의 초기 접근 제한
+
+운영 도메인은 기능이 완성될 때까지 기본적으로 닫아 둡니다.
+
+- 호스트 nginx의 `auth_basic`으로 접근을 제한합니다(`infra/nginx/host-https.prod.conf.example`).
+- `X-Robots-Tag: noindex, nofollow`를 함께 둡니다. 검색 노출만 막는 장치이고 접근 제한의 대체가 아닙니다.
+- `/.well-known/acme-challenge/`는 인증 없이 열어 둬야 인증서 갱신이 됩니다.
+- Basic Auth를 켠 상태에서는 PWA 설치, Service Worker 등록, Web Push가 인증 뒤에서 동작합니다. 그 상태의 검증 결과를 공개 상태의 결과로 간주하지 않습니다. 공개 전환 시 같은 항목을 다시 확인합니다.
+
 ## Secret 처리
 
 하드코딩 금지:
@@ -65,6 +88,33 @@ YOUR_SERVER_IP
 YOUR_SSH_USER
 YOUR_SECRET_NAME
 ```
+
+### dev와 prod Secret 분리
+
+같은 VM에서 두 환경이 돌기 때문에 Secret을 공유하면 개발 환경에서 유출된 값 하나로 운영 데이터까지 열립니다. 아래는 **운영용으로 새로 만듭니다.**
+
+```text
+POSTGRES_PASSWORD / DB_PASSWORD
+JWT_SECRET
+PROFILE_ENCRYPTION_KEY
+ADMIN_REPORT_CURSOR_HMAC_SECRET
+ADMIN_LOCAL_PASSWORD
+WEB_PUSH_VAPID_PUBLIC_KEY / WEB_PUSH_VAPID_PRIVATE_KEY
+```
+
+외부 서비스 키는 성격에 따라 판단이 다릅니다.
+
+| 키 | 분리 필요 | 이유 |
+| --- | --- | --- |
+| Kakao / Naver OAuth | **필요** | redirect URI가 애플리케이션에 등록된 값과 정확히 같아야 합니다. 한 애플리케이션에 두 URI를 등록해 공유할 수도 있지만, 그러면 개발 쪽 설정 실수가 운영 로그인에 바로 영향을 줍니다 |
+| Kakao Maps JavaScript 키 | **권장** | 허용 도메인 목록으로 통제되는 키입니다. 운영 도메인만 등록한 키를 따로 두면 유출 시 영향 범위가 좁아집니다 |
+| TourAPI(한국관광공사) | 공유 가능 | 도메인 개념이 없고 일일 호출 한도만 있습니다. 다만 dev와 운영이 같은 한도를 나눠 쓰므로 동기화 주기 설계에 반영합니다 |
+| OpenAI | 권장 | 사용량과 비용을 운영/개발로 나눠 보기 위해서입니다 |
+| OCI Object Storage | 키는 공유 가능 | 다만 `OCI_OBJECT_STORAGE_PROFILE_PREFIX`는 반드시 나눕니다. 같은 prefix면 개발 업로드가 운영 파일과 섞입니다 |
+
+> ⚠ **현재 상태**: 운영은 dev와 **같은 OAuth 애플리케이션을 공유**하고 있습니다. 운영 Redirect URI를 기존 앱에 추가하는 방식으로 시작했습니다. 그동안은 dev 앱의 Redirect URI 목록을 정리하거나 Client Secret을 재발급하면 **운영 로그인이 함께 끊깁니다.** 공개 전에 운영 전용 애플리케이션으로 분리합니다.
+
+`PROFILE_ENCRYPTION_KEY`는 운영 데이터를 쓰기 시작하면 교체할 수 없습니다. 바꾸면 기존 암호화 데이터를 복호화할 수 없습니다. Web Push VAPID 키를 교체하면 기존 구독이 전부 무효가 되어 사용자가 다시 권한을 허용해야 합니다.
 
 ## GitHub Secrets
 

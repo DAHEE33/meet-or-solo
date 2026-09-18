@@ -81,13 +81,24 @@ profile 기준:
 
 - `local`: 각 팀원의 개인 PC에서 Docker PostgreSQL로 개발하고 빠르게 확인하는 환경이다.
 - `dev`: Oracle Cloud VM에 배포하는 개발/시연용 공유 환경이다.
-- `prod`: 추후 제출/운영 단계에서 별도 DB, 별도 도메인, 별도 디렉터리 또는 외부 DB 서비스로 분리할 운영 후보 환경이다.
+- `prod`: 같은 Oracle Cloud VM에서 `dev`와 **분리해 함께 운영**하는 환경이다. 별도 앱 경로, 별도 DB와 계정, 별도 도메인, 별도 compose project를 쓴다.
 
 `local`은 개인 개발 편의를 위해 `application-local.yml`에 fallback 기본값을 둘 수 있습니다.
 
 `dev`와 `prod`는 서버 환경이므로 환경변수 주입을 원칙으로 합니다. 실제 DB URL, 계정, 비밀번호, 서버 IP, 도메인은 저장소에 기록하지 않습니다.
 
-현재는 Oracle Cloud VM 리소스와 작업 안정성을 고려해 `dev`만 VM에 배포하는 방향으로 준비합니다. 6단계에서는 실제 서버 접속이나 배포 자동화를 수행하지 않고 dev 서버와 dev DB 구성 기준만 문서화합니다. `prod`는 추후 제출/운영 필요가 생기면 분리합니다. `dev`와 `prod`를 처음부터 같은 VM에서 동시에 띄우지 않습니다.
+초기에는 Oracle Cloud VM 리소스를 고려해 `dev`만 VM에 배포했습니다. 운영 배포 기반이 필요해지면서 같은 VM에 `prod`를 추가하는 방향으로 전환했습니다. 두 환경을 같은 VM에서 함께 띄우되 앱 경로, DB와 계정, 데이터 경로, compose project와 network, host 포트, 로그, 환경변수를 전부 분리합니다.
+
+| 항목 | dev | prod |
+| --- | --- | --- |
+| 앱 경로 | `/home/ubuntu/meet-or-solo` | `/home/ubuntu/meet-or-solo-prod` |
+| compose project | `meet-or-solo-dev` | `meet-or-solo-prod` |
+| 웹 host 포트 | `18080` | `127.0.0.1:28080` |
+| DB | `meet_or_solo_dev` | `meet_or_solo_prod` (별도 계정) |
+| DB host 포트 | `127.0.0.1:15432` | publish 없음. 필요 시 임시로 `127.0.0.1:25432` |
+| 기준 브랜치 | `dev` | `main` |
+
+운영 DB는 빈 DB에서 Flyway migration으로 구성하고 dev DB 전체를 복사하지 않습니다. 운영 배포 구성과 수동 배포 절차는 [docs/07](07_DEPLOYMENT.md)을 따릅니다.
 
 기능 분업 전에 `dev` 서버와 `dev` DB를 구축하는 이유:
 
@@ -101,9 +112,9 @@ Docker Compose 방향:
 
 - `docker-compose.local.yml`: 로컬 PostgreSQL과 개발 편의 구성
 - `infra/docker/docker-compose.dev.yml`: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 dev 배포 초안
-- prod 배포용 docker-compose: 추후 제출/운영 단계에서 dev와 분리해 별도 작성
+- `infra/docker/docker-compose.prod.yml`: 같은 Oracle VM에서 dev와 분리해 운영하는 prod 배포 구성
 
-현재까지는 local PostgreSQL 중심의 최소 구성과 dev 배포 템플릿만 사용합니다. prod docker-compose와 GitHub Actions는 해당 단계에서 별도 승인 후 작성합니다.
+운영 CD(GitHub Actions 자동 배포)는 아직 만들지 않습니다. `main` 기준 수동 배포를 먼저 검증합니다.
 
 dev compose의 nginx는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 host `18080`을 container `80`에 매핑합니다. dev 서버 검증은 `http://<DEV_SERVER_HOST>:18080` 또는 서버 내부 `curl http://localhost:18080/api/health`를 기준으로 합니다.
 
