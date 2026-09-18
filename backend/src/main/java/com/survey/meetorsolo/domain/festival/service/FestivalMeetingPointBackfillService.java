@@ -26,7 +26,6 @@ public class FestivalMeetingPointBackfillService {
     private static final Logger log = LoggerFactory.getLogger(FestivalMeetingPointBackfillService.class);
     private static final int DEFAULT_ASSIGNMENT_ORDER = 0;
     private static final String KAKAO_PLACE_ID_PREFIX = "AUTO-";
-    private static final String DEFAULT_NAME_SUFFIX = " (자동 등록 기본 위치)";
     private static final String DEFAULT_ADDRESS_PLACEHOLDER = "주소 미확인 (관리자 확인 필요)";
     private static final int NAME_MAX_LENGTH = 255; // chk 제약은 없지만 festival_meeting_points.name은 VARCHAR(255)
 
@@ -64,13 +63,14 @@ public class FestivalMeetingPointBackfillService {
         return seeded;
     }
 
+    /**
+     * 축제 제목을 그대로 쓴다. "(자동 등록 기본 위치)" 표시는 관리자 목록 화면에서 사용자에게
+     * 노출되는 이름을 어색하게 만들어 걷어냈다 — 자동 생성 여부는 {@code kakaoPlaceId}의
+     * {@code AUTO-} 접두어로 이미 구분할 수 있다.
+     */
     private String defaultName(Festival festival) {
-        String name = festival.getTitle() + DEFAULT_NAME_SUFFIX;
-        if (name.length() <= NAME_MAX_LENGTH) {
-            return name;
-        }
-        int titleLimit = NAME_MAX_LENGTH - DEFAULT_NAME_SUFFIX.length();
-        return festival.getTitle().substring(0, titleLimit) + DEFAULT_NAME_SUFFIX;
+        String title = festival.getTitle();
+        return title.length() <= NAME_MAX_LENGTH ? title : title.substring(0, NAME_MAX_LENGTH);
     }
 
     private String defaultAddress(Festival festival) {

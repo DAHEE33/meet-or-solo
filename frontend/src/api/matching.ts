@@ -114,7 +114,8 @@ export type MatchCancellationReason =
 
 export type MatchCancellationResult = {
   groupId: number;
-  memberStatus: 'CANCELLED';
+  /** 참여 취소는 'CANCELLED', 먼저 나가기(도착 뒤 이탈)는 'LEFT'를 보낸다. */
+  memberStatus: 'CANCELLED' | 'LEFT';
   groupStatus: 'CONFIRMED' | 'IN_PROGRESS' | 'CANCELLED';
   groupContinues: boolean;
   currentMemberCount: number;
@@ -186,6 +187,12 @@ export type CurrentMatchGroup = {
   festival: MatchGroupFestival;
   meetingPoint?: MatchGroupMeetingPoint | null;
   members: MatchGroupMember[];
+  /**
+   * 도착자 2명 이상으로 만남이 성립했었는지. 이탈해 `members`(활성 참여자)에서 빠진 사람도
+   * 포함해서 서버가 판정한 값이다. 화면에서 `members`만으로 다시 세면, 혼자 남은 사람은
+   * 상대가 나가자마자 "만남 성립 전"으로 잘못 보인다.
+   */
+  meetingHeld: boolean;
 };
 
 export type MatchGroupEventType =
