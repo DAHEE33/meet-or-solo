@@ -6674,3 +6674,69 @@ Oracle VM에 운영 공간을 만들고 `.env`를 채웠다. **컨테이너·DB�
 **수동으로 1회** 한다. 운영 CD는 그 절차가 성공한 뒤에 만든다 — 처음에는 DB 초기화,
 Flyway 40개 적용, nginx 연결, 인증서에서 막힐 곳이 많은데 자동화 안에서 깨지면 로그만으로
 원인을 찾아야 한다.
+
+## [운영 환경 4-1단계] 운영 설정 커밋과 최신 dev 통합
+
+브랜치: `codex/prod-environment`
+
+### 커밋
+
+3단계까지 만든 운영 설정 16개 파일을 커밋했다(`feat(infra): 운영(prod) 환경 구성 파일과
+운영 스크립트 추가`). 커밋 전에 실제 도메인·IP·키·관리자 계정·이메일 패턴을 전수 검사해
+저장소에 들어갈 값이 전부 placeholder인지 확인했다. `.env`, `frontend/.env.local`,
+`frontend/.env.production`, `docs/NEXT_PROMPT.md`, `docs/DONE_PROMPT.md`가 모두
+`.gitignore` 대상임을 확인하고 `git add`에 파일을 하나씩 명시했다.
+
+`.gitattributes`에 `*.conf.example` 규칙을 추가했다. `host-https.prod.conf.example`이
+`*.conf`에 걸리지 않아 CRLF로 checkout될 상태였다. 서버로 복사되는 파일이다.
+
+### origin/dev 통합
+
+`origin/dev`에 4개 커밋이 새로 들어와 있었다(PR #78).
+
+| 변경 | 내용 |
+| --- | --- |
+| backend | 매칭 오류 수정(`MatchGroupQueryService`, `MatchGroupResponse`, `MatchGroupMemberRepository`), 만남장소 자동생성 네이밍(`FestivalMeetingPointBackfillService`) |
+| frontend | `useMatchRoom`, `MatchRoomPage`, `api/matching.ts` |
+| docs | `docs/24` |
+
+**충돌 없이 병합됐다.** 운영 설정 작업이 건드린 파일(`infra/`, `scripts/`,
+`application-prod.yml`, `docs/02·06·07·10`)과 겹치는 부분이 없었다.
+
+### 새 코드와 운영 설정 대조
+
+| 확인 | 결과 |
+| --- | --- |
+| 기본값 없는 필수 환경변수가 prod compose에 있는가 | 누락 0건 |
+| `application*.yml`이 바뀌었는가 | 변경 없음 → 새 환경변수 없음 |
+| 새 `@Scheduled`가 추가됐는가 | 없음 → 스케줄러 설정 그대로 |
+| DB migration | `V40`이 최신, 파일 40개. **새 migration 없음** |
+| frontend `VITE_*` | 4개 그대로. `.env.production.example`이 이미 전부 다룸 |
+
+**서버 `.env`에 추가할 항목이 없다.** 3단계에서 채운 값이 최신 코드에 그대로 유효하다.
+
+### 검증 (DB 연결·migration 실행 없음)
+
+- backend `compileJava`, `compileTestJava` 통과
+- frontend `tsc -b` 통과, `vitest run` **797건 전부 통과**(84 파일)
+- frontend 운영 빌드 통과. PWA `injectManifest`, precache 7 entries
+- `docker compose config` 통과(dummy env 사용, 실제 Secret 미사용)
+- `nginx -t` 통과(`default.prod.conf`)
+- `bash -n` 3건 통과, `test-restore-prod-db.sh` **40건 전부 통과**
+- 스크립트 3종 CR 0
+
+Testcontainers 기반 backend 통합 테스트는 실행하지 않았다. 공유 dev DB에 연결하지 않는다는
+이번 작업 경계 때문이다.
+
+### 최신 수치
+
+| 항목 | 이전 기록 | 현재 |
+| --- | --- | --- |
+| `origin/main` → `origin/dev` | 231 커밋 | **235 커밋** |
+| 작업 브랜치 → `origin/main` | — | **237 커밋** |
+| migration 최신 | `V40` | **`V40` (변동 없음)** |
+
+### 다음
+
+`codex/prod-environment` → `dev` PR, `dev` 검증 후 `dev` → `main` PR.
+push와 PR 생성은 아직 하지 않았다.
