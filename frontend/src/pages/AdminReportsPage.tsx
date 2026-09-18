@@ -4,6 +4,10 @@ import AdminHeader from '../components/admin/AdminHeader';
 import AdminNav from '../components/admin/AdminNav';
 import AdminSafetyAlertSection from '../components/admin/AdminSafetyAlertSection';
 import {
+  ADMIN_REPORT_REASON_OPTIONS,
+  ADMIN_REPORT_STATUS_OPTIONS,
+  adminReportReasonLabel,
+  adminReportStatusLabel,
   type AdminReportDetail,
   type AdminReportFilters,
   type AdminReportReasonCode,
@@ -14,17 +18,8 @@ import { EMPTY_ADMIN_REPORT_FILTERS, useAdminReports } from '../hooks/useAdminRe
 import { formatSeoulDateTime } from '../utils/dateTime';
 import { LoadingState } from '../components/common/Spinner';
 
-const STATUS_OPTIONS: Array<{ value: AdminReportStatus | ''; label: string }> = [
-  { value: '', label: '전체 상태' }, { value: 'SUBMITTED', label: '접수됨' },
-  { value: 'REVIEWING', label: '검토 중' }, { value: 'RESOLVED', label: '유효 신고' },
-  { value: 'REJECTED', label: '기각' }, { value: 'ACTION_TAKEN', label: '제재 완료' },
-];
-const REASON_OPTIONS: Array<{ value: AdminReportReasonCode | ''; label: string }> = [
-  { value: '', label: '전체 사유' }, { value: 'RUDE', label: '무례한 행동' },
-  { value: 'SEXUAL_HARASSMENT', label: '성희롱' }, { value: 'NO_SHOW', label: '나타나지 않음' },
-  { value: 'SCAM', label: '사기 의심' }, { value: 'SAFETY', label: '안전 문제' },
-  { value: 'OTHER', label: '기타' },
-];
+const STATUS_OPTIONS = ADMIN_REPORT_STATUS_OPTIONS;
+const REASON_OPTIONS = ADMIN_REPORT_REASON_OPTIONS;
 
 export default function AdminReportsPage() {
   const actions = useAdminReports();
@@ -69,8 +64,8 @@ export function toApiFilters(filters: AdminReportFilters): AdminReportFilters {
   return { ...filters, createdFrom: toSeoulOffset(filters.createdFrom), createdTo: toSeoulOffset(filters.createdTo) };
 }
 function toSeoulOffset(value: string): string { return value ? `${value}:00+09:00` : ''; }
-function statusLabel(value: AdminReportStatus): string { return STATUS_OPTIONS.find((option) => option.value === value)?.label ?? value; }
-function reasonLabel(value: AdminReportReasonCode): string { return REASON_OPTIONS.find((option) => option.value === value)?.label ?? value; }
+function statusLabel(value: AdminReportStatus): string { return adminReportStatusLabel(value); }
+function reasonLabel(value: AdminReportReasonCode): string { return adminReportReasonLabel(value); }
 
 export function AdminReportDetailDialog({ detail, loading, error, onRetry, onClose, onAction }: { detail: AdminReportDetail | null; loading: boolean; error: Error | null; onRetry: () => void; onClose: () => void; onAction: (target: AdminReportTargetStatus, opener: HTMLButtonElement) => void }) {
   const dialogRef = useRef<HTMLElement>(null);

@@ -6740,3 +6740,66 @@ Testcontainers 기반 backend 통합 테스트는 실행하지 않았다. 공유
 
 `codex/prod-environment` → `dev` PR, `dev` 검증 후 `dev` → `main` PR.
 push와 PR 생성은 아직 하지 않았다.
+
+## [관리자] 대시보드 목업 제거와 실데이터 연결
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+
+`/admin` 대시보드만 마지막까지 목업이었다. `AdminDashboardPage`가
+`data/mock/adminStats.ts`를 그대로 렌더링해, 강원 서비스 화면에 전북 관광지(전주 한옥마을,
+남부시장 야시장)와 고정 숫자(1842명/37건/5211건)가 떠 있었다. 나머지 관리자 화면 4개
+(신고·회원·만남 장소·문의)는 이미 실제 API를 쓰고 있었다.
+
+### 카드별 데이터 소스
+
+| 카드 | 집계 |
+| --- | --- |
+| 총 사용자 | `members`에서 `WITHDRAWN`·`DELETED` 제외 |
+| 오늘 매칭 | `match_groups.confirmed_at >= 오늘 0시(Asia/Seoul)` |
+| 누적 체크인 | `festival_checkins`에서 `CANCELLED` 제외 |
+| 인기 축제 | `festival_checkins`를 축제별로 GROUP BY, 상위 5건 |
+| 신고 / 문의 | `reports`·`inquiries` 각 최근 5건 |
+
+### 설계 판단
+
+- **"인기 관광지"를 "인기 축제"로 바꿨다.** 체크인은 축제에만 기록된다
+  (`festival_checkins.festival_id`). 관광지에는 북마크만 있어 "체크인 기준 인기 관광지"는
+  만들 수 있는 값이 아니었다. 지표(체크인)를 유지하고 대상을 실제 데이터가 있는 축제로 맞췄다.
+- **신고와 문의를 서버에서 합치지 않는다.** 식별자도 상태 enum도 다른 별개 도메인이라
+  합치면 한쪽에만 있는 field가 전부 nullable이 된다. 서버는 두 목록을 따로 내리고,
+  화면이 `mergeRecentIssues`로 최신순 한 목록을 만든다. 시각이 같으면 신고를 앞에 둔다 —
+  두 목록의 id는 서로 비교할 수 없어 tiebreaker가 없고, 순서가 흔들리면 화면이 이유 없이 움직인다.
+- **신고 본문을 내리지 않는다.** `reports.detail_encrypted`는 복호화가 필요한 값이고
+  대시보드는 훑는 자리다. 사유 코드와 대상 닉네임까지만 내리고 상세는 `/admin/reports`로 넘긴다.
+  탈퇴 회원 닉네임은 다른 admin 조회와 같은 `CASE`로 '탈퇴한 회원'으로 가린다.
+- **"오늘"은 달력 날짜다.** 최근 24시간으로 잡으면 오전에 본 숫자에 어제 저녁 건이 섞여
+  날짜별 비교가 안 된다. `Clock` bean이 이미 `Asia/Seoul`이라 경계가 관리자 화면과 일치한다.
+- **오늘 매칭은 취소를 빼지 않는다.** `match_groups` 행은 성사 순간 생기고 `confirmed_at`은
+  이후 바뀌지 않는다. 취소를 빼면 오늘 성사 건수가 저녁에 줄어드는, 누적으로 읽히지 않는 값이 된다.
+- **신고 사유·상태 라벨을 `api/adminReports.ts`로 올렸다.** `AdminReportsPage`에 인라인으로
+  있던 배열을 대시보드가 복사하면 문구가 두 벌이 된다. 문의 쪽 `inquiryCategoryLabel`과 같은 자리다.
+- **재조회 실패는 화면을 비우지 않는다.** 이미 보여 주고 있는 집계가 있으면 직전 값을 유지한다.
+
+### 추가·변경 파일
+
+| 구분 | 파일 |
+| --- | --- |
+| backend 신규 | `domain/admin/dashboard/` (controller·service·repository + DTO 4) |
+| frontend 신규 | `api/adminDashboard.ts`, `hooks/useAdminDashboard.ts`, `utils/adminDashboard.ts` |
+| frontend 변경 | `pages/AdminDashboardPage.tsx`(전면), `pages/AdminReportsPage.tsx`(라벨 참조), `api/adminReports.ts`(라벨 export), `types/index.ts`(`AdminStats`·`AdminReport` 제거) |
+| frontend 삭제 | `data/mock/adminStats.ts` |
+
+migration 없음(기존 테이블만 읽는다). `SecurityConfig`·`WebMvcConfig` 변경 없음 —
+`/api/admin/dashboard/stats`는 다른 관리자 endpoint와 같은 경로 규칙을 탄다.
+
+### 테스트
+
+- Backend 신규 15건: `AdminDashboardServiceTest` 5건(권한 차단, 서울 0시 경계 2건, 집계 전달,
+  조회 건수), `AdminDashboardControllerTest` 3건(401·403·응답 형태),
+  `AdminDashboardIntegrationTest` 7건(집계 SQL).
+- Frontend 신규 14건: `utils/adminDashboard.test.ts` 8건, `AdminDashboardPage.test.tsx` 6건
+  (목업 문자열 회귀 방지 포함).
+- 회귀: frontend **811건 전체 통과**, `tsc -b` 통과. backend 747건 중 76건 실패인데
+  전부 Docker 미설치로 인한 통합 테스트 환경 실패다(41개 클래스 전수 확인, 다른 원인 0건).
+  `AdminDashboardIntegrationTest`도 같은 이유로 로컬에서 실행되지 않았다 — **DB가 있는
+  환경에서 확인이 필요하다.**
