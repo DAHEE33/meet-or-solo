@@ -6509,3 +6509,168 @@ SSO를 유지한 채 `/admin/login` 진입 경로를 하나 더 만들었다. �
 
 `ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`를 환경에 넣고 기동해야 계정이 생긴다.
 dev DB에는 `V37`이 아직 적용되지 않았으므로 다음 기동 때 적용된다.
+
+## [운영 환경 2-2] 운영 설정 파일 작성과 로컬 검증
+
+브랜치: `codex/prod-environment` (커밋 없이 작업)
+구성과 절차: [`docs/07`](07_DEPLOYMENT.md) 'prod 배포 구성' · '운영 수동 배포 절차'
+
+같은 Oracle VM에서 dev를 유지한 채 prod를 추가하기 위한 **설정 파일만** 준비했다.
+**운영 서버 폴더, 운영 DB, 운영 도메인 server block은 아직 만들지 않았다.**
+서버 접속, DB 연결, migration 실행, 배포, 커밋·push·PR은 하지 않았다.
+
+### 만든 것
+
+`infra/docker/docker-compose.prod.yml`, `infra/nginx/default.prod.conf`,
+`infra/nginx/host-https.prod.conf.example`, `infra/env/.env.prod.example`,
+`scripts/backup-prod-db.sh`, `scripts/restore-prod-db.sh`, `.gitattributes`
+
+고친 것: `application-prod.yml`, `frontend/.env.production.example`, `.gitignore`,
+`docs/02`, `docs/06`, `docs/07`
+
+배포 절차·운영 점검·백업/롤백은 새 번호 문서를 만들지 않고 `docs/07`의
+'운영 수동 배포 절차' 절로 흡수했다. 분석 과정과 이번 회차 결과 요약은
+`docs/DONE_PROMPT.md`(gitignore 대상, 매 작업마다 덮어씀)에 둔다.
+
+### 판단 세 가지
+
+- **GPS 우회를 운영에서는 환경변수로 못 켜게 고정했다.** dev compose는
+  `FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK` 기본값이 `true`다. 그 줄을 복사해 오면 운영
+  위치 검증이 통째로 꺼진다. compose에서 변수를 빼는 것만으로는 `.env` 한 줄이면 다시
+  켜지므로, `application-prod.yml`에서 `false`를 **하드코딩**했다.
+- **로그 디렉터리를 마운트하지 않았다.** dev는 `logs/backend`를 마운트했지만 Spring에
+  `logging.file.name`이 없어 비어 있었고, `logs/nginx`는 호스트 logrotate 대상 밖이라
+  회전되지 않았다. 마운트하지 않으면 두 로그가 모두 Docker `json-file`로 가고
+  `max-size 10m` / `max-file 3` 제한이 그대로 적용된다. logrotate 파일이 필요 없어진다.
+- **복원을 스크립트로 만들고 기본 동작을 "검증"으로 뒀다.** `restore-prod-db.sh`는 임시 DB에
+  복원해 테이블 수·Flyway 이력·건수를 보여준 뒤 임시 DB를 지운다. 운영 DB를 덮어쓰려면
+  `--target-prod`와 `RESTORE` 입력이 필요하고, backend가 떠 있으면 거부한다.
+
+### 걸렸던 것
+
+- **`.env.prod.example`이 `.gitignore`의 `.env.*`에 걸려 커밋되지 않는 상태였다.**
+  `!infra/env/.env.prod.example` 예외를 추가했다. `git check-ignore`로 확인하지 않았으면
+  파일을 만들어 두고 계속 없는 줄 몰랐을 것이다.
+- **nginx 검증이 처음에 거짓 통과했다.** Git Bash가 컨테이너 쪽 mount 경로까지 Windows
+  경로로 바꿔 파일이 마운트되지 않았고, nginx가 기본 설정을 검사하고 성공을 돌려줬다.
+  entrypoint 로그의 "Enabled listen on IPv6"가 단서였다 — 그 메시지는 파일이 **패키지
+  기본값과 같을 때만** 나온다. `cygpath -w` + `MSYS_NO_PATHCONV=1`로 다시 검증했다.
+
+### 검증
+
+로컬 정적 검증만 수행했고 실제 Secret 대신 scratchpad의 dummy 값을 썼다.
+
+- `docker compose config` 통과(경고 0건). 포트 `127.0.0.1:28080`, 자원·로그 제한,
+  스케줄러 5종 `true`, GPS 우회 변수 부재를 해석 결과에서 확인했다.
+- healthcheck 명령이 이미지에 실재하는지 직접 확인했다 — `curl`(eclipse-temurin:17-jre-jammy),
+  `wget`(nginx:1.27-alpine), `pg_isready`·`pg_dump`·`pg_restore`(pgvector/pgvector:pg16).
+- `nginx -t` 통과 — `default.prod.conf`, `host-https.prod.conf.example`(Basic Auth 주석/해제 양쪽).
+- `bash -n` 통과, `application-prod.yml` YAML 파싱 통과.
+- 기본값이 없는 환경변수와 compose 전달 목록을 대조해 누락 0건을 확인했다.
+
+미검증: backend 실제 기동, Flyway 적용, 업로드 5MB 통과, WebSocket 101,
+Basic Auth와 OAuth·PWA·Web Push 호환, 백업·복원 실행, 자원 수치 적정성.
+전부 운영 DB·도메인이 있어야 확인되는 항목이라 3단계 이후로 남긴다.
+
+### [운영 환경 2-2 보완] 백업·복원 스크립트 안전장치
+
+브랜치: `codex/prod-environment` (커밋 없이 이어 작업)
+
+첫 판의 `restore-prod-db.sh`에는 **검증 모드가 운영 DB를 지울 수 있는 경로**가 있었다.
+`dropdb --if-exists ${VERIFY_DB}`로 시작했기 때문에, `PROD_RESTORE_VERIFY_DB`가 운영 DB
+이름으로 설정돼 있으면 "검증"을 돌리는 순간 운영 데이터가 사라진다. 이름을 셸 문자열에
+끼워 넣는 방식도 함께 고쳤다.
+
+**검증 모드**
+
+- 컨테이너에서 `POSTGRES_DB`를 읽어 임시 DB 이름과 비교한다. 같으면 **DB 명령을 하나도
+  실행하기 전에** 중단한다. 접두사만 같아도 걸린다.
+- 삭제로 시작하지 않는다. 그 이름의 DB가 이미 있으면 남의 것이므로 건드리지 않고 중단한다.
+- 이름은 실행별로 고유하다(`<prefix>_<타임스탬프>_<PID>`). 동시 실행이 서로를 지우지 않는다.
+- `CREATED` 플래그와 `trap`으로 **이번 실행이 직접 만든 DB만** 정리한다. 복원이 실패하면
+  조사용으로 남기고 이름을 안내한다.
+- DB 이름을 컨테이너 안 `sh -c` 문자열에 삽입하지 않고 위치 인자(`"$1"`)로 넘긴다.
+  이름 자체도 `^[a-z_][a-z0-9_]*$`와 63자 한도로 미리 검증한다.
+
+**운영 복원 모드**
+
+파괴적 명령에 닿기까지 관문이 4개다. ①덤프 TOC → ②임시 DB 복원 검증 → ③운영 DB 사전 백업
+→ ④교체. ①~③ 중 하나라도 실패하면 운영 DB를 손대지 않은 상태로 중단한다. 사전 백업은
+`pre-restore-<타임스탬프>.dump`로 저장하고 TOC까지 확인한 뒤에야 ④로 넘어간다.
+④ 중간 실패 시에는 사전 백업 파일 경로와 되돌리는 명령을 그대로 출력한다.
+기존 `RESTORE` 확인 입력과 backend 정지 확인은 그대로 유지했다.
+
+**`pg_restore --list`에 대한 정정**
+
+"무결성 확인"이라고 적었던 것을 고쳤다. `--list`는 아카이브 헤더와 목차만 읽는다.
+뒤쪽 데이터 블록이 잘려 있어도 통과할 수 있다. 덤프 형식인지 보는 1차 관문일 뿐이고,
+실제 무결성은 임시 DB에 복원해 봐야 안다. 두 스크립트 주석과 `docs/07`에 반영했다.
+`pg_restore --list -`의 `-`도 제거했다 — 입력 파일명을 주지 않으면 표준 입력을 읽고,
+`-`는 파일명으로 해석될 수 있다.
+
+**검증**
+
+`scripts/test-restore-prod-db.sh`를 추가했다. `docker`를 흉내 내는 mock을 PATH 앞에 두고
+호출 로그를 확인한다. 실제 Docker나 PostgreSQL이 필요 없다. 보는 것은 "무엇이 실행됐나"가
+아니라 **"파괴적 명령이 나가면 안 되는 상황에서 나가지 않았나"**다.
+
+9개 시나리오 40건 전부 통과했다 — 이름 충돌(전체·접두사), 기존 DB 존재, TOC 실패,
+빈 덤프, 정상 검증, 연속 실행 이름 중복, 복원 실패 시 보존, 운영 모드 사전 검증 실패,
+사전 백업 실패, 확인 입력 불일치, 정상 운영 복원의 순서(사전 백업 < 운영 DB drop).
+
+`createdb`/`dropdb`가 `--` 옵션 종료자를 받는지도 `pgvector/pgvector:pg16` 이미지에서
+직접 확인했다(옵션 파싱을 통과해 연결 단계까지 도달).
+
+서버 접속, DB 연결·삭제·복원, 배포, 커밋·push는 하지 않았다.
+
+## [운영 환경 3단계] 서버 운영 공간·환경변수 준비
+
+브랜치: `codex/prod-environment` (커밋 없이 이어 작업)
+절차: [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차' 1절
+
+Oracle VM에 운영 공간을 만들고 `.env`를 채웠다. **컨테이너·DB는 아직 만들지 않았다.**
+
+### 만든 것
+
+`/home/ubuntu/meet-or-solo-prod/` 아래 `backend`, `frontend`, `infra/docker`,
+`infra/nginx`, `data/postgres`, `releases`, `scripts`. 그리고 `/home/ubuntu/backups/meet-or-solo-prod`(700).
+`.env`는 600으로 두고 자리표시자 0개까지 채웠다. 운영 스크립트 3종(`logs.sh`,
+`backup-prod-db.sh`, `restore-prod-db.sh`)을 복사하고 실행 권한을 부여했다.
+
+착수 전 조회에서 `28080`·`25432`가 비어 있고 `meet-or-solo-*-prod` 컨테이너·네트워크가
+없음을 확인했다. 기존 dev·병원·study는 건드리지 않았다.
+
+### 판단
+
+- **`data/postgres`에 chown·chmod를 하지 않았다.** dev가 `drwx------ lxd ubuntu`인 것은
+  uid 999(컨테이너의 postgres 사용자)가 이 서버에서 `lxd`로 표시될 뿐이고, 첫 기동 때
+  entrypoint가 스스로 맞춘 결과다. 미리 손대면 PostgreSQL이 권한을 이유로 기동을 거부한다.
+- **OAuth 앱을 dev와 공유하기로 했다.** 운영 Redirect URI를 기존 앱에 추가하는 방식이다.
+  새 앱은 동의항목을 처음부터 설정해야 해서 우선 공유로 시작한다. 그동안 **dev 앱 설정을
+  건드리면 운영 로그인이 함께 끊긴다.** 공개 전에 분리한다.
+- **www 서브도메인은 두지 않는다.** apex는 이미 서버를 가리키고 `www`는 A 레코드가 없다.
+  필수가 아니라 나중에 추가 + apex redirect로 처리한다.
+- **VAPID 키는 PC에서 만들어 서버에 넣었다.** 서버에 node가 없고, 키 생성은 한 번뿐이라
+  서버에 Node를 설치할 이유가 없다. 프론트엔드는 공개키를 빌드에 박지 않고
+  `GET /api/members/me/push-subscriptions/public-key`로 받아가므로 서버 `.env`만 채우면 된다.
+
+### 걸렸던 것
+
+- **긴 한 줄 명령이 붙여넣기에서 깨진다.** `for` 목록이 중간에서 잘려 syntax error가 났다.
+  이후 모든 안내를 짧은 줄로 나눴다.
+- **자리표시자 검사 조건이 부실했다.** "값이 `<`로 시작하는가"로 판정해서, 값 중간에
+  자리표시자가 있는 `OCI_OBJECT_STORAGE_ENDPOINT`(`https://<...>`)와
+  `WEB_PUSH_VAPID_SUBJECT`(`mailto:<...>`)를 "이미 채워짐"으로 건너뛰었다.
+  `grep -E '<[A-Z_0-9]+>'`로 다시 찾아 채웠다.
+- **확인 명령이 거짓 안심을 줬다.** `sed 's/=.*/=<설정됨>/'`가 자리표시자까지 `<설정됨>`으로
+  덮어써서 채워진 것처럼 보였다. 안 채워진 키 **이름만** 나열하는 방식으로 바꿨다.
+- **`.env.prod.example`이 CRLF였다.** Windows에서 만들어져 CR이 205개 있었다. 그대로 두면
+  `DB_URL` 값 끝에 `\r`이 붙고 비밀번호에도 보이지 않는 문자가 섞인다. 서버에서 제거하고
+  PC 원본도 LF로 고쳤으며 `.gitattributes`에 `.env*`·`*.conf`·`infra/**/*.yml` 규칙을 추가했다.
+
+### 남은 것
+
+4단계에서 16개 파일을 커밋하고 `dev` 검증 후 `main`에 병합한다. 첫 배포는 5단계에서
+**수동으로 1회** 한다. 운영 CD는 그 절차가 성공한 뒤에 만든다 — 처음에는 DB 초기화,
+Flyway 40개 적용, nginx 연결, 인증서에서 막힐 곳이 많은데 자동화 안에서 깨지면 로그만으로
+원인을 찾아야 한다.
