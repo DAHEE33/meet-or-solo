@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { subscribeMatchingNotifications } from '../../api/matchingNotificationHub';
+import { TOP_NOTICE_POSITION } from '../common/TopNotice';
 import {
   NOTICE_VISIBLE_MS,
   isAlreadyVisible,
@@ -95,9 +96,7 @@ export default function NotificationCenter() {
     <div
       role={urgent ? 'alert' : 'status'}
       aria-live={urgent ? 'assertive' : 'polite'}
-      className={`fixed left-1/2 top-4 z-50 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl px-4 py-3 text-white shadow-lg ${
-        urgent ? 'bg-coral' : 'bg-ink'
-      }`}
+      className={`${TOP_NOTICE_POSITION} z-50 text-white ${urgent ? 'bg-coral' : 'bg-ink'}`}
     >
       <button
         type="button"

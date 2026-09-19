@@ -249,12 +249,39 @@ PWA 기본 설정은 `vite.config.ts`의 `VitePWA`로 구성합니다.
 - `manifest.name: meet-or-solo`
 - `manifest.short_name: meet-or-solo`
 - `display: standalone`
-- placeholder icon: `public/icons/placeholder.svg`
+- `theme_color` / `background_color`: `#FAF7F1` (앱 배경 `sand`)
+- 아이콘: `public/icons/icon.svg`(`purpose: any`), `public/icons/icon-maskable.svg`(`purpose: maskable`)
 - `navigateFallback: /index.html`
 
-현재 PWA는 기본 shell, manifest, service worker 생성 설정, placeholder icon 수준입니다. `npm run build`를 실행하면 `dist/manifest.webmanifest`, `dist/sw.js`, `dist/registerSW.js` 같은 빌드 결과물이 생성됩니다.
+### 아이콘
 
-`frontend/dist/`는 build 결과물이므로 커밋하지 않습니다. `frontend/public/icons/placeholder.svg`는 소스 리소스이므로 커밋 대상입니다.
+브랜드 핀 하나로 통일합니다. 탭 favicon, PWA 설치 아이콘, 앱 첫 화면(스플래시)이 **같은
+그림**입니다.
+
+| 자리 | 파일 |
+| --- | --- |
+| 브라우저 탭 | `public/icons/icon.svg` (`index.html`의 `<link rel="icon">`) |
+| PWA 일반 | `public/icons/icon.svg` (`purpose: any`) |
+| PWA 설치(홈 화면) | `public/icons/icon-maskable.svg` (`purpose: maskable`) |
+| 스플래시 | `src/components/splash/BrandPin.tsx` (애니메이션 SVG) |
+
+`any`와 `maskable`을 한 항목에 같이 두지 않습니다. maskable은 바깥 20%가 잘려도 되도록 여백을
+크게 준 그림이라, 그대로 탭 아이콘으로 쓰면 로고가 작게 박혀 보입니다.
+
+도형 좌표는 `src/components/splash/brandPinGeometry.ts` 한 곳에 있고, 정적 SVG는 `public/`에
+있어 그 모듈을 import할 수 없습니다. 그래서 `brandPinIcon.test.ts`가 **파일 내용을 읽어 좌표가
+같은지 확인**합니다. 핀을 고칠 때는 세 곳(`BrandPin.tsx`, `icon.svg`, `icon-maskable.svg`)을
+함께 고쳐야 하고, 빠뜨리면 이 테스트가 깨집니다.
+
+**PNG 아이콘은 아직 없습니다.** iOS 홈 화면(`apple-touch-icon`)은 SVG를 지원하지 않고, 일부
+안드로이드 런처도 PNG를 선호합니다. SVG에서 PNG를 뽑으려면 래스터화 도구가 필요합니다
+(`npx sharp-cli -i public/icons/icon-maskable.svg -o public/icons/icon-192.png resize 192 192`
+같은 식). 뽑은 뒤에는 `index.html`에 `apple-touch-icon`을, manifest `icons`에 192/512 PNG 항목을
+추가합니다.
+
+`npm run build`를 실행하면 `dist/manifest.webmanifest`, `dist/sw.js`, `dist/registerSW.js` 같은 빌드 결과물이 생성됩니다.
+
+`frontend/dist/`는 build 결과물이므로 커밋하지 않습니다. `frontend/public/icons/`의 SVG는 소스 리소스이므로 커밋 대상입니다.
 
 실제 설치 안내 UI, offline fallback 화면, Web Push 권한 흐름, 실제 앱 아이콘 세트, 브랜딩 작업은 추후 별도 승인 후 구현합니다.
 

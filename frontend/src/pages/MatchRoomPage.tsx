@@ -8,6 +8,7 @@ import type {
   MatchReportReasonCode,
 } from '../api/matching';
 import PrimaryButton from '../components/common/PrimaryButton';
+import TopNotice, { NOTICE_DISMISS_MS } from '../components/common/TopNotice';
 import MobileLayout from '../components/layout/MobileLayout';
 import PageHeader from '../components/layout/PageHeader';
 import KakaoMeetingPointMap from '../components/matching/KakaoMeetingPointMap';
@@ -16,6 +17,7 @@ import { useMatchBlock, type MatchBlockState, type MatchBlockTarget } from '../h
 import { useMatchReport, type MatchReportState, type MatchReportTarget } from '../hooks/useMatchReport';
 import { formatSeoulDateTime } from '../utils/dateTime';
 import { describeMatchRoomError } from '../utils/matchRoomError';
+import { profileImageSrc } from '../utils/profileImage';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
@@ -49,6 +51,11 @@ export default function MatchRoomPage() {
   );
   useDialogFocusTrap(block.state.open, block.state.submitting, '[data-block-dialog]', block.close);
 
+  // 신고·차단 완료 안내에는 자동 해제가 아예 없었다. 닫기를 누르기 전까지 화면에 남았고,
+  // 그것도 "알림이 안 사라진다"의 한 갈래였다. 다른 알림과 같은 시간으로 맞춘다.
+  useAutoDismiss(report.state.successMessage, report.clearSuccess);
+  useAutoDismiss(block.state.successMessage, block.clearSuccess);
+
   return (
     <MobileLayout>
       <PageHeader title="매칭 상태방" />
@@ -79,6 +86,15 @@ export default function MatchRoomPage() {
       <ArrivalChangeSnackbar message={state.arrivalChangeNotice} />
     </MobileLayout>
   );
+}
+
+/** 안내 문구가 생기면 {@link NOTICE_DISMISS_MS} 뒤에 스스로 내린다. */
+function useAutoDismiss(message: string | null, clear: () => void) {
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = window.setTimeout(clear, NOTICE_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [clear, message]);
 }
 
 function useDialogFocusTrap(
@@ -237,17 +253,14 @@ export function MatchRoomContent({
   );
 }
 
+/**
+ * 도착 시간 변경 안내.
+ *
+ * <p>화면 <b>위</b>에 뜬다. 예전에는 아래(`bottom-24`)에 있어서, 같은 성격의 매칭 알림이
+ * 위에 뜨는 것과 자리가 갈렸다. 위치와 모양은 {@link TopNotice}가 갖는다.
+ */
 export function ArrivalChangeSnackbar({ message }: { message?: string | null }) {
-  if (!message) return null;
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="fixed bottom-24 left-1/2 z-50 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg"
-    >
-      {message}
-    </div>
-  );
+  return <TopNotice message={message} />;
 }
 
 export type ArrivalMinutes = ArrivalMinutesSelection;
@@ -571,7 +584,7 @@ export function CurrentGroupRoom({
         {group.members.map((member) => (
           <article key={member.memberId} className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
             {member.profileImageUrl ? (
-              <img src={member.profileImageUrl} alt={`${member.nickname} 프로필`} className="h-12 w-12 rounded-full object-cover" referrerPolicy="no-referrer" />
+              <img src={profileImageSrc(member.profileImageUrl)} alt={`${member.nickname} 프로필`} className="h-12 w-12 rounded-full object-cover" referrerPolicy="no-referrer" />
             ) : (
               <div aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-full bg-coral/15 font-bold text-coral">
                 {member.nickname.slice(0, 1)}
@@ -654,19 +667,9 @@ export function CurrentGroupRoom({
         </ol>
       </section>
 
-      {reportState?.successMessage && (
-        <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg">
-          <span>{reportState.successMessage}</span>
-          <button type="button" onClick={onClearReportSuccess} className="ml-2 underline">닫기</button>
-        </div>
-      )}
-
-      {blockState?.successMessage && (
-        <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-40 w-[calc(100%-2.5rem)] max-w-[390px] -translate-x-1/2 rounded-2xl bg-ink px-4 py-3 text-center text-[14px] font-semibold text-white shadow-lg">
-          <span>{blockState.successMessage}</span>
-          <button type="button" onClick={onClearBlockSuccess} className="ml-2 underline">닫기</button>
-        </div>
-      )}
+      {/* 신고·차단 완료 안내도 위에 뜬다. 자동 해제는 MatchRoomPage가 건다. */}
+      <TopNotice message={reportState?.successMessage} onClose={onClearReportSuccess} />
+      <TopNotice message={blockState?.successMessage} onClose={onClearBlockSuccess} />
 
       {reportState && reportState.step !== 'CLOSED' && reportState.target && (
         <ReportDialog

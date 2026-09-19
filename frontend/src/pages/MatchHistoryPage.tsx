@@ -7,6 +7,7 @@ import { matchHistoryApi, type MatchHistory, type MatchHistoryItem } from '../ap
 import { useMatchReport } from '../hooks/useMatchReport';
 import { ReportDialog } from './MatchRoomPage';
 import { formatSeoulDateTime } from '../utils/dateTime';
+import { profileImageSrc } from '../utils/profileImage';
 
 type LoadStatus = 'LOADING' | 'READY' | 'ERROR';
 
@@ -200,7 +201,7 @@ export function MatchHistoryCard({
           <div key={member.memberId} className="flex items-center gap-3">
             {member.profileImageUrl ? (
               <img
-                src={member.profileImageUrl}
+                src={profileImageSrc(member.profileImageUrl)}
                 alt={`${member.nickname} 프로필`}
                 className="h-10 w-10 rounded-full object-cover"
                 referrerPolicy="no-referrer"

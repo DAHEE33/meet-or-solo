@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { contentCommentsApi } from './contentComments';
+import { contentCommentsApi, resolveCommentProfileImageUrl } from './contentComments';
 import { contentBookmarksApi, contentTargetSegment } from './contentBookmarks';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -11,9 +11,30 @@ const json = (data: unknown, status = 200) =>
   });
 
 const comment = {
-  id: 1024, nickname: '춘천사람', body: '좋았어요',
+  id: 1024, nickname: '춘천사람', profileImageUrl: null, body: '좋았어요',
   likeCount: 4, likedByMe: false, mine: false, createdAt: '2026-09-07T10:12:00+09:00',
 };
+
+/**
+ * 직접 올린 사진은 우리 서버를 거치는 상대 경로로, 소셜 사진은 절대 URL로 온다.
+ *
+ * <p>상대 경로를 그대로 `<img src>`에 넣으면 API base가 따로 설정된 배포에서 깨진다.
+ * 프로필 화면이 자기 사진에 하는 처리와 같다(`memberProfile.ts`).
+ */
+describe('resolveCommentProfileImageUrl', () => {
+  it('업로드 사진의 상대 경로를 API 주소로 바꾼다', () => {
+    expect(resolveCommentProfileImageUrl({
+      ...comment, profileImageUrl: '/api/members/7/profile-image',
+    }).profileImageUrl).toContain('/api/members/7/profile-image');
+  });
+
+  it('소셜 사진의 절대 URL과 사진 없음은 그대로 둔다', () => {
+    expect(resolveCommentProfileImageUrl({
+      ...comment, profileImageUrl: 'https://cdn.kakao.com/a.jpg',
+    }).profileImageUrl).toBe('https://cdn.kakao.com/a.jpg');
+    expect(resolveCommentProfileImageUrl(comment).profileImageUrl).toBeNull();
+  });
+});
 
 describe('contentTargetSegment', () => {
   it('관광지는 /api/spots segment를 쓴다', () => {

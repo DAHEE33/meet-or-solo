@@ -12,6 +12,7 @@ import com.survey.meetorsolo.domain.content.support.ContentTarget;
 import com.survey.meetorsolo.domain.content.support.ContentTargetReader;
 import com.survey.meetorsolo.domain.festival.repository.FestivalCheckinRepository;
 import com.survey.meetorsolo.domain.member.entity.Member;
+import com.survey.meetorsolo.domain.member.service.MemberProfileImageUrls;
 import com.survey.meetorsolo.domain.member.repository.MemberRepository;
 import com.survey.meetorsolo.global.error.ErrorCode;
 import com.survey.meetorsolo.global.exception.BusinessException;
@@ -115,12 +116,25 @@ public class ContentCommentService {
         return new ContentCommentResponse(
                 row.id(),
                 row.nickname(),
+                profileImageUrl(row, viewerMemberId),
                 row.body(),
                 row.likeCount(),
                 likedByMe,
                 viewerMemberId != null && viewerMemberId.equals(row.authorMemberId()),
                 row.createdAt()
         );
+    }
+
+    /**
+     * 프로필 사진 URL. <b>비로그인에게는 담지 않는다</b>(docs/27 6.2).
+     *
+     * <p>목록 자체는 비로그인도 읽을 수 있어야 하므로 여기서 예외를 던지지 않고 {@code null}만
+     * 돌려준다. 화면은 값이 없으면 이니셜 아바타를 그린다.
+     */
+    private String profileImageUrl(ContentCommentRow row, Long viewerMemberId) {
+        if (viewerMemberId == null) return null;
+        return MemberProfileImageUrls.forOtherMember(
+                row.authorMemberId(), row.profileImageUrl(), row.profileImageObjectKey());
     }
 
     @Transactional
@@ -148,6 +162,9 @@ public class ContentCommentService {
         return new ContentCommentResponse(
                 saved.getId(),
                 member.getNickname(),
+                // 방금 쓴 댓글은 언제나 본인이 본다. 로그인 여부를 따질 필요가 없다.
+                MemberProfileImageUrls.forOtherMember(
+                        memberId, member.getProfileImageUrl(), member.getProfileImageObjectKey()),
                 saved.getBody(),
                 0,
                 false,

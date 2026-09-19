@@ -6,6 +6,7 @@ import com.survey.meetorsolo.domain.matching.history.dto.MatchHistoryPaginationR
 import com.survey.meetorsolo.domain.matching.history.dto.MatchHistoryResponse;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupRepository;
+import com.survey.meetorsolo.domain.member.service.MemberProfileImageUrls;
 import com.survey.meetorsolo.domain.safety.report.policy.MatchReportWindowPolicy;
 import com.survey.meetorsolo.domain.safety.report.repository.MatchReportRepository;
 import java.time.Clock;
@@ -130,10 +131,15 @@ public class MatchHistoryService {
             return List.of();
         }
         return rows.stream()
+                // 사진은 소셜 URL과 직접 올린 것 두 갈래다. 소셜 쪽만 읽으면 올린 사진이
+                // 상대에게 보이지 않는다(MatchGroupMemberResponse.from과 같은 판정).
                 .map(row -> new MatchHistoryMemberResponse(
                         row.getMemberId(),
                         row.getNickname(),
-                        row.getProfileImageUrl(),
+                        MemberProfileImageUrls.forOtherMember(
+                                row.getMemberId(),
+                                row.getProfileImageUrl(),
+                                row.getProfileImageObjectKey()),
                         reportedPairs.contains(pairKey(groupId, row.getMemberId()))))
                 .toList();
     }

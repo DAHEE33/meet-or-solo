@@ -4,6 +4,7 @@ import { ApiClientError } from '../api/apiClient';
 import { GeolocationError } from '../utils/geolocation';
 import type { CurrentMatchGroup } from '../api/matching';
 import type { MatchRoomState } from '../hooks/useMatchRoom';
+import TopNotice from '../components/common/TopNotice';
 import { toNotificationMessage } from '../notifications/notificationMessages';
 import {
   ArrivalChangeSnackbar,
@@ -399,15 +400,36 @@ describe('MatchRoomContent', () => {
     expect(content).not.toContain('먼저 갈게요');
   });
 
-  it('상대 도착 시간 변경 snackbar를 하단 navigation 위 접근 가능한 status로 표시한다', () => {
+  /**
+   * 알림은 화면 <b>위</b> 한 자리에만 뜬다.
+   *
+   * <p>이 안내는 아래(`bottom-24`)에 있었다. 매칭 알림은 위에 뜨는데 같은 성격의 이 안내만
+   * 아래에서 떠서, 사용자에게는 알림이 제각각 나타나는 것으로 보였다. 신고·차단 완료 안내도
+   * 같은 자리에 있었고 그쪽은 자동 해제조차 없었다.
+   */
+  it('상대 도착 시간 변경 안내를 화면 위 접근 가능한 status로 표시한다', () => {
     const tree = renderNode(ArrivalChangeSnackbar({
       message: '테스트님이 도착 시간을 변경하였어요.',
     }));
     expect(text(tree)).toContain('테스트님이 도착 시간을 변경하였어요.');
     const snackbar = elements(tree).find((element) => element.props.role === 'status');
     expect(snackbar?.props['aria-live']).toBe('polite');
-    expect(snackbar?.props.className).toContain('bottom-24');
-    expect(ArrivalChangeSnackbar({ message: null })).toBeNull();
+    expect(snackbar?.props.className).toContain('top-4');
+    expect(snackbar?.props.className).not.toContain('bottom-');
+    expect(renderNode(ArrivalChangeSnackbar({ message: null }))).toBeNull();
+  });
+
+  /** 신고·차단 완료 안내도 같은 자리, 같은 모양이다. */
+  it('신고·차단 완료 안내를 화면 위에 닫기와 함께 표시한다', () => {
+    const tree = renderNode(TopNotice({
+      message: '민수님에 대한 신고가 접수됐어요.',
+      onClose: vi.fn(),
+    }));
+    const notice = elements(tree).find((element) => element.props.role === 'status');
+    expect(text(tree)).toContain('민수님에 대한 신고가 접수됐어요.');
+    expect(notice?.props.className).toContain('top-4');
+    expect(notice?.props.className).not.toContain('bottom-');
+    expect(text(tree)).toContain('닫기');
   });
 
   it('current group null 상태만 /matching replace 이동 대상으로 판정한다', () => {

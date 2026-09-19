@@ -11,6 +11,7 @@ import type { ContentComment, ContentCommentPage } from '../api/contentComments'
 const comment = (id: number, overrides: Partial<ContentComment> = {}): ContentComment => ({
   id,
   nickname: `회원${id}`,
+  profileImageUrl: null,
   body: `댓글 ${id}`,
   likeCount: 0,
   likedByMe: false,
