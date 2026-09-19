@@ -65,10 +65,10 @@ public class AdminMemberService {
 
     @Transactional(readOnly = true)
     public AdminMemberPageResponse list(
-            long adminMemberId, String queryValue, String statusValue, String roleValue,
+            long adminMemberId, String queryValue, String statusValue,
             Boolean testAccountValue, String cursorValue, Integer sizeValue) {
         authorization.requireAdmin(adminMemberId);
-        AdminMemberFilter filter = filter(queryValue, statusValue, roleValue, testAccountValue);
+        AdminMemberFilter filter = filter(queryValue, statusValue, testAccountValue);
         int size = size(sizeValue);
         AdminMemberCursorCodec.Cursor cursor = blank(cursorValue) ? null
                 : cursorCodec.decode(cursorValue, filter.fingerprint());
@@ -437,19 +437,14 @@ public class AdminMemberService {
                 adminMembers.findMannerTemperatureAdjustments(memberId));
     }
 
-    private AdminMemberFilter filter(
-            String query, String status, String role, Boolean testAccount) {
+    private AdminMemberFilter filter(String query, String status, Boolean testAccount) {
         try {
             String normalizedQuery = blank(query) ? null : query.trim();
             if (normalizedQuery != null && normalizedQuery.length() > 50) throw invalid("검색어가 너무 깁니다.");
             AdminMemberStatus parsedStatus = blank(status) ? null : AdminMemberStatus.valueOf(status);
-            String parsedRole = blank(role) ? null : role;
-            if (parsedRole != null && !Set.of(Member.ROLE_USER, Member.ROLE_ADMIN).contains(parsedRole)) {
-                throw invalid("role 값이 올바르지 않습니다.");
-            }
             // false는 "테스트 계정 제외"가 아니라 "조건 없음"으로 접는다. 화면의 체크박스가
             // 꺼진 상태를 그대로 보내도 전체 목록이 나온다.
-            return new AdminMemberFilter(normalizedQuery, parsedStatus, parsedRole,
+            return new AdminMemberFilter(normalizedQuery, parsedStatus,
                     Boolean.TRUE.equals(testAccount) ? Boolean.TRUE : null);
         } catch (BusinessException exception) {
             throw exception;

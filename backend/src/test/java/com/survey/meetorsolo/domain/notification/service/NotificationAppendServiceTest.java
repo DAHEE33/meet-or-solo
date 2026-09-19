@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -68,19 +67,27 @@ class NotificationAppendServiceTest {
         });
     }
 
-    /** 내가 누른 변화를 내 알림함에 남기지 않는다(docs/31 5절 "알림 자기 반향"). */
+    /**
+     * 그룹 전체의 사실은 행위자에게도 남긴다.
+     *
+     * <p>{@code MATCH_CONFIRMED}의 행위자는 마지막으로 수락한 사람이다. 예전에는 행위자를
+     * 무조건 걸렀기 때문에 <b>매칭을 성사시킨 본인만</b> 알림함에 확정 기록이 없었다.
+     * {@code MATCH_TIMEOUT}도 마찬가지로 페널티를 받은 당사자만 이유를 못 봤다.
+     */
     @Test
-    void 행위자_본인에게는_남기지_않는다() {
-        when(notifications.existsByMemberIdAndReasonAndOccurredAt(eq(2L), anyString(), any()))
+    void 그룹_사실은_행위자에게도_남긴다() {
+        when(notifications.existsByMemberIdAndReasonAndOccurredAt(anyLong(), anyString(), any()))
                 .thenReturn(false);
 
-        int saved = service().append(List.of(1L, 2L), "MATCH_CANCELLED", 1L, OCCURRED);
+        int saved = service().append(List.of(1L, 2L), "MATCH_CONFIRMED", 1L, OCCURRED);
 
-        assertThat(saved).isEqualTo(1);
+        assertThat(saved).isEqualTo(2);
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
-        verify(notifications).save(captor.capture());
-        assertThat(captor.getValue().getMemberId()).isEqualTo(2L);
-        assertThat(captor.getValue().getActorMemberId()).isEqualTo(1L);
+        verify(notifications, org.mockito.Mockito.times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(Notification::getMemberId)
+                .containsExactly(1L, 2L);
+        assertThat(captor.getAllValues()).allSatisfy(notification ->
+                assertThat(notification.getActorMemberId()).isEqualTo(1L));
     }
 
     /** 재연결·이벤트 재발행으로 같은 알림이 두 번 올 수 있다. */

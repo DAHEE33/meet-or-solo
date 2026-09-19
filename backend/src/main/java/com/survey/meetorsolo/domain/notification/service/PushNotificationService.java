@@ -35,8 +35,9 @@ public class PushNotificationService {
     /**
      * 수신자들에게 push를 보낸다.
      *
-     * <p>행위자 본인은 건너뛴다. 알림함과 같은 규칙이다 — 내가 누른 일을 내 잠금 화면이
-     * 다시 알려 줄 이유가 없다.
+     * <p>관측자 시점 사유는 행위자 본인에게 보내지 않는다. WebSocket·알림함과 같은 판정
+     * ({@link NotificationPolicy#deliverableTo})을 쓴다 — 내가 누른 일을 내 잠금 화면이 다시
+     * 알려 줄 이유는 없지만, 내가 수락해서 확정된 매칭은 나에게도 보내야 한다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void notifyMembers(
@@ -46,7 +47,7 @@ public class PushNotificationService {
         String payload = payload(reason, occurredAt);
         memberIds.stream()
                 .distinct()
-                .filter(memberId -> actorMemberId == null || actorMemberId.longValue() != memberId)
+                .filter(memberId -> NotificationPolicy.deliverableTo(reason, actorMemberId, memberId))
                 .flatMap(memberId -> subscriptions.findAllByMemberId(memberId).stream())
                 .forEach(subscription -> send(subscription, payload));
     }

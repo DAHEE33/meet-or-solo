@@ -97,7 +97,18 @@ services:
       # 비어 있으면 제재 안내에서 문의 문구를 숨긴다.
       SUPPORT_CONTACT_EMAIL: ${SUPPORT_CONTACT_EMAIL:-}
       ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED: ${ADMIN_MEMBER_SUSPENSION_SCHEDULER_ENABLED:-true}
-      FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:-true}
+      # 기본값이 true였다. 그래서 .env에 적지 않아도 반경 검증이 꺼진 채로 떴고, 어디에
+      # 있든 아무 축제나 체크인돼 멀리 있는 사람과 매칭됐다. 현장에 가지 않고 테스트하려면
+      # 환경 전체를 끄지 말고 /admin/members에서 테스트 계정으로 지정한다.
+      FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK: ${FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK:-false}
+      FESTIVAL_CHECKIN_RADIUS_METERS: ${FESTIVAL_CHECKIN_RADIUS_METERS:-500}
+      FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:-100}
+      # Web Push(docs/32 3.4). 이 세 줄이 아예 없어서 dev에서 push가 한 번도 나가지 않았다 —
+      # 키가 비면 WebPushSender가 조용히 발송을 끄고 WebSocket·알림함만 동작해 증상이
+      # 드러나지 않는다. 실제 값은 .env.dev에만 넣는다(저장소에 넣지 않는다).
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-}
     volumes:
       - ../../backend/app.jar:/app/app.jar:ro
       - ../../logs/backend:/app/logs

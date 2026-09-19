@@ -99,8 +99,8 @@ class ReportSafetyAutomationIntegrationTest {
 
     @BeforeEach
     void prepare() {
-        jdbc.update("UPDATE members SET role='ADMIN', nickname='admin-a' WHERE id=?", ADMIN_A);
-        jdbc.update("UPDATE members SET role='ADMIN', nickname='admin-b' WHERE id=?", ADMIN_B);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL', nickname='admin-a' WHERE id=?", ADMIN_A);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL', nickname='admin-b' WHERE id=?", ADMIN_B);
         insertGroup(GROUP_1);
         insertGroup(GROUP_2);
         insertGroup(GROUP_3);

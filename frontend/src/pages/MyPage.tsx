@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronRight, Heart, MapPinCheck, HeartHandshake, MessageCircleQuestion, Pencil, ShieldX, Sparkles, UserCog } from 'lucide-react';
+import { ChevronRight, Heart, MapPinCheck, HeartHandshake, MessageCircleQuestion, Pencil, ShieldX, Sparkles } from 'lucide-react';
 import { authApi } from '../api/auth';
 import { matchHistoryApi } from '../api/matchHistory';
 import { checkinApi } from '../api/checkin';
 import { memberProfileApi, type MemberProfile } from '../api/memberProfile';
 import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
 import WithdrawalConfirmDialog from '../components/member/WithdrawalConfirmDialog';
-import { adminReportsApi } from '../api/adminReports';
 import { preferenceEmbeddingApi } from '../api/preferenceEmbedding';
 import {
   isPreferenceStateKnown,
@@ -56,7 +55,6 @@ export default function MyPage() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [preferenceState, setPreferenceState] = useState<PreferenceState>('LOADING');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isWithdrawalOpen, setIsWithdrawalOpen] = useState(false);
@@ -124,14 +122,6 @@ export default function MyPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    adminReportsApi.getSession(controller.signal)
-      .then(() => { if (!controller.signal.aborted) setIsAdmin(true); })
-      .catch(() => { if (!controller.signal.aborted) setIsAdmin(false); });
-    return () => controller.abort();
   }, []);
 
   // 매칭 기록 건수는 부가 정보다. 조회에 실패해도 카드는 그대로 두고 진입만 유지한다.
@@ -378,12 +368,6 @@ export default function MyPage() {
           )}
           <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
         </Link>
-
-        {isAdmin && <Link to="/admin" className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm">
-          <UserCog size={18} className="text-teal" aria-hidden="true" />
-          <span className="flex-1 text-[14px] font-semibold text-ink">관리자 기능</span>
-          <ChevronRight size={16} className="text-ink/30" aria-hidden="true" />
-        </Link>}
 
         <button
           type="button"

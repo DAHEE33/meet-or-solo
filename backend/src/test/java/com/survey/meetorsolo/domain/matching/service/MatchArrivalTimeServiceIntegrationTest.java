@@ -184,8 +184,15 @@ class MatchArrivalTimeServiceIntegrationTest {
         jdbc.execute("DROP FUNCTION IF EXISTS fail_arrival_event_insert()");
     }
 
+    /**
+     * 알림은 <b>고른 본인을 뺀</b> 나머지 활성 회원에게 간다.
+     *
+     * <p>{@code ARRIVAL_TIME_SELECTED}의 문구는 "상대가 도착 예정 시간을 알렸어요"라
+     * 고른 본인에게 가면 말이 되지 않는다({@code NotificationPolicy.ACTOR_RELATIVE_REASONS}).
+     * 본인 화면은 이 응답의 snapshot으로 이미 갱신되므로 알림이 없어도 갱신이 밀리지 않는다.
+     */
     @Test
-    void JOINED에서_도착_시간을_선택하고_current_snapshot과_전체_회원_알림을_갱신한다() {
+    void JOINED에서_도착_시간을_선택하고_본인을_뺀_회원에게만_알림을_보낸다() {
         MatchGroupResponse snapshot = service.select(9_110_001L, 10);
 
         assertThat(snapshot.members()).extracting(member -> member.memberId())
@@ -198,13 +205,14 @@ class MatchArrivalTimeServiceIntegrationTest {
                 .isEqualTo(NOW.plusMinutes(30).plusSeconds(10));
         assertThat(eventMinutes()).containsExactly(10);
         verify(messagingTemplate, timeout(1_000)).convertAndSendToUser(
-                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.eq("9110002"),
                 org.mockito.ArgumentMatchers.eq("/queue/matching"),
                 org.mockito.ArgumentMatchers.any()
         );
-        verify(messagingTemplate, timeout(1_000)).convertAndSendToUser(
-                org.mockito.ArgumentMatchers.eq("9110002"),
-                org.mockito.ArgumentMatchers.eq("/queue/matching"),
+        // 고른 본인(9110001)에게는 보내지 않는다 — 자기 반향(docs/31 5절).
+        verify(messagingTemplate, never()).convertAndSendToUser(
+                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any()
         );
         verify(messagingTemplate, never()).convertAndSendToUser(
@@ -329,11 +337,17 @@ class MatchArrivalTimeServiceIntegrationTest {
                   AND member_id = 9110001
                   AND event_type = 'MEMBER_ARRIVED'
                 """, Integer.class)).isEqualTo(1);
+        // 반복 요청이 멱등이라 알림도 한 번뿐이다. 도착한 본인(9110001)이 아니라 상대에게 간다.
         verify(messagingTemplate, timeout(1_000).times(1)).convertAndSendToUser(
-                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.eq("9110002"),
                 org.mockito.ArgumentMatchers.eq("/queue/matching"),
                 org.mockito.ArgumentMatchers.argThat((MatchingStateChangedNotification notification) ->
                         "MEMBER_ARRIVED".equals(notification.reason()))
+        );
+        verify(messagingTemplate, never()).convertAndSendToUser(
+                org.mockito.ArgumentMatchers.eq("9110001"),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any()
         );
     }
 
@@ -525,8 +539,13 @@ class MatchArrivalTimeServiceIntegrationTest {
             assertThat(memberArrivedEventCounts()).containsExactly(
                     new MemberEventCount(9_110_001L, 1L)
             );
-            verifyMemberArrivedNotification("9110001", 1);
+            // 동시에 두 번 눌러도 상대에게 가는 알림은 한 건이다. 도착한 본인은 받지 않는다.
             verifyMemberArrivedNotification("9110002", 1);
+            verify(messagingTemplate, never()).convertAndSendToUser(
+                    org.mockito.ArgumentMatchers.eq("9110001"),
+                    org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.any()
+            );
         } finally {
             executor.shutdownNow();
         }
