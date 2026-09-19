@@ -59,14 +59,22 @@ Nginx /    -> frontend static dist
 - 운영 DB는 평소 host 포트를 열지 않습니다. 관리자 접속은 컨테이너 내부 `psql`을 우선하고, GUI 도구가 꼭 필요하면 `127.0.0.1:25432`로 임시 publish한 뒤 SSH tunnel로 접속하고 작업 후 다시 닫습니다.
 - Oracle Cloud Ingress에 `25432`를 열지 않습니다.
 
-### 미완성 서비스의 초기 접근 제한
+### 접근 제한과 검색 노출
 
-운영 도메인은 기능이 완성될 때까지 기본적으로 닫아 둡니다.
+**nginx 단의 Basic Auth는 쓰지 않습니다.** 일반 사용자가 운영 주소로 바로 접속하고, 회원 인증과 관리자 권한 검사는 앱 기능이 담당합니다 — JWT cookie, `/admin/login`, `MemberAccessInterceptor`, 관리자 role 검사.
 
-- 호스트 nginx의 `auth_basic`으로 접근을 제한합니다(`infra/nginx/host-https.prod.conf.example`).
-- `X-Robots-Tag: noindex, nofollow`를 함께 둡니다. 검색 노출만 막는 장치이고 접근 제한의 대체가 아닙니다.
-- `/.well-known/acme-challenge/`는 인증 없이 열어 둬야 인증서 갱신이 됩니다.
-- Basic Auth를 켠 상태에서는 PWA 설치, Service Worker 등록, Web Push가 인증 뒤에서 동작합니다. 그 상태의 검증 결과를 공개 상태의 결과로 간주하지 않습니다. 공개 전환 시 같은 항목을 다시 확인합니다.
+Basic Auth를 검토했다가 접은 이유는, 켜 두면 PWA 설치·Service Worker 등록·Web Push가 인증 뒤에서 동작해 **그 상태의 검증 결과를 공개 상태의 결과로 믿을 수 없기** 때문입니다. 접근을 막아야 할 상황이 다시 생기면 `infra/nginx/host-https.prod.conf.example`의 주석을 참고합니다.
+
+검색 노출은 접근 제한과 별개 장치이고, 두 도메인의 정책이 다릅니다.
+
+| 도메인 | `X-Robots-Tag: noindex` | 이유 |
+| --- | --- | --- |
+| 운영 | **없음** | 검색에 노출되어야 합니다 |
+| 개발 | **있음** | 개발 버전이 검색에 뜨면 같은 내용이 두 주소로 잡혀 운영 순위까지 깎입니다 |
+
+`index.html`은 빌드 결과물 하나라 dev와 운영이 같은 `title`·`description`·`robots.txt`를 갖습니다. 그래서 개발 도메인을 막는 일은 앱이 아니라 **호스트 nginx에서** 처리합니다.
+
+> 개발 도메인은 등록하지 않아도 크롤러가 찾아올 수 있습니다. HTTPS 인증서를 발급받으면 그 도메인이 공개 기록(Certificate Transparency)에 남기 때문입니다. "등록하지 않았으니 안전하다"고 볼 수 없어 `noindex`를 겁니다.
 
 ## Secret 처리
 
