@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Comparator;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,6 +43,11 @@ class MatchingOrchestrationServiceIntegrationTest {
     private static final int EMBEDDING_DIMENSIONS = 1536;
     private static final OffsetDateTime STYLE_CREATED_AT =
             OffsetDateTime.of(2026, 7, 17, 14, 0, 0, 0, ZoneOffset.ofHours(9));
+    /** 5인 시나리오의 첫 신청 시각. 이후 후보는 10초 간격으로 들어온다. */
+    private static final OffsetDateTime ARRIVAL_BASE =
+            OffsetDateTime.of(2026, 7, 17, 14, 59, 10, 0, ZoneOffset.ofHours(9));
+    private static final OffsetDateTime SEARCH_EXPIRES_AT =
+            OffsetDateTime.of(2026, 7, 17, 15, 1, 0, 0, ZoneOffset.ofHours(9));
     @Container @ServiceConnection static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
     @Autowired MatchingOrchestrationService service;
@@ -89,6 +96,123 @@ class MatchingOrchestrationServiceIntegrationTest {
         assertBreakdown(attemptId, 9_110_002L, "68.38", "61.11", "85.33", 2);
         assertBreakdown(attemptId, 9_110_006L, "36.49", "22.22", "69.78", 2);
         assertBreakdown(attemptId, 9_110_007L, "61.11", "61.11", null, 0);
+    }
+
+    /**
+     * 같은 배치에 유효 후보 5명이 있을 때 <b>신청 순서가 아니라 궁합 점수로</b> 조합이 선택되는지
+     * 검증한다. 이번 변경(즉시 조합 경로 제거)의 회귀 방지선이다.
+     *
+     * <p>바로 위 테스트와 목적이 다르다. 그쪽은 후보가 정확히 4명이라 조합이 하나뿐이고
+     * "점수 분해값이 컬럼까지 도달하는가"를 본다. 여기서는 <b>조합이 여러 개일 때 무엇이
+     * 선택되는가</b>를 본다. 즉시 조합 경로가 살아 있으면 후보가 2명을 넘지 못해 이 상황 자체가
+     * 만들어지지 않았다.
+     *
+     * <p>태그는 fixture가 전원 {@code PHOTO} 하나로 주므로 모든 pair의 Jaccard가 100으로
+     * 같다. 따라서 총점 순위는 코사인만으로 갈린다. 희망 인원을 전원 2명으로 두는 것이 전제다.
+     * 3인 이상을 허용하면 조합 우선순위가 점수보다 인원 수를 먼저 보므로 점수 검증이 되지 않는다.
+     *
+     * <p>신청 순서는 1 → 2 → 6 → 10 → 11이다. 순서대로 묶으면 (1,2)·(6,10)이고 11이 남는다.
+     * 점수대로 묶으면 (1,10)·(2,11)이고 6이 남는다. 둘이 겹치지 않으므로 결과만 보고
+     * 어느 쪽으로 동작했는지 구분할 수 있다.
+     */
+    @Test void 같은_배치의_후보_5명_중_신청순서가_아니라_임베딩_점수로_두_조합이_선택된다() {
+        prepareFiveCandidateScenario(false);
+
+        MatchingOrchestrationResult result = service.runTick();
+
+        assertThat(result.createdAttemptIds()).as("result=%s", result).hasSize(2);
+        assertThat(memberPairs(result.createdAttemptIds()))
+                .as("신청 순서대로면 [[1,2],[6,10]]이 된다")
+                .containsExactly(List.of(9_110_001L, 9_110_010L), List.of(9_110_002L, 9_110_011L));
+        // 남은 한 명은 매칭되지 않고 대기 상태로 돌아온다.
+        assertThat(poolStatus(9_110_006L)).isEqualTo("WAITING");
+        result.createdAttemptIds().forEach(attemptId ->
+                assertThat(createdBy(attemptId)).isEqualTo("SCHEDULER"));
+        // 태그가 상수였고 임베딩이 실제로 적용됐다는 것까지 확인해야 점수 검증이 성립한다.
+        assertAllPairsUsedEmbedding(result.createdAttemptIds());
+    }
+
+    /**
+     * 임베딩만 맞바꾸면 선택되는 조합도 바뀌는지 확인한다.
+     *
+     * <p>위 테스트만으로는 "우연히 그 조합이 나왔다"를 배제하지 못한다. 회원·신청 순서·태그를
+     * 그대로 둔 채 9110010과 9110011의 벡터만 교환하면 기대 조합이 (1,11)·(2,10)으로 바뀐다.
+     * 선택 결과가 실제로 임베딩에 의존한다는 뜻이다.
+     */
+    @Test void 임베딩을_맞바꾸면_선택되는_조합도_바뀐다() {
+        prepareFiveCandidateScenario(true);
+
+        MatchingOrchestrationResult result = service.runTick();
+
+        assertThat(result.createdAttemptIds()).as("result=%s", result).hasSize(2);
+        assertThat(memberPairs(result.createdAttemptIds()))
+                .containsExactly(List.of(9_110_001L, 9_110_011L), List.of(9_110_002L, 9_110_010L));
+        assertThat(poolStatus(9_110_006L)).isEqualTo("WAITING");
+        assertAllPairsUsedEmbedding(result.createdAttemptIds());
+    }
+
+    /**
+     * 유효 후보를 5명으로 만든다. 희망 인원 2명, 태그 동일(fixture의 {@code PHOTO}), 차단·쿨타임·
+     * 재매칭 제외 없음, 전원 COMPLETED 임베딩 보유.
+     *
+     * <p>벡터는 앞 두 성분만 쓰는 단위 벡터이고 각도로 설계했다. 0°(1) / 90°(2) / 45°(6) /
+     * 2°(10) / 85°(11)이므로 코사인 1위는 1-10(cos 2°), 2위는 2-11(cos 5°)이고 6은 어느 쪽과도
+     * 그보다 가깝지 않다. 외부 임베딩 API는 호출하지 않는다.
+     *
+     * @param swapEmbeddings 9110010과 9110011의 벡터를 맞바꿀지 여부
+     */
+    private void prepareFiveCandidateScenario(boolean swapEmbeddings) {
+        jdbc.update("DELETE FROM user_blocks");
+        jdbc.update("DELETE FROM match_cooldowns");
+        jdbc.update("DELETE FROM match_opponent_exclusions");
+        jdbc.update("DELETE FROM member_preference_embeddings");
+        jdbc.update("UPDATE match_pools SET status='PROPOSED' "
+                + "WHERE member_id NOT IN (9110001,9110002,9110006,9110010,9110011)");
+
+        // 신청 순서를 10초 간격으로 분명히 해 둔다. 점수 순위와 겹치지 않게 배치했다.
+        long[] arrivalOrder = {9_110_001L, 9_110_002L, 9_110_006L, 9_110_010L, 9_110_011L};
+        for (int index = 0; index < arrivalOrder.length; index++) {
+            jdbc.update("UPDATE match_pools SET status='WAITING', preferred_group_size=2, "
+                    + "allow_minimum_two=TRUE, entered_at=?, search_expires_at=? WHERE member_id=?",
+                    ARRIVAL_BASE.plusSeconds(10L * index), SEARCH_EXPIRES_AT, arrivalOrder[index]);
+        }
+
+        String angle2 = vectorLiteral("0.99939", "0.03490");
+        String angle85 = vectorLiteral("0.08716", "0.99619");
+        insertEmbedding(9_110_001L, vectorLiteral("1", "0"), "COMPLETED");
+        insertEmbedding(9_110_002L, vectorLiteral("0", "1"), "COMPLETED");
+        insertEmbedding(9_110_006L, vectorLiteral("0.70711", "0.70711"), "COMPLETED");
+        insertEmbedding(9_110_010L, swapEmbeddings ? angle85 : angle2, "COMPLETED");
+        insertEmbedding(9_110_011L, swapEmbeddings ? angle2 : angle85, "COMPLETED");
+    }
+
+    /** attempt별 회원 쌍. 첫 회원 id 순으로 정렬해 비교를 결정적으로 만든다. */
+    private List<List<Long>> memberPairs(List<Long> attemptIds) {
+        return attemptIds.stream()
+                .map(attemptId -> jdbc.queryForList(
+                        "SELECT member_id FROM match_attempt_members WHERE attempt_id=? ORDER BY member_id",
+                        Long.class, attemptId))
+                .sorted(Comparator.comparing(members -> members.get(0)))
+                .toList();
+    }
+
+    private String poolStatus(long memberId) {
+        return jdbc.queryForObject("SELECT status FROM match_pools WHERE member_id=?", String.class, memberId);
+    }
+
+    private String createdBy(long attemptId) {
+        return jdbc.queryForObject("SELECT created_by FROM match_attempts WHERE id=?", String.class, attemptId);
+    }
+
+    /** 태그가 상수(Jaccard 100)였고 임베딩이 실제 적용됐는지. 둘 중 하나라도 어긋나면 점수 검증이 아니다. */
+    private void assertAllPairsUsedEmbedding(List<Long> attemptIds) {
+        attemptIds.forEach(attemptId -> jdbc.queryForList(
+                "SELECT member_id,jaccard_score,embedding_applied FROM match_attempt_members WHERE attempt_id=?",
+                attemptId).forEach(row -> {
+                    String context = "attempt " + attemptId + " member " + row.get("member_id");
+                    assertThat((BigDecimal) row.get("jaccard_score")).as(context).isEqualByComparingTo("100.00");
+                    assertThat(row.get("embedding_applied")).as(context).isEqualTo(true);
+                }));
     }
 
     /**

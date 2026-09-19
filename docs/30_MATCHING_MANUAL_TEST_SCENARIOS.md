@@ -830,3 +830,75 @@ ORDER BY cosine DESC;
 
 화면 문구와 문서에서 "AI가 궁합을 분석한다"로 표현하지 않습니다.
 "입력한 취향의 유사도를 점수에 반영한다"가 사실에 맞습니다.
+
+### 재현 체크리스트 — 즉시 조합 경로 제거 후 dev 확인
+
+구조 수정(즉시 조합 경로 제거)이 dev에서 실제로 동작하는지 확인하는 순서입니다. **위에서부터
+순서대로** 확인하고, 앞 단계가 어긋나면 뒤 단계 결과는 판정에 쓰지 않습니다.
+
+| # | 확인 | 방법 | 기대 |
+| --- | --- | --- | --- |
+| 1 | **수정 커밋이 배포됐는가** | 배포된 backend 이미지의 커밋 | `7b77a0f` 이후 |
+| 2 | **scheduler가 켜져 있는가** | 기동 로그에 `MatchingScheduler` 빈 생성, 또는 신청 후 tick 동작 | `MATCHING_SCHEDULER_ENABLED=true` |
+| 3 | **수집 주기가 의도한 값인가** | 주입된 `MATCHING_SCHEDULER_FIXED_DELAY` | `10s` |
+| 4 | **동일 배치에 5명 전원이 들어갔는가** | 아래 4-A | 두 attempt의 `started_at`이 같은 tick |
+| 5 | **제외 조건이 없는가** | 아래 5-A | 차단·재매칭 제외·쿨타임 0건 |
+| 6 | **SCHEDULER가 만든 제안 2건인가** | 아래 6-A | `created_by='SCHEDULER'`, attempt 2건 |
+| 7 | **점수가 기대대로인가** | 아래 6-A | `jaccard_score` 전원 동일, `cosine_score`만 다름, `embedding_applied = t` |
+
+1~3번은 서버 설정 확인입니다. **1번이 아니면 나머지를 볼 필요가 없습니다.** `created_by`가
+`POOL_ENTRY`로 나오면 배포가 반영되지 않은 것입니다.
+
+**4-A. 같은 tick에서 만들어졌는가**
+
+```sql
+SELECT id, created_by, status, target_group_size, started_at
+FROM match_attempts
+WHERE started_at > now() - INTERVAL '10 minutes'
+ORDER BY id DESC;
+```
+
+두 attempt의 `started_at`이 같아야 한 배치입니다. 초 단위로 갈라져 있으면 신청이 **틱 경계를
+걸친** 것이고, 그때는 먼저 평가된 배치에서 일부가 먼저 묶입니다. 결함이 아니라 설계대로입니다.
+
+**5-A. 후보에서 빠질 사유가 없는가** (세 쿼리 모두 0건이 정상)
+
+```sql
+SELECT * FROM user_blocks
+WHERE blocker_member_id IN (:ids) AND blocked_member_id IN (:ids);
+
+SELECT * FROM match_cooldowns
+WHERE member_id IN (:ids) AND status='ACTIVE' AND starts_at <= now() AND expires_at > now();
+
+SELECT * FROM match_opponent_exclusions
+WHERE lower_member_id IN (:ids) AND higher_member_id IN (:ids);
+```
+
+`match_opponent_exclusions`는 **직전 라운드에서 제안을 거절**하면 그 체크인 쌍으로 생깁니다.
+라운드를 반복할 때 거절 대신 타임아웃을 쓰는 이유가 이것입니다.
+
+**6-A. 제안과 점수**
+
+```sql
+SELECT am.attempt_id, a.created_by, am.member_id, am.member_score,
+       am.jaccard_score, am.cosine_score, am.embedding_applied, am.embedding_pair_count
+FROM match_attempt_members am
+JOIN match_attempts a ON a.id = am.attempt_id
+WHERE a.started_at > now() - INTERVAL '10 minutes'
+ORDER BY am.attempt_id DESC, am.member_id;
+```
+
+`jaccard_score`가 전원 같지 않거나 `embedding_applied`가 `f`인 회원이 있으면 **태그 상수 가정이
+깨진 것**이므로 점수 검증이 성립하지 않습니다. 그 회원의 태그·임베딩 상태부터 고칩니다.
+
+**7. 남은 한 명**
+
+```sql
+SELECT member_id, status, entered_at, search_expires_at FROM match_pools
+WHERE member_id IN (:ids) ORDER BY entered_at;
+```
+
+`WAITING`이면 다음 tick을 기다리는 정상 상태이고, `EXPIRED`면 탐색 60초가 지난 것입니다.
+
+> 결과가 기대와 다르면 **추가 결함으로 단정하기 전에 4·5번(실제 배치 구성과 제외 사유)부터
+> 확인합니다.** 조건 하나만 어긋나도 다른 결과가 정상입니다.
