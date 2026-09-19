@@ -37,8 +37,11 @@ public class NotificationAppendService {
     /**
      * 수신자마다 한 줄씩 남긴다.
      *
-     * <p>행위자 본인은 건너뛴다. 내가 도착을 눌렀는데 "상대가 도착했어요"가 내 알림함에 남는
-     * 것이 1단계의 알려진 한계였다(`docs/31` 5절 "알림 자기 반향").
+     * <p>관측자 시점 사유는 행위자 본인에게 남기지 않는다. 내가 도착을 눌렀는데 "상대가
+     * 도착했어요"가 내 알림함에 남는 것이 1단계의 알려진 한계였다(`docs/31` 5절 "알림 자기
+     * 반향"). 판정은 {@link NotificationPolicy#deliverableTo}가 하고 WebSocket·push도 같은
+     * 것을 쓴다 — 예전에는 여기서만 행위자를 무조건 걸러서, 매칭을 성사시킨 본인이
+     * {@code MATCH_CONFIRMED}를, 시간 초과된 본인이 {@code MATCH_TIMEOUT}을 못 받았다.
      *
      * @param actorMemberId 그 변화를 만든 회원. 스케줄러가 만든 변화는 {@code null}
      */
@@ -51,7 +54,7 @@ public class NotificationAppendService {
         int saved = 0;
         // deadlock을 피하려고 항상 회원 ID 오름차순으로 쓴다(보상 지급과 같은 규칙).
         for (long memberId : memberIds.stream().distinct().sorted().toList()) {
-            if (actorMemberId != null && actorMemberId == memberId) continue;
+            if (!NotificationPolicy.deliverableTo(reason, actorMemberId, memberId)) continue;
             if (appendOne(memberId, reason, actorMemberId, occurredAt, now)) saved++;
         }
         return saved;

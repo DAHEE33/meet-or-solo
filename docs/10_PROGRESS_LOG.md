@@ -1,5 +1,76 @@
 # 진행 상태 기록
 
+## [알림 결함 1] 자기 반향 — WebSocket에만 규칙이 빠져 있었다
+
+상태: Backend 수정 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
+
+dev에서 알림을 검증하다 나온 증상 6건 중 **첫 번째(알림이 두 개씩 뜸)의 원인 하나**를 고쳤다.
+나머지는 아직 손대지 않았다.
+
+### 무엇이 잘못돼 있었나
+
+같은 이벤트가 세 경로로 나가는데, **행위자 제외 규칙이 두 곳에만 있었다.**
+
+| 경로 | 이전 | 위치 |
+| --- | --- | --- |
+| WebSocket | ❌ 전원에게 | `MatchingStateChangedEventHandler` |
+| 알림함 | ✅ 행위자 제외 | `NotificationAppendService` |
+| Web Push | ✅ 행위자 제외 | `PushNotificationService` |
+
+그래서 **내가 도착을 눌렀는데 "상대가 만남 장소에 도착했어요" 토스트가 나에게 떴고, 정작
+알림함에는 그 줄이 없었다.** 같은 이벤트인데 어느 경로로 받느냐에 따라 결과가 달랐다.
+
+`docs/31` 5절은 이 한계가 "2단계에서 해결"됐다고 적고 있었는데, 실제로는 **알림함과 push만**
+해결됐다. 사용자가 실제로 보는 토스트·배너는 그대로였다.
+
+### 규칙을 한 곳으로 옮기면서, 무조건 제외가 틀렸다는 것을 확인했다
+
+WebSocket에 기존 규칙을 그대로 복사하려다 더 큰 문제를 찾았다. **행위자를 무조건 걸러내면
+정작 당사자만 알림을 못 받는 사유가 둘 있다.**
+
+- `MATCH_CONFIRMED` — 행위자는 **마지막으로 수락한 사람**이다. 걸러내면 매칭을 성사시킨
+  본인만 확정 알림을 못 받는다.
+- `MATCH_TIMEOUT` — 행위자는 **시간 초과된 사람**이다(`MatchProposalResponseService.timeoutAttempt`가
+  `candidate.getMemberId()`를 행위자로 넘긴다). 걸러내면 `penalty_score +1`과 쿨타임 2분을
+  받은 당사자만 이유를 모른다.
+
+이건 이번에 만든 결함이 아니라 **알림함에 이미 있던 결함이다.** 그래서 규칙 자체를 나눴다.
+
+| 분류 | 사유 | 행위자에게 |
+| --- | --- | --- |
+| 관측자 시점 ("상대가 ~했어요") | `MATCH_ACCEPTED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`, `MEMBER_CANCELLED`, `MEMBER_LEFT`, `MEMBER_NO_SHOW` | 보내지 않음 |
+| 그룹 사실 ("매칭이 ~됐어요") | `MATCH_PROPOSED`, `MATCH_CONFIRMED`, `MATCH_REJECTED`, `MATCH_TIMEOUT`, `MATCH_INSUFFICIENT_MEMBERS`, `MATCH_CANCELLED`, `MATCH_COMPLETED`, `ALL_ARRIVED` | 보냄 |
+
+판정은 `NotificationPolicy.deliverableTo(reason, actorMemberId, memberId)` 하나로 모으고
+**세 경로가 모두 이것을 쓴다.** 한 곳만 규칙이 달라지는 것이 이번 결함의 원인이었다.
+
+모르는 사유는 걸러내지 않는다. 사유가 하나 늘었을 때 알림이 조용히 사라지는 쪽보다 본인에게
+한 번 더 뜨는 쪽이 추적하기 쉽다(프론트 `notificationMessages.ts`의 `FALLBACK`과 같은 방향).
+
+### 행위자 화면이 갱신되지 않을 걱정은 없다
+
+WebSocket 알림은 `useMatchRoom`·`useMatchingSession`에서 **갱신 트리거로도** 쓰인다. 행위자가
+자기 알림을 못 받으면 화면이 멈추는 것 아닌지 확인했는데, 그렇지 않다 — 행위자의 동작은
+mutation 응답으로 이미 상태를 갱신하고(`arrive`·`selectArrivalTime`은 snapshot을, `respond`는
+직후 `refresh()`를) 진행 중 상태에는 2초 polling도 걸려 있다.
+
+### 테스트
+
+- 신규 `NotificationPolicyTest` 16건 — 분류 자체를 고정한다.
+- `MatchingStateChangedEventHandlerTest`에 2건 추가(관측자 시점은 행위자 제외 / 그룹 사실은 포함).
+- `NotificationAppendServiceTest`·`PushNotificationServiceTest`의 "행위자 본인에게는 보내지
+  않는다"를 새 규칙에 맞게 고쳤다. 두 곳 모두 저장·발송 사유에 관측자 시점이 하나도 없어
+  **실제로 걸러지는 일은 지금 없다.** 그래도 같은 판정을 쓰는지 고정해 둔다.
+- `MatchArrivalTimeServiceIntegrationTest` 3개 지점을 새 동작으로 고쳤다. **Testcontainers라
+  이 PC에서 실행되지 않는다** — Docker가 있는 환경에서 확인해야 한다.
+- 회귀: backend 767건 중 35건 실패인데 **전부 Docker 미설치다**(실패 클래스 35개 전수 확인,
+  다른 원인 0건). frontend는 변경 없고 813건 전체 통과.
+
+### 남은 알림 결함 5건
+
+2번 안 사라짐, 3번 화면별로 다름, 4번 위/아래 분리, 5번 활동 반경, 6번 push 미수신은
+아직 그대로다. 1번도 원인이 둘인데 그중 하나(응답 1건마다 이벤트 발행)는 남아 있다.
+
 ## [10-B 후속] 알림 2·3단계, 30도 매칭 제한, 체크인 오류 문구 — 구현 완료
 
 상태: Backend/Frontend 구현 완료. **컨테이너 통합 테스트와 수동 검증 대기**

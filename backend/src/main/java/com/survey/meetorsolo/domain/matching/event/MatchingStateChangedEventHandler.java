@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.matching.event;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchingStateChangedNotification;
+import com.survey.meetorsolo.domain.notification.policy.NotificationPolicy;
 import com.survey.meetorsolo.domain.notification.service.NotificationAppendService;
 import com.survey.meetorsolo.domain.notification.service.PushNotificationService;
 import org.slf4j.Logger;
@@ -46,6 +47,11 @@ public class MatchingStateChangedEventHandler {
                 MatchingStateChangedNotification.of(event.reason(), event.occurredAt());
         event.memberIds().stream()
                 .distinct()
+                // 행위자 본인에게 관측자 시점 문구를 보내지 않는다(docs/31 5절 "알림 자기 반향").
+                // 알림함·push에만 있던 규칙이라 "내가 도착을 눌렀는데 상대가 도착했다는 토스트가
+                // 뜨고, 정작 알림함에는 없는" 상태가 됐다. 세 경로가 같은 판정을 쓴다.
+                .filter(memberId -> NotificationPolicy.deliverableTo(
+                        event.reason(), event.actorMemberId(), memberId))
                 .forEach(memberId -> messagingTemplate.convertAndSendToUser(
                         String.valueOf(memberId),
                         MATCHING_DESTINATION,
