@@ -25,8 +25,9 @@ import org.testcontainers.utility.DockerImageName;
  * dev 서버에서 "3명이 같은 희망 인원으로 동시에 신청했는데 아무 일도 일어나지 않는다"고 보고된
  * 상황을 코드 경로로 재현한다.
  *
- * <p>scheduler tick 경로와 pool entry trigger 경로를 모두 태운다. 두 경로 모두 proposal을
- * 만들면 조합 로직에는 문제가 없고 원인이 배포 환경에 있다는 뜻이 된다.
+ * <p>조합 경로는 scheduler tick 하나뿐이다. 예전에는 pool entry trigger 경로도 함께 태웠으나,
+ * 그 경로가 유효한 조합이 처음 생기는 순간 즉시 소진시켜 궁합 점수가 개입할 수 없게 만들어
+ * 제거했다. tick이 proposal을 만들면 조합 로직에는 문제가 없고 원인이 배포 환경에 있다는 뜻이다.
  */
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
@@ -49,7 +50,6 @@ class MatchingThreeMemberScenarioIntegrationTest {
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
 
     @Autowired MatchingOrchestrationService schedulerOrchestration;
-    @Autowired PoolEntryMatchingOrchestrationService poolEntryOrchestration;
     @Autowired JdbcTemplate jdbc;
 
     @Test void 희망인원_3명인_회원_3명이_대기하면_scheduler_tick이_proposal을_만든다() {
@@ -70,16 +70,6 @@ class MatchingThreeMemberScenarioIntegrationTest {
         assertThat(result.createdAttemptIds()).as("result=%s", result).isEmpty();
         assertThat(result.claimedCount()).as("result=%s", result).isEqualTo(3);
         assertThat(result.releasedCount()).as("result=%s", result).isEqualTo(3);
-    }
-
-    @Test void 희망인원_3명인_세번째_회원의_pool_entry가_즉시_proposal을_만든다() {
-        prepareTrio(3);
-
-        MatchingOrchestrationResult result = poolEntryOrchestration.run(9_120_006L, 9_110_006L, 9_100_001L);
-
-        assertThat(result.createdAttemptIds()).as("result=%s", result).hasSize(1);
-        assertThat(result.failedGroupCount()).as("result=%s", result).isZero();
-        assertProposedTrio(result.createdAttemptIds().get(0), 3);
     }
 
     /**
