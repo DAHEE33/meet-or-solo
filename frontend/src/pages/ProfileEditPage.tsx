@@ -16,6 +16,10 @@ import {
   memberConsentApi,
   type MemberConsent,
 } from '../api/memberConsents';
+import {
+  resizeFailureMessage,
+  resizeProfileImage,
+} from '../utils/imageResize';
 import Chip from '../components/common/Chip';
 import AiConsentSection, {
   EMPTY_AI_CONSENT_DRAFT,
@@ -79,6 +83,15 @@ export default function ProfileEditPage() {
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  /**
+   * 사진 선택 실패는 errorMessage와 분리한다.
+   *
+   * 같은 자리를 쓰면 저장을 누르는 순간 닉네임 검증 메시지가 덮어써서, 사용자는
+   * 사진이 왜 안 붙었는지 알 수 없다. 실제로 "오류가 떴는데 저장은 되고 사진만
+   * 안 바뀐다"는 제보가 있었다.
+   */
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageProcessing, setImageProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -142,23 +155,29 @@ export default function ProfileEditPage() {
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
   }, [imagePreviewUrl]);
 
-  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    setErrorMessage(null);
+  const handleImageChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    // await 뒤에는 event.target을 믿지 않는다. 먼저 잡아둔다.
+    const input = event.target;
+    const file = input.files?.[0] ?? null;
+    setImageError(null);
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setErrorMessage('JPEG, PNG, WEBP 이미지만 선택할 수 있습니다.');
-      event.target.value = '';
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage('프로필 이미지는 5MB 이하만 업로드할 수 있습니다.');
-      event.target.value = '';
+
+    // 업로드 전에 줄인다. 아이폰 사진은 iOS가 HEIC를 JPEG로 바꾸면서 2~3배로 커져,
+    // 갤러리에 3MB로 보이던 사진이 그대로면 상한에 걸린다.
+    setImageProcessing(true);
+    const result = await resizeProfileImage(file);
+    setImageProcessing(false);
+    // 같은 파일을 다시 고를 수 있게 비운다. 선택 결과는 state가 들고 있다.
+    input.value = '';
+
+    if (!result.ok) {
+      setImageError(resizeFailureMessage(result.reason));
+      setImageFile(null);
       return;
     }
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    setImageFile(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
+    setImageFile(result.file);
+    setImagePreviewUrl(URL.createObjectURL(result.file));
   };
 
   const toggleStyle = (style: TravelStyleCode) => {
@@ -174,6 +193,12 @@ export default function ProfileEditPage() {
   };
 
   const handleSave = async () => {
+    // 사진 선택이 실패한 채로 저장하면 사진만 조용히 빠진 상태로 성공한다.
+    // 사용자는 저장됐다고 믿고 화면을 떠난다. 명시적으로 막고 선택지를 준다.
+    if (imageError) {
+      setErrorMessage('선택한 사진이 적용되지 않았어요. 사진을 다시 고르거나 안내를 닫고 저장해 주세요.');
+      return;
+    }
     const nicknameError = validateNickname(nickname);
     if (nicknameError) {
       setErrorMessage(nicknameError);
@@ -316,7 +341,21 @@ export default function ProfileEditPage() {
                 className="sr-only"
               />
             </label>
-            <p className="text-center text-xs text-ink/45">JPEG, PNG, WEBP · 최대 5MB</p>
+            <p className="text-center text-xs text-ink/45">
+              {imageProcessing ? '사진을 준비하는 중이에요...' : 'JPEG, PNG, WEBP · 사진은 자동으로 줄여서 올라가요'}
+            </p>
+            {imageError && (
+              <div role="alert" className="flex w-full items-start gap-2 rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">
+                <span className="flex-1">{imageError}</span>
+                <button
+                  type="button"
+                  onClick={() => setImageError(null)}
+                  className="shrink-0 font-bold underline"
+                >
+                  안내 닫기
+                </button>
+              </div>
+            )}
           </section>
           <label className="flex flex-col gap-2 text-[15px] font-bold text-ink">
             닉네임
@@ -357,7 +396,7 @@ export default function ProfileEditPage() {
             ))}</div>
           </section>
           {errorMessage && <p role="alert" className="rounded-2xl bg-coral/10 px-4 py-3 text-sm text-coral">{errorMessage}</p>}
-          <PrimaryButton onClick={handleSave} disabled={isSaving}>{isSaving ? '저장 중...' : '수정 내용 저장'}</PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={isSaving || imageProcessing}>{isSaving ? '저장 중...' : '수정 내용 저장'}</PrimaryButton>
 
           {/* 취향 전격 분석 */}
           <section className="flex flex-col gap-3 border-t border-line pt-6">
