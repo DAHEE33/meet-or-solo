@@ -38,22 +38,40 @@ export default defineConfig({
         enabled: true,
         type: 'module',
       },
-      includeAssets: ['icons/placeholder.svg'],
+      includeAssets: ['icons/icon.svg', 'icons/icon-maskable.svg'],
       manifest: {
         name: 'meet-or-solo',
         short_name: 'meet-or-solo',
         description: '강원도 축제 현장 매칭 PWA',
-        theme_color: '#0f172a',
-        background_color: '#ffffff',
+        // 없으면 'en'으로 나간다. 화면이 전부 한국어고 index.html도 lang="ko"다.
+        lang: 'ko',
+        /*
+          index.html의 <meta name="theme-color">와 같은 값이어야 한다. 예전에는 여기만
+          '#0f172a'(남색)여서, 설치한 앱의 상단 바 색과 브라우저에서 연 색이 달랐다.
+          배경색도 앱 배경(sand)으로 맞춘다 — 설치 앱이 뜨는 동안 흰 판이 한 번 깜빡였다.
+        */
+        theme_color: '#FAF7F1',
+        background_color: '#FAF7F1',
         display: 'standalone',
         start_url: '/',
         scope: '/',
+        /*
+          'any'와 'maskable'을 한 항목에 같이 두지 않는다. maskable은 바깥 20%가 잘려도
+          되도록 여백을 크게 준 그림이라, 그걸 그대로 탭 아이콘('any')으로 쓰면 로고가
+          작게 박혀 보인다. 파일을 나눠 각자 맞는 그림을 준다.
+        */
         icons: [
           {
-            src: '/icons/placeholder.svg',
+            src: '/icons/icon.svg',
             sizes: 'any',
             type: 'image/svg+xml',
-            purpose: 'any maskable',
+            purpose: 'any',
+          },
+          {
+            src: '/icons/icon-maskable.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'maskable',
           },
         ],
       },

@@ -1,5 +1,62 @@
 # 진행 상태 기록
 
+## [아이콘] 브랜드 핀 하나로 통일 — favicon·PWA·스플래시
+
+상태: Frontend 구현 완료. **PNG 아이콘은 래스터화 도구가 없어 만들지 못했다(아래 참조)**
+
+탭 아이콘이 `public/icons/placeholder.svg`(남색 사각형에 원 두 개와 웃는 입)였다. 앱 첫
+화면의 핀 로고와 아무 관계가 없는 그림이라, 탭·설치 아이콘·스플래시가 각자 놀았다.
+
+### 스플래시 핀을 정지 SVG로 옮겼다
+
+| 자리 | 이전 | 지금 |
+| --- | --- | --- |
+| 브라우저 탭 | `placeholder.svg` | `icons/icon.svg` |
+| PWA 일반 | `placeholder.svg` (`any maskable`) | `icons/icon.svg` (`any`) |
+| PWA 설치 | 같음 | `icons/icon-maskable.svg` (`maskable`) |
+| 스플래시 | `BrandPin.tsx` | 그대로 |
+
+애니메이션과 바닥 그림자는 뺐다. 착지 동작을 설명하는 조각이라 멈춰 있으면 의미가 없고,
+16px 탭 아이콘에서는 핀 아래 얼룩으로만 보인다.
+
+**`any`와 `maskable`을 한 항목에 같이 두지 않는다.** 예전에는 `purpose: 'any maskable'`
+하나였다. maskable은 바깥 20%가 잘려도 되도록 여백을 크게 준 그림이라, 그대로 탭 아이콘으로
+쓰면 로고가 작게 박혀 보인다. 파일을 나눠 각자 맞는 그림을 준다 — `maskable` 쪽만 0.71배로
+줄이고 `sand` 배경을 꽉 채운다(투명하면 잘라낸 자리에 검은 판이 깔리는 기기가 있다).
+
+### 도형이 세 곳에 생겨서 가드를 붙였다
+
+`BrandPin.tsx`·`icon.svg`·`icon-maskable.svg`가 같은 도형을 그린다. 정적 SVG는 `public/`에
+있어 좌표 모듈을 import할 수 없으므로, **`brandPinIcon.test.ts`가 파일을 읽어 좌표가 같은지
+대조**한다. 좌표는 `brandPinGeometry.ts` 한 곳에 모았다.
+
+이번 세션에서 같은 값이 여러 곳에 흩어져 한 곳을 빠뜨린 일이 두 번 있었다(알림 타이머,
+프로필 사진 URL). 눈으로 보기 전까지 아무도 모르는 종류의 결함이라 가드를 먼저 뒀다.
+**가드가 실제로 잡는지 확인했다** — 머리 반지름을 6.3→7.9로, 색을 팔레트 밖 값으로 바꿨더니
+2건이 깨졌다.
+
+### 곁들여 맞춘 것
+
+- manifest `theme_color`가 `#0f172a`(남색)였다. `index.html`의 `<meta name="theme-color">`는
+  `#FAF7F1`이라, **설치한 앱의 상단 바 색과 브라우저에서 연 색이 달랐다.** 둘 다 `sand`로 맞췄다.
+- `background_color`도 `#ffffff` → `#FAF7F1`. 설치 앱이 뜨는 동안 흰 판이 한 번 깜빡였다.
+- manifest `lang`이 없어 `en`으로 나가고 있었다. `ko`를 넣었다.
+
+### PNG 아이콘은 못 만들었다
+
+**iOS 홈 화면(`apple-touch-icon`)은 SVG를 지원하지 않는다.** 일부 안드로이드 런처도 PNG를
+선호한다. 그런데 이 PC에 래스터화 도구가 없다(sharp·ImageMagick 모두 없음).
+`frontend/logo.png`가 있지만 1448x1086에 워드마크까지 합쳐져 있어 정사각 아이콘으로 쓸 수 없다.
+
+뽑는 법과 뒤이어 할 일은 `docs/03` PWA 절에 적어 뒀다. **지금 상태로도 안드로이드 설치와
+데스크톱 탭은 정상**이고, iOS 홈 화면 아이콘만 비어 보인다.
+
+### 테스트
+
+Frontend **840건 전체 통과**(88 파일), `tsc -b` 통과, `npm run build` 성공. 빌드된
+`dist/manifest.webmanifest`에 아이콘 2개와 `#FAF7F1`이 들어간 것을 확인했다.
+`@types/node`를 들이지 않으려고 테스트는 `?raw` import로 SVG를 읽는다.
+
 ## [프로필 사진] 댓글·매칭방에 반영한다 — 로그인 회원 한정
 
 상태: Backend/Frontend 구현 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**

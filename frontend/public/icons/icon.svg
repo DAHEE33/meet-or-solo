@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-label="meet or solo">
+  <!--
+    브라우저 탭 favicon과 PWA 아이콘(purpose="any").
+
+    스플래시 첫 화면의 핀(src/components/splash/BrandPin.tsx)과 같은 도형이다. 좌표 원본은
+    src/components/splash/brandPinGeometry.ts이고, 두 곳이 어긋나면 brandPinIcon.test.ts가
+    깨진다 — 탭 아이콘과 앱 로고가 다른 그림이 되는 것을 막는다.
+
+    애니메이션과 바닥 그림자는 뺐다. 착지 동작을 설명하는 조각이라 멈춰 있으면 의미가 없고,
+    16px 탭 아이콘에서는 핀 아래 얼룩으로만 보인다.
+
+    배경은 투명이다. 핀이 coral이고 안쪽이 흰 원이라 밝은 탭에서도 어두운 탭에서도 읽힌다.
+    원본 좌표계(100x112)를 정사각 112x112 안에 가운데로 옮긴 것이 아래 translate다.
+  -->
+  <g transform="translate(6 3.5)">
+    <path d="M22.5 70.3 A38 38 0 1 1 77.5 70.3 L50 99 Z" fill="#E8593A"/>
+    <circle cx="50" cy="44" r="27.5" fill="#FFFFFF"/>
+    <clipPath id="mors-icon-inner">
+      <circle cx="50" cy="44" r="27.5"/>
+    </clipPath>
+    <g clip-path="url(#mors-icon-inner)">
+      <g fill="#22303E">
+        <circle cx="30.8" cy="42.1" r="6.3"/>
+        <path d="M48 35.2 C46.9 37.3 45.4 40 44 42.6 C43 44.8 41.6 46.6 39.6 47.6 C35.4 49.6 30 50.6 26 53.2 C22.5 55.4 19 58.4 16 61 L16 78 L39.4 78 C38.4 71 37.8 65 38.6 60.4 C39.4 56.4 41.8 54.4 44.8 52.6 C47.2 51 48.6 46.6 49.6 42.2 C50.2 38.6 49.8 36.2 48 35.2 Z"/>
+      </g>
+      <g fill="#E8593A" transform="translate(100 0) scale(-1 1)">
+        <circle cx="30.8" cy="42.1" r="6.3"/>
+        <path d="M48 35.2 C46.9 37.3 45.4 40 44 42.6 C43 44.8 41.6 46.6 39.6 47.6 C35.4 49.6 30 50.6 26 53.2 C22.5 55.4 19 58.4 16 61 L16 78 L39.4 78 C38.4 71 37.8 65 38.6 60.4 C39.4 56.4 41.8 54.4 44.8 52.6 C47.2 51 48.6 46.6 49.6 42.2 C50.2 38.6 49.8 36.2 48 35.2 Z"/>
+      </g>
+    </g>
+    <g stroke="#E8593A" stroke-width="3.2" stroke-linecap="round">
+      <path d="M50 23 L50 29"/>
+      <path d="M40.4 27.6 L44.1 31.5"/>
+      <path d="M59.6 27.6 L55.9 31.5"/>
+    </g>
+  </g>
+</svg>

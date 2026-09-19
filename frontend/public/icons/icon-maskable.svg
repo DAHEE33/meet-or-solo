@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-label="meet or solo">
+  <!--
+    PWA 아이콘(purpose="maskable"). 홈 화면에 설치했을 때 OS가 원·사각·squircle 등 제 모양으로
+    잘라 쓰는 판이다.
+
+    `any`용 icon.svg와 두 가지가 다르다.
+
+    1) 배경을 꽉 채운다(sand). 투명하면 OS가 잘라낸 자리에 검은 판이 깔리는 기기가 있다.
+    2) 핀을 0.71배로 줄여 가운데 안전영역 안에 넣는다. maskable은 바깥 20%가 잘려 나갈 수
+       있다고 보고 그리므로, icon.svg와 같은 크기로 두면 핀 끝과 광선이 잘린다.
+
+    도형 자체는 icon.svg와 같다(src/components/splash/brandPinGeometry.ts).
+  -->
+  <rect width="112" height="112" fill="#FAF7F1"/>
+  <g transform="translate(20.48 18.74) scale(0.71)">
+    <path d="M22.5 70.3 A38 38 0 1 1 77.5 70.3 L50 99 Z" fill="#E8593A"/>
+    <circle cx="50" cy="44" r="27.5" fill="#FFFFFF"/>
+    <clipPath id="mors-maskable-inner">
+      <circle cx="50" cy="44" r="27.5"/>
+    </clipPath>
+    <g clip-path="url(#mors-maskable-inner)">
+      <g fill="#22303E">
+        <circle cx="30.8" cy="42.1" r="6.3"/>
+        <path d="M48 35.2 C46.9 37.3 45.4 40 44 42.6 C43 44.8 41.6 46.6 39.6 47.6 C35.4 49.6 30 50.6 26 53.2 C22.5 55.4 19 58.4 16 61 L16 78 L39.4 78 C38.4 71 37.8 65 38.6 60.4 C39.4 56.4 41.8 54.4 44.8 52.6 C47.2 51 48.6 46.6 49.6 42.2 C50.2 38.6 49.8 36.2 48 35.2 Z"/>
+      </g>
+      <g fill="#E8593A" transform="translate(100 0) scale(-1 1)">
+        <circle cx="30.8" cy="42.1" r="6.3"/>
+        <path d="M48 35.2 C46.9 37.3 45.4 40 44 42.6 C43 44.8 41.6 46.6 39.6 47.6 C35.4 49.6 30 50.6 26 53.2 C22.5 55.4 19 58.4 16 61 L16 78 L39.4 78 C38.4 71 37.8 65 38.6 60.4 C39.4 56.4 41.8 54.4 44.8 52.6 C47.2 51 48.6 46.6 49.6 42.2 C50.2 38.6 49.8 36.2 48 35.2 Z"/>
+      </g>
+    </g>
+    <g stroke="#E8593A" stroke-width="3.2" stroke-linecap="round">
+      <path d="M50 23 L50 29"/>
+      <path d="M40.4 27.6 L44.1 31.5"/>
+      <path d="M59.6 27.6 L55.9 31.5"/>
+    </g>
+  </g>
+</svg>
