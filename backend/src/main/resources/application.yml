@@ -139,7 +139,11 @@ app:
       # 성사되지 않고, 제안이 닫히지 않아 회원 pool이 PROPOSED에 남아 재신청까지 막힌다.
       # 배치가 데이터를 건드리면 곤란한 테스트는 각 테스트에서 false로 덮어쓴다.
       enabled: ${MATCHING_SCHEDULER_ENABLED:true}
-      fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:5s}
+      # 후보 수집 주기. 즉시 조합 경로를 제거한 뒤에는 이 값이 곧 한 배치에 모이는 시간이다.
+      # 세 scheduler가 이 값을 공유하므로 늘리면 제안 timeout·만남 종료 판정도 그만큼 늦어진다.
+      # 5s 대비 10s는 한 창에 유효 후보 3명 이상이 모일 확률을 저·중밀도에서 4~7배 높인다.
+      # 고밀도에서는 차이가 거의 없다. 즉 이득이 "문제가 실제로 발생하는 구간"에 몰린다.
+      fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:10s}
       stale-timeout: ${MATCHING_STALE_TIMEOUT:30s}
       proposal-timeout: ${MATCHING_PROPOSAL_TIMEOUT:30s}
       batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}

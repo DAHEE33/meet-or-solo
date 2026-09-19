@@ -35,7 +35,7 @@ class MatchingSchedulerPropertiesTest {
             assertThat(context).hasNotFailed();
             MatchingSchedulerProperties properties = context.getBean(MatchingSchedulerProperties.class);
             assertThat(properties.enabled()).isTrue();
-            assertThat(properties.fixedDelay()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(properties.fixedDelay()).isEqualTo(Duration.ofSeconds(10));
             assertThat(properties.staleTimeout()).isEqualTo(Duration.ofSeconds(30));
             assertThat(properties.proposalTimeout()).isEqualTo(Duration.ofSeconds(30));
             assertThat(properties.batchSize()).isEqualTo(20);
