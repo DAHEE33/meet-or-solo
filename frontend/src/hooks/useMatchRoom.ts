@@ -147,7 +147,8 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
             terminationNotice: completionSignalReceived
               ? '만남이 끝났어요. 매너온도가 올랐어요.'
               : hadCurrentGroup
-              ? '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.'
+              // 알림 문구(notificationMessages의 MATCH_CANCELLED)와 같은 어휘를 쓴다.
+              ? '남은 인원으로 만남을 이어갈 수 없어 만남이 종료됐어요.'
               : currentState.terminationNotice,
             isSubmitting: false,
           });

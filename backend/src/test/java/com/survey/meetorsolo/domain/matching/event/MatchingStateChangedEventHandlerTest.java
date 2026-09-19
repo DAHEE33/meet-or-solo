@@ -1,5 +1,6 @@
 package com.survey.meetorsolo.domain.matching.event;
 
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -83,6 +84,63 @@ class MatchingStateChangedEventHandlerTest {
                 List.of(1L, 2L), "MATCH_PROPOSED", occurredAt, 2L));
 
         verify(notifications).append(List.of(1L, 2L), "MATCH_PROPOSED", 2L, occurredAt);
+    }
+
+    /**
+     * 내가 누른 일을 나에게 다시 알리지 않는다({@code docs/31} 5절 "알림 자기 반향").
+     *
+     * <p>예전에는 알림함·push에만 행위자 제외가 있고 WebSocket에는 없었다. 그래서 내가 도착을
+     * 눌렀는데 "상대가 만남 장소에 도착했어요" 토스트가 나에게 떴고, 정작 알림함에는 그 줄이
+     * 없었다 — 같은 이벤트인데 경로에 따라 결과가 달랐다.
+     */
+    @Test
+    void 관측자시점알림은행위자에게보내지않는다() {
+        SimpMessagingTemplate messagingTemplate = org.mockito.Mockito.mock(SimpMessagingTemplate.class);
+        NotificationAppendService notifications =
+                org.mockito.Mockito.mock(NotificationAppendService.class);
+        PushNotificationService push = org.mockito.Mockito.mock(PushNotificationService.class);
+        MatchingStateChangedEventHandler handler =
+                new MatchingStateChangedEventHandler(messagingTemplate, notifications, push);
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-07-29T12:10:00+09:00");
+
+        handler.handle(new MatchingStateChangedEvent(
+                List.of(1L, 2L), "MEMBER_ARRIVED", occurredAt, 1L));
+
+        MatchingStateChangedNotification notification =
+                MatchingStateChangedNotification.of("MEMBER_ARRIVED", occurredAt);
+        verify(messagingTemplate, times(1))
+                .convertAndSendToUser("2", "/queue/matching", notification);
+        verify(messagingTemplate, never()).convertAndSendToUser(
+                org.mockito.ArgumentMatchers.eq("1"),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    /**
+     * 그룹 전체의 사실은 행위자에게도 보낸다.
+     *
+     * <p>{@code MATCH_CONFIRMED}의 행위자는 <b>마지막으로 수락한 사람</b>이다. 행위자를 무조건
+     * 걸러내면 매칭을 성사시킨 본인만 확정 배너를 못 본다.
+     */
+    @Test
+    void 그룹사실은행위자에게도보낸다() {
+        SimpMessagingTemplate messagingTemplate = org.mockito.Mockito.mock(SimpMessagingTemplate.class);
+        NotificationAppendService notifications =
+                org.mockito.Mockito.mock(NotificationAppendService.class);
+        PushNotificationService push = org.mockito.Mockito.mock(PushNotificationService.class);
+        MatchingStateChangedEventHandler handler =
+                new MatchingStateChangedEventHandler(messagingTemplate, notifications, push);
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-07-29T12:00:20+09:00");
+
+        handler.handle(new MatchingStateChangedEvent(
+                List.of(1L, 2L), "MATCH_CONFIRMED", occurredAt, 1L));
+
+        MatchingStateChangedNotification notification =
+                MatchingStateChangedNotification.of("MATCH_CONFIRMED", occurredAt);
+        verify(messagingTemplate, times(1))
+                .convertAndSendToUser("1", "/queue/matching", notification);
+        verify(messagingTemplate, times(1))
+                .convertAndSendToUser("2", "/queue/matching", notification);
     }
 
     /**

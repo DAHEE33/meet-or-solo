@@ -114,7 +114,7 @@ Docker Compose 방향:
 - `infra/docker/docker-compose.dev.yml`: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 dev 배포 초안
 - `infra/docker/docker-compose.prod.yml`: 같은 Oracle VM에서 dev와 분리해 운영하는 prod 배포 구성
 
-운영 CD(GitHub Actions 자동 배포)는 아직 만들지 않습니다. `main` 기준 수동 배포를 먼저 검증합니다.
+운영 CD는 `.github/workflows/deploy-prod.yml`로 자동화했습니다. `main` push가 트리거입니다. 자세한 내용은 [docs/07](07_DEPLOYMENT.md) '운영 CD' 절을 따릅니다.
 
 dev compose의 nginx는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 host `18080`을 container `80`에 매핑합니다. dev 서버 검증은 `http://<DEV_SERVER_HOST>:18080` 또는 서버 내부 `curl http://localhost:18080/api/health`를 기준으로 합니다.
 
@@ -229,6 +229,42 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 `ADMIN_REPORT_CURSOR_HMAC_SECRET`은 JWT 서명 키와 다른 난수 Secret을 dev/prod에 각각
 주입하며 실제 값은 repository와 문서에 기록하지 않습니다. 이 키를 회전하면 기존에 발급한
 관리자 신고 목록 cursor는 무효화될 수 있습니다.
+
+## 매칭 Scheduler 플래그
+
+`MATCHING_SCHEDULER_ENABLED`는 **스케줄러 3개를 한꺼번에** 켜고 끕니다.
+`@ConditionalOnProperty(havingValue = "true")`이므로 `true`가 아니면 빈이 아예 생성되지 않습니다.
+
+| 스케줄러 | 하는 일 |
+| --- | --- |
+| `MatchingScheduler` | 대기자 선점 → 후보 조합 → proposal 생성, stale `LOCKED` pool 정리 |
+| `MatchProposalTimeoutScheduler` | 30초 지난 proposal timeout 처리 |
+| `MatchMeetingCloseScheduler` | 시간이 지난 만남 종료 처리 |
+
+노쇼 배치만 `MATCHING_NO_SHOW_SCHEDULER_ENABLED`로 따로 관리합니다.
+
+**`false`면 매칭 성사만 멈추는 것이 아닙니다.** 수명주기 전체가 멈춥니다.
+
+- proposal이 30초를 넘겨도 닫히지 않아 회원 pool이 `PROPOSED`에 남고,
+  `existsActiveByMemberId`에 걸려 재신청이 `MATCHING_CONFLICT`로 막힙니다
+- 만남이 종료되지 않아 그룹이 `CONFIRMED`로 남고 참가자가 새 매칭을 신청할 수 없습니다
+- stale `LOCKED` pool이 정리되지 않습니다
+
+`application.yml` 기본값은 `true`입니다. 예전에는 `false`였고, 매칭 신청 직후 즉시 조합하는
+경로가 따로 있어서 스케줄러가 꺼진 상태로도 매칭이 되는 것처럼 보였습니다. 그 경로를
+제거했으므로 이제 이 플래그가 꺼지면 매칭이 성사되지 않습니다. 배치가 데이터를 건드리면
+곤란한 테스트는 각 테스트에서 `app.matching.scheduler.enabled=false`로 덮어씁니다.
+
+`MATCHING_SCHEDULER_FIXED_DELAY`는 세 스케줄러가 **공유**합니다. 즉시 조합 경로를 제거한
+뒤에는 이 값이 곧 "후보가 한 배치에 모이는 시간"입니다. 짧으면 후보가 2명을 넘기 어려워
+궁합 점수가 순위에 개입하지 못하고, 늘리면 proposal timeout과 만남 종료 판정도 같이
+느슨해집니다. dev·prod example은 `10s`를 기준으로 둡니다.
+
+| `fixed-delay` | 첫 평가까지 평균 / 최대 | 30초 proposal이 실제로 닫히는 시점 |
+| --- | --- | --- |
+| `5s` | 2.5초 / 5초 | 30~35초 |
+| `10s` (기준) | 5초 / 10초 | 30~40초 |
+| `15s` | 7.5초 / 15초 | 30~45초 |
 
 ## 취향 임베딩 실패 진단
 

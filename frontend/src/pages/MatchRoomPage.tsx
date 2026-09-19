@@ -865,6 +865,16 @@ export function ReportDialog({
   );
 }
 
+/**
+ * 상태 기록 한 줄의 문구.
+ *
+ * <p><b>알림 문구(`notificationMessages.ts`)와 같은 어휘를 쓴다.</b> 같은 사건을 두 화면이
+ * 다른 말로 부르면 사용자는 다른 일이 일어난 것으로 읽는다 — 종에는 "상대가 만남 장소에
+ * 도착했어요"가, 상태방에는 "민수님이 도착했어요"가 남아 있었다.
+ *
+ * <p>닉네임은 여기서만 쓴다. 알림은 행위자 닉네임을 모르기 때문에 "상대가"로만 말할 수 있고,
+ * 상태방은 그룹 구성원을 알고 있어 더 구체적으로 적을 수 있다. 어휘를 맞추되 이 차이는 둔다.
+ */
 export function matchEventText(
   event: MatchRoomState['events'][number],
   currentMemberId?: number,
@@ -873,13 +883,14 @@ export function matchEventText(
   const actor = event.actor
     ? (event.actor.memberId === currentMemberId ? '내가' : `${event.actor.nickname}님이`)
     : '참여자가';
-  if (event.type === 'MEMBER_ARRIVED') return `${actor} 도착했어요.`;
+  if (event.type === 'MEMBER_ARRIVED') return `${actor} 만남 장소에 도착했어요.`;
   if (event.type === 'MEMBER_CANCELLED') return `${actor} 참여를 취소했어요.`;
+  if (event.type === 'MEMBER_LEFT') return `${actor} 먼저 갔어요.`;
   if (event.type === 'MEMBER_NO_SHOW') {
-    return `${actor} 도착 마감까지 도착하지 않았어요.`;
+    return `${actor} 도착 마감까지 오지 않았어요.`;
   }
   if (event.type === 'MATCH_CANCELLED') {
-    return '남은 인원으로 만남을 계속할 수 없어 그룹이 종료됐어요.';
+    return '남은 인원으로 만남을 이어갈 수 없어 만남이 종료됐어요.';
   }
   if (event.arrivalMinutes === 0) return `${actor} 곧 도착할 예정이에요.`;
   return `${actor} ${event.arrivalMinutes}분 후 도착할 예정이에요.`;

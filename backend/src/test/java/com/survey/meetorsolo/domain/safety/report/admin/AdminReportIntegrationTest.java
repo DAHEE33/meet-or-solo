@@ -72,8 +72,8 @@ class AdminReportIntegrationTest {
 
     @BeforeEach
     void prepare() {
-        jdbc.update("UPDATE members SET role='ADMIN', nickname='admin-a' WHERE id=?", ADMIN_A);
-        jdbc.update("UPDATE members SET role='ADMIN', nickname='admin-b' WHERE id=?", ADMIN_B);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL', nickname='admin-a' WHERE id=?", ADMIN_A);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL', nickname='admin-b' WHERE id=?", ADMIN_B);
         jdbc.update("""
                 INSERT INTO match_groups(
                     id, attempt_id, festival_id, status, confirmed_member_count, confirmed_at,

@@ -737,3 +737,168 @@ GPS 반경 검증을 건너뛰고 체크인을 허용했습니다(사유=TEST_AC
 - **탈퇴와 재가입**(4.4), **1:1 문의**(4.5), **동의 흐름**(4.7)
 - **30도 매칭 제한**(4.9 PR C)과 **후기**(PR D) — 미착수
 - **알림 2·3단계** — 서버 저장 알림함과 PWA push. 구현 후 시나리오 R을 늘립니다
+
+## 7. 취향 임베딩 검증 2건
+
+"임베딩이 매칭에 반영되는가"는 **성격이 다른 두 질문**입니다. 합치면 원인을 가릴 수 없습니다.
+검증 1이 실패하면 검증 2는 의미가 없으므로 순서를 지킵니다.
+
+### 검증 1. 임베딩이 정상 생성·저장·조회되는가
+
+임베딩 실패는 회원 흐름을 막지 않고 조용히 `FAILED`로만 남습니다. 더 중요한 것은
+`PairCompatibilityScorer.scoreDetailed()`가 **한쪽이라도 임베딩이 없으면 경고 없이 Jaccard
+점수만 쓰고** `embedding_applied = false`로 기록한다는 점입니다. 그래서 "임베딩이 안 먹는
+것 같다"는 증상은 데이터 문제로도 똑같이 나타납니다.
+
+| 단계 | 확인 |
+| --- | --- |
+| 1 | `GET /api/admin/diagnostics/embedding` → `ok: true`, `dimensions: 1536` |
+| 2 | 참가자 전원 `member_preference_embeddings.embedding_status = 'COMPLETED'`, `embedding IS NOT NULL` |
+| 3 | 실패면 `embedding_error_reason` 확인 (`docs/02` 취향 임베딩 실패 진단) |
+| 4 | 지난 매칭의 `match_attempt_members.embedding_applied` 확인 |
+
+```sql
+SELECT e.member_id, m.nickname, e.embedding_status, e.embedding_error_reason,
+       (e.embedding IS NOT NULL) AS has_vector,
+       split_part(e.preference_text, E'
+', 1) AS activity,
+       split_part(e.preference_text, E'
+', 2) AS companion,
+       e.updated_at
+FROM member_preference_embeddings e
+JOIN members m ON m.id = e.member_id
+ORDER BY e.updated_at DESC
+LIMIT 10;
+```
+
+`member_preference_embeddings`는 회원당 1행이므로 `updated_at DESC`가 곧 "방금 입력한
+테스터 순"입니다. member id를 몰라도 됩니다.
+
+판정:
+
+- `embedding_applied = true` → 임베딩은 반영됐다. 결과가 취향과 안 맞으면 원인은 조합 단계다
+- `embedding_applied = false` → **이 회원의 임베딩이 원인이다.** 검증 2로 넘어가지 말고 먼저 고친다
+
+### 검증 2. 임베딩이 조합 선택 결과에 반영되는가
+
+**희망 인원을 전원 2명으로 고정하는 것이 전제입니다.** 3인 이상을 허용하면 조합 우선순위가
+점수보다 인원 수를 먼저 보므로 세 명이 한 그룹으로 묶이고, 점수를 검증할 수 없습니다.
+
+| | |
+| --- | --- |
+| 준비 | 참가자 전원 같은 축제 체크인, **여행스타일 태그 전원 동일**, 취향 문장만 서로 다르게, 임베딩 전원 `COMPLETED` |
+| 조작 | 전원 희망 인원 **2명**, "2명이어도 괜찮아요" 체크 → `MATCHING_SCHEDULER_FIXED_DELAY` 안에 **3명 이상**이 함께 신청 |
+| 기대 | 코사인이 가장 높은 pair가 묶이고 남는 사람은 매칭되지 않는다(→ 솔로 코스 전환) |
+| 기대 — DB | `match_attempt_members`의 `jaccard_score`가 전원 동일, `cosine_score`만 다름, `embedding_applied = true` |
+
+태그를 전원 동일하게 두면 모든 pair의 Jaccard가 상수가 되므로, 총점 순위는 **코사인만으로**
+결정됩니다. 가중치 값과 무관하게 예상 짝이 정해지므로 `.env`를 건드릴 필요가 없습니다.
+
+매칭을 돌리기 **전에** 예상 짝을 적어두고 대조합니다. 이것이 "잘 되는지"를 검증 가능한
+형태로 바꾸는 단계입니다.
+
+```sql
+WITH recent AS (
+    SELECT e.member_id, e.embedding, m.nickname
+    FROM member_preference_embeddings e
+    JOIN members m ON m.id = e.member_id
+    WHERE e.embedding_status = 'COMPLETED'
+    ORDER BY e.updated_at DESC
+    LIMIT 5
+)
+SELECT a.nickname AS m1, b.nickname AS m2,
+       round(((1 - (a.embedding <=> b.embedding)) * 100)::numeric, 2) AS cosine
+FROM recent a
+JOIN recent b ON a.member_id < b.member_id
+ORDER BY cosine DESC;
+```
+
+코사인 내림차순으로 사람이 겹치지 않게 골라 나가면 그것이 조합기의 예상 출력입니다.
+
+**의도한 짝과 1순위 오답 짝의 차이가 2점 미만이면 취향 문장을 더 갈라서 다시 합니다.**
+취향 입력은 가이드 2문항과 자유 입력을 라벨 붙여 한 문자열로 합쳐 임베딩하므로
+(`하고 싶은 것:` / `편한 사람:`), 모든 회원 텍스트에 공통 접두어가 들어가 코사인 바닥값이
+전반적으로 높게 깔립니다. 그래서 절대값이 아니라 **순서**로 판정합니다.
+두 문항이 서로 다른 방향을 가리키면 노이즈가 되므로, 같은 방향을 강화하도록 씁니다.
+
+### 임베딩 점수를 과대 해석하지 않는다
+
+코사인 유사도는 **회원이 입력한 취향 문장의 의미적 유사도**입니다. 실제 사람 사이의 궁합이나
+만남 만족도를 검증한 점수가 아닙니다. 궁합의 보조 신호로 쓰는 것은 타당하지만, 실제 만족도와의
+관계는 별도 검증이 필요합니다. 가중치(태그 0.70 / 임베딩 0.30)도 실사용 데이터를 확보한 뒤
+재조정할 값으로 `PairCompatibilityScorer` 주석에 명시돼 있습니다.
+
+화면 문구와 문서에서 "AI가 궁합을 분석한다"로 표현하지 않습니다.
+"입력한 취향의 유사도를 점수에 반영한다"가 사실에 맞습니다.
+
+### 재현 체크리스트 — 즉시 조합 경로 제거 후 dev 확인
+
+구조 수정(즉시 조합 경로 제거)이 dev에서 실제로 동작하는지 확인하는 순서입니다. **위에서부터
+순서대로** 확인하고, 앞 단계가 어긋나면 뒤 단계 결과는 판정에 쓰지 않습니다.
+
+| # | 확인 | 방법 | 기대 |
+| --- | --- | --- | --- |
+| 1 | **수정 커밋이 배포됐는가** | 배포된 backend 이미지의 커밋 | `7b77a0f` 이후 |
+| 2 | **scheduler가 켜져 있는가** | 기동 로그에 `MatchingScheduler` 빈 생성, 또는 신청 후 tick 동작 | `MATCHING_SCHEDULER_ENABLED=true` |
+| 3 | **수집 주기가 의도한 값인가** | 주입된 `MATCHING_SCHEDULER_FIXED_DELAY` | `10s` |
+| 4 | **동일 배치에 5명 전원이 들어갔는가** | 아래 4-A | 두 attempt의 `started_at`이 같은 tick |
+| 5 | **제외 조건이 없는가** | 아래 5-A | 차단·재매칭 제외·쿨타임 0건 |
+| 6 | **SCHEDULER가 만든 제안 2건인가** | 아래 6-A | `created_by='SCHEDULER'`, attempt 2건 |
+| 7 | **점수가 기대대로인가** | 아래 6-A | `jaccard_score` 전원 동일, `cosine_score`만 다름, `embedding_applied = t` |
+
+1~3번은 서버 설정 확인입니다. **1번이 아니면 나머지를 볼 필요가 없습니다.** `created_by`가
+`POOL_ENTRY`로 나오면 배포가 반영되지 않은 것입니다.
+
+**4-A. 같은 tick에서 만들어졌는가**
+
+```sql
+SELECT id, created_by, status, target_group_size, started_at
+FROM match_attempts
+WHERE started_at > now() - INTERVAL '10 minutes'
+ORDER BY id DESC;
+```
+
+두 attempt의 `started_at`이 같아야 한 배치입니다. 초 단위로 갈라져 있으면 신청이 **틱 경계를
+걸친** 것이고, 그때는 먼저 평가된 배치에서 일부가 먼저 묶입니다. 결함이 아니라 설계대로입니다.
+
+**5-A. 후보에서 빠질 사유가 없는가** (세 쿼리 모두 0건이 정상)
+
+```sql
+SELECT * FROM user_blocks
+WHERE blocker_member_id IN (:ids) AND blocked_member_id IN (:ids);
+
+SELECT * FROM match_cooldowns
+WHERE member_id IN (:ids) AND status='ACTIVE' AND starts_at <= now() AND expires_at > now();
+
+SELECT * FROM match_opponent_exclusions
+WHERE lower_member_id IN (:ids) AND higher_member_id IN (:ids);
+```
+
+`match_opponent_exclusions`는 **직전 라운드에서 제안을 거절**하면 그 체크인 쌍으로 생깁니다.
+라운드를 반복할 때 거절 대신 타임아웃을 쓰는 이유가 이것입니다.
+
+**6-A. 제안과 점수**
+
+```sql
+SELECT am.attempt_id, a.created_by, am.member_id, am.member_score,
+       am.jaccard_score, am.cosine_score, am.embedding_applied, am.embedding_pair_count
+FROM match_attempt_members am
+JOIN match_attempts a ON a.id = am.attempt_id
+WHERE a.started_at > now() - INTERVAL '10 minutes'
+ORDER BY am.attempt_id DESC, am.member_id;
+```
+
+`jaccard_score`가 전원 같지 않거나 `embedding_applied`가 `f`인 회원이 있으면 **태그 상수 가정이
+깨진 것**이므로 점수 검증이 성립하지 않습니다. 그 회원의 태그·임베딩 상태부터 고칩니다.
+
+**7. 남은 한 명**
+
+```sql
+SELECT member_id, status, entered_at, search_expires_at FROM match_pools
+WHERE member_id IN (:ids) ORDER BY entered_at;
+```
+
+`WAITING`이면 다음 tick을 기다리는 정상 상태이고, `EXPIRED`면 탐색 60초가 지난 것입니다.
+
+> 결과가 기대와 다르면 **추가 결함으로 단정하기 전에 4·5번(실제 배치 구성과 제외 사유)부터
+> 확인합니다.** 조건 하나만 어긋나도 다른 결과가 정상입니다.

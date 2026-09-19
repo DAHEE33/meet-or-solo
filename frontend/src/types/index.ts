@@ -104,17 +104,3 @@ export interface Festival {
   bookmarkedByMe?: boolean;
 }
 
-export interface AdminReport {
-  id: number;
-  type: '신고' | '문의';
-  content: string;
-  createdAt: string;
-}
-
-export interface AdminStats {
-  totalUsers: number;
-  todayMatches: number;
-  totalCheckIns: number;
-  popularSpots: { name: string; count: number }[];
-  reports: AdminReport[];
-}

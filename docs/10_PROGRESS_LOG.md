@@ -1,5 +1,200 @@
 # 진행 상태 기록
 
+## [알림 결함 2~6] 표시 자리 통합, 문구 통일, dev 반경·push 배선
+
+상태: Backend/Frontend/인프라 수정 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
+
+dev 알림 검증에서 나온 증상 6건 중 [앞선 항목](#알림-결함-1-자기-반향--websocket에만-규칙이-빠져-있었다)에서
+1번을 고쳤고, 나머지 다섯을 이어서 고쳤다. `dev` 병합(`d41e663`)은 관리자 대시보드·인증
+쪽이라 알림 경로와 겹치지 않았다.
+
+### 2·4번 — 알림 자리를 하나로 합쳤다
+
+두 증상의 원인이 같아서 함께 고쳤다.
+
+| | 이전 | 지금 |
+| --- | --- | --- |
+| 자리 | 긴급은 위(배너), 일반은 아래(토스트) | **상단 한 자리**, 최신 1건 |
+| 자동 해제 | 토스트 5초, **배너는 없음** | 긴급 30초, 일반 5초 |
+| 화면 이동 | 배너가 따라다님 | 가리키는 화면에 도착하면 내림 |
+
+**배너에 타이머가 없던 것이 "안 사라진다"의 원인이었다.** 닫기를 누르기 전까지 남았고, 화면을
+옮겨도 따라다녔고, 응답 시간 30초가 지나 **이미 끝난 제안의 배너가 그대로** 떠 있었다.
+
+긴급 30초는 `MATCH_PROPOSED`의 응답 시간과 맞춘 값이다. 그보다 짧으면 아직 유효한 제안이
+화면에서 사라지고, 길면 이미 끝난 제안이 남는다.
+
+자리가 둘이면 같은 순간에 위아래 둘 다 떠서 알림 종류가 나뉜 것처럼 보인다. 이제 긴급도는
+**색(코랄/잉크)과 머무는 시간으로만** 구분하고, 밀려난 알림은 사라지는 것이 아니라 종에 쌓인다.
+
+`isAlreadyVisible`은 이제 두 자리에서 쓴다 — 알림이 올 때는 *띄울지*, 떠 있는 동안에는
+*내릴지*. 긴급은 여전히 예외다(매칭 화면에 있어도 제안은 띄운다). 대신 30초 뒤 사라진다.
+
+### 3번 — 어휘를 맞추고, 빠져 있던 이벤트를 채웠다
+
+종(알림함)은 `HomePage`에만 있고 매칭방은 `PageHeader`를 쓴다. **종 위치는 그대로 두기로 하고**
+(사용자 결정) 문구만 통일했다. 같은 사건을 두 화면이 다른 말로 부르면 다른 일로 읽힌다.
+
+| 사유 | 알림함 | 상태방(이전 → 지금) |
+| --- | --- | --- |
+| `MEMBER_ARRIVED` | 상대가 **만남 장소에 도착했어요** | ~~민수님이 도착했어요~~ → 민수님이 **만남 장소에 도착했어요** |
+| `MEMBER_NO_SHOW` | 한 명이 **도착 마감까지 오지 않았어요** | ~~도착 마감까지 도착하지 않았어요~~ → **도착 마감까지 오지 않았어요** |
+| `MATCH_CANCELLED` | 남은 인원으로 **만남을 이어갈 수 없어** 만남이 종료됐어요 | ~~만남을 계속할 수 없어 그룹이 종료~~ → 같은 문장 |
+| `MEMBER_LEFT` | 한 명이 **먼저 갔어요** | **(없었음)** → 민수님이 먼저 갔어요 |
+
+**`MEMBER_LEFT`는 상태방에 아예 없었다.** `match_events`에는 쌓이는데
+`MatchEventRepository.findLatestCurrentGroupEvents`의 `event_type IN (...)`에서 빠져 있어,
+알림으로는 "한 명이 먼저 갔어요"가 오는데 상태 기록에는 아무것도 남지 않았다. 취소와 같은
+층위의 변화라 넣었다(`docs/19` 4.11.3).
+
+닉네임 차이는 그대로 둔다 — 알림은 행위자를 모르므로 "상대가"로만 말할 수 있고, 상태방은
+구성원을 알고 있어 더 구체적으로 적을 수 있다.
+
+### 5번 — dev의 전역 반경 우회가 원인이었다
+
+알림 경로에는 반경 개념이 **없다.** 매칭풀은 `festival_id`로만 묶이고(`MatchPoolRepository`의
+모든 후보 쿼리가 `checkin.festival_id = pool.festival_id`뿐) 좌표 비교가 없다. 즉 지역을 가르는
+유일한 조건이 "같은 축제에 체크인했는가"다.
+
+그런데 dev는 그 조건을 스스로 풀어 놓고 있었다.
+
+```
+docker-compose.dev.yml:  FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK: ${...:-true}   ← 기본값이 true
+.env.dev.example:        FESTIVAL_CHECKIN_BYPASS_RADIUS_CHECK=true
+```
+
+**compose 기본값까지 `true`라 `.env`에 적지 않아도 꺼진 채로 떴다.** 어디에 있든 아무 축제나
+체크인되고, 그 축제 풀에 들어가니 물리적으로 먼 사람과 매칭되고 그 알림이 온다.
+
+둘 다 `false`로 바꾸고 `FESTIVAL_CHECKIN_RADIUS_METERS`·`..._ACCURACY_THRESHOLD_METERS`를
+명시했다. 현장에 가지 않고 테스트하려면 환경 전체를 끄지 말고 `/admin/members`에서 그 계정을
+**테스트 계정**으로 지정한다(`members.test_account`) — 계정 단위 면제라 같은 환경에서 일반
+계정은 반경 검증을 그대로 받고, 반경 검증이 실제로 동작하는지도 확인할 수 있다.
+
+### 6번 — dev에 VAPID 키를 넣을 자리가 없었다
+
+`docker-compose.dev.yml`의 backend `environment:`에 **`WEB_PUSH_VAPID_*` 세 줄이 아예 없었고**
+`.env.dev.example`에도 항목이 없었다(prod compose에만 있다). 키가 비면
+
+1. `WebPushProperties.enabled()` → `false`
+2. `WebPushSender` → "VAPID 키가 없어 Web Push 발송을 비활성화합니다" 로그
+3. `PushNotificationService.notifyMembers` → 첫 줄에서 return
+4. `/public-key`가 빈 문자열 → 프론트 `enablePush()`가 `NOT_CONFIGURED`
+
+**WebSocket·알림함은 그대로 동작하므로 증상이 드러나지 않는다.** GPS 바이패스 때와 같은 유형의
+사고다 — *환경변수가 없으면 조용히 꺼지는 기능은, 그 변수를 example에 적어야 존재하는 기능이 된다.*
+
+배선과 함께 두 가지를 더 고쳤다.
+
+- **권한을 한 번 놓치면 영영 다시 묻지 않았다.** `markAsked()`가 `requestPermission()`
+  **앞에서** 플래그를 세워서, 사용자가 팝업을 거부하지 않고 **그냥 닫으면** 권한은 `default`로
+  남고 플래그만 남는다. 그러면 `shouldAsk`가 영영 `false`다. 플래그를 **시각**으로 바꾸고
+  하루(`ASK_AGAIN_AFTER_MS`) 뒤 다시 묻는다. 거부(`denied`)는 브라우저가 기억하므로 유예와
+  무관하게 다시 묻지 않는다. 옛 형식(`'1'`)으로 저장된 값은 "물어본 적 없음"으로 본다 —
+  그 형식으로 저장된 사람들이 바로 영구 차단에 걸려 있던 쪽이다.
+- **push가 살아나면 "두 개씩"이 새로 생긴다.** `sw.ts`의 `push` handler가 탭이 열려 있는지
+  보지 않고 항상 `showNotification`을 불렀다. 앱이 열려 있으면 WebSocket이 이미 같은 내용을
+  화면에 띄우므로 OS 알림까지 겹치고, OS 알림은 탭하기 전까지 알림함에 남아 "안 사라진다"가
+  된다. **보고 있는 탭이 있으면 띄우지 않는다** — `userVisibleOnly: true`의 요구는 그 origin의
+  탭이 화면에 보이는 동안에는 브라우저가 강제하지 않는다.
+
+### 1번의 나머지 원인은 손대지 않았다
+
+`MatchProposalResponseService`가 **응답 1건마다** 이벤트를 발행하는 것은 그대로다. 자기 반향을
+고친 뒤로는 2인 그룹에서 `MATCH_ACCEPTED`가 정확히 1건(상대 것)이고, 3인이면 2건이다.
+**이건 중복이 아니라 실제로 일어난 두 사건이다**("2명 중 1명이 수락"). 알림 자리를 하나로
+합쳐 화면에는 최신 1건만 뜨고 나머지는 종에 쌓이므로 체감도 해소된다.
+
+### 테스트
+
+- Frontend **819건 전체 통과**, `tsc -b` 통과. 하네스(`notificationFlow.harness.test.tsx`)를
+  배너/토스트 두 배열에서 `notices` 한 줄로 바꿨고, 문구 정렬을 `MatchRoomPage.test.ts`에서
+  `matchEventText`와 `toNotificationMessage`를 나란히 비교해 고정했다. 권한 유예는
+  `webPush.test.ts`에서 경계값 4개로 고정했다.
+- Backend 763건 중 73건 실패인데 **전부 인프라다** — Testcontainers용 Docker 미설치, 그리고
+  `127.0.0.1:15432` 로컬 DB 미기동. 38개 실패 클래스를 전수 확인했고 **단정 실패(assertion)는
+  0건**이다.
+- `MatchEventRepository`의 `MEMBER_LEFT` 추가는 **이 PC에서 검증되지 않는다**(통합 테스트).
+  Docker가 있는 환경에서 상태방 목록에 "먼저 갔어요"가 뜨는지 확인해야 한다.
+
+### dev에 올리기 전에 할 일
+
+1. `npx web-push generate-vapid-keys`로 키를 만들어 **dev `.env`에** 넣는다(저장소 아님).
+2. dev를 **HTTPS로** 연다. HTTP면 브라우저에 `PushManager`가 없어 push가 아예 불가능하다.
+3. 반경 검증이 켜지므로, 현장에 갈 수 없는 테스트 계정은 `/admin/members`에서 **테스트 계정**으로
+   지정한다. 지정하지 않으면 체크인이 막혀 매칭 자체를 테스트할 수 없다.
+
+## [알림 결함 1] 자기 반향 — WebSocket에만 규칙이 빠져 있었다
+
+상태: Backend 수정 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
+
+dev에서 알림을 검증하다 나온 증상 6건 중 **첫 번째(알림이 두 개씩 뜸)의 원인 하나**를 고쳤다.
+나머지는 아직 손대지 않았다.
+
+### 무엇이 잘못돼 있었나
+
+같은 이벤트가 세 경로로 나가는데, **행위자 제외 규칙이 두 곳에만 있었다.**
+
+| 경로 | 이전 | 위치 |
+| --- | --- | --- |
+| WebSocket | ❌ 전원에게 | `MatchingStateChangedEventHandler` |
+| 알림함 | ✅ 행위자 제외 | `NotificationAppendService` |
+| Web Push | ✅ 행위자 제외 | `PushNotificationService` |
+
+그래서 **내가 도착을 눌렀는데 "상대가 만남 장소에 도착했어요" 토스트가 나에게 떴고, 정작
+알림함에는 그 줄이 없었다.** 같은 이벤트인데 어느 경로로 받느냐에 따라 결과가 달랐다.
+
+`docs/31` 5절은 이 한계가 "2단계에서 해결"됐다고 적고 있었는데, 실제로는 **알림함과 push만**
+해결됐다. 사용자가 실제로 보는 토스트·배너는 그대로였다.
+
+### 규칙을 한 곳으로 옮기면서, 무조건 제외가 틀렸다는 것을 확인했다
+
+WebSocket에 기존 규칙을 그대로 복사하려다 더 큰 문제를 찾았다. **행위자를 무조건 걸러내면
+정작 당사자만 알림을 못 받는 사유가 둘 있다.**
+
+- `MATCH_CONFIRMED` — 행위자는 **마지막으로 수락한 사람**이다. 걸러내면 매칭을 성사시킨
+  본인만 확정 알림을 못 받는다.
+- `MATCH_TIMEOUT` — 행위자는 **시간 초과된 사람**이다(`MatchProposalResponseService.timeoutAttempt`가
+  `candidate.getMemberId()`를 행위자로 넘긴다). 걸러내면 `penalty_score +1`과 쿨타임 2분을
+  받은 당사자만 이유를 모른다.
+
+이건 이번에 만든 결함이 아니라 **알림함에 이미 있던 결함이다.** 그래서 규칙 자체를 나눴다.
+
+| 분류 | 사유 | 행위자에게 |
+| --- | --- | --- |
+| 관측자 시점 ("상대가 ~했어요") | `MATCH_ACCEPTED`, `ARRIVAL_TIME_SELECTED`, `MEMBER_ARRIVED`, `MEMBER_CANCELLED`, `MEMBER_LEFT`, `MEMBER_NO_SHOW` | 보내지 않음 |
+| 그룹 사실 ("매칭이 ~됐어요") | `MATCH_PROPOSED`, `MATCH_CONFIRMED`, `MATCH_REJECTED`, `MATCH_TIMEOUT`, `MATCH_INSUFFICIENT_MEMBERS`, `MATCH_CANCELLED`, `MATCH_COMPLETED`, `ALL_ARRIVED` | 보냄 |
+
+판정은 `NotificationPolicy.deliverableTo(reason, actorMemberId, memberId)` 하나로 모으고
+**세 경로가 모두 이것을 쓴다.** 한 곳만 규칙이 달라지는 것이 이번 결함의 원인이었다.
+
+모르는 사유는 걸러내지 않는다. 사유가 하나 늘었을 때 알림이 조용히 사라지는 쪽보다 본인에게
+한 번 더 뜨는 쪽이 추적하기 쉽다(프론트 `notificationMessages.ts`의 `FALLBACK`과 같은 방향).
+
+### 행위자 화면이 갱신되지 않을 걱정은 없다
+
+WebSocket 알림은 `useMatchRoom`·`useMatchingSession`에서 **갱신 트리거로도** 쓰인다. 행위자가
+자기 알림을 못 받으면 화면이 멈추는 것 아닌지 확인했는데, 그렇지 않다 — 행위자의 동작은
+mutation 응답으로 이미 상태를 갱신하고(`arrive`·`selectArrivalTime`은 snapshot을, `respond`는
+직후 `refresh()`를) 진행 중 상태에는 2초 polling도 걸려 있다.
+
+### 테스트
+
+- 신규 `NotificationPolicyTest` 16건 — 분류 자체를 고정한다.
+- `MatchingStateChangedEventHandlerTest`에 2건 추가(관측자 시점은 행위자 제외 / 그룹 사실은 포함).
+- `NotificationAppendServiceTest`·`PushNotificationServiceTest`의 "행위자 본인에게는 보내지
+  않는다"를 새 규칙에 맞게 고쳤다. 두 곳 모두 저장·발송 사유에 관측자 시점이 하나도 없어
+  **실제로 걸러지는 일은 지금 없다.** 그래도 같은 판정을 쓰는지 고정해 둔다.
+- `MatchArrivalTimeServiceIntegrationTest` 3개 지점을 새 동작으로 고쳤다. **Testcontainers라
+  이 PC에서 실행되지 않는다** — Docker가 있는 환경에서 확인해야 한다.
+- 회귀: backend 767건 중 35건 실패인데 **전부 Docker 미설치다**(실패 클래스 35개 전수 확인,
+  다른 원인 0건). frontend는 변경 없고 813건 전체 통과.
+
+### 남은 알림 결함 5건
+
+2번 안 사라짐, 3번 화면별로 다름, 4번 위/아래 분리, 5번 활동 반경, 6번 push 미수신은
+아직 그대로다. 1번도 원인이 둘인데 그중 하나(응답 1건마다 이벤트 발행)는 남아 있다.
+
 ## [10-B 후속] 알림 2·3단계, 30도 매칭 제한, 체크인 오류 문구 — 구현 완료
 
 상태: Backend/Frontend 구현 완료. **컨테이너 통합 테스트와 수동 검증 대기**
@@ -6740,3 +6935,509 @@ Testcontainers 기반 backend 통합 테스트는 실행하지 않았다. 공유
 
 `codex/prod-environment` → `dev` PR, `dev` 검증 후 `dev` → `main` PR.
 push와 PR 생성은 아직 하지 않았다.
+
+## [운영 환경 4단계 완료] 운영 설정을 main에 반영
+
+브랜치 흐름: `codex/prod-environment` → `dev`(PR #79) → `main`(PR #80)
+
+운영 환경 구성 파일이 운영 기준 브랜치 `main`에 반영됐다.
+**실제 운영 배포는 하지 않았다.** 5단계에서 수동으로 진행한다.
+
+### 병합 결과
+
+| 항목 | 값 |
+| --- | --- |
+| `origin/main` | `fac9eea` Merge pull request #80 from DAHEE33/dev |
+| `origin/dev` | `8b25ba0` Merge pull request #79 |
+| 병합 규모 | 239 커밋. `main`의 직전 커밋이 `chore: dev 브랜치 자동 배포 설정`이라 사실상 `main`의 첫 실질 반영이다 |
+
+`main`에 운영 설정이 전부 들어간 것을 확인했다 — compose, nginx 설정 2종,
+`.env.prod.example`, 스크립트 4종, `.gitattributes`, `application-prod.yml`,
+`frontend/.env.production.example`. migration은 `V40`, 파일 40개로 변동이 없다.
+
+### 의도하지 않은 배포가 없음을 확인
+
+workflow 파일은 `ci.yml`과 `deploy-dev.yml` 둘뿐이다.
+
+| workflow | 트리거 | main 병합 시 |
+| --- | --- | --- |
+| `ci.yml` | push/PR → `dev`, `main` | 실행됨. 빌드만 하고 서버에 접속하지 않는다 |
+| `deploy-dev.yml` | push → `dev` **만** | 실행되지 않는다 |
+| 운영 배포 workflow | — | **존재하지 않는다** |
+
+즉 `main` 병합으로 어떤 서버도 바뀌지 않았다.
+
+### 검증 상태 — 무엇이 확인됐고 무엇이 아닌지
+
+**확인됨**: `Deploy Dev` workflow 성공(#79 병합 커밋), backend 컴파일,
+frontend `tsc -b`·테스트 797건·운영 빌드, `docker compose config`, `nginx -t`,
+`bash -n` 4건, `test-restore-prod-db.sh` 40건, 필수 환경변수 누락 0건.
+
+**아직 확인되지 않음**
+
+| 항목 | 이유 |
+| --- | --- |
+| **dev 사이트 수동 기능 확인** | 자동 배포 성공만 확인했다. 로그인·매칭·체크인 등 실제 동작은 아직 확인하지 않았다 |
+| **backend 통합 테스트(Testcontainers)** | 공유 dev DB에 연결하지 않는다는 작업 경계 때문에 미실행 |
+| 운영 환경 실제 기동 | 운영 DB·컨테이너를 만들지 않았다 |
+
+"배포 파이프라인이 통과했다"와 "기능이 동작한다"는 다른 말이다. 5단계 전에 dev에서
+수동 확인을 한 번 하는 편이 낫다.
+
+### 서버 상태
+
+3단계에서 준비한 그대로다. `/home/ubuntu/meet-or-solo-prod/`에 폴더 구조와 `.env`(600,
+자리표시자 0개), 운영 스크립트 3종이 있고 `/home/ubuntu/backups/meet-or-solo-prod/`(700)가
+있다. 운영 DB와 컨테이너는 아직 없다.
+
+**서버 `.env`에 추가할 항목은 없다.** 최신 코드에 새 환경변수·스케줄러·migration이 없다.
+
+### 다음
+
+5단계에서 `main` 기준으로 첫 배포를 **수동으로 1회** 한다.
+절차는 [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차'를 따른다.
+운영 CD는 그 절차가 성공한 뒤에 만든다.
+
+## [운영 환경 5단계] main 기준 첫 운영 배포
+
+배포 버전: `fac9eea` (origin/main)
+절차: [`docs/07`](07_DEPLOYMENT.md) '운영 수동 배포 절차'
+
+운영 서버에서 서비스가 처음 동작했다. 기존 dev·병원·study는 그대로 유지했다.
+
+### 빌드 — worktree로 분리
+
+`git worktree`로 `main` 전용 작업 공간을 따로 만들었다.
+
+```
+C:/dev/meet-or-solo        작업 브랜치 (문서)
+C:/dev/meet-or-solo-build  fac9eea (detached) ← 운영 빌드 전용
+```
+
+**이유가 있다.** 원래 폴더의 `frontend/.env.local`에는 개발용 Kakao 지도 키와 이메일이
+값으로 들어 있다. 거기서 운영 빌드를 돌리면 `.env.production`에 빠뜨린 키가 개발용 값으로
+채워진다. Vite 5.4.21로 확인한 결과 같은 키는 `.env.production`이 이기지만, **한쪽에만
+있는 키는 살아남는다.** worktree에는 `.env.local`이 없어서(gitignore 대상) 이 문제가
+구조적으로 사라진다.
+
+번들 검증: 문의 이메일·Kakao 키 포함, `localhost`·개발 도메인 흔적 없음.
+jar 검증: migration 40개(`V1`~`V40`), `application-prod.yml` 포함.
+
+### 기동 순서를 나눴다
+
+postgres → backend → nginx 순으로 하나씩 올렸다. 한 번에 올리면 실패 원인을 구분하기
+어렵다. 특히 빈 DB에 migration 40개가 처음 적용되는 구간이라 따로 확인했다.
+
+`data/postgres`는 `ubuntu` 소유 빈 폴더로 두었고, 첫 기동 때 컨테이너 entrypoint가
+uid 999(`lxd`로 표시) `0700`으로 스스로 정리했다. 예상대로다.
+
+### 결과
+
+컨테이너 3개 healthy. migration 40/40 성공, 실패 0건. `admin_credentials` 1건
+(`mos_admin` 생성됨). GPS 우회 환경변수 없음, 스케줄러 5종 전부 `true`.
+nginx는 `127.0.0.1:28080`에만 바인딩.
+
+`/api/health`는 고정 문자열이라 DB를 보지 않으므로, `GET /api/festivals`로 DB 연결을
+따로 확인했다.
+
+### 초기 데이터 적재
+
+`FESTIVAL_SYNC_ENABLED`·`TOUR_PLACE_SYNC_ENABLED`를 `true`로 올려 한 번 채운 뒤
+`false`로 되돌리고 `--force-recreate` 했다. 축제 21건, 관광지 3806건(강원 지역코드 51).
+TourAPI 일일 호출 한도를 dev와 같은 키로 나눠 쓰기 때문에 적재 후 바로 껐다.
+
+### 백업·복원 검증
+
+`backup-prod-db.sh`로 덤프 1건 생성, `restore-prod-db.sh`로 검증 성공.
+실행별 고유 임시 DB에 복원해 테이블 41개·Flyway 40 success·festivals 21을 확인하고
+임시 DB를 정리했다. 운영 DB는 열지 않았다.
+
+외부 보관은 미구성이다(`PROD_BACKUP_REMOTE` 없음).
+
+## [운영 환경 6단계] 운영 도메인·HTTPS 연결
+
+### 착수 전 조회에서 드러난 것
+
+- `/etc/nginx/sites-available/meetorsolo.kr`는 **이름만 운영 도메인이고 내용은 dev용**이었다
+  (`server_name dev.meetorsolo.kr`, `proxy_pass 127.0.0.1:18080`). 건드리지 않았다.
+- `meetorsolo.kr` 인증서가 **이미 있고 81일 유효**했다. 처음 운영 도메인으로 설정했다가
+  dev로 바꾸면서 인증서만 남은 것이다. 새로 발급하지 않고 재사용했다.
+- ⚠ **`server_name meetorsolo.kr`인 블록이 하나도 없었다.** certbot이
+  `authenticator = nginx` 방식이라 갱신 시 그 도메인의 server block을 찾아 인증 경로를
+  임시로 끼워 넣는데, 찾을 블록이 없었다. **자동 갱신이 실패할 상황이었고 이번 작업으로
+  함께 해결됐다.**
+- 그래서 `https://meetorsolo.kr` 접속은 dev 인증서가 반환돼 TLS 단계에서 실패하고 있었다.
+
+### 작업
+
+`/etc/nginx/sites-available/meet-or-solo-prod`를 **새 파일로** 만들고 symlink로 활성화했다.
+기존 dev·study 설정은 읽지도 않았다.
+
+- `upstream` → `127.0.0.1:28080`
+- `:80`은 301 redirect, `:443`은 기존 인증서 재사용
+- `client_max_body_size 6m` (앱 상한 5MB와 맞춤)
+- `/ws`를 `location /`보다 먼저, `Upgrade` 전달, `proxy_read_timeout 3600s`
+- `X-Robots-Tag: noindex, nofollow`
+
+`/.well-known/acme-challenge/` location은 두지 않았다. `authenticator = nginx`가
+갱신 시 스스로 끼워 넣기 때문이다.
+
+**Basic Auth는 적용하지 않기로 했다.** 일반 고객이 운영 주소로 바로 접속하고, 회원 인증과
+관리자 권한 검사는 앱 기능(JWT cookie, `/admin/login`, `MemberAccessInterceptor`)이
+담당한다.
+
+### 검증
+
+| 항목 | 결과 |
+| --- | --- |
+| `https://<운영도메인>/api/health` | 정상 |
+| `/` | 200 |
+| HTTP → HTTPS | 301 |
+| `/api/festivals` | 축제 16건 조회. 도메인부터 DB까지 전 구간 확인 |
+| `X-Robots-Tag` | 적용됨 |
+| `certbot renew --dry-run` | **성공.** 자동 갱신이 동작함 |
+| dev / study | 각 200. 영향 없음 |
+| 컨테이너 | 8개 전부 정상 |
+
+### WebSocket 검증 방법을 바로잡았다
+
+`docs/07`에 "`101`이면 정상"이라고 적어뒀는데 이 앱에는 맞지 않는다. handshake에서
+로그인 쿠키를 검사하므로(`WebSocketAuthenticationInterceptor`) **쿠키 없는 `curl`에는
+`200` + 빈 응답이 정상**이다. 인터셉터가 handshake만 중단하고 응답 코드는 200으로 남긴다.
+
+운영에서 `200`이 나와 dev와 비교했더니 dev도 동일하게 `200`이었다. 응답 본문이 비어 있는지
+(backend까지 감) HTML인지(SPA로 떨어짐)로 구분해야 한다. `docs/07` 두 곳과 확인 목록을
+이 기준으로 고쳤다.
+
+### 공개 출시 시 되돌릴 항목
+
+- **`X-Robots-Tag: noindex, nofollow` 제거.** 남겨두면 검색에 영원히 잡히지 않는다.
+
+### 남은 것
+
+7단계 실기기 검증 — OAuth 로그인, PWA 설치, Web Push, 매칭 화면의 WebSocket 실동작.
+
+## [매칭] 즉시 조합 경로 제거와 scheduler 배치 통일
+
+브랜치: `fix/wbs-10-b-matching-scheduler-only` (`origin/dev` 8b25ba0 기준)
+
+### 발견 경위
+
+개발계에서 테스터 5명으로 취향 임베딩이 매칭에 반영되는지 확인하려 했다. 전원 같은 여행스타일
+태그, 희망 인원 2명으로 맞추고 취향 문장만 다르게 입력했는데, 결과가 취향과 무관하게 "먼저
+누른 두 사람끼리" 묶였다. T1·T3가 먼저 신청해 짝이 되고 T2·T4가 나중에 신청해 짝이 됐다.
+
+### 원인
+
+조합 경로가 둘이었고, 즉시 경로가 점수가 개입할 여지를 없앴다.
+
+| 위치 | 내용 |
+| --- | --- |
+| `MatchPoolEntryService:110` | pool 저장 직후 `MatchingPoolEnteredEvent` 발행 |
+| `MatchingPoolEnteredEventHandler:22` | `@TransactionalEventListener(AFTER_COMMIT)`으로 즉시 조합 실행 |
+
+즉시 경로는 **유효한 조합이 처음 생기는 순간 소진**시킨다. 그래서 대기 후보가 2명을 넘지
+못했고, 가능한 조합이 1개면 `MatchGroupComposer`가 정렬해서 고를 대상이 없다. 점수는
+계산·저장만 됐다. `MATCHING_SCHEDULER_ENABLED`와 무관하게 항상 동작했고 끄는 플래그도 없었다.
+
+함께 확인된 것:
+
+- 최소 궁합 점수 임계값이 없다. 점수는 조합 간 순위만 가리고 그 순위도 인원 수보다 뒤다.
+- `MatchPoolRepository`의 pool entry claim 쿼리에만 `preferred_group_size` 버킷 필터가
+  남아 있었다. `MatchGroupComposer` 주석이 "없앴다"고 적은 그 버킷이고,
+  `findSchedulerClaimablePoolsForUpdate`에는 없어 두 경로의 후보 집합 정의가 달랐다.
+- `docs/05` 매칭 흐름 3번은 이미 "Scheduler가 eligible pool entry를 조회한다"였다.
+  즉시 경로는 정책 문서에 없었다. 이번 작업은 새 정책 도입이 아니라 코드를 문서에 맞추는 것이다.
+
+### 원인을 하나로 단정하지 않았다
+
+관찰된 현상은 위 구조로 설명되지만, 그것이 임베딩 생성·저장·조회가 정상이라는 증명은 아니다.
+`PairCompatibilityScorer.scoreDetailed()`는 한쪽이라도 임베딩이 없으면 **경고 없이** Jaccard
+점수만 쓰고 `embedding_applied = false`로 남긴다(`EmbeddingScorer.score()`가 null 반환).
+즉 참가자 일부의 임베딩이 `COMPLETED`가 아니었어도 같은 증상이 나온다. 두 가설은 배타적이지
+않다. 그래서 검증을 두 개로 나눠 `docs/30` 7절에 남겼다. 이번 변경은 구조 쪽만 해소한다.
+
+### 변경
+
+| 구분 | 내용 |
+| --- | --- |
+| 삭제 (main) | `MatchingPoolEnteredEvent`, `MatchingPoolEnteredEventHandler`, `PoolEntryMatchingOrchestrationService`, `PoolEntryMatchPoolClaimService` |
+| 삭제 (repository) | `findPoolEntryClaimablePoolsForUpdate` 67줄 — `preferred_group_size` 버킷 필터가 함께 사라졌다 |
+| 수정 | `MatchPoolEntryService` 이벤트 발행 제거, `MatchPoolCheckinCancellationService` 주석 참조 정리 |
+| 유지 | `MatchAttempt.CREATED_BY_POOL_ENTRY` 상수와 `V3` CHECK 제약 — 기존 attempt에 `POOL_ENTRY` 값이 남아 있어 제거하면 조회가 깨진다. migration은 추가하지 않았다 |
+| 설정 | `application.yml`의 `MATCHING_SCHEDULER_ENABLED` 기본값 `false` → `true` |
+| 설정 | `.env.dev.example`, `.env.prod.example`의 `MATCHING_SCHEDULER_FIXED_DELAY` `5s` → `10s` |
+
+`application.yml`의 `fixed-delay` 기본값은 `5s`로 두었다. 승인 범위에 없던 변경이라 건드리지
+않았다. 환경변수를 주지 않는 로컬만 5초 창으로 돈다.
+
+### 기본값을 true로 바꾼 이유
+
+`MATCHING_SCHEDULER_ENABLED`는 `@ConditionalOnProperty(havingValue = "true")`로 스케줄러
+3개(`MatchingScheduler`, `MatchProposalTimeoutScheduler`, `MatchMeetingCloseScheduler`)를
+함께 켜고 끈다. 즉시 경로가 없어진 뒤 이 값이 `false`면 매칭이 성사되지 않고, proposal이
+닫히지 않아 회원 pool이 `PROPOSED`에 남아 재신청까지 막힌다. 테스트 32개 파일이
+`app.matching.scheduler.enabled=false`를 직접 지정하고 있어 기본값 변경에 영향받지 않는다.
+
+### 테스트
+
+`MatchGroupComposerTest`에 임베딩을 넣는 케이스가 **하나도 없었다.** 이번 버그가 아무도 모르게
+존재할 수 있었던 이유다. 3건을 추가했다.
+
+| 테스트 | 검증 |
+| --- | --- |
+| `태그가_같고_희망_인원이_2명이면_코사인이_가장_높은_pair를_고른다` | 후보 3명, 태그 고정, 임베딩만 다름 → 코사인 최고 pair 선택, 1명 남음. **이번 변경의 회귀 방지선** |
+| `전원이_3인을_허용하면_궁합_점수보다_인원_수가_먼저다` | 인원 우선 규칙을 별도로 고정 |
+| `임베딩_미보유_후보가_섞여도_조합에서_제외하지_않는다` | fallback 후보도 조합 대상 |
+
+첫 번째 테스트는 희망 인원을 전원 2명으로 고정하는 것이 전제다. 3인을 허용하면 인원 우선
+규칙이 먼저 걸려 점수 검증이 되지 않는다. fallback 단위 검증은
+`PairCompatibilityScorerTest`에 이미 있어 중복하지 않았다.
+
+삭제한 테스트 5건:
+
+- `MatchingPoolEnteredEventHandlerTest`, `MatchingPoolEnteredEventIntegrationTest`,
+  `MatchingPoolEnteredAfterCommitTransactionIntegrationTest`
+- `PoolEntryMatchingOrchestrationServiceTest`, `PoolEntryMatchingOrchestrationServiceIntegrationTest`
+  — 스케줄러 경로 테스트(`MatchingOrchestrationServiceTest`,
+  `MatchingOrchestrationServiceIntegrationTest`, `SchedulerMatchPoolClaimServiceIntegrationTest`,
+  `MatchPoolClaimServiceIntegrationTest`)가 이미 같은 경로를 덮고 있어 흡수할 것이 없었다.
+
+`MatchingThreeMemberScenarioIntegrationTest`에서 pool entry 경로 테스트를 걷어내고 클래스
+주석을 고쳤다. `MatchingSchedulerPropertiesTest`는 `enabled` 기본값 `false`를 단정하고
+있어 `true`로 고쳤고, override 검증은 기본값과 같은 방향이면 증명이 되지 않으므로 `false`
+방향으로 바꿨다.
+
+### 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| `docs/02` | "매칭 Scheduler 플래그" 절 신설 — 플래그 하나가 켜고 끄는 스케줄러 3개, `false`의 실제 영향, `fixed-delay` 주기별 영향 표 |
+| `docs/05` | 후보 수집 주기 추가, "조합 경로는 scheduler 하나뿐이다", "궁합 점수가 결과를 바꾸는 조건" — 임계값이 없다는 점과 그 결과를 정책 한계로 명시 |
+| `docs/30` | 7절 신설 — 취향 임베딩 검증 2건(정상 여부 / 선택 반영 여부), 희망 인원 2명 고정 전제, 과대 해석 금지 |
+| `docs/32` | 항목 G 추가와 10절 |
+
+### 남은 한계
+
+수집 주기는 후보가 모일 **기회**를 주지만 보장하지 않는다. 그 시간에 두 명만 모이면 여전히 그
+둘이 매칭된다. 밀도의 한계가 아니라 **임계값 없이 지금 가능한 조합을 즉시 선택하는 현재 정책의
+결과**다. 임계값이나 "더 나은 상대를 기다리는" 정책을 두면 후보가 적을 때 선택을 유보할 수
+있으나 둘 다 이번 범위가 아니다. 실사용 점수 분포를 확보한 뒤 판단한다.
+
+임베딩 코사인은 **입력한 취향 문장의 의미적 유사도**이고 실제 궁합이나 만남 만족도를 검증한
+점수가 아니다. 만족도와의 관계 검증(후속 경로 후보: `member_reviews`·매너온도 변화와 당시
+`match_attempt_members.cosine_score`의 상관)은 이번 범위가 아니다.
+
+### 다음
+
+`docs/30` 7절의 선행 검증 2건이 남아 있다. 검증 1은 dev DB 터널이 필요하고, 검증 2는 테스터
+3명 이상이 같은 수집 주기 안에 신청해야 한다. 운영 7단계 실기기 검증은 이 작업과 무관하게
+별도로 남아 있다.
+
+## [매칭] 즉시 조합 경로 제거 — 로컬 회귀 테스트 보강과 검증 범위 정리
+
+브랜치: `fix/wbs-10-b-matching-scheduler-only`
+
+앞 절의 구조 수정에 이어, **어디까지 확인했고 어디부터 확인하지 못했는지**를 분리해 기록한다.
+검토 과정에서 "관측을 설명한다"와 "원인을 증명했다"를 섞어 쓴 표현을 함께 바로잡았다.
+
+### 테스트 결과 — 범위를 구분한다
+
+| 구분 | 결과 |
+| --- | --- |
+| **이번 관련 테스트** | **41건 통과, 실패 0건** |
+| **직전 전체 테스트** | 1098건 중 36건 실패(34건 dev DB 터널 미연결, 2건 기존 실패). **이번에는 재실행하지 않음** |
+
+관련 테스트 41건 내역:
+
+| 테스트 | 건수 |
+| --- | --- |
+| `MatchingOrchestrationServiceIntegrationTest` | 4 (신규 2 포함) |
+| `MatchGroupComposerTest` | 16 (신규 3 포함) |
+| `PairCompatibilityScorerTest` | 13 |
+| `MatchingSchedulerPropertiesTest` | 6 |
+| `MatchingThreeMemberScenarioIntegrationTest` | 2 |
+
+전체 회귀를 다시 돌리지 않은 근거: 직전 전체 실행 이후의 변경이 **테스트 추가와 문서뿐**이고,
+application 코드·설정 diff가 앞 절 커밋 범위에서 늘어나지 않았음을 커밋 전에 확인했다
+(`backend/src/main`, `infra`, `frontend` 변경 없음).
+
+### 로컬에서 확인한 것 — 임베딩에 따른 조합 선택
+
+`MatchingOrchestrationServiceIntegrationTest`에 5인 시나리오 2건을 추가했다. Testcontainers의
+실제 PostgreSQL에 `vector(1536)`을 넣고 scheduler 경로(`runTick()`)를 한 번 실행한다.
+**외부 임베딩 API는 호출하지 않는다**(고정 벡터).
+
+- `같은_배치의_후보_5명_중_신청순서가_아니라_임베딩_점수로_두_조합이_선택된다`
+  신청 순서는 1→2→6→10→11이다. 순서대로면 (1,2)·(6,10)이고 11이 남고, 점수대로면
+  (1,10)·(2,11)이고 6이 남는다. 두 결과가 겹치지 않아 어느 쪽으로 동작했는지 구분된다.
+  남은 한 명의 pool이 `WAITING`인지, `created_by`가 `SCHEDULER`인지도 함께 본다.
+- `임베딩을_맞바꾸면_선택되는_조합도_바뀐다`
+  회원·신청 순서·태그를 그대로 두고 두 회원의 벡터만 교환하면 기대 조합이 바뀐다.
+  선택 결과가 실제로 임베딩에 의존한다는 확인이다.
+
+두 테스트 모두 `jaccard_score = 100.00`과 `embedding_applied = true`를 함께 단언한다.
+태그가 상수였고 임베딩이 실제 적용됐다는 확인이 없으면 "점수로 골랐다"가 성립하지 않는다.
+
+기존 테스트와 중복되지 않는다. 기존 `DB에_저장된_임베딩이_scheduler_tick을_거쳐_점수_분해_
+컬럼에_반영된다`는 후보가 4명이라 조합이 하나뿐이고 **분해값이 컬럼까지 도달하는가**를 본다.
+이번에 추가한 것은 **조합이 여러 개일 때 무엇이 선택되는가**다.
+
+### 아직 확인하지 못한 것
+
+- **dev에서 수정 효과 재현은 미확인이다.** 로컬 코드 경로만 검증했다. 배포 반영·서버 설정·실제
+  신청 타이밍은 별개다. 체크리스트는 `docs/30` "재현 체크리스트 — 즉시 조합 경로 제거 후 dev 확인"에 있다.
+- **당시 후보 구성은 미확인이다.** 09-18 관측에서 `created_by = POOL_ENTRY`는 즉시 경로가
+  실행됐다는 증거지만, 그 순간 후보가 정확히 두 명이었다는 증거는 아니다. 그 시점 `match_pools`
+  스냅샷이 없다. "후보가 2명을 넘지 못했다"는 코드 구조상 가장 그럴듯한 설명이며, 이번 로컬
+  테스트가 그 설명을 뒷받침한다.
+- **dev 저장 점수가 가중치 0.50/0.50 계산과 일치**하지만(`application.yml` 기본값과
+  `.env.dev.example`은 0.70/0.30), **주입 출처는 확인하지 않았다.** 서버 설정을 직접 보지 않았다.
+- **임베딩 모델 품질과 실제 만족도의 관계**는 이번 범위가 아니다. 고정 벡터 테스트는 코드 경로만
+  검증하며 `text-embedding-3-small`의 한국어 취향 문장 변별력은 다루지 않는다.
+
+### 문서
+
+`docs/DONE-PROMPT_AI.md`를 새로 추가했다. 이번 건의 실측 결과와 남은 정책 판단 5건을 모아
+둔 문서이며, 절마다 **확인한 것과 확인하지 않은 것**을 나눠 적었다. 포아송 확률표는
+"10초 동안 신규 유효 신청이 3건 이상 발생할 확률"이며 직전 틱의 잔여 대기자를 포함하지 않아
+실제 점수 개입 비율과 다르다는 점을 명시했다.
+
+`docs/30`에는 dev 재현 체크리스트를 추가했다. 배포 여부 → scheduler 활성화·주기 → 동일 배치
+포함 여부 → 제외 조건 → `SCHEDULER`가 만든 제안 2건과 점수 순으로 확인한다.
+
+### 다음
+
+1. `docs/30` 재현 체크리스트로 dev 확인 (배포·재기동 선행)
+2. 가중치 주입 출처 확인 후 0.50/0.50과 0.70/0.30 중 어디에 맞출지 결정
+   (설정 일관성 문제이며, 어느 배분이 품질에서 낫다는 검증은 없다)
+3. 임계값·대기 유보 정책은 실사용 점수 분포 확보 후 판단
+
+## [관리자] 대시보드 목업 제거와 실데이터 연결
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+
+`/admin` 대시보드만 마지막까지 목업이었다. `AdminDashboardPage`가
+`data/mock/adminStats.ts`를 그대로 렌더링해, 강원 서비스 화면에 전북 관광지(전주 한옥마을,
+남부시장 야시장)와 고정 숫자(1842명/37건/5211건)가 떠 있었다. 나머지 관리자 화면 4개
+(신고·회원·만남 장소·문의)는 이미 실제 API를 쓰고 있었다.
+
+### 카드별 데이터 소스
+
+| 카드 | 집계 |
+| --- | --- |
+| 총 사용자 | `members`에서 `WITHDRAWN`·`DELETED` 제외 |
+| 오늘 매칭 | `match_groups.confirmed_at >= 오늘 0시(Asia/Seoul)` |
+| 누적 체크인 | `festival_checkins`에서 `CANCELLED` 제외 |
+| 인기 축제 | `festival_checkins`를 축제별로 GROUP BY, 상위 5건 |
+| 신고 / 문의 | `reports`·`inquiries` 각 최근 5건 |
+
+### 설계 판단
+
+- **"인기 관광지"를 "인기 축제"로 바꿨다.** 체크인은 축제에만 기록된다
+  (`festival_checkins.festival_id`). 관광지에는 북마크만 있어 "체크인 기준 인기 관광지"는
+  만들 수 있는 값이 아니었다. 지표(체크인)를 유지하고 대상을 실제 데이터가 있는 축제로 맞췄다.
+- **신고와 문의를 서버에서 합치지 않는다.** 식별자도 상태 enum도 다른 별개 도메인이라
+  합치면 한쪽에만 있는 field가 전부 nullable이 된다. 서버는 두 목록을 따로 내리고,
+  화면이 `mergeRecentIssues`로 최신순 한 목록을 만든다. 시각이 같으면 신고를 앞에 둔다 —
+  두 목록의 id는 서로 비교할 수 없어 tiebreaker가 없고, 순서가 흔들리면 화면이 이유 없이 움직인다.
+- **신고 본문을 내리지 않는다.** `reports.detail_encrypted`는 복호화가 필요한 값이고
+  대시보드는 훑는 자리다. 사유 코드와 대상 닉네임까지만 내리고 상세는 `/admin/reports`로 넘긴다.
+  탈퇴 회원 닉네임은 다른 admin 조회와 같은 `CASE`로 '탈퇴한 회원'으로 가린다.
+- **"오늘"은 달력 날짜다.** 최근 24시간으로 잡으면 오전에 본 숫자에 어제 저녁 건이 섞여
+  날짜별 비교가 안 된다. `Clock` bean이 이미 `Asia/Seoul`이라 경계가 관리자 화면과 일치한다.
+- **오늘 매칭은 취소를 빼지 않는다.** `match_groups` 행은 성사 순간 생기고 `confirmed_at`은
+  이후 바뀌지 않는다. 취소를 빼면 오늘 성사 건수가 저녁에 줄어드는, 누적으로 읽히지 않는 값이 된다.
+- **신고 사유·상태 라벨을 `api/adminReports.ts`로 올렸다.** `AdminReportsPage`에 인라인으로
+  있던 배열을 대시보드가 복사하면 문구가 두 벌이 된다. 문의 쪽 `inquiryCategoryLabel`과 같은 자리다.
+- **재조회 실패는 화면을 비우지 않는다.** 이미 보여 주고 있는 집계가 있으면 직전 값을 유지한다.
+
+### 추가·변경 파일
+
+| 구분 | 파일 |
+| --- | --- |
+| backend 신규 | `domain/admin/dashboard/` (controller·service·repository + DTO 4) |
+| frontend 신규 | `api/adminDashboard.ts`, `hooks/useAdminDashboard.ts`, `utils/adminDashboard.ts` |
+| frontend 변경 | `pages/AdminDashboardPage.tsx`(전면), `pages/AdminReportsPage.tsx`(라벨 참조), `api/adminReports.ts`(라벨 export), `types/index.ts`(`AdminStats`·`AdminReport` 제거) |
+| frontend 삭제 | `data/mock/adminStats.ts` |
+
+migration 없음(기존 테이블만 읽는다). `SecurityConfig`·`WebMvcConfig` 변경 없음 —
+`/api/admin/dashboard/stats`는 다른 관리자 endpoint와 같은 경로 규칙을 탄다.
+
+### 테스트
+
+- Backend 신규 15건: `AdminDashboardServiceTest` 5건(권한 차단, 서울 0시 경계 2건, 집계 전달,
+  조회 건수), `AdminDashboardControllerTest` 3건(401·403·응답 형태),
+  `AdminDashboardIntegrationTest` 7건(집계 SQL).
+- Frontend 신규 14건: `utils/adminDashboard.test.ts` 8건, `AdminDashboardPage.test.tsx` 6건
+  (목업 문자열 회귀 방지 포함).
+- 회귀: frontend **811건 전체 통과**, `tsc -b` 통과. backend 747건 중 76건 실패인데
+  전부 Docker 미설치로 인한 통합 테스트 환경 실패다(41개 클래스 전수 확인, 다른 원인 0건).
+  `AdminDashboardIntegrationTest`도 같은 이유로 로컬에서 실행되지 않았다 — **DB가 있는
+  환경에서 확인이 필요하다.**
+
+## [관리자] 진입 경로 일원화와 회원 목록 역할 filter 제거, 메뉴 순서 변경
+
+브랜치: `feature/wbs-10-a-festival-course` (커밋 없이 이어 작업)
+설계 갱신: `docs/30-2_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md` 8절
+
+사용자 요청 3건을 한 번에 처리했다. 세 건이 같은 흐름에서 나왔다 — 관리자 계정이 로컬
+하나로 정리되면 역할로 걸러 볼 이유가 사라진다.
+
+### 1. SSO 관리자 진입 제거 (서버까지)
+
+| 계층 | 변경 |
+| --- | --- |
+| `AdminAuthorizationService` | `role='ADMIN'` + `provider='LOCAL'`을 함께 요구한다 |
+| `FestivalMeetingPointAdminService` | 자체 `requireAdmin`을 없애고 공통 서비스에 위임한다 |
+| `MyPage` | "관리자 기능" 링크와 `GET /api/admin/me` 조회를 제거한다 |
+
+- **화면만 막지 않았다.** 링크를 지워도 URL을 아는 사람은 그대로 들어온다. 소셜 계정에
+  `role='ADMIN'`을 붙이면 관리자 화면이 열리는 상태가 남으면 경로를 없앴다고 할 수 없다.
+- **`FestivalMeetingPointAdminService`에 구멍이 있었다.** 이 서비스만 자체 `requireAdmin`을
+  갖고 있어 역할만 보고 통과시켰다. 공통 판정으로 옮기지 않았으면 소셜 관리자가 만남 장소를
+  그대로 고칠 수 있었다. 제재 판정(`requireAccessible`)이 함께 걸리는 것도 이득이다.
+- **사유를 갈라 알리지 않는다.** 소셜 ADMIN도 일반 회원과 같은 `403 FORBIDDEN`이다. 구분하면
+  어느 계정이 관리자 역할을 갖고 있는지가 응답으로 드러난다.
+
+### 2. 회원 목록 역할 filter 제거
+
+`/admin/members`의 USER/ADMIN select를 없앴다. 요청·필터·cursor fingerprint에서 `role`을 걷어냈다.
+
+**관리자를 목록에서 빼는 조건은 서버로 옮겼다.** `AdminMemberRepository.findPage`가 항상
+`role='USER'`를 건다. 화면 filter의 기본값이 이미 `USER`여서 관리자 계정은 원래 보이지
+않았는데, filter만 지우면 관리자 계정이 목록에 새로 나타난다. 그건 filter 제거가 의도한
+변화가 아니고, 관리자는 제재·매너온도 조정 대상도 아니라 목록에 둘 이유가 없다.
+
+목록 행의 `{role} · {status}` 표기에서도 role을 뺐다. DTO의 `role`은 남겼다 — 회원 상세의
+제재 버튼이 `role === 'USER'`로 노출을 가르는 안전장치다.
+
+### 3. 관리자 메뉴 순서
+
+`대시보드 → 신고 → 회원 → 만남 장소 → 문의`를
+**`대시보드 → 회원 → 만남 장소 → 문의 → 신고`**로 바꿨다.
+
+### 통합 테스트 fixture 수정
+
+관리자 자격에 provider 조건이 생기면서, `provider='KAKAO'`로 관리자를 만들던 통합 테스트가
+전부 403이 된다. 5개 클래스의 fixture를 `LOCAL`로 고쳤다(`AdminMemberIntegrationTest`,
+`MemberWithdrawalIntegrationTest`는 helper가 role을 보고 provider를 고르게, 나머지 3개는
+`UPDATE ... SET role='ADMIN', provider='LOCAL'`).
+
+### 테스트
+
+- Backend: `AdminAuthorizationServiceTest`에 "소셜 계정은 ADMIN 역할이어도 403" 1건 추가(6건),
+  `FestivalMeetingPointAdminServiceTest`를 공통 판정 위임에 맞게 수정(2건).
+  `AdminMemberIntegrationTest`의 `list` 호출 4곳에서 role 인자 제거.
+- Frontend: `AdminNav.test.ts`에 메뉴 순서 1건 추가, badge 순서 기대값 수정.
+  `MyPage.test.tsx`에 "관리자 기능 링크를 그리지 않는다" 1건 추가(회귀 방지).
+  `adminMembers.test.ts`·`useAdminMembers.test.ts`에서 role filter 제거.
+- 회귀: frontend **813건 전체 통과**, `tsc -b` 통과. backend 748건 중 35건 실패인데
+  **전부 Docker 미설치로 인한 컨테이너·컨텍스트 로드 실패다**(실패 메시지 전수 확인, 다른 원인 0건).
+
+### 확인이 필요한 것
+
+`provider='LOCAL'` 조건은 통합 테스트로만 실제 검증되는데 이 PC에서는 돌지 않는다.
+**dev 배포 후 `/admin/login` 로그인이 여전히 되는지 한 번 확인해야 한다.** 운영/dev DB의
+관리자 계정이 소셜 계정이라면 그 계정은 더 이상 관리자 화면에 들어갈 수 없다 —
+`ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`로 만든 계정이 있는지 먼저 봐야 한다.

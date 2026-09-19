@@ -27,8 +27,7 @@ public class MatchPoolCheckinCancellationService {
      * {@code @TransactionalEventListener(AFTER_COMMIT)}이다. 그 시점에는 원본 트랜잭션이 이미
      * 커밋됐지만 동기화는 살아 있어서, 기본 {@code REQUIRED}로 두면 Spring이 새 트랜잭션을 열지 않고
      * 완료된 트랜잭션에 참여하려다 {@code no transaction is in progress}로 실패한다.
-     * pool entry 매칭 경로({@code PoolEntryMatchPoolClaimService} 등)와 동일하게
-     * {@code REQUIRES_NEW}로 새 트랜잭션을 연다.
+     * 그래서 {@code REQUIRES_NEW}로 새 트랜잭션을 연다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int cancelWaitingPool(long memberId, long festivalId, OffsetDateTime now) {

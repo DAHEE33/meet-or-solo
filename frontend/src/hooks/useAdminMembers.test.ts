@@ -9,7 +9,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 describe('createAdminMembersSession', () => {
   it('검색 변경은 cursor를 초기화하고 늦은 목록 응답을 무시한다', async () => {
     const first = deferred<AdminMemberPage>(); const second = deferred<AdminMemberPage>(); const list = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise); let state!: AdminMembersState;
-    const session = createAdminMembersSession({ list, detail: vi.fn(), act: vi.fn(), forceWithdraw: vi.fn(), adjustMannerTemperature: vi.fn(), updateTestAccount: vi.fn() }, (next) => { state = next; }); void session.load(); void session.applyFilters({ query: '새회원', status: '', role: 'USER', testAccount: false }); second.resolve(page([detail(2)])); await Promise.resolve(); first.resolve(page([detail(1)])); await Promise.resolve();
+    const session = createAdminMembersSession({ list, detail: vi.fn(), act: vi.fn(), forceWithdraw: vi.fn(), adjustMannerTemperature: vi.fn(), updateTestAccount: vi.fn() }, (next) => { state = next; }); void session.load(); void session.applyFilters({ query: '새회원', status: '', testAccount: false }); second.resolve(page([detail(2)])); await Promise.resolve(); first.resolve(page([detail(1)])); await Promise.resolve();
     expect(state.items.map((item) => item.memberId)).toEqual([2]); expect(state.filters.query).toBe('새회원'); expect(list.mock.calls[1][1]).toBeNull();
   });
   it('이중 제출은 한 번만 호출하고 실패 전 snapshot을 유지한다', async () => {

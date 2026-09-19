@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.survey.meetorsolo.domain.notification.entity.PushSubscription;
+import com.survey.meetorsolo.domain.notification.policy.NotificationPolicy;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -53,17 +54,45 @@ class PushNotificationServiceTest {
         verify(sender).sendAsync(anyString(), anyString(), anyString(), anyString(), any());
     }
 
+    /**
+     * 확정을 만든 본인에게도 보낸다.
+     *
+     * <p>{@code MATCH_CONFIRMED}의 행위자는 마지막으로 수락한 사람이다. 만남 장소로 이동을
+     * 시작해야 하고 도착 마감이 30분이라, 그 사람이야말로 잠금 화면에서 봐야 한다. 행위자를
+     * 무조건 걸러내던 때는 매칭을 성사시킨 본인만 push를 못 받았다.
+     */
     @Test
-    void 행위자_본인에게는_보내지_않는다() {
+    void 그룹_사실은_행위자에게도_보낸다() {
         when(sender.enabled()).thenReturn(true);
+        when(subscriptions.findAllByMemberId(1L)).thenReturn(List.of(subscription(1L, "https://push/1")));
         when(subscriptions.findAllByMemberId(2L)).thenReturn(List.of(subscription(2L, "https://push/2")));
 
         service().notifyMembers(List.of(1L, 2L), "MATCH_CONFIRMED", 1L, OCCURRED);
 
-        verify(subscriptions, never()).findAllByMemberId(1L);
+        verify(sender).sendAsync(
+                org.mockito.ArgumentMatchers.eq("https://push/1"),
+                anyString(), anyString(), anyString(), any());
         verify(sender).sendAsync(
                 org.mockito.ArgumentMatchers.eq("https://push/2"),
                 anyString(), anyString(), anyString(), any());
+    }
+
+    /**
+     * 관측자 시점 사유는 행위자에게 보내지 않는다(docs/31 5절 "알림 자기 반향").
+     *
+     * <p>push 사유({@code MATCH_PROPOSED}·{@code MATCH_CONFIRMED})에는 관측자 시점이 없어
+     * 지금은 여기서 걸러질 일이 없다. 그래도 WebSocket·알림함과 <b>같은 판정</b>을 쓰는지
+     * 고정해 둔다 — 세 경로 중 하나만 규칙이 달라지는 것이 이번 결함의 원인이었다.
+     */
+    @Test
+    void 관측자_시점_사유는_행위자에게_보내지_않는다() {
+        when(sender.enabled()).thenReturn(true);
+
+        service().notifyMembers(List.of(1L, 2L), "MEMBER_ARRIVED", 1L, OCCURRED);
+
+        // 애초에 push 대상 사유가 아니라 구독 조회조차 하지 않는다.
+        verify(subscriptions, never()).findAllByMemberId(anyLong());
+        assertThat(NotificationPolicy.deliverableTo("MEMBER_ARRIVED", 1L, 1L)).isFalse();
     }
 
     /** 키가 없는 환경에서는 구독을 조회하지도 않는다. */

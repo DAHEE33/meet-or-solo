@@ -200,6 +200,9 @@ export type MatchGroupEventType =
   | 'ARRIVAL_TIME_SELECTED'
   | 'MEMBER_ARRIVED'
   | 'MEMBER_CANCELLED'
+  // 먼저 나가기는 알림으로는 오는데("한 명이 먼저 갔어요") 상태 기록에는 빠져 있었다.
+  // 상태방은 취소·도착과 같은 층위의 변화를 모두 보여주는 자리다(docs/19 4.11.3).
+  | 'MEMBER_LEFT'
   | 'MEMBER_NO_SHOW'
   | 'MATCH_CANCELLED';
 

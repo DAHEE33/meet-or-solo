@@ -6,6 +6,7 @@ import {
 } from '../api/matchingNotificationHub';
 import type { MatchingWebSocketCallbacks } from '../api/matchingWebSocket';
 import {
+  NOTICE_VISIBLE_MS,
   isAlreadyVisible,
   toNotificationMessage,
 } from './notificationMessages';
@@ -129,7 +130,7 @@ describe('notificationMessages', () => {
       .toBe('매칭 상태가 바뀌었어요');
   });
 
-  it('이미 보고 있는 화면이면 토스트를 띄우지 않는다', () => {
+  it('이미 보고 있는 화면이면 알림을 띄우지 않는다', () => {
     const arrived = toNotificationMessage({ reason: 'MEMBER_ARRIVED' });
     expect(isAlreadyVisible(arrived, '/match-room')).toBe(true);
     expect(isAlreadyVisible(arrived, '/')).toBe(false);
@@ -139,6 +140,18 @@ describe('notificationMessages', () => {
   it('URGENT는 같은 화면에 있어도 띄운다', () => {
     const proposed = toNotificationMessage({ reason: 'MATCH_PROPOSED' });
     expect(isAlreadyVisible(proposed, '/matching')).toBe(false);
+  });
+
+  /**
+   * "알림이 안 사라진다"의 회귀 방어다.
+   *
+   * <p>예전에는 긴급 알림(배너)에 타이머가 아예 없어서 닫기를 누르기 전까지 남았다. 화면을
+   * 옮겨도 따라다녔고, 응답 시간 30초가 지나 이미 끝난 제안의 배너가 그대로 떠 있었다.
+   */
+  it('긴급 알림도 저절로 사라지고 제안 응답 시간과 같은 30초다', () => {
+    expect(NOTICE_VISIBLE_MS.URGENT).toBe(30_000);
+    expect(NOTICE_VISIBLE_MS.INFO).toBe(5_000);
+    expect(NOTICE_VISIBLE_MS.URGENT).toBeGreaterThan(NOTICE_VISIBLE_MS.INFO);
   });
 });
 
