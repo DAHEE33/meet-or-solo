@@ -22,8 +22,10 @@
 | **D** | 알림 2단계 — 서버 알림함 | `docs/31` 3.1 | C와 동일 항목 |
 | **E** | 알림 3단계 — PWA Web Push | `docs/31` 3.2 | 단독 |
 | **F** | 30도 매칭 제한 (4.9 PR C) | `docs/31` 3.3 | 단독 |
+| **G** | 매칭 즉시 조합 경로 제거 | 임베딩 검증 중 발견 | **신규.** 10절 참고 |
 
 결론: **실제 작업 항목은 A, B, C(=D), E, F 다섯 개**다.
+(G는 A~F 구현 완료 후 임베딩 검증 과정에서 발견됐다. 10절에 따로 적었다.)
 
 ## 3. 추가 요청 3건 분석
 
@@ -321,3 +323,52 @@ B는 진단 결과에 따라 A 브랜치에 흡수하거나 문서·스크립트
 | **VAPID 키** | `npx web-push generate-vapid-keys`로 만들어 `.env`와 dev/prod Secret에 넣는다. 없으면 push만 꺼진 채 나머지는 동작한다 |
 | **오프라인 동작** | `injectManifest` 전환 뒤 캐싱 회귀를 실기기에서 한 번 확인한다(`npm run build` + preview) |
 | **수동 검증** | `docs/30` 시나리오 A~R. 특히 B(도착 반경), R(알림) |
+
+## 10. G — 매칭 즉시 조합 경로 제거 (2026-09-18)
+
+### 발견 경위
+
+개발계에서 테스터 5명으로 취향 임베딩이 매칭에 반영되는지 확인하려 했다. 전원 같은 태그,
+희망 인원 2명으로 맞추고 취향만 다르게 입력했는데 결과가 취향과 무관하게 "먼저 누른 두
+사람끼리" 묶였다.
+
+### 원인
+
+조합 경로가 둘이었고, 그중 즉시 경로가 점수가 개입할 여지를 없앴다.
+
+| 위치 | 내용 |
+| --- | --- |
+| `MatchPoolEntryService` | pool 저장 직후 `MatchingPoolEnteredEvent` 발행 |
+| `MatchingPoolEnteredEventHandler` | `@TransactionalEventListener(AFTER_COMMIT)`으로 즉시 조합 실행 |
+
+즉시 경로는 **유효한 조합이 처음 생기는 순간 소진**시킨다. 그래서 대기 후보가 2명을 넘지
+못했고, 가능한 조합이 1개뿐이면 조합을 정렬해서 고를 대상이 없다. 점수는 계산·저장만 됐다.
+`MATCHING_SCHEDULER_ENABLED`와 무관하게 항상 동작했고 끄는 플래그도 없었다.
+
+함께 확인된 것:
+
+- 최소 궁합 점수 임계값이 없다. 점수는 조합 간 순위만 가리고, 그 순위도 인원 수보다 뒤다
+- `MatchPoolRepository.findPoolEntryClaimablePoolsForUpdate`에만
+  `preferred_group_size` 버킷 필터가 남아 있었다. `MatchGroupComposer` 주석이 "없앴다"고
+  적은 그 버킷이며, scheduler claim 쿼리에는 없어 두 경로의 후보 집합 정의가 달랐다
+- `docs/05` 매칭 흐름 3번은 이미 "Scheduler가 eligible pool entry를 조회한다"였다.
+  즉시 경로는 문서에 없었다. 이번 작업은 새 정책 도입이 아니라 코드를 문서에 맞추는 것이다
+
+### 처리
+
+즉시 경로를 제거하고 조합을 scheduler tick 하나로 통일했다. 버킷 필터는 해당 쿼리가
+사라지면서 함께 해소됐다. `MATCHING_SCHEDULER_ENABLED` 기본값은 `true`로 바꿨다 —
+즉시 경로가 없어진 뒤에는 이 플래그가 꺼지면 매칭이 성사되지 않는다.
+
+### 하지 않은 것
+
+- 최소 점수 임계값: 수집 주기 전환 뒤 실사용 점수 분포를 보고 별도 판단
+- 가중치 조정, `allowMinimumTwo`·`acceptsSize` 정책 변경
+- 임베딩 점수와 실제 만족도의 관계 검증. 후속 경로 후보는
+  `member_reviews`·매너온도 변화와 당시 `match_attempt_members.cosine_score`의 상관이다
+
+### 남은 한계
+
+수집 주기는 후보가 모일 기회를 주지만 보장하지 않는다. 그 시간에 두 명만 모이면 여전히 그
+둘이 매칭된다. 밀도의 한계가 아니라 임계값 없이 지금 가능한 조합을 즉시 선택하는 현재 정책의
+결과다. 검증 절차는 `docs/30` 7절에 있다.

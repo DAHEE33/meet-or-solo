@@ -206,6 +206,76 @@ class MatchGroupComposerTest {
         assertThat(poolIds(groups).get(0)).hasSize(3);
     }
 
+    /**
+     * 태그를 상수로 고정하면 코사인만 순위를 가른다.
+     *
+     * <p>희망 인원을 전원 2명으로 두는 것이 이 검증의 전제다. 3인을 허용하면 조합 우선순위가
+     * 점수보다 인원 수를 먼저 보므로 세 명이 한 그룹으로 묶여 점수 검증이 되지 않는다.
+     * 바로 아래 테스트가 그 규칙을 따로 확인한다.
+     *
+     * <p>이 테스트가 이번 변경(즉시 조합 경로 제거)의 회귀 방지선이다. 신청 직후 즉시 조합하면
+     * 후보가 2명을 넘지 못해 조합이 1개뿐이고, 그러면 아래 기대값이 코사인과 무관하게
+     * 만족돼 버린다. 후보 3명이 한 배치에 들어오는 경로가 유지돼야 이 검증이 의미를 가진다.
+     */
+    @Test
+    void 태그가_같고_희망_인원이_2명이면_코사인이_가장_높은_pair를_고른다() {
+        // 태그는 전원 PHOTO 하나뿐이므로 모든 pair의 Jaccard가 100으로 같다.
+        // 1-2 코사인 약 0.99, 1-3은 0, 2-3은 약 0.14다.
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 2, new float[] {1.0f, 0.0f}, PHOTO),
+                candidate(2, 2, new float[] {0.99f, 0.14f}, PHOTO),
+                candidate(3, 2, new float[] {0.0f, 1.0f}, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).containsExactly(1L, 2L);
+    }
+
+    /** 궁합 점수는 같은 인원 조합 사이의 순위만 가린다. 인원 수가 먼저다. */
+    @Test
+    void 전원이_3인을_허용하면_궁합_점수보다_인원_수가_먼저다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 3, new float[] {1.0f, 0.0f}, PHOTO),
+                candidate(2, 3, new float[] {0.99f, 0.14f}, PHOTO),
+                candidate(3, 3, new float[] {0.0f, 1.0f}, PHOTO)
+        ));
+
+        // 1-2만 묶으면 pair 점수가 더 높지만, 3인 조합이 가능하므로 그쪽이 먼저다.
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).containsExactly(1L, 2L, 3L);
+    }
+
+    /** 임베딩 보유자와 미보유자가 섞여도 조합은 만들어진다(미보유 pair는 태그 점수만 쓴다). */
+    @Test
+    void 임베딩_미보유_후보가_섞여도_조합에서_제외하지_않는다() {
+        List<MatchGroupCombination> groups = composer.compose(List.of(
+                candidate(1, 2, new float[] {1.0f, 0.0f}, PHOTO),
+                candidate(2, 2, (float[]) null, PHOTO)
+        ));
+
+        assertThat(groups).hasSize(1);
+        assertThat(poolIds(groups).get(0)).containsExactly(1L, 2L);
+    }
+
+    private MatchingCandidate candidate(
+            long id,
+            int groupSize,
+            float[] preferenceEmbedding,
+            TravelStyleCode... styles
+    ) {
+        return new MatchingCandidate(
+                id,
+                100L + id,
+                id,
+                1L,
+                groupSize,
+                true,
+                BASE_TIME.plusSeconds(id),
+                List.of(styles),
+                preferenceEmbedding
+        );
+    }
+
     private MatchingCandidate candidate(long id, int groupSize, TravelStyleCode... styles) {
         return candidate(id, groupSize, 1L, BASE_TIME.plusSeconds(id), true, styles);
     }
