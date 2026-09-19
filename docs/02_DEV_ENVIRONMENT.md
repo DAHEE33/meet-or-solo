@@ -255,16 +255,21 @@ backend `application-dev.yml`은 환경변수 주입을 기준으로 합니다.
 제거했으므로 이제 이 플래그가 꺼지면 매칭이 성사되지 않습니다. 배치가 데이터를 건드리면
 곤란한 테스트는 각 테스트에서 `app.matching.scheduler.enabled=false`로 덮어씁니다.
 
-`MATCHING_SCHEDULER_FIXED_DELAY`는 세 스케줄러가 **공유**합니다. 즉시 조합 경로를 제거한
-뒤에는 이 값이 곧 "후보가 한 배치에 모이는 시간"입니다. 짧으면 후보가 2명을 넘기 어려워
-궁합 점수가 순위에 개입하지 못하고, 늘리면 proposal timeout과 만남 종료 판정도 같이
-느슨해집니다. dev·prod example은 `10s`를 기준으로 둡니다.
+### 주기 설정 세 가지
 
-| `fixed-delay` | 첫 평가까지 평균 / 최대 | 30초 proposal이 실제로 닫히는 시점 |
+| 설정 | 기준값 | 쓰는 곳 |
 | --- | --- | --- |
-| `5s` | 2.5초 / 5초 | 30~35초 |
-| `10s` (기준) | 5초 / 10초 | 30~40초 |
-| `15s` | 7.5초 / 15초 | 30~45초 |
+| `MATCHING_COLLECT_WINDOW` | `10s` | **후보 수집 시간.** 첫 유효 대기자부터 이 시간 동안 모은다 |
+| `MATCHING_SCHEDULER_MATCHING_FIXED_DELAY` | `2s` | **조합 scheduler 주기.** `MatchingScheduler`만 쓴다 |
+| `MATCHING_SCHEDULER_FIXED_DELAY` | `10s` | proposal timeout·만남 종료 scheduler 주기 |
+
+**수집 시간과 조합 주기는 다른 값입니다.** 제안이 만들어지는 시점은
+`수집 종료 + (0 ~ 조합 주기) + 처리 시간`입니다. 조합 주기가 수집 시간보다 길면 수집이 끝나고도
+한 주기를 더 기다리게 되므로, **조합 주기는 수집 시간보다 짧아야 하고 기동 시 검증합니다.**
+
+주기를 분리했기 때문에 **proposal timeout과 만남 종료 동작은 이번 변경으로 달라지지 않습니다.**
+30초 proposal이 닫히는 시점은 `fixed-delay`가 10s인 한 기존과 같은 30~40초입니다. 이를 좁히려면
+`fixed-delay`를 따로 낮춰야 하며, 그것은 별도 결정입니다.
 
 ## 취향 임베딩 실패 진단
 

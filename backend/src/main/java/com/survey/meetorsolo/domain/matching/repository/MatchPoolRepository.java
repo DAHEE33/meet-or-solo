@@ -40,10 +40,20 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
             @Param("now") OffsetDateTime now
     );
 
+    /**
+     * 한 수집 구간의 유효 후보를 <b>전량</b> 조회한다.
+     *
+     * <p><b>LIMIT을 걸지 않는다.</b> 구간 후보를 신청순으로 자르면 뒤쪽 후보가 비교 대상에서
+     * 빠진다. 조회 분할과 비교 후보 제한은 다른 문제이므로 여기서는 나누지 않는다.
+     *
+     * <p>{@code SKIP LOCKED}도 쓰지 않는다. 구간은 이미 배타적으로 확보한 뒤이고, 여기서 건너뛰면
+     * 같은 구간의 후보가 쪼개져 서로 비교되지 않는다.
+     */
     @Query(value = """
             SELECT pool.* FROM match_pools pool
             JOIN festival_checkins checkin ON checkin.id = pool.checkin_id
-            WHERE pool.status = 'WAITING'
+            WHERE pool.collect_window_id = :windowId
+              AND pool.status = 'WAITING'
               AND pool.search_expires_at > :now
               AND checkin.member_id = pool.member_id
               AND checkin.festival_id = pool.festival_id
@@ -57,12 +67,66 @@ public interface MatchPoolRepository extends JpaRepository<MatchPool, Long> {
                     AND cooldown.expires_at > :now
               )
             ORDER BY pool.entered_at ASC, pool.id ASC
-            LIMIT :limit
-            FOR UPDATE OF pool SKIP LOCKED
+            FOR UPDATE OF pool
             """, nativeQuery = true)
-    List<MatchPool> findSchedulerClaimablePoolsForUpdate(
-            @Param("now") OffsetDateTime now,
-            @Param("limit") int limit
+    List<MatchPool> findWindowCandidatesForUpdate(
+            @Param("windowId") long windowId,
+            @Param("now") OffsetDateTime now
+    );
+
+    /** 그 구간에 아직 대기 중인 후보가 남아 있는지. 잔여 후보 이월 여부 판정에 쓴다. */
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1 FROM match_pools
+                WHERE collect_window_id = :windowId
+                  AND status = 'WAITING'
+                  AND search_expires_at > :now
+            )
+            """, nativeQuery = true)
+    boolean existsWaitingInWindow(@Param("windowId") long windowId, @Param("now") OffsetDateTime now);
+
+    /** 수집 구간이 아직 없는 대기 후보를 가진 축제. 배포 시점 잔여분을 편입할 때 쓴다. */
+    @Query(value = """
+            SELECT DISTINCT pool.festival_id FROM match_pools pool
+            WHERE pool.collect_window_id IS NULL
+              AND pool.status = 'WAITING'
+              AND pool.search_expires_at > :now
+            """, nativeQuery = true)
+    List<Long> findFestivalIdsWithUnassignedPools(@Param("now") OffsetDateTime now);
+
+    /** 구간이 없는 대기 후보를 주어진 구간에 편입한다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET collect_window_id = :windowId, updated_at = :now
+            WHERE collect_window_id IS NULL
+              AND festival_id = :festivalId
+              AND status = 'WAITING'
+              AND search_expires_at > :now
+            """, nativeQuery = true)
+    int assignWindowToUnassignedPools(
+            @Param("windowId") long windowId,
+            @Param("festivalId") long festivalId,
+            @Param("now") OffsetDateTime now
+    );
+
+    /**
+     * 평가 후 남은 후보를 다음 구간으로 옮긴다.
+     *
+     * <p>{@code entered_at}과 {@code search_expires_at}은 건드리지 않는다. 잔여 후보가 대기 시간을
+     * 처음부터 다시 시작하면 안 된다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE match_pools
+            SET collect_window_id = :windowId, updated_at = :now
+            WHERE collect_window_id = :previousWindowId
+              AND status = 'WAITING'
+            """, nativeQuery = true)
+    int carryOverToNextWindow(
+            @Param("previousWindowId") long previousWindowId,
+            @Param("windowId") long windowId,
+            @Param("now") OffsetDateTime now
     );
 
     List<MatchPool> findAllByLockTokenOrderByEnteredAtAscIdAsc(String lockToken);

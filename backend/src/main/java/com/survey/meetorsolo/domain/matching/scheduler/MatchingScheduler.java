@@ -12,6 +12,7 @@ public class MatchingScheduler {
     public MatchingScheduler(MatchingOrchestrationService orchestrationService) {
         this.orchestrationService = orchestrationService;
     }
-    @Scheduled(fixedDelayString = "${app.matching.scheduler.fixed-delay:5s}")
+    // 조합 주기는 수집 시간보다 짧아야 하므로 timeout·close scheduler와 분리한다.
+    @Scheduled(fixedDelayString = "${app.matching.scheduler.matching-fixed-delay:2s}")
     public void run() { orchestrationService.runTick(); }
 }

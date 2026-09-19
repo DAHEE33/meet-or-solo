@@ -18,7 +18,8 @@ class MatchingSchedulerTest {
             .withBean(MatchingOrchestrationService.class, () -> Mockito.mock(MatchingOrchestrationService.class))
             .withBean(MatchProposalTimeoutService.class, () -> Mockito.mock(MatchProposalTimeoutService.class))
             .withBean(MatchingSchedulerProperties.class, () -> new MatchingSchedulerProperties(
-                    true, Duration.ofSeconds(5), Duration.ofSeconds(30), Duration.ofSeconds(30), 20))
+                    true, Duration.ofSeconds(5), Duration.ofSeconds(2), Duration.ofSeconds(10),
+                    Duration.ofSeconds(30), Duration.ofSeconds(30), 20))
             .withUserConfiguration(SchedulerConfiguration.class);
 
     @Test void scheduled_method는_orchestration만_호출한다() {

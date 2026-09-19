@@ -4,6 +4,7 @@ import com.survey.meetorsolo.domain.festival.entity.FestivalMeetingPointStatus;
 import com.survey.meetorsolo.domain.festival.repository.FestivalMeetingPointRepository;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolResponse;
+import com.survey.meetorsolo.domain.matching.entity.MatchCollectionWindow;
 import com.survey.meetorsolo.domain.matching.entity.MatchPool;
 import com.survey.meetorsolo.domain.matching.repository.MatchCooldownRepository;
 import com.survey.meetorsolo.domain.matching.repository.MatchGroupMemberRepository;
@@ -31,6 +32,7 @@ public class MatchPoolEntryService {
     private final MatchGroupMemberRepository groupMembers;
     private final MatchGroupRepository groups;
     private final MatchCompletionLockPolicy completionLocks;
+    private final MatchCollectionWindowService collectionWindows;
     private final FestivalMeetingPointRepository meetingPoints;
 
     public MatchPoolEntryService(
@@ -41,6 +43,7 @@ public class MatchPoolEntryService {
             MatchGroupMemberRepository groupMembers,
             MatchGroupRepository groups,
             MatchCompletionLockPolicy completionLocks,
+            MatchCollectionWindowService collectionWindows,
             FestivalMeetingPointRepository meetingPoints
     ) {
         this.clock = clock;
@@ -50,6 +53,7 @@ public class MatchPoolEntryService {
         this.groupMembers = groupMembers;
         this.groups = groups;
         this.completionLocks = completionLocks;
+        this.collectionWindows = collectionWindows;
         this.meetingPoints = meetingPoints;
     }
 
@@ -100,6 +104,12 @@ public class MatchPoolEntryService {
                 now,
                 now.plusSeconds(60)
         );
+        // 이 축제의 수집 구간에 합류한다. 열린 구간이 없거나 수집 시간이 끝났으면 새로 연다.
+        // 구간이 정해지는 시점이 곧 "첫 유효 대기자가 들어온 시점"이며, 그 구간의 종료 시각은
+        // 이후 누가 취소·매칭·만료되어도 다시 계산하지 않는다.
+        MatchCollectionWindow window = collectionWindows.openOrJoin(request.festivalId(), now);
+        pool.assignCollectWindow(window.getId(), now);
+
         try {
             // 조합은 scheduler tick에서만 수행한다(docs/05 매칭 흐름 3번).
             //

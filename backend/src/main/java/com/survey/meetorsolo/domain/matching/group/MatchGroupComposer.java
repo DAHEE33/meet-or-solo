@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +44,13 @@ public class MatchGroupComposer {
     /** 그룹 인원의 상한. 희망 인원 선택지의 최대값이다. */
     private static final int MAXIMUM_GROUP_SIZE = 4;
 
+    /** pair 점수 캐시 key. 순서를 정규화해 (a,b)와 (b,a)가 같은 항목을 쓰게 한다. */
+    private record PairKey(long lower, long higher) {
+        static PairKey of(long left, long right) {
+            return new PairKey(Math.min(left, right), Math.max(left, right));
+        }
+    }
+
     private static final Comparator<MatchingCandidate> CANDIDATE_ORDER =
             Comparator.comparing(MatchingCandidate::enteredAt)
                     .thenComparingLong(MatchingCandidate::poolId);
@@ -77,9 +85,13 @@ public class MatchGroupComposer {
         }
 
         List<MatchGroupCombination> combinations = new ArrayList<>();
+        // pair 점수를 한 번만 계산한다. 조합은 크기 4·3·2를 전수 열거하므로 같은 pair가 여러 조합에
+        // 반복해 나타나고, 매번 1536차원 코사인을 다시 계산하면 후보 수에 따라 비용이 급격히
+        // 늘어난다. 캐시는 계산 횟수만 줄이며 점수와 조합 순위 규칙은 그대로다.
+        Map<PairKey, BigDecimal> pairScores = new HashMap<>();
         festivalBuckets.forEach((festivalId, bucket) -> {
             for (int size = MAXIMUM_GROUP_SIZE; size >= MINIMUM_GROUP_SIZE; size--) {
-                generateCombinations(bucket, size, 0, new ArrayList<>(), combinations, compatibility);
+                generateCombinations(bucket, size, 0, new ArrayList<>(), combinations, compatibility, pairScores);
             }
         });
         combinations.sort(this::compareCombinations);
@@ -109,11 +121,12 @@ public class MatchGroupComposer {
             int startIndex,
             List<MatchingCandidate> current,
             List<MatchGroupCombination> combinations,
-            BiPredicate<MatchingCandidate, MatchingCandidate> compatibility
+            BiPredicate<MatchingCandidate, MatchingCandidate> compatibility,
+            Map<PairKey, BigDecimal> pairScores
     ) {
         if (current.size() == groupSize) {
             if (acceptsSize(current, groupSize)) {
-                combinations.add(new MatchGroupCombination(current, groupScore(current)));
+                combinations.add(new MatchGroupCombination(current, groupScore(current, pairScores)));
             }
             return;
         }
@@ -124,21 +137,24 @@ public class MatchGroupComposer {
                 continue;
             }
             current.add(candidate);
-            generateCombinations(candidates, groupSize, index + 1, current, combinations, compatibility);
+            generateCombinations(candidates, groupSize, index + 1, current, combinations, compatibility,
+                    pairScores);
             current.remove(current.size() - 1);
         }
     }
 
-    private BigDecimal groupScore(List<MatchingCandidate> candidates) {
+    private BigDecimal groupScore(List<MatchingCandidate> candidates, Map<PairKey, BigDecimal> pairScores) {
         BigDecimal total = BigDecimal.ZERO;
         int pairCount = 0;
         for (int left = 0; left < candidates.size() - 1; left++) {
             for (int right = left + 1; right < candidates.size(); right++) {
                 MatchingCandidate l = candidates.get(left);
                 MatchingCandidate r = candidates.get(right);
-                total = total.add(pairScorer.score(
-                        l.travelStyles(), r.travelStyles(),
-                        l.preferenceEmbedding(), r.preferenceEmbedding()));
+                total = total.add(pairScores.computeIfAbsent(
+                        PairKey.of(l.poolId(), r.poolId()),
+                        ignored -> pairScorer.score(
+                                l.travelStyles(), r.travelStyles(),
+                                l.preferenceEmbedding(), r.preferenceEmbedding())));
                 pairCount++;
             }
         }
