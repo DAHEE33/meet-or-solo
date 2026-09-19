@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_DIMENSION,
+  MAX_INPUT_BYTES,
   calculateTargetSize,
   isSupportedImageType,
   resizeFailureMessage,
+  resizeProfileImage,
 } from './imageResize';
 
 /*
@@ -75,14 +77,49 @@ describe('resizeFailureMessage', () => {
     const messages = [
       resizeFailureMessage('UNSUPPORTED_TYPE'),
       resizeFailureMessage('TOO_LARGE'),
+      resizeFailureMessage('INPUT_TOO_LARGE'),
       resizeFailureMessage('DECODE_FAILED'),
     ];
-    expect(new Set(messages).size).toBe(3);
+    expect(new Set(messages).size).toBe(4);
   });
 
   it('무엇을 해야 하는지 알려준다', () => {
     expect(resizeFailureMessage('UNSUPPORTED_TYPE')).toContain('선택');
     expect(resizeFailureMessage('TOO_LARGE')).toContain('선택');
+    expect(resizeFailureMessage('INPUT_TOO_LARGE')).toContain('선택');
     expect(resizeFailureMessage('DECODE_FAILED')).toContain('선택');
+  });
+
+  it('원본 상한 안내에 허용 용량을 적는다', () => {
+    expect(resizeFailureMessage('INPUT_TOO_LARGE')).toContain('30MB');
+  });
+});
+
+describe('resizeProfileImage 입력 검증', () => {
+  /*
+    canvas가 jsdom에 없어 디코딩 이후는 테스트하지 않는다.
+    다만 "디코딩 전에 거르는가"는 여기서 확인할 수 있다 - 걸러지면 canvas에 닿지 않는다.
+  */
+  /** size는 읽기 전용이라 실제 바이트를 만들지 않고 값만 바꿔 끼운다. */
+  const fileWith = (size: number, type: string): File => {
+    const file = new File([new Uint8Array(0)], 'photo.jpg', { type });
+    Object.defineProperty(file, 'size', { value: size });
+    return file;
+  };
+
+  it('지원하지 않는 형식을 먼저 거른다', async () => {
+    const result = await resizeProfileImage(fileWith(1000, 'image/heic'));
+    expect(result).toEqual({ ok: false, reason: 'UNSUPPORTED_TYPE' });
+  });
+
+  it('원본 상한을 넘으면 읽지 않고 거절한다', async () => {
+    const result = await resizeProfileImage(fileWith(MAX_INPUT_BYTES + 1, 'image/jpeg'));
+    expect(result).toEqual({ ok: false, reason: 'INPUT_TOO_LARGE' });
+  });
+
+  it('상한과 같은 크기는 통과시킨다', async () => {
+    // 여기서는 디코딩 단계로 넘어가므로 INPUT_TOO_LARGE가 아니어야 한다.
+    const result = await resizeProfileImage(fileWith(MAX_INPUT_BYTES, 'image/jpeg'));
+    expect(result.ok === false && result.reason === 'INPUT_TOO_LARGE').toBe(false);
   });
 });

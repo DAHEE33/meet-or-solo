@@ -28,6 +28,17 @@ export const PASS_THROUGH_MAX_BYTES = 1024 * 1024;
 /** 줄인 뒤에도 이 값을 넘으면 거부한다. 실제로는 거의 발생하지 않는다. */
 export const MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
 
+/**
+ * 읽기 전에 거르는 원본 상한.
+ *
+ * 리사이즈 덕분에 결과물은 늘 작지만, 그러려면 원본을 **통째로 디코딩**해야 한다.
+ * 상한이 없으면 수백 MB짜리 파일도 일단 메모리에 펼치려다 저사양 기기에서 멈춘다.
+ *
+ * 30MB는 휴대폰 사진(보통 10~15MB, 고화소도 20MB 남짓)을 전부 통과시키면서
+ * 비정상적으로 큰 파일만 걸러내는 값이다.
+ */
+export const MAX_INPUT_BYTES = 30 * 1024 * 1024;
+
 export const SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
 export type ResizeFailureReason =
@@ -35,6 +46,8 @@ export type ResizeFailureReason =
   | 'UNSUPPORTED_TYPE'
   /** 이미지를 읽지 못했다. 파일이 손상됐거나 브라우저가 지원하지 않는다. */
   | 'DECODE_FAILED'
+  /** 원본이 너무 커서 읽기 전에 거절했다. */
+  | 'INPUT_TOO_LARGE'
   /** 줄였는데도 상한을 넘는다. */
   | 'TOO_LARGE';
 
@@ -113,6 +126,11 @@ export async function resizeProfileImage(file: File): Promise<ResizeResult> {
     return { ok: false, reason: 'UNSUPPORTED_TYPE' };
   }
 
+  // 디코딩 전에 거른다. 읽고 나서 판단하면 이미 메모리를 다 쓴 뒤다.
+  if (file.size > MAX_INPUT_BYTES) {
+    return { ok: false, reason: 'INPUT_TOO_LARGE' };
+  }
+
   let source: CanvasImageSource & { width: number; height: number };
   try {
     source = await decode(file);
@@ -157,6 +175,8 @@ export function resizeFailureMessage(reason: ResizeFailureReason): string {
   switch (reason) {
     case 'UNSUPPORTED_TYPE':
       return 'JPEG, PNG, WEBP 이미지만 선택할 수 있어요.';
+    case 'INPUT_TOO_LARGE':
+      return `사진이 너무 커요(${Math.round(MAX_INPUT_BYTES / 1024 / 1024)}MB 이하). 다른 사진을 선택해 주세요.`;
     case 'TOO_LARGE':
       return '사진 용량이 너무 커요. 다른 사진을 선택해 주세요.';
     case 'DECODE_FAILED':
