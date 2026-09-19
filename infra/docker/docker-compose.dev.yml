@@ -105,7 +105,7 @@ services:
       FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS: ${FESTIVAL_CHECKIN_ACCURACY_THRESHOLD_METERS:-100}
       # Web Push(docs/32 3.4). 이 세 줄이 아예 없어서 dev에서 push가 한 번도 나가지 않았다 —
       # 키가 비면 WebPushSender가 조용히 발송을 끄고 WebSocket·알림함만 동작해 증상이
-      # 드러나지 않는다. 실제 값은 .env.dev에만 넣는다(저장소에 넣지 않는다).
+      # 드러나지 않는다. 실제 값은 서버의 .env에만 넣는다(저장소에 넣지 않는다).
       WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
       WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
       WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-}
