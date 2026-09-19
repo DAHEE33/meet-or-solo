@@ -86,6 +86,12 @@ export default defineConfig({
       */
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        /*
+          og-image.png은 링크 공유 미리보기용이라 크롤러만 가져간다. 사용자 화면에는
+          쓰이지 않는데 precache에 들어가면 모든 사용자가 160KB를 내려받는다.
+          실제로 이 파일을 추가했더니 precache가 587KB에서 748KB로 늘었다.
+        */
+        globIgnores: ['**/og-image.png'],
       },
     }),
   ],

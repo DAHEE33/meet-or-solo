@@ -153,6 +153,27 @@ Web Push 키는 `VAPID_*`로 적어 두었으나 구현하면서 `WEB_PUSH_VAPID
 **private key가 유출되면 우리 도메인 이름으로 누구나 push를 보낼 수 있습니다.** 공개키는
 브라우저에 그대로 들어가는 값이라 숨기지 않지만, private key는 서버 환경변수로만 주입합니다.
 
+운영 CD(`deploy-prod.yml`)가 쓰는 Secrets는 이름을 나눕니다.
+
+```text
+PROD_SERVER_HOST
+PROD_SERVER_USER
+PROD_SSH_KEY
+PROD_DEPLOY_PATH
+PROD_VITE_KAKAO_MAPS_APP_KEY
+PROD_VITE_SUPPORT_CONTACT_EMAIL
+```
+
+dev와 값이 같더라도 이름을 분리합니다. 외부 서비스 키를 운영 전용으로 바꿀 때 Secret 값만
+교체하면 되고, 동작 중인 dev CD를 건드리지 않아도 됩니다.
+
+⚠ SSH 키를 교체하면 `DEV_SSH_KEY`와 `PROD_SSH_KEY`를 **둘 다** 갱신해야 합니다. 하나만
+바꾸면 그쪽 배포가 인증 실패로 멈춥니다.
+
+이 Secrets에는 운영 DB 비밀번호나 JWT 키가 들어가지 않습니다. 그 값들은 서버 `.env`에만
+있고 workflow는 읽지 않습니다. CD는 서버에 접속해 컨테이너를 다시 띄울 뿐이고, 앱이
+자기 `.env`를 읽습니다.
+
 실제 값은 GitHub Secrets에만 저장하고 repository file에는 넣지 않습니다.
 
 관리자 신고 목록의 opaque cursor는 `ADMIN_REPORT_CURSOR_HMAC_SECRET`을 전용

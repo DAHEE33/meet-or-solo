@@ -114,7 +114,7 @@ Docker Compose 방향:
 - `infra/docker/docker-compose.dev.yml`: Oracle VM dev 서버에서 frontend `dist`, backend app, postgres, nginx를 연결하는 dev 배포 초안
 - `infra/docker/docker-compose.prod.yml`: 같은 Oracle VM에서 dev와 분리해 운영하는 prod 배포 구성
 
-운영 CD(GitHub Actions 자동 배포)는 아직 만들지 않습니다. `main` 기준 수동 배포를 먼저 검증합니다.
+운영 CD는 `.github/workflows/deploy-prod.yml`로 자동화했습니다. `main` push가 트리거입니다. 자세한 내용은 [docs/07](07_DEPLOYMENT.md) '운영 CD' 절을 따릅니다.
 
 dev compose의 nginx는 기존 운영 nginx와 host `80` 충돌을 피하기 위해 host `18080`을 container `80`에 매핑합니다. dev 서버 검증은 `http://<DEV_SERVER_HOST>:18080` 또는 서버 내부 `curl http://localhost:18080/api/health`를 기준으로 합니다.
 
