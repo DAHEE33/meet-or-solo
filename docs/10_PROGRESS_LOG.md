@@ -1,5 +1,56 @@
 # 진행 상태 기록
 
+## [알림 결함 4 후속] 매칭방 스낵바 3개가 아래에 남아 있었다
+
+상태: Frontend 수정 완료. **dev 재배포 후 확인 필요**
+
+앞 항목에서 4번을 "완료"로 적었는데 **`NotificationCenter` 범위만 고친 것이었다.** dev에서
+검증하다 "매칭방에서 알림이 아래에 뜨는 게 있다"는 제보가 나왔고, 실제로 `MatchRoomPage`가
+자기 스낵바를 따로 `bottom-24`에 띄우고 있었다. 전역 알림만 위로 올려 놓고 화면별 알림은
+그대로 둔 셈이다.
+
+| 자리 | 내용 | 이전 | 지금 |
+| --- | --- | --- | --- |
+| `ArrivalChangeSnackbar` | "○○님이 도착 시간을 변경하였어요" | 아래, 3초 | **위, 5초** |
+| 신고 완료 | "○○님에 대한 신고가 접수됐어요" | 아래, **자동 해제 없음** | **위, 5초** |
+| 차단 완료 | "회원을 차단했어요…" | 아래, **자동 해제 없음** | **위, 5초** |
+
+신고·차단 완료 안내는 타이머가 아예 없어 닫기를 누르기 전까지 남았다. 2번("안 사라짐")의
+한 갈래였는데 앞 항목에서 놓쳤다.
+
+### 위치와 시간을 한 파일로 모았다
+
+같은 값이 네 군데에 복사돼 있었기 때문에 한 곳만 고치고 나머지를 놓쳤다. 이제
+`components/common/TopNotice.tsx`가 **위치(`TOP_NOTICE_POSITION`)와 머무는 시간
+(`NOTICE_DISMISS_MS`)을 모두** 갖고, 전역·화면별 알림이 같은 것을 참조한다.
+
+- `NOTICE_VISIBLE_MS.URGENT` / `.INFO` → 둘 다 `NOTICE_DISMISS_MS`
+- `ARRIVAL_CHANGE_NOTICE_MS` → `NOTICE_DISMISS_MS`
+- 신고·차단 완료 → `MatchRoomPage`의 `useAutoDismiss`가 같은 값으로 건다
+
+z-index는 전역 `z-50`, 화면별 `z-40`으로 나눴다. 둘이 겹치면 매칭 상태 변화가 위로 온다 —
+신고 접수 완료보다 매칭이 확정됐다는 사실이 먼저다.
+
+### 긴급 알림 30초를 5초로 낮췄다
+
+앞 항목에서 `MATCH_PROPOSED`의 응답 시간에 맞춰 30초를 줬는데, **화면을 30초 동안 가리는
+값이라 부담이 컸다.** 사용자 요청대로 5초로 통일했다.
+
+놓쳐도 사라지지 않는 경로가 이미 둘 있어 받아들일 만하다 — 매칭 화면의 제안 카드(카운트다운
+포함)와 헤더의 종이다. 긴급도는 이제 **색으로만** 구분한다(코랄/잉크).
+
+### timer에 용도를 붙였다
+
+`ARRIVAL_CHANGE_NOTICE_MS`가 `MATCH_ROOM_FALLBACK_POLL_MS`와 같은 5초가 되면서, 지연 시간만
+보고 timer를 고르던 `useMatchRoom.test.ts`가 **폴링 timer를 안내 timer로 착각**하게 됐다.
+`schedule(callback, delay, purpose)`에 `MatchRoomTimer`(`'FALLBACK_POLL' | 'ARRIVAL_CHANGE_NOTICE'`)
+를 추가해 테스트가 용도로 고르게 했다.
+
+### 테스트
+
+Frontend **820건 전체 통과**, `tsc -b` 통과. `fixed bottom`으로 전수 검색해 알림성 UI가
+하나도 남지 않은 것을 확인했다(탭바·상세 하단 액션바는 `inset-x-0 bottom-0`이고 알림이 아니다).
+
 ## [알림 결함 2~6] 표시 자리 통합, 문구 통일, dev 반경·push 배선
 
 상태: Backend/Frontend/인프라 수정 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**

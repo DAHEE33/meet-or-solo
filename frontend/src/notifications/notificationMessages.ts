@@ -1,3 +1,4 @@
+import { NOTICE_DISMISS_MS } from '../components/common/TopNotice';
 import type { MatchingStateChangedNotification } from '../api/matchingWebSocket';
 
 /**
@@ -18,16 +19,18 @@ export type NotificationLevel =
 /**
  * 알림이 화면에 머무는 시간.
  *
- * <p><b>긴급 알림도 저절로 사라진다.</b> 예전에는 배너에 타이머가 없어 "닫기"를 누르기 전까지
- * 영영 남았다. 화면을 옮겨도 따라다녔고, 응답 시간 30초가 지나 이미 끝난 제안의 배너가 그대로
- * 떠 있었다.
+ * <p><b>긴급 알림도 저절로 사라지고, 시간은 모든 알림이 같다.</b> 예전에는 배너에 타이머가
+ * 없어 "닫기"를 누르기 전까지 영영 남았고, 화면을 옮겨도 따라다녔다. 자리마다 3초·5초·무제한
+ * 으로 제각각이기도 했다.
  *
- * <p>30초인 이유는 {@code MATCH_PROPOSED}의 응답 시간이 30초이기 때문이다. 그보다 짧으면
- * 아직 유효한 제안이 화면에서 사라지고, 길면 이미 끝난 제안이 남는다.
+ * <p>긴급 알림을 더 오래 띄우지 않는다. 제안을 놓치면 안 된다는 이유로 응답 시간과 같은 30초를
+ * 줬었는데, 화면을 30초 동안 가리는 값이라 부담이 컸다. 대신 <b>놓쳐도 사라지지 않는 경로가
+ * 이미 둘 있다</b> — 매칭 화면의 제안 카드(카운트다운 포함)와 헤더의 종이다. 색으로만
+ * 구분한다(긴급 코랄, 일반 잉크).
  */
 export const NOTICE_VISIBLE_MS: Record<NotificationLevel, number> = {
-  URGENT: 30_000,
-  INFO: 5_000,
+  URGENT: NOTICE_DISMISS_MS,
+  INFO: NOTICE_DISMISS_MS,
 };
 
 export type NotificationMessage = {
@@ -158,7 +161,7 @@ export function toNotificationMessage(
  * <b>내릴지</b>를 정한다. 그 화면에 도착했으면 "가서 보라"는 신호는 역할을 다했다.
  *
  * <p>긴급 알림은 예외다. 제안을 놓치면 `penalty_score +1`과 쿨타임 2분이 붙어서, 매칭 화면에
- * 있더라도 눈에 띄게 알려야 한다. 대신 {@link NOTICE_VISIBLE_MS}의 30초가 지나면 사라진다.
+ * 있더라도 눈에 띄게 알려야 한다. 대신 {@link NOTICE_VISIBLE_MS}가 지나면 사라진다.
  */
 export function isAlreadyVisible(message: NotificationMessage, pathname: string): boolean {
   if (message.level === 'URGENT') return false;

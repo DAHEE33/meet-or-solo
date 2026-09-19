@@ -9,6 +9,7 @@ import {
   createMatchRoomSession,
   MATCH_ROOM_FALLBACK_POLL_MS,
   type MatchRoomState,
+  type MatchRoomTimer,
 } from './useMatchRoom';
 
 const group: CurrentMatchGroup = {
@@ -61,6 +62,7 @@ function harness(
   const states: MatchRoomState[] = [];
   const scheduled = new Map<number, () => void>();
   const scheduledDelays = new Map<number, number>();
+  const scheduledPurposes = new Map<number, MatchRoomTimer>();
   let nextTimer = 1;
   const disconnect = vi.fn();
   const session = createMatchRoomSession({
@@ -88,16 +90,19 @@ function harness(
       callbacks = nextCallbacks;
       return disconnect;
     },
-    schedule: (callback, delay) => {
+    schedule: (callback, delay, purpose) => {
       expect([MATCH_ROOM_FALLBACK_POLL_MS, ARRIVAL_CHANGE_NOTICE_MS]).toContain(delay);
       const id = nextTimer++;
       scheduled.set(id, callback);
       scheduledDelays.set(id, delay);
+      // 폴링과 안내가 같은 5초라 지연 시간만으로는 구분할 수 없다.
+      scheduledPurposes.set(id, purpose);
       return id;
     },
     cancelSchedule: (id) => {
       scheduled.delete(id);
       scheduledDelays.delete(id);
+      scheduledPurposes.delete(id);
     },
     onState: (state) => states.push(state),
   });
@@ -114,6 +119,7 @@ function harness(
     states,
     scheduled,
     scheduledDelays,
+    scheduledPurposes,
     disconnect,
     loadEvents,
     session,
@@ -322,8 +328,8 @@ describe('createMatchRoomSession', () => {
 
     expect(test.states.at(-1)?.arrivalChangeNotice)
       .toBe('member-b님이 도착 시간을 변경하였어요.');
-    const noticeTimerId = [...test.scheduledDelays.entries()]
-      .find(([, delay]) => delay === ARRIVAL_CHANGE_NOTICE_MS)?.[0];
+    const noticeTimerId = [...test.scheduledPurposes.entries()]
+      .find(([, purpose]) => purpose === 'ARRIVAL_CHANGE_NOTICE')?.[0];
     expect(noticeTimerId).toBeDefined();
     test.scheduled.get(noticeTimerId!)?.();
     expect(test.states.at(-1)?.arrivalChangeNotice).toBeNull();
@@ -334,8 +340,8 @@ describe('createMatchRoomSession', () => {
     test.loads[0].resolve(group);
     await test.session.refresh();
 
-    const pollTimerId = [...test.scheduledDelays.entries()]
-      .find(([, delay]) => delay === MATCH_ROOM_FALLBACK_POLL_MS)?.[0];
+    const pollTimerId = [...test.scheduledPurposes.entries()]
+      .find(([, purpose]) => purpose === 'FALLBACK_POLL')?.[0];
     test.scheduled.get(pollTimerId!)?.();
     test.loads[1].resolve({
       ...group,
@@ -347,8 +353,8 @@ describe('createMatchRoomSession', () => {
     await test.session.refresh();
     expect(test.states.at(-1)?.arrivalChangeNotice)
       .toBe('member-b님이 도착 시간을 변경하였어요.');
-    const noticeTimerId = [...test.scheduledDelays.entries()]
-      .find(([, delay]) => delay === ARRIVAL_CHANGE_NOTICE_MS)?.[0];
+    const noticeTimerId = [...test.scheduledPurposes.entries()]
+      .find(([, purpose]) => purpose === 'ARRIVAL_CHANGE_NOTICE')?.[0];
     test.scheduled.get(noticeTimerId!)?.();
 
     const ownOnly = {
@@ -389,7 +395,7 @@ describe('createMatchRoomSession', () => {
       ],
     });
     await refresh;
-    expect([...test.scheduledDelays.values()]).toContain(ARRIVAL_CHANGE_NOTICE_MS);
+    expect([...test.scheduledPurposes.values()]).toContain('ARRIVAL_CHANGE_NOTICE');
 
     test.session.stop();
 
