@@ -1,6 +1,7 @@
 package com.survey.meetorsolo.domain.matching.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.survey.meetorsolo.domain.matching.dto.MatchPoolEntryRequest;
 import java.time.Clock;
@@ -73,6 +74,11 @@ class MatchingCollectionWindowConcurrencyIntegrationTest {
     @Autowired MatchingOrchestrationService orchestration;
     @Autowired MatchPoolEntryService entryService;
     @Autowired MatchCollectionWindowService windowService;
+    @Autowired SchedulerMatchPoolClaimService claimService;
+    @Autowired MatchPoolCleanupService cleanupService;
+    @Autowired MatchingBatchReader batchReader;
+    @Autowired com.survey.meetorsolo.domain.matching.group.MatchGroupComposer composer;
+    @Autowired MatchProposalCreationService creationService;
     @Autowired MutableClock clock;
     @Autowired JdbcTemplate jdbc;
 
@@ -175,6 +181,45 @@ class MatchingCollectionWindowConcurrencyIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM match_pools WHERE collect_window_id <> ?", Integer.class, windowId))
                 .as("이월도 일어나지 않았다").isZero();
+    }
+
+    /**
+     * 소유권을 잃은 실행은 <b>제안도 만들 수 없다.</b>
+     *
+     * <p>종결·이월 차단만으로는 부족하다. 느린 실행이 stale 회수 전에 만들어 둔 조합을 들고
+     * 뒤늦게 제안 생성까지 진행하면, 이미 다른 실행이 평가 중인 후보로 중복 제안이 생긴다.
+     *
+     * <p>차단 근거는 두 겹이다. stale 회수가 pool을 {@code WAITING}으로 되돌리고
+     * {@code lock_token}을 비우므로 {@code MatchProposalCreationService}의 최종 검증이
+     * "LOCKED가 아님"과 "lock_token 불일치" 양쪽에서 막는다.
+     */
+    @Test
+    void stale_회수된_뒤_옛_토큰으로는_제안도_만들_수_없다() {
+        enterAll();
+        advanceSeconds(11);
+
+        // 느린 실행이 구간과 후보를 잡고 조합까지 만들어 뒀다.
+        MatchCollectionWindowService.ClaimedWindow window =
+                windowService.claimEvaluableWindows(now(), 20, "slow-token").get(0);
+        claimService.claimWindow(window.windowId(), now(), "slow-token");
+        List<com.survey.meetorsolo.domain.matching.group.MatchGroupCombination> groups =
+                composer.compose(batchReader.read("slow-token").candidates());
+        assertThat(groups).as("조합이 있어야 이 검증이 성립한다").isNotEmpty();
+
+        // 평가가 느려 stale 회수됐다. pool 잠금이 풀리고 구간도 평가 대기로 돌아간다.
+        advanceSeconds(31);
+        cleanupService.cleanup(now(), now().minusSeconds(30));
+        windowService.releaseStaleEvaluations(now(), now().minusSeconds(30));
+
+        // 느린 실행이 뒤늦게 옛 토큰으로 제안을 만들려 한다.
+        assertThatThrownBy(() -> creationService.createInitial(
+                groups.get(0), "slow-token", now(), Duration.ofSeconds(30)))
+                .isInstanceOf(MatchProposalCreationException.class);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM match_attempts", Integer.class))
+                .as("중간 데이터도 남지 않는다").isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM match_pools WHERE lock_token='slow-token'", Integer.class))
+                .isZero();
     }
 
     /**
