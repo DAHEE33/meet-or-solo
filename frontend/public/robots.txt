@@ -1,0 +1,21 @@
+# 검색엔진 크롤러 규칙.
+#
+# 공개 전까지는 운영 nginx가 X-Robots-Tag: noindex, nofollow 헤더를 보내고 있어서
+# 이 파일이 허용하더라도 검색 결과에 오르지 않는다. 그 헤더가 우선한다.
+# 공개 시 nginx에서 헤더를 지우면 이 규칙이 실제로 동작한다.
+#
+# 개인 화면은 로그인이 필요해 크롤러가 내용을 볼 수 없지만, 주소가 검색 결과에
+# 노출될 이유도 없어 막아 둔다.
+
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /mypage/
+Disallow: /match-room
+Disallow: /check-in
+Disallow: /profile/edit
+
+# sitemap은 아직 두지 않는다.
+# 축제·관광지 상세는 /festivals/:id, /spots/:id 처럼 DB에 따라 늘어나는 주소라
+# 정적 파일로는 최신 상태를 유지할 수 없다. 필요해지면 backend가 생성해 주는 방식으로
+# 만들고 여기에 Sitemap 줄을 추가한다.
