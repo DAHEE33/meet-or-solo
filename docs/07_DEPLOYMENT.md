@@ -610,20 +610,27 @@ Web Push는 이미 구현돼 있습니다(`WebPushSender`, `push_subscriptions`(
 - 키를 교체하면 기존 구독이 전부 무효가 되어 사용자가 다시 권한을 허용해야 합니다.
 - iOS는 홈 화면에 설치한 상태에서만 push가 옵니다(Safari 16.4+).
 
-### 6. 초기 접근 제한
+### 6. 접근 제한과 검색 노출
 
-기능이 완성되지 않은 동안 운영 도메인을 열어 두지 않습니다. `host-https.prod.conf.example`에 Basic Auth 예시가 주석으로 들어 있습니다.
+**Basic Auth는 적용하지 않습니다.** 일반 사용자가 운영 주소로 바로 접속하고, 회원 인증과 관리자 권한 검사는 앱 기능이 담당합니다. 막아야 할 상황이 다시 생기면 `host-https.prod.conf.example`의 주석 처리된 예시를 참고합니다.
+
+검색 노출은 두 도메인의 정책이 다릅니다.
+
+| 도메인 | 설정 파일 | `X-Robots-Tag` |
+| --- | --- | --- |
+| 운영 | `/etc/nginx/sites-available/meet-or-solo-prod` | **주석 처리됨** (검색 허용) |
+| 개발 | `sites-available`의 개발 도메인 설정 (파일명이 운영 도메인이니 `server_name`으로 확인) | **`noindex, nofollow`** (검색 차단) |
+
+`index.html`은 빌드 결과물 하나라 dev와 운영이 같은 `title`·`description`·`robots.txt`를 갖습니다. 개발 도메인을 막는 일은 앱이 아니라 호스트 nginx에서 처리합니다.
+
+확인:
 
 ```bash
-sudo apt-get install -y apache2-utils
-sudo htpasswd -c /etc/nginx/.htpasswd-meet-or-solo-prod <USERNAME>
-sudo chmod 640 /etc/nginx/.htpasswd-meet-or-solo-prod
-sudo chown root:www-data /etc/nginx/.htpasswd-meet-or-solo-prod
-# 설정에서 auth_basic 두 줄의 주석을 푼 뒤
-sudo nginx -t && sudo systemctl reload nginx
+curl -sI https://<운영도메인>/ | grep -i x-robots     # 아무것도 안 나와야 함
+curl -sI https://<개발도메인>/ | grep -i x-robots     # noindex, nofollow
 ```
 
-`X-Robots-Tag: noindex, nofollow`는 이미 켜 두었습니다. 검색 노출만 막는 장치이고 접근 제한의 대체가 아닙니다.
+되돌리려면 해당 설정의 `add_header X-Robots-Tag` 줄 앞 `#`을 붙이거나 떼고 `nginx -t` 후 reload합니다.
 
 저장소에서 판단할 수 없어 **실서버에서 확인해야 하는 항목**입니다.
 
