@@ -1,0 +1,240 @@
+name: Deploy Prod
+
+# 운영 배포.
+#
+# main에 push되면 자동으로 돈다. dev -> main 병합이 곧 운영 배포다.
+# 수동 재실행이 필요하면 Actions 화면에서 workflow_dispatch로 다시 돌린다.
+#
+# 서버 .env는 건드리지 않는다. 배포 패키지에도 넣지 않는다.
+# 운영 비밀번호·키는 서버에만 있고 이 workflow는 그 값을 모른다.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 같은 시각에 두 배포가 겹치지 않게 한다. 나중 것이 기다린다.
+# 취소하지 않는 이유 - 배포 도중에 끊기면 운영이 반쯤 갱신된 상태로 남는다.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    name: Build and Deploy Prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build backend jar
+        working-directory: backend
+        run: |
+          chmod +x ./gradlew
+          ./gradlew bootJar -x test
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # VITE_ 변수는 build 시점에 번들로 인라인된다. 서버 .env에 넣어도 반영되지 않으므로
+      # build가 실행되는 이 자리에서 주입해야 한다.
+      #
+      # 운영 전용 Secret을 쓴다. dev와 같은 값을 쓰더라도 이름을 나눠 두면
+      # 나중에 분리할 때 workflow를 고치지 않아도 된다.
+      - name: Build frontend dist
+        working-directory: frontend
+        env:
+          VITE_KAKAO_MAPS_APP_KEY: ${{ secrets.PROD_VITE_KAKAO_MAPS_APP_KEY }}
+          VITE_SUPPORT_CONTACT_EMAIL: ${{ secrets.PROD_VITE_SUPPORT_CONTACT_EMAIL }}
+        run: |
+          npm ci
+          npm run build
+
+      # 빌드 결과에 개발용 값이 섞이지 않았는지 확인한다.
+      # worktree가 아니라 CI의 깨끗한 checkout이라 .env.local이 없지만, 회귀를 막는 관문으로 둔다.
+      - name: Verify prod bundle
+        working-directory: frontend
+        run: |
+          set -e
+          if grep -rq "localhost:8080" dist/assets/*.js; then
+            echo "dist에 localhost 주소가 남아 있습니다."
+            exit 1
+          fi
+          if [ ! -f dist/sw.js ] || [ ! -f dist/manifest.webmanifest ]; then
+            echo "PWA 산출물(sw.js, manifest.webmanifest)이 없습니다."
+            exit 1
+          fi
+
+      - name: Prepare deploy package
+        run: |
+          set -e
+          mkdir -p deploy-package/backend
+          mkdir -p deploy-package/frontend
+          mkdir -p deploy-package/infra/docker
+          mkdir -p deploy-package/infra/nginx
+          mkdir -p deploy-package/scripts
+
+          JAR_PATH="$(find backend/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*plain.jar' | head -n 1)"
+          if [ -z "$JAR_PATH" ]; then
+            echo "backend jar not found"
+            exit 1
+          fi
+
+          cp "$JAR_PATH" deploy-package/backend/app.jar
+          cp -R frontend/dist deploy-package/frontend/dist
+          cp infra/docker/docker-compose.prod.yml deploy-package/infra/docker/docker-compose.prod.yml
+          cp infra/nginx/default.prod.conf deploy-package/infra/nginx/default.prod.conf
+          cp scripts/backup-prod-db.sh scripts/restore-prod-db.sh scripts/logs.sh deploy-package/scripts/
+
+          # 서버 .env는 패키지에 넣지 않는다. 덮어쓰면 운영 비밀번호·키가 사라진다.
+          tar -czf deploy-prod.tar.gz -C deploy-package .
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/prod_key
+          chmod 600 ~/.ssh/prod_key
+          ssh-keyscan -H "${{ secrets.PROD_SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload package
+        run: |
+          scp -i ~/.ssh/prod_key deploy-prod.tar.gz \
+            "${{ secrets.PROD_SERVER_USER }}@${{ secrets.PROD_SERVER_HOST }}:${{ secrets.PROD_DEPLOY_PATH }}/deploy-prod.tar.gz"
+
+      # 배포 전에 되돌릴 수단을 먼저 만든다.
+      # 자동 배포는 실수로 병합해도 그대로 나가므로, 스냅샷과 DB 백업이 없으면 복구가 불가능하다.
+      - name: Snapshot and back up before deploy
+        run: |
+          ssh -i ~/.ssh/prod_key "${{ secrets.PROD_SERVER_USER }}@${{ secrets.PROD_SERVER_HOST }}" << 'EOF'
+          set -e
+          cd "${{ secrets.PROD_DEPLOY_PATH }}"
+
+          if [ ! -f .env ]; then
+            echo "서버에 .env가 없습니다. 운영 서버에서 먼저 만들어야 합니다."
+            exit 1
+          fi
+
+          STAMP="$(date +%Y%m%d-%H%M%S)"
+          mkdir -p "releases/$STAMP"
+
+          # 첫 배포라 이전 산출물이 없을 수 있다. 없으면 건너뛴다.
+          if [ -f backend/app.jar ]; then
+            cp backend/app.jar "releases/$STAMP/app.jar"
+          fi
+          if [ -d frontend/dist ]; then
+            cp -R frontend/dist "releases/$STAMP/dist"
+          fi
+          echo "이전 산출물 보관: releases/$STAMP"
+
+          # DB 백업. 컨테이너가 떠 있을 때만 의미가 있다.
+          if docker ps --format '{{.Names}}' | grep -qx meet-or-solo-postgres-prod; then
+            chmod +x scripts/backup-prod-db.sh 2>/dev/null || true
+            ./scripts/backup-prod-db.sh
+          else
+            echo "postgres 컨테이너가 없어 DB 백업을 건너뜁니다(첫 배포로 보입니다)."
+          fi
+
+          # 스냅샷은 3개만 남긴다. 82MB 짜리라 쌓이면 디스크를 먹는다.
+          ls -1dt releases/*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+          EOF
+
+      - name: Deploy on prod server
+        run: |
+          ssh -i ~/.ssh/prod_key "${{ secrets.PROD_SERVER_USER }}@${{ secrets.PROD_SERVER_HOST }}" << 'EOF'
+          set -e
+          cd "${{ secrets.PROD_DEPLOY_PATH }}"
+
+          tar -xzf deploy-prod.tar.gz
+          rm deploy-prod.tar.gz
+          chmod +x scripts/*.sh
+
+          COMPOSE="docker compose --env-file .env -f infra/docker/docker-compose.prod.yml"
+
+          # compose 파일이 바뀌었으면 여기서 반영된다. postgres는 설정이 그대로면 건드리지 않는다.
+          $COMPOSE up -d
+
+          # jar는 bind mount라 파일만 바꿔서는 교체되지 않는다.
+          # JVM은 기동 시점에 읽은 것을 계속 쓰고, compose 설정이 그대로면 up -d가 컨테이너를
+          # 다시 만들지도 않는다. backend만 명시적으로 재생성한다.
+          $COMPOSE up -d --force-recreate backend
+
+          $COMPOSE ps
+          EOF
+
+      # /api/health는 고정 문자열을 돌려주는 controller라 DB를 보지 않는다.
+      # 여기서 OK만 보고 성공이라 하면 DB가 끊긴 배포를 성공으로 넘기게 된다.
+      - name: Verify deployment
+        run: |
+          ssh -i ~/.ssh/prod_key "${{ secrets.PROD_SERVER_USER }}@${{ secrets.PROD_SERVER_HOST }}" << 'EOF'
+          set -e
+          cd "${{ secrets.PROD_DEPLOY_PATH }}"
+
+          echo "backend가 healthy가 될 때까지 기다립니다(최대 180초)."
+          for i in $(seq 1 36); do
+            STATUS="$(docker inspect -f '{{.State.Health.Status}}' meet-or-solo-backend-prod 2>/dev/null || echo none)"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "backend healthy"
+              break
+            fi
+            if [ "$i" = "36" ]; then
+              echo "backend가 healthy가 되지 않았습니다. 최근 로그:"
+              docker logs meet-or-solo-backend-prod --tail=100
+              exit 1
+            fi
+            sleep 5
+          done
+
+          # DB 연결까지 확인한다. 이 요청은 실제로 DB를 읽는다.
+          if ! curl -fsS "http://127.0.0.1:28080/api/festivals?page=0&size=1" > /dev/null; then
+            echo "DB를 읽는 API 호출이 실패했습니다."
+            docker logs meet-or-solo-backend-prod --tail=100
+            exit 1
+          fi
+
+          # Flyway가 실패한 migration을 남기지 않았는지 본다.
+          FAILED="$(docker exec meet-or-solo-postgres-prod sh -c \
+            'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from flyway_schema_history where success = false"' \
+            | tr -d '[:space:]')"
+          if [ "$FAILED" != "0" ]; then
+            echo "실패한 migration이 ${FAILED}건 있습니다. 이 상태로 서비스하면 안 됩니다."
+            exit 1
+          fi
+
+          echo "배포 검증 통과."
+          EOF
+
+      # 앞 단계가 실패하면 되돌리는 방법을 로그에 남긴다.
+      # 자동 롤백은 하지 않는다 - migration이 이미 적용된 경우 앱만 되돌리면
+      # "이전 jar + 새 스키마"가 되어 ddl-auto=validate에서 기동에 실패한다.
+      - name: On failure, print rollback guide
+        if: failure()
+        run: |
+          cat <<'GUIDE'
+          배포가 실패했습니다. 되돌리려면 운영 서버에서:
+
+            cd <운영 경로>
+            ls -1dt releases/*/          # 보관된 스냅샷 확인
+            cp releases/<STAMP>/app.jar backend/app.jar
+            rm -rf frontend/dist && cp -R releases/<STAMP>/dist frontend/dist
+            docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d --force-recreate backend
+
+          이번 배포에 DB migration이 포함됐다면 앱만 되돌릴 수 없습니다.
+          배포 직전 백업으로 DB까지 되돌려야 합니다.
+
+            ls -lt /home/ubuntu/backups/meet-or-solo-prod/
+            ./scripts/restore-prod-db.sh <직전 백업>.dump --target-prod
+
+          절차는 docs/07_DEPLOYMENT.md의 '운영 수동 배포 절차'를 따릅니다.
+          GUIDE

@@ -327,7 +327,7 @@ dev 배포를 검증한 뒤 같은 VM에 `prod`를 분리해 추가했습니다.
 - 축제·관광지 동기화는 `application-prod.yml`에서 기본 꺼져 있고 환경변수로만 켭니다.
 - GPS 반경 검증 우회는 운영에서 `application-prod.yml`이 `false`로 고정합니다. 환경변수로 켤 수 없습니다.
 
-운영 CD(GitHub Actions 자동 배포)는 아직 만들지 않습니다. `main` 기준 수동 배포를 먼저 검증합니다.
+운영 CD는 `main` 기준 수동 배포를 한 번 성공한 뒤 `.github/workflows/deploy-prod.yml`로 자동화했습니다. 아래 '운영 CD' 절을 참고합니다.
 
 운영 요청 경로:
 
@@ -865,6 +865,81 @@ docker logs meet-or-solo-nginx-prod --tail=100
 | 10 | 백업 1회 + 복원 검증 1회 | 8 |
 | 11 | 배포 전 `releases/<STAMP>` 보관 | 9 |
 | 12 | Basic Auth 상태에서 OAuth·PWA·Push 동작 | 6 |
+
+## 운영 CD (GitHub Actions)
+
+`.github/workflows/deploy-prod.yml`. 첫 수동 배포가 성공한 뒤 그 절차를 그대로 옮겼습니다.
+
+### 트리거
+
+```text
+push to main
+workflow_dispatch
+```
+
+`dev` → `main` 병합이 곧 운영 배포입니다. 병합 자체가 의도된 행위라 자동으로 둡니다.
+수동 재실행이 필요하면 Actions 화면에서 `workflow_dispatch`로 다시 돌립니다.
+
+`concurrency: deploy-prod`로 동시 실행을 막습니다. 진행 중인 배포를 취소하지는 않습니다 —
+도중에 끊기면 운영이 반쯤 갱신된 상태로 남습니다.
+
+### 필요한 GitHub Secrets
+
+```text
+PROD_SERVER_HOST
+PROD_SERVER_USER
+PROD_SSH_KEY
+PROD_DEPLOY_PATH
+PROD_VITE_KAKAO_MAPS_APP_KEY
+PROD_VITE_SUPPORT_CONTACT_EMAIL
+```
+
+dev와 값이 같더라도 이름을 나눠 둡니다. Kakao 지도 키를 운영 전용으로 분리할 때
+Secret 값만 바꾸면 되고, 잘 돌고 있는 dev CD를 건드리지 않아도 됩니다.
+
+⚠ SSH 키를 교체하면 `DEV_SSH_KEY`와 `PROD_SSH_KEY`를 **둘 다** 갱신해야 합니다.
+
+### 동작 순서
+
+| 단계 | 내용 |
+| --- | --- |
+| 1 | backend `bootJar -x test`, frontend `npm ci && npm run build` |
+| 2 | 번들 검증 — `dist`에 `localhost` 흔적이 없는지, PWA 산출물이 있는지 |
+| 3 | 배포 패키지 생성 |
+| 4 | 업로드 |
+| 5 | **배포 전 보호** — `releases/<타임스탬프>` 스냅샷 + DB 백업 |
+| 6 | 배포 — `up -d` 후 `backend`만 `--force-recreate` |
+| 7 | 검증 — healthy 대기, DB 읽는 API 호출, Flyway 실패 0건 |
+| 8 | 실패 시 롤백 방법을 로그에 출력 |
+
+### 서버 `.env`는 건드리지 않습니다
+
+배포 패키지에 넣지 않고, 서버에 없으면 배포를 중단합니다. 운영 비밀번호·키는 서버에만
+있고 workflow는 그 값을 모릅니다. GitHub Secrets는 **서버 접속 정보와 빌드용 `VITE_` 값**만
+가집니다.
+
+### 배포 전 보호 장치
+
+자동 배포는 실수로 병합해도 그대로 나갑니다. 그래서 파괴적 단계 앞에 두 가지를 둡니다.
+
+- `releases/<타임스탬프>/`에 이전 `app.jar`와 `dist` 보관. 3개만 남기고 정리합니다
+  (82MB짜리라 쌓이면 디스크를 먹습니다)
+- `scripts/backup-prod-db.sh` 실행. postgres 컨테이너가 떠 있을 때만 수행합니다
+
+### 검증이 `/api/health`에서 끝나지 않는 이유
+
+`/api/health`는 고정 문자열을 돌려주는 controller라 DB를 보지 않습니다. 여기서 `OK`만 보고
+성공 처리하면 **DB가 끊긴 배포를 성공으로 넘기게** 됩니다. 그래서 세 가지를 확인합니다.
+
+1. backend 컨테이너가 `healthy`가 될 때까지 대기 (최대 180초)
+2. `GET /api/festivals` — 실제로 DB를 읽는 요청
+3. `flyway_schema_history`에 `success = false`가 0건인지
+
+### 자동 롤백을 하지 않는 이유
+
+migration이 이미 적용된 상태에서 앱만 되돌리면 "이전 jar + 새 스키마"가 됩니다.
+`ddl-auto: validate`라 entity와 스키마가 어긋나면 기동 자체가 실패합니다. 되돌리는 방법을
+로그에 출력하고, 판단은 사람이 합니다. 절차는 '운영 수동 배포 절차' 9절과 같습니다.
 
 ## Nginx와 Let's Encrypt
 
