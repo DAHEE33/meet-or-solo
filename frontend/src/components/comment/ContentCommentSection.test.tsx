@@ -15,6 +15,7 @@ const render = (element: React.ReactElement) =>
 const comment = (overrides: Partial<ContentComment> = {}): ContentComment => ({
   id: 1024,
   nickname: '춘천사람',
+  profileImageUrl: null,
   body: '작년에도 갔는데 야간 조명이 좋았어요',
   likeCount: 4,
   likedByMe: false,
@@ -127,7 +128,11 @@ describe('ContentCommentForm', () => {
 describe('ContentCommentItem', () => {
   const handlers = { onToggleLike: () => {}, onRequestDelete: () => {}, onHide: () => {} };
 
-  it('닉네임 이니셜 아바타와 좋아요 수를 그리고 프로필 이미지는 쓰지 않는다', () => {
+  /**
+   * 사진이 없으면 지금까지처럼 이니셜이다. 비로그인이면 서버가 URL 자체를 안 주므로
+   * (docs/27 6.2) 이 경우와 같은 화면이 된다.
+   */
+  it('프로필 사진이 없으면 닉네임 이니셜 아바타를 그린다', () => {
     const html = render(
       <ContentCommentItem comment={comment()} loggedIn admin={false} likePending={false} {...handlers} />,
     );
@@ -136,6 +141,26 @@ describe('ContentCommentItem', () => {
     expect(html).toContain('aria-label="좋아요"');
     expect(html).toContain('>4<');
     expect(html).not.toContain('<img');
+  });
+
+  /**
+   * 프로필 사진을 등록했는데 댓글에는 이니셜만 나오던 것을 고쳤다. 사진은 서버가
+   * 로그인한 회원에게만 내려준다.
+   */
+  it('프로필 사진이 있으면 이니셜 대신 사진을 그린다', () => {
+    const html = render(
+      <ContentCommentItem
+        comment={comment({ profileImageUrl: 'https://cdn.example.com/a.jpg' })}
+        loggedIn
+        admin={false}
+        likePending={false}
+        {...handlers}
+      />,
+    );
+    expect(html).toContain('src="https://cdn.example.com/a.jpg"');
+    expect(html).toContain('춘천사람');
+    // 이니셜 아바타는 사라진다. 둘이 같이 뜨면 아바타가 두 개가 된다.
+    expect(html).not.toContain('>춘<');
   });
 
   it('내 댓글에만 삭제 버튼을 노출한다', () => {

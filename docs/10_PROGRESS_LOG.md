@@ -1,5 +1,75 @@
 # 진행 상태 기록
 
+## [프로필 사진] 댓글·매칭방에 반영한다 — 로그인 회원 한정
+
+상태: Backend/Frontend 구현 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
+
+"프로필 사진을 등록했는데 댓글에는 이니셜만 나온다"는 제보다. `docs/27` 6.2가 **의도적으로**
+노출하지 않기로 한 것이었는데, 등록한 사진이 아무 데도 안 쓰이는 것은 사용자 입장에서
+등록이 반영되지 않은 것과 같다. 노출 범위를 **로그인 회원으로 제한**해 다시 켰다.
+
+### 필드만 추가해서는 안 되는 구조였다
+
+회원은 사진을 두 갈래로 갖는다.
+
+| 갈래 | 컬럼 | 꺼내는 법 |
+| --- | --- | --- |
+| 소셜 사진 | `members.profile_image_url` | 카카오·네이버 CDN 절대 URL |
+| 올린 사진 | `members.profile_image_object_key` | private bucket → **서버 중계 필요** |
+
+**올린 사진을 꺼내는 경로가 `GET /api/members/me/profile-image` 본인 전용 하나뿐이었다.**
+그래서 댓글 응답에 `profileImageUrl`을 담기만 하면 각자 자기 사진만 보이는 상태가 된다.
+
+그리고 **두 갈래를 함께 보는 자리가 한 곳도 없었다.** 댓글도 매칭방도 `profile_image_url`만
+읽는다. 그래서 사진을 올린 회원은 남에게 사진이 안 보이고, 소셜로 가입한 뒤 사진을 올린
+회원은 **방금 올린 사진 대신 가입 당시 소셜 사진**이 계속 보인다.
+
+### 무엇을 만들었나
+
+- `MemberProfileImageUrls.forOtherMember` — 두 갈래를 한 곳에서 판정한다. **올린 사진이
+  소셜 사진보다 우선**이다(나중에 정한 값이므로).
+- `GET /api/members/{memberId}/profile-image` — 로그인 확인 후 다른 회원의 올린 사진을
+  중계한다. `SecurityConfig`가 `anyRequest().permitAll()`이라 인증은 controller가 직접 한다.
+  **없는 회원과 사진 없는 회원에게 같은 응답**(`PROFILE_IMAGE_NOT_FOUND`)을 준다 — 구분하면
+  그 id의 회원이 있는지가 드러난다.
+- `ContentCommentResponse.profileImageUrl` — **`viewerMemberId`가 `null`이면 담지 않는다.**
+  목록 자체는 비로그인도 읽을 수 있어야 하므로 예외를 던지지 않고 값만 비운다.
+- `CommentAvatar` — 사진이 있으면 사진, 없으면 이니셜. **로딩이 실패해도 이니셜로 되돌린다**
+  (로그인이 풀리거나 소셜 URL이 만료되면 깨진 이미지 아이콘이 남는다).
+
+### 매칭방·매칭 상대 카드·매칭 기록도 함께 고쳤다
+
+같은 결함이 `MatchGroupMemberRepository`의 세 쿼리에 그대로 있었다 — `profile_image_url`만
+읽어서 **올린 사진이 매칭 상대에게 보이지 않았다.** 댓글만 고치면 "댓글엔 내 사진이 보이는데
+매칭방엔 안 보인다"가 된다.
+
+URL을 SQL에서 만들지 않고 **projection에 `profileImageObjectKey`를 추가해 Java에서 판정**했다.
+`CASE WHEN ... THEN '/api/members/' || id || ...`을 쿼리 세 곳에 복사하면, 나중에 경로가 바뀔 때
+한 곳을 빠뜨린다. 판정은 댓글과 같은 `MemberProfileImageUrls.forOtherMember` 하나다.
+
+| 자리 | 매핑 지점 |
+| --- | --- |
+| 매칭방 상대 카드 | `MatchGroupMemberResponse.from` |
+| 매칭 확정 카드(`/matching`) | 같음 |
+| 매칭 기록 | `MatchHistoryService.members` |
+
+프론트는 상대 경로를 절대 경로로 바꿔야 한다. 매칭 관련 endpoint가 `CurrentMatchGroup`을
+여러 갈래로 돌려주므로 **API 계층이 아니라 렌더 지점**에서 `profileImageSrc`로 바꾼다 —
+endpoint를 하나 빠뜨리는 것보다 `<img>` 세 곳을 보는 편이 확실하다.
+
+차단 목록(`BlockedMembersPage`)은 그대로다. 그쪽 쿼리는 이번에 손대지 않아 여전히 소셜
+사진만 내려온다.
+
+### 테스트
+
+- 신규 `MemberProfileImageUrlsTest` 4건 — 두 갈래 우선순위와 공백·null 처리를 고정한다.
+- Frontend: 사진 있음/없음 아바타 분기 2건, `resolveCommentProfileImageUrl` 2건,
+  `profileImageSrc` 3건 추가. 기존 fixture 2곳에 `profileImageUrl: null`을 넣었다.
+- 회귀: frontend **826건 전체 통과**, `tsc -b` 통과. backend 767건 중 73건 실패인데 **전부
+  인프라다**(Docker 미설치 + `127.0.0.1:15432` 미기동, 38개 실패 클래스 전수 확인, 단정 실패 0건).
+- **엔드포인트 인증은 통합 테스트로만 검증되는데 이 PC에서 돌지 않는다.** dev 배포 후
+  로그아웃 상태에서 `/api/members/{id}/profile-image`가 401인지 확인해야 한다.
+
 ## [알림 결함 4 후속] 매칭방 스낵바 3개가 아래에 남아 있었다
 
 상태: Frontend 수정 완료. **dev 재배포 후 확인 필요**

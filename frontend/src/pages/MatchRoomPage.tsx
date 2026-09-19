@@ -17,6 +17,7 @@ import { useMatchBlock, type MatchBlockState, type MatchBlockTarget } from '../h
 import { useMatchReport, type MatchReportState, type MatchReportTarget } from '../hooks/useMatchReport';
 import { formatSeoulDateTime } from '../utils/dateTime';
 import { describeMatchRoomError } from '../utils/matchRoomError';
+import { profileImageSrc } from '../utils/profileImage';
 
 export default function MatchRoomPage() {
   const navigate = useNavigate();
@@ -583,7 +584,7 @@ export function CurrentGroupRoom({
         {group.members.map((member) => (
           <article key={member.memberId} className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-[0_1px_8px_rgba(34,48,62,0.05)]">
             {member.profileImageUrl ? (
-              <img src={member.profileImageUrl} alt={`${member.nickname} 프로필`} className="h-12 w-12 rounded-full object-cover" referrerPolicy="no-referrer" />
+              <img src={profileImageSrc(member.profileImageUrl)} alt={`${member.nickname} 프로필`} className="h-12 w-12 rounded-full object-cover" referrerPolicy="no-referrer" />
             ) : (
               <div aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-full bg-coral/15 font-bold text-coral">
                 {member.nickname.slice(0, 1)}

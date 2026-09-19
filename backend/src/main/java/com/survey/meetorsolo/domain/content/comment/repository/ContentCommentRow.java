@@ -16,6 +16,10 @@ public record ContentCommentRow(
         Long id,
         Long authorMemberId,
         String nickname,
+        /** 카카오·네이버가 준 외부 URL. 직접 올린 사진이 있으면 그쪽이 우선이다. */
+        String profileImageUrl,
+        /** 직접 올린 사진의 object key. 값 자체는 응답에 담지 않고 URL을 만드는 데만 쓴다. */
+        String profileImageObjectKey,
         String body,
         Integer likeCount,
         OffsetDateTime createdAt

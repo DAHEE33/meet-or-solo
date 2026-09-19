@@ -231,7 +231,7 @@ V24 헤더 주석 규칙대로, 적용 전 공유 dev DB의 `flyway_schema_histo
 `memberId`는 **노출하지 않는다.** 차단·신고 연동이 없어 필요가 없고, `docs/06_SECURITY_POLICY.md`의
 내부 ID 미노출 기조에 맞춘다. `mine`만으로 삭제 버튼 노출을 판단한다.
 
-`profileImageUrl`도 노출하지 않는다(6.2절).
+`profileImageUrl`은 **로그인한 회원에게만** 담는다(6.2절). 비로그인 응답에서는 `null`이다.
 
 ## 5. 로직 설계
 
@@ -353,20 +353,41 @@ UPDATE content_comments
 공개 댓글이므로 평문으로 저장한다. `member_reviews.comment_encrypted`와 반대인 이유는 그쪽이
 비공개 상호 평가라서다.
 
-### 6.2 작성자 아바타는 닉네임 이니셜만 — 프로필 이미지는 노출하지 않는다
+### 6.2 작성자 아바타 — 로그인 회원에게만 프로필 사진을 보여준다
 
-- 타인 프로필 이미지 노출 선례(`MatchGroupMemberRepository`가 `member.profile_image_url`을
-  내려주는 것)는 **같은 매칭 그룹의 인증 회원 한정**이다. 댓글은 비로그인 포함 전체 공개다.
-- 카카오·네이버 OAuth 프로필 사진을 공개 웹에 노출하려면 별도 동의·정책 검토가 필요하다.
-- 직접 업로드한 이미지는 private bucket 본인 전용 중계(`GET /api/members/me/profile-image`)라
-  애초에 타인에게 쓸 수 없다.
+> **2026-09-19 변경.** 처음에는 아무에게도 노출하지 않기로 했다. 그 결과 **프로필 사진을
+> 등록해도 댓글에는 이니셜만 나왔고**, 사용자에게는 등록이 반영되지 않은 것으로 보였다.
+> 아래는 바뀐 결정과, 원래 우려를 어떻게 처리했는지다.
 
-따라서 댓글 작성자는 **닉네임 + 닉네임 첫 글자 이니셜 아바타**로만 표시한다.
+**노출 범위를 로그인 회원으로 제한한다.** 비로그인 응답에는 `profileImageUrl`을 담지 않고,
+사진을 내려주는 경로도 로그인을 요구한다. 원래 우려였던 "공개 웹 노출"은 그대로 막힌다.
+
+- 카카오·네이버 OAuth 프로필 사진을 **비회원·크롤러에게** 노출하려면 별도 동의·정책 검토가
+  필요하다. 로그인 회원 한정이면 매칭방(`MatchGroupMemberRepository`)이 같은 그룹 회원에게
+  사진을 보여주는 것과 같은 수준이다.
+- 직접 업로드한 이미지는 private bucket에 있고 꺼내는 경로가
+  `GET /api/members/me/profile-image` **본인 전용 하나뿐**이었다. 그래서 필드만 추가해서는
+  남의 사진이 보이지 않는다. `GET /api/members/{memberId}/profile-image`를 새로 두고
+  **로그인 확인 후** 중계한다(`MemberProfileImageController`).
+- 두 갈래(소셜 URL / 업로드 object key)를 함께 보는 자리가 한 곳도 없었던 것이 결함의
+  원인이다. `MemberProfileImageUrls.forOtherMember`가 그 판정을 한 곳에서 한다.
+  **업로드한 사진이 소셜 사진보다 우선**이다 — 소셜 가입자가 사진을 새로 올려도
+  `profile_image_url`에는 가입 당시 사진이 남아 있어, 그쪽을 먼저 보면 옛 사진이 계속 보인다.
+
+사진이 없거나 비로그인이면 지금까지처럼 **닉네임 첫 글자 이니셜 아바타**를 그린다. 사진
+로딩이 실패해도 이니셜로 되돌린다(`CommentAvatar`).
+
+존재하지 않는 회원과 사진 없는 회원에게 **같은 응답**(`PROFILE_IMAGE_NOT_FOUND`)을 준다.
+구분하면 "그 id의 회원이 있는지"가 응답으로 드러난다.
 
 ### 6.3 노출하지 않는 값
 
-`memberId`, `profileImageUrl`, 이메일, OAuth 식별자, 회원 상태, penalty/cooldown, 내부 댓글
-`status`를 공개 응답에 담지 않는다.
+`memberId`, 이메일, OAuth 식별자, 회원 상태, penalty/cooldown, 내부 댓글 `status`를 공개
+응답에 담지 않는다.
+
+`profileImageUrl`은 로그인 회원에게만 담는다(6.2절). 업로드 사진의 URL에는 대상 회원 id가
+경로로 들어가지만(`/api/members/{id}/profile-image`) `memberId` 필드를 따로 두지는 않는다 —
+사진을 가리키는 데 필요한 최소값이다.
 
 ## 7. 화면 설계
 
