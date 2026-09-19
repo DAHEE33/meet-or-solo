@@ -51,31 +51,36 @@ server {
     client_max_body_size 6m;
 
     # -------------------------------------------------------------------------
-    # 초기 접근 제한 (미완성 서비스 공개 전)
+    # 접근 제한 (현재 쓰지 않습니다)
     #
-    # 기능이 완성되지 않은 동안 운영 도메인을 열어 두지 않기 위한 장치입니다.
-    # 사용하려면 아래 두 줄의 주석을 풀고 계정 파일을 먼저 만드세요.
+    # 일반 사용자가 운영 주소로 바로 접속하고, 회원 인증과 관리자 권한 검사는 앱 기능이
+    # 담당합니다 - JWT cookie, /admin/login, MemberAccessInterceptor, 관리자 role 검사.
+    #
+    # 검토했다가 접은 이유는, Basic Auth를 켜 두면 PWA 설치·Service Worker 등록·Web Push가
+    # 인증 뒤에서 동작해 그 상태의 검증 결과를 공개 상태의 결과로 믿을 수 없기 때문입니다.
+    #
+    # 다시 막아야 할 상황이 생기면 아래 두 줄의 주석을 풀고 계정 파일을 먼저 만드세요.
     #
     #   sudo apt-get install -y apache2-utils
     #   sudo htpasswd -c /etc/nginx/.htpasswd-meet-or-solo-prod <USERNAME>
     #   sudo chmod 640 /etc/nginx/.htpasswd-meet-or-solo-prod
     #   sudo chown root:www-data /etc/nginx/.htpasswd-meet-or-solo-prod
     #
-    # ⚠ 아래 항목은 저장소에서 판단할 수 없어 **실서버 검증 항목**으로 남깁니다(docs/07 운영 수동 배포 절차 6절).
-    #   - OAuth: Kakao·Naver 로그인은 브라우저 top-level 이동이라 Basic Auth 세션이 함께
-    #     전달될 것으로 보이지만, 콜백까지 통과하는지는 실제로 눌러 봐야 압니다.
-    #   - PWA: 설치와 Service Worker 등록이 인증 뒤에서 되는지 확인이 필요합니다.
-    #   - Web Push: 구독 등록(`POST /api/members/me/push-subscriptions`)은 브라우저 요청이라
-    #     인증을 함께 보내지만, push 발송은 브라우저 push 서비스가 우리 도메인을 호출하는
-    #     구조가 아니라 우리 서버가 발신하므로 Basic Auth의 영향을 받지 않을 것으로 봅니다.
-    #     이 역시 실기기 확인 항목입니다.
-    #   - 제한을 켠 상태의 검증 결과를 "공개 상태에서도 된다"로 읽으면 안 됩니다.
+    # ⚠ 켜게 되면 OAuth 로그인·PWA 설치·Web Push가 모두 인증 뒤에서 동작합니다.
+    #   그 상태의 검증 결과를 "공개 상태에서도 된다"로 읽으면 안 됩니다.
     #
     # auth_basic           "meet-or-solo prod";
     # auth_basic_user_file /etc/nginx/.htpasswd-meet-or-solo-prod;
 
-    # 검색 노출 차단. Basic Auth의 대체가 아니라 보완입니다.
-    add_header X-Robots-Tag "noindex, nofollow" always;
+    # 검색 노출 차단 - 운영에서는 꺼 둡니다.
+    #
+    # 운영 도메인은 검색에 노출되어야 하므로 주석 처리합니다. 기능이 완성되기 전에
+    # 잠시 가려야 하면 주석을 풀고 reload합니다.
+    #
+    # 개발 도메인에는 이 줄이 켜져 있습니다. index.html은 빌드 결과물 하나라 dev와 운영이
+    # 같은 title·description·robots.txt를 갖는데, 개발 버전이 검색에 뜨면 같은 내용이
+    # 두 주소로 잡혀 운영 순위까지 깎입니다.
+    # add_header X-Robots-Tag "noindex, nofollow" always;
     # -------------------------------------------------------------------------
 
     # WebSocket(STOMP) 상태 동기화 전용 경로입니다.
