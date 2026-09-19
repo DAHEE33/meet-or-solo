@@ -4,6 +4,7 @@ import { ApiClientError } from '../api/apiClient';
 import { GeolocationError } from '../utils/geolocation';
 import type { CurrentMatchGroup } from '../api/matching';
 import type { MatchRoomState } from '../hooks/useMatchRoom';
+import { toNotificationMessage } from '../notifications/notificationMessages';
 import {
   ArrivalChangeSnackbar,
   formatRemainingTime,
@@ -516,9 +517,32 @@ describe('MatchRoomContent', () => {
     const content = text(tree);
     expect(content.indexOf('매칭이 확정됐어요.'))
       .toBeLessThan(content.indexOf('내가 10분 후 도착할 예정이에요.'));
-    expect(content).toContain('여행자B님이 도착했어요.');
+    expect(content).toContain('여행자B님이 만남 장소에 도착했어요.');
     expect(content).toContain('2026-07-30 09:01:00');
     expect(elements(tree).some((element) => element.type === 'time')).toBe(true);
+  });
+
+  /**
+   * 같은 사건을 두 화면이 다른 말로 부르면 사용자는 다른 일이 일어난 것으로 읽는다.
+   *
+   * <p>종(알림함)에는 "상대가 만남 장소에 도착했어요"가, 상태방에는 "민수님이 도착했어요"가
+   * 남아 있어서 "메인 화면 알림과 매칭방 알림이 다르다"는 제보가 나왔다. 닉네임만 다르고
+   * 나머지 어휘는 같아야 한다.
+   */
+  it.each([
+    ['MEMBER_ARRIVED', '만남 장소에 도착했어요'],
+    ['MEMBER_CANCELLED', '참여를 취소했어요'],
+    ['MEMBER_LEFT', '먼저 갔어요'],
+    ['MEMBER_NO_SHOW', '도착 마감까지 오지 않았어요'],
+  ] as const)('%s 문구는 알림 문구와 같은 어휘를 쓴다', (type, phrase) => {
+    expect(matchEventText({
+      eventId: 1,
+      type,
+      occurredAt: '2026-07-30T00:00:00Z',
+      actor: { memberId: 2, nickname: '민수' },
+      arrivalMinutes: null,
+    }, 1)).toBe(`민수님이 ${phrase}.`);
+    expect(toNotificationMessage({ reason: type }).title).toContain(phrase);
   });
 
   it.each([0, 5, 10, 20, 25, 30] as const)(

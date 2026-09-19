@@ -729,9 +729,10 @@ Kakao JavaScript Key는 환경 설정으로 주입하고 저장소에 커밋하�
   (스레드) 3개이고, 진입점은 `MyPage`의 "1:1 문의" 행입니다. 목록은 `BlockedMembersPage`의
   상태 분기 패턴(loading / 빈 상태 / 오류·재시도)을 따릅니다.
 - **미확인 답변 badge는 부가 기능이 아니라 필수입니다.** 관리자 답변을 사용자에게 밀어줄 채널이
-  없습니다 — STOMP는 `/matching`·`/match-room`에서만 연결되고, Web Push는 VAPID 키·구독
-  table·권한 UI가 전무하며, 메일 발송 인프라도 없습니다. badge가 유일한 도달 신호이므로
-  진입점에서 빼면 사용자는 답변이 온 사실을 알 수 없습니다.
+  없습니다. STOMP·알림함·Web Push가 생긴 뒤에도 그렇습니다 — 셋 다 **매칭 상태 변화
+  (`MatchingStateChangedEvent`)만** 실어 나르고 문의 답변은 그 경로에 올라가지 않습니다.
+  메일 발송 인프라도 없습니다. badge가 유일한 도달 신호이므로 진입점에서 빼면 사용자는
+  답변이 온 사실을 알 수 없습니다.
 - badge 값은 `GET /api/members/me/inquiries/unread-count`로 읽습니다. 목록 전체를 불러오지
   않습니다. 조회에 실패하면 badge를 감추고 진입점은 그대로 둡니다(안전 알림 badge와 같은 방식).
 - 스레드 상세를 여는 것만으로 서버가 열람 시각을 갱신해 badge가 꺼집니다. 별도 "읽음" 호출이

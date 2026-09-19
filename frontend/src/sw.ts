@@ -47,17 +47,39 @@ function readPayload(event: PushEvent): PushPayload | null {
   }
 }
 
+/**
+ * 화면을 보고 있는 탭이 있는지.
+ *
+ * <p>앱이 열려 있으면 WebSocket이 같은 알림을 이미 전달했고 `NotificationCenter`가 화면에
+ * 띄운다. 거기에 push까지 OS 알림을 올리면 <b>같은 일이 두 번</b> 보인다 — 앱 안에 하나,
+ * 알림 센터에 하나. 게다가 OS 알림은 탭하기 전까지 알림함에 남아 "알림이 안 사라진다"가 된다.
+ */
+async function hasVisibleClient(): Promise<boolean> {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  return windows.some((client) => client.visibilityState === 'visible');
+}
+
 self.addEventListener('push', (event) => {
   const payload = readPayload(event);
   if (!payload?.reason) return;
   const message = toNotificationMessage({ reason: payload.reason });
-  event.waitUntil(self.registration.showNotification(message.title, {
-    body: message.body,
-    // 같은 사유의 알림이 여러 번 오면 쌓지 않고 최신 것으로 덮는다.
-    tag: payload.reason,
-    renotify: true,
-    data: { path: message.path },
-  } as NotificationOptions));
+  event.waitUntil((async () => {
+    /*
+      보고 있는 탭이 있으면 OS 알림을 띄우지 않는다.
+
+      `userVisibleOnly: true`로 구독했으므로 원칙적으로 push마다 알림을 띄워야 하지만,
+      브라우저는 그 origin의 탭이 화면에 보이는 동안에는 이 요구를 강제하지 않는다. 앱이
+      이미 같은 내용을 보여주고 있기 때문이다.
+    */
+    if (await hasVisibleClient()) return;
+    await self.registration.showNotification(message.title, {
+      body: message.body,
+      // 같은 사유의 알림이 여러 번 오면 쌓지 않고 최신 것으로 덮는다.
+      tag: payload.reason,
+      renotify: true,
+      data: { path: message.path },
+    } as NotificationOptions);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
