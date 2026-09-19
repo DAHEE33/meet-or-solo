@@ -23,6 +23,7 @@ import { remainingSeconds, stabilizeRemainingSeconds } from '../utils/serverCloc
 import { positiveInteger, readNumberFromLocationState } from '../utils/positiveInteger';
 import MannerTemperatureBadge from '../components/member/MannerTemperatureBadge';
 import { enablePush } from '../push/webPush';
+import { profileImageSrc } from '../utils/profileImage';
 
 function useCountdown(deadlineIso: string | null | undefined, serverOffsetMs: number, deadlineKey?: string) {
   const [remaining, setRemaining] = useState(0);
@@ -947,7 +948,7 @@ function ConfirmedCard({ group, onEnterRoom }: { group: CurrentMatchGroup; onEnt
           <div key={member.memberId} className="flex items-center gap-3 rounded-2xl bg-sand p-3">
             {member.profileImageUrl ? (
               <img
-                src={member.profileImageUrl}
+                src={profileImageSrc(member.profileImageUrl)}
                 alt=""
                 className="h-11 w-11 rounded-full object-cover"
                 referrerPolicy="no-referrer"

@@ -28,6 +28,7 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
                 CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
                      ELSE member.nickname END AS nickname,
                 member.profile_image_url AS profileImageUrl,
+                member.profile_image_object_key AS profileImageObjectKey,
                 group_member.status AS status,
                 group_member.arrival_minutes AS arrivalMinutes,
                 group_member.arrival_time_selected_at AS arrivalTimeSelectedAt,
@@ -49,6 +50,7 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
                 CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
                      ELSE member.nickname END AS nickname,
                 member.profile_image_url AS profileImageUrl,
+                member.profile_image_object_key AS profileImageObjectKey,
                 group_member.status AS status,
                 group_member.arrival_minutes AS arrivalMinutes,
                 group_member.arrival_time_selected_at AS arrivalTimeSelectedAt,
@@ -120,7 +122,8 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
                 member.id AS memberId,
                 CASE WHEN member.status = 'WITHDRAWN' THEN '탈퇴한 회원'
                      ELSE member.nickname END AS nickname,
-                member.profile_image_url AS profileImageUrl
+                member.profile_image_url AS profileImageUrl,
+                member.profile_image_object_key AS profileImageObjectKey
             FROM match_group_members group_member
             JOIN members member ON member.id = group_member.member_id
             WHERE group_member.group_id IN (:groupIds)
@@ -164,14 +167,26 @@ public interface MatchGroupMemberRepository extends JpaRepository<MatchGroupMemb
         Long getGroupId();
         Long getMemberId();
         String getNickname();
+        /** 카카오·네이버가 준 외부 URL. 직접 올린 사진이 있으면 그쪽이 우선이다. */
         String getProfileImageUrl();
+        /**
+         * 직접 올린 사진의 object key.
+         *
+         * <p>이 값을 함께 읽지 않아 <b>사진을 올린 회원은 남에게 사진이 보이지 않았다</b> —
+         * 올린 사진은 private bucket에 있고 {@code profile_image_url}에는 가입 당시 소셜
+         * 사진이 남거나 비어 있다. 판정은 {@code MemberProfileImageUrls.forOtherMember}가 한다.
+         */
+        String getProfileImageObjectKey();
     }
 
     interface ActiveGroupMemberProjection {
         Long getGroupMemberId();
         Long getMemberId();
         String getNickname();
+        /** 카카오·네이버가 준 외부 URL. 직접 올린 사진이 있으면 그쪽이 우선이다. */
         String getProfileImageUrl();
+        /** 직접 올린 사진의 object key. {@code MatchHistoryMemberProjection}과 같은 이유로 읽는다. */
+        String getProfileImageObjectKey();
         String getStatus();
         Integer getArrivalMinutes();
         java.time.Instant getArrivalTimeSelectedAt();

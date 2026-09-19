@@ -8,13 +8,29 @@ import {
   type MatchCancellationReason,
   type MatchCancellationResult,
 } from '../api/matching';
+import { NOTICE_DISMISS_MS } from '../components/common/TopNotice';
 import { connectMatchingWebSocket } from '../api/matchingWebSocket';
 import { subscribeMatchingNotifications } from '../api/matchingNotificationHub';
 import { getCurrentPosition } from '../utils/geolocation';
 import type { MatchRoomAction } from '../utils/matchRoomError';
 
 export const MATCH_ROOM_FALLBACK_POLL_MS = 5_000;
-export const ARRIVAL_CHANGE_NOTICE_MS = 3_000;
+
+/**
+ * 도착 시간 변경 안내가 화면에 머무는 시간.
+ *
+ * <p>다른 알림과 같은 값을 쓴다({@link NOTICE_DISMISS_MS}). 예전에는 이것만 3초여서, 같은
+ * 화면의 다른 안내보다 먼저 사라졌다.
+ */
+export const ARRIVAL_CHANGE_NOTICE_MS = NOTICE_DISMISS_MS;
+
+/**
+ * 이 session이 거는 timer의 종류.
+ *
+ * <p>둘의 지연 시간이 같아졌기 때문에 필요하다. 예전에는 폴링 5초 / 안내 3초라 테스트가 지연
+ * 시간만 보고 구분할 수 있었는데, 안내를 5초로 맞추면서 그 방법이 통하지 않는다.
+ */
+export type MatchRoomTimer = 'FALLBACK_POLL' | 'ARRIVAL_CHANGE_NOTICE';
 
 export type MatchRoomState = {
   status: 'LOADING' | 'READY' | 'EMPTY' | 'ERROR';
@@ -67,7 +83,7 @@ type MatchRoomSessionDependencies = {
   ) => Promise<MatchCancellationResult>;
   leave?: (signal: AbortSignal) => Promise<MatchCancellationResult>;
   connect: typeof connectMatchingWebSocket;
-  schedule: (callback: () => void, delay: number) => number;
+  schedule: (callback: () => void, delay: number, purpose: MatchRoomTimer) => number;
   cancelSchedule: (timer: number) => void;
   onState: (state: MatchRoomState) => void;
 };
@@ -102,7 +118,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
     timer = dependencies.schedule(() => {
       timer = null;
       void refresh();
-    }, MATCH_ROOM_FALLBACK_POLL_MS);
+    }, MATCH_ROOM_FALLBACK_POLL_MS, 'FALLBACK_POLL');
   };
 
   const publish = (state: MatchRoomState) => {
@@ -162,7 +178,7 @@ export function createMatchRoomSession(dependencies: MatchRoomSessionDependencie
           noticeTimer = dependencies.schedule(() => {
             noticeTimer = null;
             if (!stopped) publish({ ...currentState, arrivalChangeNotice: null });
-          }, ARRIVAL_CHANGE_NOTICE_MS);
+          }, ARRIVAL_CHANGE_NOTICE_MS, 'ARRIVAL_CHANGE_NOTICE');
         }
         publish({
           status: 'READY',

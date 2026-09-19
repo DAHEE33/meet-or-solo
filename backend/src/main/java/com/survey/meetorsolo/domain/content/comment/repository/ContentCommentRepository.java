@@ -41,7 +41,8 @@ public interface ContentCommentRepository extends JpaRepository<ContentComment, 
      */
     @Query(value = """
             select new com.survey.meetorsolo.domain.content.comment.repository.ContentCommentRow(
-                comment.id, comment.memberId, member.nickname, comment.body,
+                comment.id, comment.memberId, member.nickname,
+                member.profileImageUrl, member.profileImageObjectKey, comment.body,
                 comment.likeCount, comment.createdAt)
             from ContentComment comment, Member member
             where member.id = comment.memberId
@@ -63,7 +64,8 @@ public interface ContentCommentRepository extends JpaRepository<ContentComment, 
 
     @Query(value = """
             select new com.survey.meetorsolo.domain.content.comment.repository.ContentCommentRow(
-                comment.id, comment.memberId, member.nickname, comment.body,
+                comment.id, comment.memberId, member.nickname,
+                member.profileImageUrl, member.profileImageObjectKey, comment.body,
                 comment.likeCount, comment.createdAt)
             from ContentComment comment, Member member
             where member.id = comment.memberId

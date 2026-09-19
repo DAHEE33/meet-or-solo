@@ -5,6 +5,7 @@ import {
   subscribeMatchingNotifications,
 } from '../api/matchingNotificationHub';
 import type { MatchingWebSocketCallbacks } from '../api/matchingWebSocket';
+import { NOTICE_DISMISS_MS } from '../components/common/TopNotice';
 import {
   NOTICE_VISIBLE_MS,
   isAlreadyVisible,
@@ -147,11 +148,15 @@ describe('notificationMessages', () => {
    *
    * <p>예전에는 긴급 알림(배너)에 타이머가 아예 없어서 닫기를 누르기 전까지 남았다. 화면을
    * 옮겨도 따라다녔고, 응답 시간 30초가 지나 이미 끝난 제안의 배너가 그대로 떠 있었다.
+   *
+   * <p>긴급도 일반과 같은 5초다. 자리마다 3초·5초·무제한으로 달랐던 것을 하나로 모았다
+   * ({@link NOTICE_DISMISS_MS}). 긴급 알림을 더 오래 띄우지 않는 이유는 놓쳐도 사라지지 않는
+   * 경로가 이미 둘(매칭 화면의 제안 카드, 헤더의 종) 있기 때문이다.
    */
-  it('긴급 알림도 저절로 사라지고 제안 응답 시간과 같은 30초다', () => {
-    expect(NOTICE_VISIBLE_MS.URGENT).toBe(30_000);
-    expect(NOTICE_VISIBLE_MS.INFO).toBe(5_000);
-    expect(NOTICE_VISIBLE_MS.URGENT).toBeGreaterThan(NOTICE_VISIBLE_MS.INFO);
+  it('모든 알림이 같은 시간 동안 뜨고 저절로 사라진다', () => {
+    expect(NOTICE_VISIBLE_MS.URGENT).toBe(NOTICE_DISMISS_MS);
+    expect(NOTICE_VISIBLE_MS.INFO).toBe(NOTICE_DISMISS_MS);
+    expect(NOTICE_DISMISS_MS).toBe(5_000);
   });
 });
 

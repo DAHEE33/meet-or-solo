@@ -1,5 +1,183 @@
 # 진행 상태 기록
 
+## [아이콘] 브랜드 핀 하나로 통일 — favicon·PWA·스플래시
+
+상태: Frontend 구현 완료. **PNG 아이콘은 래스터화 도구가 없어 만들지 못했다(아래 참조)**
+
+탭 아이콘이 `public/icons/placeholder.svg`(남색 사각형에 원 두 개와 웃는 입)였다. 앱 첫
+화면의 핀 로고와 아무 관계가 없는 그림이라, 탭·설치 아이콘·스플래시가 각자 놀았다.
+
+### 스플래시 핀을 정지 SVG로 옮겼다
+
+| 자리 | 이전 | 지금 |
+| --- | --- | --- |
+| 브라우저 탭 | `placeholder.svg` | `icons/icon.svg` |
+| PWA 일반 | `placeholder.svg` (`any maskable`) | `icons/icon.svg` (`any`) |
+| PWA 설치 | 같음 | `icons/icon-maskable.svg` (`maskable`) |
+| 스플래시 | `BrandPin.tsx` | 그대로 |
+
+애니메이션과 바닥 그림자는 뺐다. 착지 동작을 설명하는 조각이라 멈춰 있으면 의미가 없고,
+16px 탭 아이콘에서는 핀 아래 얼룩으로만 보인다.
+
+**`any`와 `maskable`을 한 항목에 같이 두지 않는다.** 예전에는 `purpose: 'any maskable'`
+하나였다. maskable은 바깥 20%가 잘려도 되도록 여백을 크게 준 그림이라, 그대로 탭 아이콘으로
+쓰면 로고가 작게 박혀 보인다. 파일을 나눠 각자 맞는 그림을 준다 — `maskable` 쪽만 0.71배로
+줄이고 `sand` 배경을 꽉 채운다(투명하면 잘라낸 자리에 검은 판이 깔리는 기기가 있다).
+
+### 도형이 세 곳에 생겨서 가드를 붙였다
+
+`BrandPin.tsx`·`icon.svg`·`icon-maskable.svg`가 같은 도형을 그린다. 정적 SVG는 `public/`에
+있어 좌표 모듈을 import할 수 없으므로, **`brandPinIcon.test.ts`가 파일을 읽어 좌표가 같은지
+대조**한다. 좌표는 `brandPinGeometry.ts` 한 곳에 모았다.
+
+이번 세션에서 같은 값이 여러 곳에 흩어져 한 곳을 빠뜨린 일이 두 번 있었다(알림 타이머,
+프로필 사진 URL). 눈으로 보기 전까지 아무도 모르는 종류의 결함이라 가드를 먼저 뒀다.
+**가드가 실제로 잡는지 확인했다** — 머리 반지름을 6.3→7.9로, 색을 팔레트 밖 값으로 바꿨더니
+2건이 깨졌다.
+
+### 곁들여 맞춘 것
+
+- manifest `theme_color`가 `#0f172a`(남색)였다. `index.html`의 `<meta name="theme-color">`는
+  `#FAF7F1`이라, **설치한 앱의 상단 바 색과 브라우저에서 연 색이 달랐다.** 둘 다 `sand`로 맞췄다.
+- `background_color`도 `#ffffff` → `#FAF7F1`. 설치 앱이 뜨는 동안 흰 판이 한 번 깜빡였다.
+- manifest `lang`이 없어 `en`으로 나가고 있었다. `ko`를 넣었다.
+
+### PNG 아이콘은 못 만들었다
+
+**iOS 홈 화면(`apple-touch-icon`)은 SVG를 지원하지 않는다.** 일부 안드로이드 런처도 PNG를
+선호한다. 그런데 이 PC에 래스터화 도구가 없다(sharp·ImageMagick 모두 없음).
+`frontend/logo.png`가 있지만 1448x1086에 워드마크까지 합쳐져 있어 정사각 아이콘으로 쓸 수 없다.
+
+뽑는 법과 뒤이어 할 일은 `docs/03` PWA 절에 적어 뒀다. **지금 상태로도 안드로이드 설치와
+데스크톱 탭은 정상**이고, iOS 홈 화면 아이콘만 비어 보인다.
+
+### 테스트
+
+Frontend **840건 전체 통과**(88 파일), `tsc -b` 통과, `npm run build` 성공. 빌드된
+`dist/manifest.webmanifest`에 아이콘 2개와 `#FAF7F1`이 들어간 것을 확인했다.
+`@types/node`를 들이지 않으려고 테스트는 `?raw` import로 SVG를 읽는다.
+
+## [프로필 사진] 댓글·매칭방에 반영한다 — 로그인 회원 한정
+
+상태: Backend/Frontend 구현 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
+
+"프로필 사진을 등록했는데 댓글에는 이니셜만 나온다"는 제보다. `docs/27` 6.2가 **의도적으로**
+노출하지 않기로 한 것이었는데, 등록한 사진이 아무 데도 안 쓰이는 것은 사용자 입장에서
+등록이 반영되지 않은 것과 같다. 노출 범위를 **로그인 회원으로 제한**해 다시 켰다.
+
+### 필드만 추가해서는 안 되는 구조였다
+
+회원은 사진을 두 갈래로 갖는다.
+
+| 갈래 | 컬럼 | 꺼내는 법 |
+| --- | --- | --- |
+| 소셜 사진 | `members.profile_image_url` | 카카오·네이버 CDN 절대 URL |
+| 올린 사진 | `members.profile_image_object_key` | private bucket → **서버 중계 필요** |
+
+**올린 사진을 꺼내는 경로가 `GET /api/members/me/profile-image` 본인 전용 하나뿐이었다.**
+그래서 댓글 응답에 `profileImageUrl`을 담기만 하면 각자 자기 사진만 보이는 상태가 된다.
+
+그리고 **두 갈래를 함께 보는 자리가 한 곳도 없었다.** 댓글도 매칭방도 `profile_image_url`만
+읽는다. 그래서 사진을 올린 회원은 남에게 사진이 안 보이고, 소셜로 가입한 뒤 사진을 올린
+회원은 **방금 올린 사진 대신 가입 당시 소셜 사진**이 계속 보인다.
+
+### 무엇을 만들었나
+
+- `MemberProfileImageUrls.forOtherMember` — 두 갈래를 한 곳에서 판정한다. **올린 사진이
+  소셜 사진보다 우선**이다(나중에 정한 값이므로).
+- `GET /api/members/{memberId}/profile-image` — 로그인 확인 후 다른 회원의 올린 사진을
+  중계한다. `SecurityConfig`가 `anyRequest().permitAll()`이라 인증은 controller가 직접 한다.
+  **없는 회원과 사진 없는 회원에게 같은 응답**(`PROFILE_IMAGE_NOT_FOUND`)을 준다 — 구분하면
+  그 id의 회원이 있는지가 드러난다.
+- `ContentCommentResponse.profileImageUrl` — **`viewerMemberId`가 `null`이면 담지 않는다.**
+  목록 자체는 비로그인도 읽을 수 있어야 하므로 예외를 던지지 않고 값만 비운다.
+- `CommentAvatar` — 사진이 있으면 사진, 없으면 이니셜. **로딩이 실패해도 이니셜로 되돌린다**
+  (로그인이 풀리거나 소셜 URL이 만료되면 깨진 이미지 아이콘이 남는다).
+
+### 매칭방·매칭 상대 카드·매칭 기록도 함께 고쳤다
+
+같은 결함이 `MatchGroupMemberRepository`의 세 쿼리에 그대로 있었다 — `profile_image_url`만
+읽어서 **올린 사진이 매칭 상대에게 보이지 않았다.** 댓글만 고치면 "댓글엔 내 사진이 보이는데
+매칭방엔 안 보인다"가 된다.
+
+URL을 SQL에서 만들지 않고 **projection에 `profileImageObjectKey`를 추가해 Java에서 판정**했다.
+`CASE WHEN ... THEN '/api/members/' || id || ...`을 쿼리 세 곳에 복사하면, 나중에 경로가 바뀔 때
+한 곳을 빠뜨린다. 판정은 댓글과 같은 `MemberProfileImageUrls.forOtherMember` 하나다.
+
+| 자리 | 매핑 지점 |
+| --- | --- |
+| 매칭방 상대 카드 | `MatchGroupMemberResponse.from` |
+| 매칭 확정 카드(`/matching`) | 같음 |
+| 매칭 기록 | `MatchHistoryService.members` |
+
+프론트는 상대 경로를 절대 경로로 바꿔야 한다. 매칭 관련 endpoint가 `CurrentMatchGroup`을
+여러 갈래로 돌려주므로 **API 계층이 아니라 렌더 지점**에서 `profileImageSrc`로 바꾼다 —
+endpoint를 하나 빠뜨리는 것보다 `<img>` 세 곳을 보는 편이 확실하다.
+
+차단 목록(`BlockedMembersPage`)은 그대로다. 그쪽 쿼리는 이번에 손대지 않아 여전히 소셜
+사진만 내려온다.
+
+### 테스트
+
+- 신규 `MemberProfileImageUrlsTest` 4건 — 두 갈래 우선순위와 공백·null 처리를 고정한다.
+- Frontend: 사진 있음/없음 아바타 분기 2건, `resolveCommentProfileImageUrl` 2건,
+  `profileImageSrc` 3건 추가. 기존 fixture 2곳에 `profileImageUrl: null`을 넣었다.
+- 회귀: frontend **826건 전체 통과**, `tsc -b` 통과. backend 767건 중 73건 실패인데 **전부
+  인프라다**(Docker 미설치 + `127.0.0.1:15432` 미기동, 38개 실패 클래스 전수 확인, 단정 실패 0건).
+- **엔드포인트 인증은 통합 테스트로만 검증되는데 이 PC에서 돌지 않는다.** dev 배포 후
+  로그아웃 상태에서 `/api/members/{id}/profile-image`가 401인지 확인해야 한다.
+
+## [알림 결함 4 후속] 매칭방 스낵바 3개가 아래에 남아 있었다
+
+상태: Frontend 수정 완료. **dev 재배포 후 확인 필요**
+
+앞 항목에서 4번을 "완료"로 적었는데 **`NotificationCenter` 범위만 고친 것이었다.** dev에서
+검증하다 "매칭방에서 알림이 아래에 뜨는 게 있다"는 제보가 나왔고, 실제로 `MatchRoomPage`가
+자기 스낵바를 따로 `bottom-24`에 띄우고 있었다. 전역 알림만 위로 올려 놓고 화면별 알림은
+그대로 둔 셈이다.
+
+| 자리 | 내용 | 이전 | 지금 |
+| --- | --- | --- | --- |
+| `ArrivalChangeSnackbar` | "○○님이 도착 시간을 변경하였어요" | 아래, 3초 | **위, 5초** |
+| 신고 완료 | "○○님에 대한 신고가 접수됐어요" | 아래, **자동 해제 없음** | **위, 5초** |
+| 차단 완료 | "회원을 차단했어요…" | 아래, **자동 해제 없음** | **위, 5초** |
+
+신고·차단 완료 안내는 타이머가 아예 없어 닫기를 누르기 전까지 남았다. 2번("안 사라짐")의
+한 갈래였는데 앞 항목에서 놓쳤다.
+
+### 위치와 시간을 한 파일로 모았다
+
+같은 값이 네 군데에 복사돼 있었기 때문에 한 곳만 고치고 나머지를 놓쳤다. 이제
+`components/common/TopNotice.tsx`가 **위치(`TOP_NOTICE_POSITION`)와 머무는 시간
+(`NOTICE_DISMISS_MS`)을 모두** 갖고, 전역·화면별 알림이 같은 것을 참조한다.
+
+- `NOTICE_VISIBLE_MS.URGENT` / `.INFO` → 둘 다 `NOTICE_DISMISS_MS`
+- `ARRIVAL_CHANGE_NOTICE_MS` → `NOTICE_DISMISS_MS`
+- 신고·차단 완료 → `MatchRoomPage`의 `useAutoDismiss`가 같은 값으로 건다
+
+z-index는 전역 `z-50`, 화면별 `z-40`으로 나눴다. 둘이 겹치면 매칭 상태 변화가 위로 온다 —
+신고 접수 완료보다 매칭이 확정됐다는 사실이 먼저다.
+
+### 긴급 알림 30초를 5초로 낮췄다
+
+앞 항목에서 `MATCH_PROPOSED`의 응답 시간에 맞춰 30초를 줬는데, **화면을 30초 동안 가리는
+값이라 부담이 컸다.** 사용자 요청대로 5초로 통일했다.
+
+놓쳐도 사라지지 않는 경로가 이미 둘 있어 받아들일 만하다 — 매칭 화면의 제안 카드(카운트다운
+포함)와 헤더의 종이다. 긴급도는 이제 **색으로만** 구분한다(코랄/잉크).
+
+### timer에 용도를 붙였다
+
+`ARRIVAL_CHANGE_NOTICE_MS`가 `MATCH_ROOM_FALLBACK_POLL_MS`와 같은 5초가 되면서, 지연 시간만
+보고 timer를 고르던 `useMatchRoom.test.ts`가 **폴링 timer를 안내 timer로 착각**하게 됐다.
+`schedule(callback, delay, purpose)`에 `MatchRoomTimer`(`'FALLBACK_POLL' | 'ARRIVAL_CHANGE_NOTICE'`)
+를 추가해 테스트가 용도로 고르게 했다.
+
+### 테스트
+
+Frontend **820건 전체 통과**, `tsc -b` 통과. `fixed bottom`으로 전수 검색해 알림성 UI가
+하나도 남지 않은 것을 확인했다(탭바·상세 하단 액션바는 `inset-x-0 bottom-0`이고 알림이 아니다).
+
 ## [알림 결함 2~6] 표시 자리 통합, 문구 통일, dev 반경·push 배선
 
 상태: Backend/Frontend/인프라 수정 완료. **컨테이너 통합 테스트와 dev 수동 검증 대기**
