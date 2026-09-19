@@ -105,7 +105,8 @@ WebSocket/application event도 발행하지 않습니다.
 
 - `V19__add_admin_member_sanctions.sql`로 `BANNED`, 정지 시작·종료 시각,
   제재 전 상태, `admin_actions.reason_code`, `idempotency_key` 추가
-- 관리자 회원 목록·닉네임 검색·상태/역할 filter·cursor pagination
+- 관리자 회원 목록·닉네임 검색·상태 filter·cursor pagination
+  (역할 filter는 2026-09-18에 제거했다 — [docs/30-2](30-2_SUPER_ADMIN_LOCAL_LOGIN_DESIGN.md) 8절)
 - 회원 상세와 신고·제재 이력 조회
 - `WARNING`, `SUSPEND`, `BAN`, `UNBAN` action
 - 필수 `Idempotency-Key`, member → optional report 고정 row lock

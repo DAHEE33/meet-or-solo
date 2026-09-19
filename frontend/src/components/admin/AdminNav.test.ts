@@ -25,6 +25,19 @@ describe('AdminNavContent', () => {
     expect(links.map((link) => link.props.to)).toContain('/admin/meeting-points');
   });
 
+  /** 메뉴 순서는 관리자가 자주 여는 순서다. 신고 관리가 마지막이다. */
+  it('회원 → 만남 장소 → 문의 → 신고 순으로 메뉴를 배치한다', () => {
+    const tree = AdminNavContent({ pathname: '/admin' });
+    const links = nodes(tree).filter((node) => (node.props as { to?: string }).to !== undefined);
+    expect(links.map((link) => link.props.to)).toEqual([
+      '/admin',
+      '/admin/members',
+      '/admin/meeting-points',
+      '/admin/inquiries',
+      '/admin/reports',
+    ]);
+  });
+
   it('미확인 안전 알림이 있으면 신고 관리 메뉴에만 badge를 표시한다', () => {
     const tree = AdminNavContent({ pathname: '/admin', openSafetyAlertCount: 3 });
     const badges = nodes(tree).filter(
@@ -80,9 +93,10 @@ describe('AdminNavContent', () => {
       // nav 자체의 aria-label("관리자 메뉴")은 badge가 아니다.
       return typeof label === 'string' && /^미(확인|처리)/.test(label);
     });
+    // 메뉴 순서(회원 → 만남 장소 → 문의 → 신고)를 그대로 따라 문의 badge가 먼저 나온다.
     expect(badged.map((node) => node.props['aria-label'])).toEqual([
-      '미확인 안전 알림 3건',
       '미처리 문의 2건',
+      '미확인 안전 알림 3건',
     ]);
   });
 });

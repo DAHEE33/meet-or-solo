@@ -48,6 +48,21 @@ class AdminAuthorizationServiceTest {
         verify(accessPolicy, never()).requireAccessible(member);
     }
 
+    /**
+     * 관리자 진입은 {@code /admin/login}의 로컬 계정 하나로만 연다. 마이페이지의 관리자 진입
+     * 링크를 걷어내면서 서버도 같이 닫았다 — 화면에서 링크만 지우면 URL을 아는 사람은 그대로
+     * 들어온다.
+     */
+    @Test
+    void 소셜_계정은_ADMIN_역할이어도_403이다() {
+        Member member = member(3L, "소셜관리자", Member.ROLE_ADMIN, "KAKAO");
+        when(members.findById(3L)).thenReturn(Optional.of(member));
+
+        assertError(3L, ErrorCode.FORBIDDEN);
+        // 계정 종류에서 끝나므로 제재 판정까지 가지 않는다.
+        verify(accessPolicy, never()).requireAccessible(member);
+    }
+
     @Test
     void 관리자_회원은_제재_판정을_거친다() {
         Member member = member(2L, "관리자", Member.ROLE_ADMIN);
@@ -68,10 +83,15 @@ class AdminAuthorizationServiceTest {
     }
 
     private Member member(long id, String nickname, String role) {
+        return member(id, nickname, role, Member.PROVIDER_LOCAL);
+    }
+
+    private Member member(long id, String nickname, String role, String provider) {
         Member member = mock(Member.class);
         when(member.getId()).thenReturn(id);
         when(member.getNickname()).thenReturn(nickname);
         when(member.getRole()).thenReturn(role);
+        when(member.getProvider()).thenReturn(provider);
         return member;
     }
 

@@ -30,6 +30,9 @@ public interface MatchEventRepository extends JpaRepository<MatchEvent, Long> {
                   'ARRIVAL_TIME_SELECTED',
                   'MEMBER_ARRIVED',
                   'MEMBER_CANCELLED',
+                  -- 먼저 나가기는 알림("한 명이 먼저 갔어요")으로는 나가는데 상태 기록에서는
+                  -- 빠져 있었다. 취소와 같은 층위의 변화라 상태방에도 남아야 한다(docs/19 4.11.3).
+                  'MEMBER_LEFT',
                   'MEMBER_NO_SHOW',
                   'MATCH_CANCELLED'
               )

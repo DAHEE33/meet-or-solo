@@ -10,10 +10,25 @@ import type { MatchingStateChangedNotification } from '../api/matchingWebSocket'
  */
 
 export type NotificationLevel =
-  /** 지금 손을 써야 하는 알림. 배너로 띄우고 저절로 사라지지 않는다. */
+  /** 지금 손을 써야 하는 알림. 눈에 띄는 색으로 오래 띄운다. */
   | 'URGENT'
-  /** 알아두면 되는 알림. 토스트로 잠깐 띄운다. */
+  /** 알아두면 되는 알림. 잠깐 띄운다. */
   | 'INFO';
+
+/**
+ * 알림이 화면에 머무는 시간.
+ *
+ * <p><b>긴급 알림도 저절로 사라진다.</b> 예전에는 배너에 타이머가 없어 "닫기"를 누르기 전까지
+ * 영영 남았다. 화면을 옮겨도 따라다녔고, 응답 시간 30초가 지나 이미 끝난 제안의 배너가 그대로
+ * 떠 있었다.
+ *
+ * <p>30초인 이유는 {@code MATCH_PROPOSED}의 응답 시간이 30초이기 때문이다. 그보다 짧으면
+ * 아직 유효한 제안이 화면에서 사라지고, 길면 이미 끝난 제안이 남는다.
+ */
+export const NOTICE_VISIBLE_MS: Record<NotificationLevel, number> = {
+  URGENT: 30_000,
+  INFO: 5_000,
+};
 
 export type NotificationMessage = {
   title: string;
@@ -26,7 +41,7 @@ export type NotificationMessage = {
 const MESSAGES: Record<string, NotificationMessage> = {
   /**
    * 응답 시간이 30초다. 놓치면 `penalty_score +1`과 쿨타임 2분이 붙으므로(백엔드
-   * `MatchingPenaltyPolicy.roundOneTimeout`) 유일하게 배너로 띄운다.
+   * `MatchingPenaltyPolicy.roundOneTimeout`) 긴급으로 띄운다.
    */
   MATCH_PROPOSED: {
     title: '매칭 상대를 찾았어요',
@@ -67,6 +82,11 @@ const MESSAGES: Record<string, NotificationMessage> = {
     path: '/match-room',
     level: 'INFO',
   },
+  /*
+    아래 상태방 사유들은 `MatchRoomPage.matchEventText`와 같은 어휘를 쓴다. 같은 사건을 두
+    화면이 다른 말로 부르면 사용자는 다른 일이 일어난 것으로 읽는다. 닉네임만 차이가 있다 —
+    알림은 행위자를 모르므로 "상대가"로만 말할 수 있다.
+  */
   MEMBER_ARRIVED: {
     title: '상대가 만남 장소에 도착했어요',
     path: '/match-room',
@@ -89,13 +109,13 @@ const MESSAGES: Record<string, NotificationMessage> = {
     level: 'INFO',
   },
   MEMBER_NO_SHOW: {
-    title: '도착 마감까지 오지 않은 멤버가 있어요',
+    title: '한 명이 도착 마감까지 오지 않았어요',
     path: '/match-room',
     level: 'INFO',
   },
   MATCH_CANCELLED: {
     title: '만남이 종료됐어요',
-    body: '남은 인원으로는 만남을 이어갈 수 없었어요.',
+    body: '남은 인원으로 만남을 이어갈 수 없었어요.',
     path: '/matching',
     level: 'INFO',
   },
@@ -131,7 +151,15 @@ export function toNotificationMessage(
   return MESSAGES[notification.reason] ?? FALLBACK;
 }
 
-/** 알림을 이미 보고 있는 화면이면 토스트를 띄우지 않는다. */
+/**
+ * 알림이 가리키는 화면을 이미 보고 있는지.
+ *
+ * <p>두 자리에서 쓴다. 알림이 올 때는 <b>띄울지</b>를 정하고, 알림이 떠 있는 동안에는
+ * <b>내릴지</b>를 정한다. 그 화면에 도착했으면 "가서 보라"는 신호는 역할을 다했다.
+ *
+ * <p>긴급 알림은 예외다. 제안을 놓치면 `penalty_score +1`과 쿨타임 2분이 붙어서, 매칭 화면에
+ * 있더라도 눈에 띄게 알려야 한다. 대신 {@link NOTICE_VISIBLE_MS}의 30초가 지나면 사라진다.
+ */
 export function isAlreadyVisible(message: NotificationMessage, pathname: string): boolean {
   if (message.level === 'URGENT') return false;
   return pathname === message.path;

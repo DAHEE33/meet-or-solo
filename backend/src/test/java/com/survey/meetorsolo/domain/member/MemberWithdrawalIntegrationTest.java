@@ -581,11 +581,17 @@ class MemberWithdrawalIntegrationTest {
                 """, USER, FESTIVAL, poolStatus, NOW, NOW.plusMinutes(1), NOW, NOW);
     }
 
+    /**
+     * 관리자 계정은 {@code provider='LOCAL'}로 넣는다. 관리자 진입을 로컬 계정으로 한정하면서
+     * {@code AdminAuthorizationService}가 provider까지 확인한다 — 소셜 계정은 role이 ADMIN이어도
+     * 403이다.
+     */
     private void insertMember(long id, String nickname, String role, String status) {
         jdbc.update("""
                 INSERT INTO members(id, provider, provider_user_id, nickname, role, status, created_at, updated_at)
-                VALUES (?, 'KAKAO', ?, ?, ?, ?, ?, ?)
-                """, id, "withdrawal-" + id, nickname, role, status, NOW.minusDays(10), NOW.minusDays(10));
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, "ADMIN".equals(role) ? "LOCAL" : "KAKAO", "withdrawal-" + id,
+                nickname, role, status, NOW.minusDays(10), NOW.minusDays(10));
     }
 
     private long count(String table, String column, long value) {

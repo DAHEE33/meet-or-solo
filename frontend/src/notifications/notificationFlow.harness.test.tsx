@@ -46,26 +46,25 @@ function fakeSocket() {
 /**
  * `NotificationCenter`가 하는 일을 그대로 옮긴 구독자다.
  *
- * <p>컴포넌트를 직접 마운트하려면 jsdom이 필요해서, 같은 판단(배너/토스트/생략)을 여기서
+ * <p>컴포넌트를 직접 마운트하려면 jsdom이 필요해서, 같은 판단(띄울지/생략할지)을 여기서
  * 재현한다. 판단 기준 자체는 `notificationMessages`의 함수를 그대로 쓴다.
+ *
+ * <p>알림 자리는 하나다. 예전에는 긴급이 위(배너), 일반이 아래(토스트)로 갈려 있었는데
+ * 같은 순간에 둘 다 떠서 알림 종류가 나뉜 것처럼 보였다. 지금은 한 자리에 최신 한 건만
+ * 띄우므로, 여기서도 `notices` 한 줄로 받는다.
  */
 function startNotificationCenter(pathname: () => string) {
-  const banners: StoredNotification[] = [];
-  const toasts: StoredNotification[] = [];
+  const notices: StoredNotification[] = [];
   const stop = subscribeMatchingNotifications({
     onConnected: () => {},
     onStateChanged: (notification) => {
       const added = addNotification(notification);
       if (!added) return;
-      if (added.message.level === 'URGENT') {
-        banners.push(added);
-        return;
-      }
       if (isAlreadyVisible(added.message, pathname())) return;
-      toasts.push(added);
+      notices.push(added);
     },
   });
-  return { banners, toasts, stop };
+  return { notices, stop };
 }
 
 const header = () => renderToStaticMarkup(
@@ -93,11 +92,13 @@ describe('매칭 한 판의 알림 흐름', () => {
     socket.emit('ALL_ARRIVED', '2026-09-14T12:12:00+09:00');
     socket.emit('MATCH_COMPLETED', '2026-09-14T13:00:20+09:00');
 
-    // 응답 30초짜리 제안과 확정은 저절로 사라지면 안 되므로 배너다.
-    expect(center.banners.map((item) => item.reason))
-      .toEqual(['MATCH_PROPOSED', 'MATCH_CONFIRMED']);
-    expect(center.toasts.map((item) => item.reason))
-      .toEqual(['MEMBER_ARRIVED', 'ALL_ARRIVED', 'MATCH_COMPLETED']);
+    // 긴급이든 아니든 같은 자리에 순서대로 뜬다. 긴급도는 색과 머무는 시간으로만 구분한다.
+    expect(center.notices.map((item) => item.reason)).toEqual([
+      'MATCH_PROPOSED', 'MATCH_CONFIRMED', 'MEMBER_ARRIVED', 'ALL_ARRIVED', 'MATCH_COMPLETED',
+    ]);
+    expect(center.notices.map((item) => item.message.level)).toEqual([
+      'URGENT', 'URGENT', 'INFO', 'INFO', 'INFO',
+    ]);
 
     const state = getNotificationState();
     expect(state.items).toHaveLength(5);
@@ -110,8 +111,8 @@ describe('매칭 한 판의 알림 흐름', () => {
     center.stop();
   });
 
-  /** 상태방을 보고 있으면 화면이 이미 갱신된다. 같은 사실을 토스트로 또 알릴 이유가 없다. */
-  it('상태방에 있으면 그 방 알림은 토스트로 중복되지 않는다', () => {
+  /** 상태방을 보고 있으면 화면이 이미 갱신된다. 같은 사실을 알림으로 또 알릴 이유가 없다. */
+  it('상태방에 있으면 그 방 알림은 화면에 중복되지 않는다', () => {
     const socket = fakeSocket();
     __setConnectImplForTest(socket.impl);
     const center = startNotificationCenter(() => '/match-room');
@@ -119,26 +120,26 @@ describe('매칭 한 판의 알림 흐름', () => {
     socket.emit('MEMBER_ARRIVED', '2026-09-14T12:10:00+09:00');
     socket.emit('MEMBER_LEFT', '2026-09-14T12:40:00+09:00');
 
-    expect(center.toasts).toHaveLength(0);
+    expect(center.notices).toHaveLength(0);
     // 띄우지 않았을 뿐 기록은 남는다. 나중에 종으로 확인할 수 있어야 한다.
     expect(getNotificationState().items).toHaveLength(2);
     center.stop();
   });
 
   /** 제안은 놓치면 penalty_score +1과 쿨타임 2분이 붙는다. 어느 화면에 있든 띄워야 한다. */
-  it('매칭 화면에 있어도 제안 배너는 뜬다', () => {
+  it('매칭 화면에 있어도 제안 알림은 뜬다', () => {
     const socket = fakeSocket();
     __setConnectImplForTest(socket.impl);
     const center = startNotificationCenter(() => '/matching');
 
     socket.emit('MATCH_PROPOSED', '2026-09-14T12:00:00+09:00');
 
-    expect(center.banners).toHaveLength(1);
+    expect(center.notices).toHaveLength(1);
     center.stop();
   });
 
   /**
-   * 끊겼다 붙으면 서버가 같은 알림을 다시 보낼 수 있다. 그때마다 배너가 뜨면 화면이
+   * 끊겼다 붙으면 서버가 같은 알림을 다시 보낼 수 있다. 그때마다 알림이 뜨면 화면이
    * 시끄럽고, 목록에도 같은 줄이 쌓인다.
    */
   it('재연결로 같은 알림이 다시 와도 한 번만 쌓인다', () => {
@@ -150,14 +151,14 @@ describe('매칭 한 판의 알림 흐름', () => {
     socket.drop();
     socket.emit('MATCH_CONFIRMED', '2026-09-14T12:00:20+09:00');
 
-    expect(center.banners).toHaveLength(1);
+    expect(center.notices).toHaveLength(1);
     expect(getNotificationState().items).toHaveLength(1);
     center.stop();
   });
 
   /**
    * 알림 센터와 매칭 화면이 동시에 구독하는 상황이다. 소켓이 둘로 갈라지면 같은 알림을
-   * 두 번 받고 배너가 겹친다.
+   * 두 번 받고 알림이 겹친다.
    */
   it('매칭 화면이 함께 구독해도 소켓은 하나고 알림 기록은 한 벌이다', () => {
     const socket = fakeSocket();

@@ -31,9 +31,17 @@ public class AdminMemberRepository {
         this.jdbc = jdbc;
     }
 
+    /**
+     * 회원 목록. <b>관리자 계정은 항상 뺀다.</b>
+     *
+     * <p>예전에는 화면의 역할 filter가 이 조건을 만들었고 기본값이 {@code USER}였다. filter를
+     * 걷어내면서 조건을 서버로 옮겼다. 그대로 두면 관리자 계정이 목록에 새로 나타나는데,
+     * 그건 filter 제거가 의도한 변화가 아니다. 관리자는 제재·매너온도 조정 대상도 아니라
+     * 목록에 둘 이유가 없다.
+     */
     public List<AdminMemberListItemResponse> findPage(
             AdminMemberFilter filter, Cursor cursor, int fetchSize) {
-        StringBuilder sql = new StringBuilder(MEMBER_COLUMNS).append(" WHERE 1=1");
+        StringBuilder sql = new StringBuilder(MEMBER_COLUMNS).append(" WHERE m.role='USER'");
         Map<String, Object> parameters = new HashMap<>();
         if (filter.query() != null) {
             sql.append(" AND m.nickname ILIKE :query ESCAPE '!'");
@@ -42,10 +50,6 @@ public class AdminMemberRepository {
         if (filter.status() != null) {
             sql.append(" AND m.status=:status");
             parameters.put("status", filter.status().name());
-        }
-        if (filter.role() != null) {
-            sql.append(" AND m.role=:role");
-            parameters.put("role", filter.role());
         }
         if (Boolean.TRUE.equals(filter.testAccount())) {
             sql.append(" AND m.test_account");

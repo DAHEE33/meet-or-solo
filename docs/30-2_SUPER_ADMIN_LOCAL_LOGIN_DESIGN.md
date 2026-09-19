@@ -1,6 +1,8 @@
 # 슈퍼관리자 ID/PW 로그인 설계
 
 - 상태: `DONE` — 구현 완료(수동 검증 대기). 2026-09-14.
+- **2026-09-18 변경: SSO 관리자 진입을 제거하고 이 경로만 남겼습니다.** 아래 1절의
+  "SSO를 유지한 채 하나 더 추가"는 더 이상 유효하지 않습니다. 자세한 내용은 8절.
 - 관련 문서: [보안 정책](06_SECURITY_POLICY.md), [관리자·회원·안전 로드맵](19_ADMIN_MEMBER_SAFETY_ROADMAP.md)
 
 ## 1. 배경과 목표
@@ -206,3 +208,45 @@ Frontend
 1. LOCAL 계정이 `/admin/members` 회원 목록에 노출된다. `AdminMemberService`가 `ROLE_ADMIN`
    대상 제재를 이미 막고 있어 위험은 없지만, 목록에서 숨길지는 별도 결정이 필요하다.
 2. 닉네임 중복. `ADMIN_LOCAL_NICKNAME`은 일반 회원과 겹치지 않는 값을 쓴다.
+
+## 8. 2026-09-18 변경 — 관리자 진입을 로컬 계정으로 일원화
+
+`/admin/login`이 자리를 잡으면서 SSO 관리자 진입(마이페이지 → "관리자 기능" → `/admin`)을
+없앴습니다. 관리자 진입 경로는 이제 **하나**입니다.
+
+### 무엇을 바꿨나
+
+| 계층 | 변경 |
+| --- | --- |
+| 자격 판정 | `AdminAuthorizationService.requireAdmin`이 `role='ADMIN'`에 더해 `provider='LOCAL'`을 요구한다 |
+| 만남 장소 | `FestivalMeetingPointAdminService`의 자체 `requireAdmin`을 없애고 공통 서비스에 위임한다 |
+| 화면 | 마이페이지의 "관리자 기능" 링크와 관리자 여부 조회(`GET /api/admin/me`)를 제거한다 |
+
+### 왜 서버까지 막았나
+
+화면에서 링크만 지우면 URL을 아는 사람은 그대로 들어옵니다. 소셜 계정에 `role='ADMIN'`을
+붙이는 것만으로 관리자 화면이 열리는 상태가 남아 있으면 경로를 없앴다고 할 수 없습니다.
+
+`FestivalMeetingPointAdminService`를 함께 고친 이유도 같습니다. 이 서비스만 자체 `requireAdmin`을
+갖고 있어 **역할만 보고 통과시켰습니다.** 공통 판정에 위임하지 않으면 소셜 관리자가 만남 장소를
+그대로 고칠 수 있는 구멍이 남습니다. 제재 판정(`requireAccessible`)이 함께 걸리는 것도 이득입니다.
+
+### 응답을 갈라 알리지 않는다
+
+소셜 계정이 `role='ADMIN'`이어도 일반 회원과 똑같은 `403 FORBIDDEN`입니다. 사유를 구분하면
+어느 계정이 관리자 역할을 갖고 있는지가 응답으로 드러납니다.
+
+### 함께 없앤 것 — 회원 목록의 역할 filter
+
+`/admin/members`의 USER/ADMIN 선택을 없앴습니다. 관리자가 로컬 계정 하나로 한정되면서
+역할로 걸러 볼 이유가 사라졌습니다.
+
+**목록에서 관리자를 빼는 조건은 서버로 옮겼습니다**(`AdminMemberRepository.findPage`가 항상
+`role='USER'`). 화면 filter의 기본값이 이미 `USER`여서 관리자 계정은 원래 보이지 않았는데,
+filter만 걷어내면 관리자 계정이 목록에 새로 나타납니다. 그건 filter 제거가 의도한 변화가
+아니고, 관리자는 제재·매너온도 조정 대상도 아니라 목록에 둘 이유가 없습니다.
+
+### 되돌리려면
+
+`AdminAuthorizationService.isLocalAdmin`에서 provider 조건을 빼고, 마이페이지 링크를 되살리면
+됩니다. DB 스키마와 migration은 건드리지 않았습니다.

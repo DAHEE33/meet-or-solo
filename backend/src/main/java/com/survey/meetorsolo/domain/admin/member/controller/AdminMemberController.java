@@ -26,13 +26,12 @@ public class AdminMemberController {
             @CookieValue(name = "access_token", required = false) String accessToken,
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String role,
             @RequestParam(required = false) Boolean testAccount,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) Integer size
     ) {
         return ApiResponse.success(members.list(
-                memberId(accessToken), query, status, role, testAccount, cursor, size));
+                memberId(accessToken), query, status, testAccount, cursor, size));
     }
 
     @GetMapping("/{memberId}")

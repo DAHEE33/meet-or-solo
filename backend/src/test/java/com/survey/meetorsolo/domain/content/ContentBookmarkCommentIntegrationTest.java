@@ -328,7 +328,7 @@ class ContentBookmarkCommentIntegrationTest {
     @Test
     void 로그인_engagement는_내_찜_상태와_관리자_여부를_알려준다() throws Exception {
         toggleBookmark(ME, "/api/festivals/" + FESTIVAL_ID, true);
-        jdbc.update("UPDATE members SET role='ADMIN' WHERE id=?", OTHER);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL' WHERE id=?", OTHER);
 
         mockMvc.perform(get("/api/festivals/{id}/engagement", FESTIVAL_ID).cookie(cookie(ME)))
                 .andExpect(jsonPath("$.data.bookmarked").value(true))
@@ -392,7 +392,7 @@ class ContentBookmarkCommentIntegrationTest {
     @Test
     void 관리자는_댓글을_숨기고_다시_공개할_수_있다() throws Exception {
         long commentId = insertComment(OTHER, "숨김 대상");
-        jdbc.update("UPDATE members SET role='ADMIN' WHERE id=?", THIRD);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL' WHERE id=?", THIRD);
 
         changeVisibility(THIRD, commentId, false)
                 .andExpect(status().isOk())
@@ -419,7 +419,7 @@ class ContentBookmarkCommentIntegrationTest {
     @Test
     void 작성자가_삭제한_댓글은_관리자가_되살리지_않는다() throws Exception {
         long commentId = insertComment(ME, "작성자 삭제 대상");
-        jdbc.update("UPDATE members SET role='ADMIN' WHERE id=?", THIRD);
+        jdbc.update("UPDATE members SET role='ADMIN', provider='LOCAL' WHERE id=?", THIRD);
         mockMvc.perform(delete("/api/comments/{id}", commentId).cookie(cookie(ME)))
                 .andExpect(status().isNoContent());
 

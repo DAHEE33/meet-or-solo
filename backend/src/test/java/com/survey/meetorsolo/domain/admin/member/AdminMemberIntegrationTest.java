@@ -72,10 +72,10 @@ class AdminMemberIntegrationTest {
 
     @Test
     void 목록은_검색_filter와_동일시각_ID_cursor를_안정적으로_처리한다() {
-        var first = service.list(ADMIN, "memb", "ACTIVE", "USER", null, null, 1);
+        var first = service.list(ADMIN, "memb", "ACTIVE", null, null, 1);
         assertThat(first.items()).extracting(AdminMemberListItemResponse::memberId).containsExactly(USER);
         assertThat(first.pagination().hasNext()).isFalse();
-        assertThatThrownBy(() -> service.list(ADMIN, null, "UNKNOWN", null, null, null, 20))
+        assertThatThrownBy(() -> service.list(ADMIN, null, "UNKNOWN", null, null, 20))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(ErrorCode.ADMIN_MEMBER_INVALID_REQUEST));
@@ -460,11 +460,11 @@ class AdminMemberIntegrationTest {
     void 테스트_계정_filter는_지정된_회원만_돌려준다() {
         service.updateTestAccount(ADMIN, USER, new AdminMemberTestAccountRequest(true, null));
 
-        assertThat(service.list(ADMIN, null, null, "USER", true, null, 20).items())
+        assertThat(service.list(ADMIN, null, null, true, null, 20).items())
                 .extracting(AdminMemberListItemResponse::memberId)
                 .containsExactly(USER);
         // false는 "제외"가 아니라 "조건 없음"이다.
-        assertThat(service.list(ADMIN, null, null, "USER", false, null, 20).items())
+        assertThat(service.list(ADMIN, null, null, false, null, 20).items())
                 .extracting(AdminMemberListItemResponse::memberId)
                 .containsExactlyInAnyOrder(USER, PROFILE_USER);
     }
@@ -493,11 +493,17 @@ class AdminMemberIntegrationTest {
         return count == null ? 0 : count;
     }
 
+    /**
+     * 관리자 계정은 {@code provider='LOCAL'}로 넣는다. 관리자 진입을 로컬 계정으로 한정하면서
+     * {@code AdminAuthorizationService}가 provider까지 확인한다 — 소셜 계정은 role이 ADMIN이어도
+     * 403이다.
+     */
     private void insertMember(long id, String nickname, String role, String status) {
         jdbc.update("""
                 INSERT INTO members(id, provider, provider_user_id, nickname, role, status, created_at, updated_at)
-                VALUES (?, 'KAKAO', ?, ?, ?, ?, ?, ?)
-                """, id, "admin-member-" + id, nickname, role, status, NOW.minusDays(1), NOW.minusDays(1));
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, "ADMIN".equals(role) ? "LOCAL" : "KAKAO", "admin-member-" + id,
+                nickname, role, status, NOW.minusDays(1), NOW.minusDays(1));
     }
 
     private long insertReport(String status) {

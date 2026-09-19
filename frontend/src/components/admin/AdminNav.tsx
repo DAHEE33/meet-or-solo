@@ -5,10 +5,10 @@ import { adminInquiriesApi, EMPTY_ADMIN_INQUIRY_FILTERS } from '../../api/adminI
 
 const MENU_ITEMS = [
   { to: '/admin', label: '대시보드' },
-  { to: '/admin/reports', label: '신고 관리' },
   { to: '/admin/members', label: '회원 관리' },
   { to: '/admin/meeting-points', label: '만남 장소 관리' },
   { to: '/admin/inquiries', label: '문의 관리' },
+  { to: '/admin/reports', label: '신고 관리' },
 ] as const;
 
 /** 관리자 화면 5곳(대시보드/신고/회원/만남 장소/문의)에 공통으로 쓰는 상단 메뉴바. */
