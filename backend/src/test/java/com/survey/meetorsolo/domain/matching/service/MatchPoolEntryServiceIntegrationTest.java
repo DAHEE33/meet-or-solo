@@ -341,6 +341,8 @@ class MatchPoolEntryServiceIntegrationTest {
         jdbc.update("DELETE FROM festival_checkins WHERE member_id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
         jdbc.update("DELETE FROM festival_meeting_points WHERE festival_id = ?", FESTIVAL_ID);
         jdbc.update("DELETE FROM members WHERE id BETWEEN ? AND ?", MEMBER_ID, MEMBER_ID + 3);
+        // 수집 구간은 축제를 ON DELETE RESTRICT로 참조한다. 축제보다 먼저 지워야 한다.
+        jdbc.update("DELETE FROM match_collection_windows WHERE festival_id = ?", FESTIVAL_ID);
         jdbc.update("DELETE FROM festivals WHERE id = ?", FESTIVAL_ID);
     }
 

@@ -43,6 +43,10 @@ import org.testcontainers.utility.DockerImageName;
 class MatchingThreeMemberScenarioIntegrationTest {
 
     private static final String TOKEN = "three-member-fixed-token";
+    private static final java.time.OffsetDateTime WINDOW_STARTED_AT =
+            java.time.OffsetDateTime.of(2026, 7, 17, 14, 59, 40, 0, java.time.ZoneOffset.ofHours(9));
+    private static final java.time.OffsetDateTime WINDOW_ENDS_AT =
+            java.time.OffsetDateTime.of(2026, 7, 17, 14, 59, 50, 0, java.time.ZoneOffset.ofHours(9));
     /** 같은 축제(9100001)에 유효한 ACTIVE check-in을 가진 회원 3명. */
     private static final String TRIO = "9110001,9110002,9110006";
 
@@ -83,6 +87,24 @@ class MatchingThreeMemberScenarioIntegrationTest {
         jdbc.update("UPDATE match_pools SET status='PROPOSED' WHERE member_id NOT IN (" + TRIO + ")");
         jdbc.update("UPDATE match_pools SET preferred_group_size=?, status='WAITING' "
                 + "WHERE member_id IN (" + TRIO + ")", preferredGroupSize);
+        stampEndedCollectionWindow();
+    }
+
+    /**
+     * SQL로 직접 넣은 pool을 <b>이미 수집이 끝난 구간</b>에 넣는다.
+     *
+     * <p>수집 구간은 신청 경로에서 만들어진다. fixture로 pool만 넣으면 구간이 없어 tick이
+     * 평가하지 못하고, 구간을 새로 열면 수집 시간이 남아 있어 역시 평가되지 않는다. 이 테스트의
+     * 관심사는 조합 로직이므로 수집은 끝난 상태로 둔다.
+     */
+    private void stampEndedCollectionWindow() {
+        jdbc.update("DELETE FROM match_collection_windows");
+        jdbc.update("INSERT INTO match_collection_windows"
+                + "(festival_id,started_at,ends_at,status,created_at,updated_at) "
+                + "SELECT DISTINCT festival_id, ?, ?, 'COLLECTED', ?, ? FROM match_pools",
+                WINDOW_STARTED_AT, WINDOW_ENDS_AT, WINDOW_STARTED_AT, WINDOW_STARTED_AT);
+        jdbc.update("UPDATE match_pools p SET collect_window_id = "
+                + "(SELECT w.id FROM match_collection_windows w WHERE w.festival_id = p.festival_id)");
     }
 
     private void assertProposedTrio(long attemptId, int targetGroupSize) {

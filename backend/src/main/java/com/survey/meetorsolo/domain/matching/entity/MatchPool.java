@@ -60,6 +60,18 @@ public class MatchPool {
     @Column(name = "lock_token", length = 100)
     private String lockToken;
 
+    /**
+     * 이 후보가 속한 수집 구간.
+     *
+     * <p>{@code null}은 두 경우다. ① 배포 시점에 이미 대기 중이던 pool ② 구간 배정 전. 둘 다
+     * 다음 tick이 해당 축제의 열린 구간으로 편입한다.
+     *
+     * <p>평가 후 남은 후보는 이 값만 다음 구간으로 옮긴다. {@code enteredAt}과
+     * {@code searchExpiresAt}은 건드리지 않는다.
+     */
+    @Column(name = "collect_window_id")
+    private Long collectWindowId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -166,6 +178,16 @@ public class MatchPool {
 
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    /** 수집 구간에 배정한다. 신청 시점과 잔여 후보 이월에서 쓴다. */
+    public void assignCollectWindow(Long collectWindowId, OffsetDateTime now) {
+        this.collectWindowId = collectWindowId;
+        this.updatedAt = now;
+    }
+
+    public Long getCollectWindowId() {
+        return collectWindowId;
     }
 
     public void lock(OffsetDateTime lockedAt, String lockToken) {

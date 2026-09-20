@@ -143,7 +143,16 @@ app:
       # 세 scheduler가 이 값을 공유하므로 늘리면 제안 timeout·만남 종료 판정도 그만큼 늦어진다.
       # 5s 대비 10s는 한 창에 유효 후보 3명 이상이 모일 확률을 저·중밀도에서 4~7배 높인다.
       # 고밀도에서는 차이가 거의 없다. 즉 이득이 "문제가 실제로 발생하는 구간"에 몰린다.
+      # 제안 timeout·만남 종료 scheduler 주기. 조합 주기와 분리한다.
+      # 이 값을 줄이면 제안이 닫히는 시점이 촘촘해지지만 조합과는 무관하다.
       fixed-delay: ${MATCHING_SCHEDULER_FIXED_DELAY:10s}
+      # 후보 수집 시간. 같은 축제의 첫 유효 대기자가 들어온 시점부터 이 시간 동안 모으고,
+      # 끝난 뒤 모인 후보를 한 번에 평가한다. tick마다 즉시 평가하면 유효한 조합이 처음 생기는
+      # 순간 소진돼 후보가 2명을 넘지 못하고, 조합이 1개면 궁합 점수가 순위에 개입할 수 없다.
+      collect-window: ${MATCHING_COLLECT_WINDOW:10s}
+      # 조합 scheduler 주기. 수집 시간보다 짧아야 한다(기동 시 검증).
+      # 제안 시점은 수집 종료 + (0 ~ 이 주기) + 평가·DB 처리 시간이다.
+      matching-fixed-delay: ${MATCHING_SCHEDULER_MATCHING_FIXED_DELAY:2s}
       stale-timeout: ${MATCHING_STALE_TIMEOUT:30s}
       proposal-timeout: ${MATCHING_PROPOSAL_TIMEOUT:30s}
       batch-size: ${MATCHING_SCHEDULER_BATCH_SIZE:20}

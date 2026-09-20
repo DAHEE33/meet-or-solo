@@ -840,7 +840,8 @@ ORDER BY cosine DESC;
 | --- | --- | --- | --- |
 | 1 | **수정 커밋이 배포됐는가** | 배포된 backend 이미지의 커밋 | `7b77a0f` 이후 |
 | 2 | **scheduler가 켜져 있는가** | 기동 로그에 `MatchingScheduler` 빈 생성, 또는 신청 후 tick 동작 | `MATCHING_SCHEDULER_ENABLED=true` |
-| 3 | **수집 주기가 의도한 값인가** | 주입된 `MATCHING_SCHEDULER_FIXED_DELAY` | `10s` |
+| 3 | **수집 시간이 의도한 값인가** | 주입된 `MATCHING_COLLECT_WINDOW` | `10s` |
+| 3-1 | **조합 주기가 수집 시간보다 짧은가** | `MATCHING_SCHEDULER_MATCHING_FIXED_DELAY` | `2s` |
 | 4 | **동일 배치에 5명 전원이 들어갔는가** | 아래 4-A | 두 attempt의 `started_at`이 같은 tick |
 | 5 | **제외 조건이 없는가** | 아래 5-A | 차단·재매칭 제외·쿨타임 0건 |
 | 6 | **SCHEDULER가 만든 제안 2건인가** | 아래 6-A | `created_by='SCHEDULER'`, attempt 2건 |
@@ -902,3 +903,40 @@ WHERE member_id IN (:ids) ORDER BY entered_at;
 
 > 결과가 기대와 다르면 **추가 결함으로 단정하기 전에 4·5번(실제 배치 구성과 제외 사유)부터
 > 확인합니다.** 조건 하나만 어긋나도 다른 결과가 정상입니다.
+
+### 수집 구간 도입 후 절차 (2026-09-19)
+
+후보 수집 방식이 바뀌었습니다. **동시에 누를 필요가 없습니다.**
+
+같은 축제의 **첫 유효 대기자가 신청한 시점부터 `MATCHING_COLLECT_WINDOW`(기준 10초)** 동안 후보를
+모으고, 그 시간이 끝난 뒤 모인 후보를 한 번에 평가합니다. 그 사이에 scheduler가 여러 번 돌아도
+제안이 만들어지지 않습니다. 예전에는 tick이 도는 순간 대기자가 2명이면 바로 묶여서, 몇 초 차이로
+결과가 갈렸습니다.
+
+**5인 검증 절차**
+
+| | |
+| --- | --- |
+| 준비 | 5명 전원 같은 축제 체크인, 태그 동일, 임베딩 `COMPLETED`, 희망 인원 **2명**, "2명이어도 괜찮아요" 체크 |
+| 조작 | **첫 신청자부터 10초 안에** 다섯 명이 신청. 시간차로 들어와도 됩니다 |
+| 기대 | 수집이 끝난 뒤 한 번에 평가되어 코사인 상위 두 조합이 묶이고 한 명이 남습니다 |
+| 기대 — DB | `match_attempts` 2건이 **같은 `started_at`**, `created_by = SCHEDULER`, 남은 한 명의 pool은 `WAITING` |
+
+**확인 쿼리** — 구간이 의도대로 열리고 닫혔는지 봅니다.
+
+```sql
+SELECT id, festival_id, status,
+       to_char(started_at,'HH24:MI:SS') AS started,
+       to_char(ends_at,'HH24:MI:SS')    AS ends,
+       (SELECT count(*) FROM match_pools p WHERE p.collect_window_id = w.id) AS candidates
+FROM match_collection_windows w
+WHERE started_at > now() - INTERVAL '30 minutes'
+ORDER BY id DESC;
+```
+
+- `status`가 `EVALUATED`면 평가까지 끝난 구간입니다
+- `COLLECTED`로 오래 남아 있으면 조합 scheduler가 돌지 않는 것입니다
+  (`MATCHING_SCHEDULER_ENABLED` 확인)
+- `EVALUATING`으로 오래 남아 있으면 평가 중 장애입니다. `stale-timeout` 경과 후 자동 회수됩니다
+- `candidates`가 기대보다 적으면 일부가 **다음 구간**으로 넘어간 것입니다.
+  `ends_at`과 각자의 신청 시각을 비교하세요

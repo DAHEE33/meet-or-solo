@@ -7619,3 +7619,68 @@ migration 없음(기존 테이블만 읽는다). `SecurityConfig`·`WebMvcConfig
 **dev 배포 후 `/admin/login` 로그인이 여전히 되는지 한 번 확인해야 한다.** 운영/dev DB의
 관리자 계정이 소셜 계정이라면 그 계정은 더 이상 관리자 화면에 들어갈 수 없다 —
 `ADMIN_LOCAL_USERNAME`/`ADMIN_LOCAL_PASSWORD`로 만든 계정이 있는지 먼저 봐야 한다.
+
+## [매칭] 후보 수집 구간 도입 — 첫 신청자 기준 10초를 모아서 평가한다
+
+브랜치: `feature/wbs-10-b-matching-collect-window` (`origin/dev` `ab3c088` 기준)
+
+### 왜
+
+즉시 조합 경로를 제거해 조합 시점을 scheduler tick으로 옮겼지만(PR #81), **대기열이 쌓이지
+않는 문제가 남아 있었다.** tick마다 "지금 대기 중인 후보 전체"를 평가하므로 유효한 조합이 처음
+생기는 순간 소진되고, 대기 후보가 2명을 넘지 못한다. 조합이 1개뿐이면 정렬해서 고를 대상이
+없으므로 궁합 점수가 순위에 개입할 수 없다.
+
+개발계 5인 시도에서 이것이 드러났다. 전원이 6초 안에 신청했는데도 먼저 들어온 두 명이 2초 뒤
+tick에서 묶였고, 나머지는 다음 tick으로 넘어갔다. 2인 매칭 기준으로 **이득 없이 지연만 늘어난
+상태**였다.
+
+### 무엇을
+
+같은 축제의 **첫 유효 대기자가 들어온 시점부터 `MATCHING_COLLECT_WINDOW`(기준 10초)** 를 하나의
+구간으로 두고, 그 구간이 끝난 뒤 모인 후보를 한 번에 평가한다.
+
+| 결정 | 내용 |
+| --- | --- |
+| 구간 시각 | `match_collection_windows` 행으로 **저장**한다. 후보의 `MIN(entered_at)`으로 유도하면 첫 신청자가 이탈할 때 종료 시각이 움직인다 |
+| 상태 | `OPEN` → `COLLECTED` → `EVALUATING` → `EVALUATED`. **수집 종료와 평가 완료를 구분**한다. 신규 신청은 `COLLECTED`까지만 내리고, scheduler가 `(OPEN, COLLECTED)`를 함께 조회해 평가 누락을 막는다 |
+| 생성 경쟁 | 부분 unique 인덱스 + `ON CONFLICT DO NOTHING` + 재조회. **매칭 신청이 unique 위반으로 실패하지 않는다** |
+| 소유 | DB 행 잠금은 트랜잭션에서 풀리므로 `EVALUATING` + `evaluator_token` 임대로 표시한다 |
+| 후보 조회 | 구간 단위 **전량**. `LIMIT`도 `SKIP LOCKED`도 쓰지 않는다. 자르면 뒤쪽 후보가 비교에서 빠지고, 건너뛰면 구간이 쪼개진다 |
+| 주기 분리 | `matching-fixed-delay`(2s)를 신설하고 `fixed-delay`(10s)는 proposal timeout·만남 종료 전용으로 남긴다 |
+| 최소 인원 | **두지 않는다.** 2명만 있어도 수집이 끝나면 매칭된다 |
+
+`MatchGroupComposer`에 pair 점수 메모이제이션을 넣었다. 조합 순위 규칙은 바꾸지 않고 계산 횟수만
+줄인다. migration은 `V41`이며 dev DB `flyway_schema_history` 최신이 V40임을 확인하고 정했다.
+
+### 조합 비용 실측 (pair 캐시 적용 후)
+
+| 후보 수 | `compose()` 소요 |
+| --- | --- |
+| 10 | 13ms |
+| 15 | 50ms |
+| 20 | 62ms |
+| 25 | 49ms |
+| 30 | 100ms |
+| 40 | 188ms |
+
+**비교 후보 상한은 넣지 않았다.** 10초 구간에 40명이 모이는 부하는 현재 트래픽에서 나오지 않고,
+값을 근거 없이 고정하면 "전체 후보 비교"에 다시 제한이 생긴다. 대신 `compose()`가 200ms를 넘으면
+후보 수와 함께 `warn`을 남겨 실측을 모은다. 상한이 필요해지면 그 로그를 근거로 정한다.
+
+### 테스트
+
+`MatchingCollectionWindowIntegrationTest` 5건, `MatchingCollectionWindowConcurrencyIntegrationTest`
+4건을 추가했다. 시간을 앞으로 감는 Clock을 테스트 빈으로 주입해 **신청 사이사이에 tick을 돌려
+"아직 제안이 없다"를 먼저 확인**한다. 5명을 미리 넣고 tick 한 번으로 끝내면 조기 매칭이 없다는
+것을 검증할 수 없다.
+
+기존 테스트는 `SchedulerMatchPoolClaimServiceIntegrationTest`를 구간 기준으로 다시 썼고
+(`batch-size=2`로 낮춰 **구간 후보가 잘리지 않음**을 확인한다),
+`MatchingOrchestrationServiceTest`를 구간 루프 기준으로 다시 썼다.
+`findSchedulerClaimablePoolsForUpdate`는 쓰는 곳이 없어져 제거했다.
+
+### 범위 밖
+
+서버 설정 변경과 배포는 하지 않았다. dev 재현은 배포 후 `docs/30` "수집 구간 도입 후 절차"로
+확인한다.
