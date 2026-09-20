@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import Wordmark from '../components/brand/Wordmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
 import { sanctionNoticeApi } from '../api/sanctionNotice';
@@ -45,11 +46,7 @@ export default function LoginPage() {
     <MobileLayout showTabBar={false}>
       <main className="flex min-h-screen flex-col justify-center px-6 pb-12 pt-10">
         <div className="flex flex-col gap-2">
-          <div className="flex items-baseline gap-1 text-2xl font-extrabold tracking-tight">
-            <span className="text-ink">meet</span>
-            <span className="text-coral">·or·</span>
-            <span className="text-ink">solo</span>
-          </div>
+          <Wordmark className="text-3xl font-extrabold" />
           <p className="text-[15px] text-ink/60">혼자 온 여행, 함께가 될 수도 있으니까</p>
         </div>
 
@@ -104,7 +101,7 @@ export default function LoginPage() {
 
         {!restricted && (
           <p className="mt-5 text-center text-xs leading-5 text-ink/45">
-            로그인 후 프로필 설정 단계에서 meet·or·solo의 이용약관과 개인정보 수집·이용에 동의하게 됩니다.
+            로그인 후 프로필 설정 단계에서 혼자왔니의 이용약관과 개인정보 수집·이용에 동의하게 됩니다.
           </p>
         )}
       </main>

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { adminAuthApi } from '../../api/adminAuth';
+import Wordmark from '../brand/Wordmark';
 
-/** 관리자 화면 공통 상단 타이틀 — "meet·or·solo" 브랜드와 화면별 부제를 함께 보여준다. */
+/** 관리자 화면 공통 상단 타이틀 — "혼자왔니" 브랜드와 화면별 부제를 함께 보여준다. */
 export default function AdminHeader({ title }: { title: string }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -22,8 +23,9 @@ export default function AdminHeader({ title }: { title: string }) {
 
   return (
     <header className="flex items-center justify-between border-b border-line bg-white px-6 py-4">
-      <h1 className="text-lg font-bold text-ink">
-        meet·or·solo <span className="ml-2 text-sm font-medium text-ink/45">{title}</span>
+      <h1 className="flex items-baseline text-ink">
+        <Wordmark className="text-xl font-extrabold" />
+        <span className="ml-2 text-sm font-medium text-ink/45">{title}</span>
       </h1>
       <button
         type="button"

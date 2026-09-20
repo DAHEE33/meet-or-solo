@@ -40,8 +40,8 @@ export default defineConfig({
       },
       includeAssets: ['icons/icon.svg', 'icons/icon-maskable.svg'],
       manifest: {
-        name: 'meet-or-solo',
-        short_name: 'meet-or-solo',
+        name: '혼자왔니',
+        short_name: '혼자왔니',
         description: '강원도 축제 현장 매칭 PWA',
         // 없으면 'en'으로 나간다. 화면이 전부 한국어고 index.html도 lang="ko"다.
         lang: 'ko',

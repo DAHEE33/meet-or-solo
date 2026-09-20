@@ -9,7 +9,7 @@ import {
 } from './brandPinGeometry';
 
 /**
- * meet·or·solo 핀 심볼.
+ * 혼자왔니 핀 심볼.
  *
  * 로고 PNG(`frontend/logo.png`)를 그대로 쓰지 않고 SVG로 다시 그린 이유는 조각별 애니메이션이
  * 필요해서다. PNG는 핀·광선·워드마크가 한 장에 픽셀로 녹아 있어 광선만 따로 팝시킬 수 없다.
