@@ -41,6 +41,10 @@ import org.testcontainers.utility.DockerImageName;
 class MatchingOrchestrationServiceIntegrationTest {
     private static final String TOKEN = "orchestration-fixed-token";
     private static final int EMBEDDING_DIMENSIONS = 1536;
+    private static final OffsetDateTime WINDOW_STARTED_AT =
+            OffsetDateTime.of(2026, 7, 17, 14, 59, 40, 0, ZoneOffset.ofHours(9));
+    private static final OffsetDateTime WINDOW_ENDS_AT =
+            OffsetDateTime.of(2026, 7, 17, 14, 59, 50, 0, ZoneOffset.ofHours(9));
     private static final OffsetDateTime STYLE_CREATED_AT =
             OffsetDateTime.of(2026, 7, 17, 14, 0, 0, 0, ZoneOffset.ofHours(9));
     /** 5인 시나리오의 첫 신청 시각. 이후 후보는 10초 간격으로 들어온다. */
@@ -52,6 +56,24 @@ class MatchingOrchestrationServiceIntegrationTest {
             DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
     @Autowired MatchingOrchestrationService service;
     @Autowired JdbcTemplate jdbc;
+
+    /**
+     * SQL로 직접 넣은 pool을 <b>이미 수집이 끝난 구간</b>에 넣는다.
+     *
+     * <p>수집 구간은 신청 경로에서 만들어진다. fixture로 pool만 넣으면 구간이 없어 tick이 평가하지
+     * 못하고, tick이 구간을 새로 열면 수집 시간이 남아 있어 역시 평가되지 않는다. 이 테스트의
+     * 관심사는 조합·점수 저장이므로 수집은 끝난 상태에서 시작한다.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void stampEndedCollectionWindow() {
+        jdbc.update("DELETE FROM match_collection_windows");
+        jdbc.update("INSERT INTO match_collection_windows"
+                + "(festival_id,started_at,ends_at,status,created_at,updated_at) "
+                + "SELECT DISTINCT festival_id, ?, ?, 'COLLECTED', ?, ? FROM match_pools",
+                WINDOW_STARTED_AT, WINDOW_ENDS_AT, WINDOW_STARTED_AT, WINDOW_STARTED_AT);
+        jdbc.update("UPDATE match_pools p SET collect_window_id = "
+                + "(SELECT w.id FROM match_collection_windows w WHERE w.festival_id = p.festival_id)");
+    }
 
     @Test void 그룹_생성실패후_token_owned_LOCKED를_즉시_release한다() {
         installMemberFailureTrigger();
@@ -238,6 +260,7 @@ class MatchingOrchestrationServiceIntegrationTest {
         insertEmbedding(9_110_006L, vectorLiteral("0.8", "0.6"), "COMPLETED");
         // COMPLETED가 아니면 벡터가 있어도 reader가 읽지 않아야 한다.
         insertEmbedding(9_110_007L, vectorLiteral("1", "0"), "FAILED");
+        stampEndedCollectionWindow();
     }
 
     private void insertEmbedding(long memberId, String vector, String status) {
