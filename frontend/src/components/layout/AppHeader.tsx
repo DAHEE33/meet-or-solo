@@ -1,6 +1,7 @@
 import { Bell } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Wordmark from '../brand/Wordmark';
 import {
   markAllReadEverywhere,
   useNotifications,
@@ -30,10 +31,7 @@ export default function AppHeader() {
   return (
     <header className="sticky top-0 z-20 bg-sand/90 px-5 pb-2 pt-4 backdrop-blur">
       <div className="flex items-center justify-between">
-        <div className="flex items-baseline">
-          <span className="text-lg font-extrabold tracking-tight text-ink">혼자</span>
-          <span className="text-lg font-extrabold tracking-tight text-coral">왔니</span>
-        </div>
+        <Wordmark className="text-xl font-extrabold" />
         <button
           type="button"
           aria-label={unreadCount > 0 ? `알림 ${unreadCount}건` : '알림'}

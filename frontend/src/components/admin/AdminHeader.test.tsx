@@ -6,8 +6,8 @@ const markup = () => renderToStaticMarkup(<AdminHeader title="회원 조회·제
 
 describe('AdminHeader', () => {
   it('브랜드명과 화면별 부제를 함께 표시한다', () => {
-    expect(markup()).toContain('혼자');
-    expect(markup()).toContain('>왔니</span>');
+    expect(markup()).toContain('>혼자<');
+    expect(markup()).toContain('>니<');
     expect(markup()).toContain('회원 조회·제재');
   });
 

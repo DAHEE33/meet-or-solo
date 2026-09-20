@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import Wordmark from '../components/brand/Wordmark';
 import MobileLayout from '../components/layout/MobileLayout';
 import AccountRestrictionNotice from '../components/common/AccountRestrictionNotice';
 import { sanctionNoticeApi } from '../api/sanctionNotice';
@@ -45,10 +46,7 @@ export default function LoginPage() {
     <MobileLayout showTabBar={false}>
       <main className="flex min-h-screen flex-col justify-center px-6 pb-12 pt-10">
         <div className="flex flex-col gap-2">
-          <div className="flex items-baseline text-2xl font-extrabold tracking-tight">
-            <span className="text-ink">혼자</span>
-            <span className="text-coral">왔니</span>
-          </div>
+          <Wordmark className="text-3xl font-extrabold" />
           <p className="text-[15px] text-ink/60">혼자 온 여행, 함께가 될 수도 있으니까</p>
         </div>
 

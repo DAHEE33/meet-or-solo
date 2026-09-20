@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import SplashScreen from './SplashScreen';
 
 describe('SplashScreen', () => {
-  it('워드마크를 LoginPage와 같은 두 조각 텍스트로 그린다', () => {
+  it('워드마크를 LoginPage와 같은 Wordmark 컴포넌트로 그린다', () => {
     const html = renderToStaticMarkup(<SplashScreen fadingOut={false} />);
     expect(html).toContain('>혼자<');
-    expect(html).toContain('>왔니<');
+    expect(html).toContain('>왔<');
+    expect(html).toContain('>니<');
   });
 
   it('핀 심볼은 장식이므로 보조기술에서 감춘다', () => {
