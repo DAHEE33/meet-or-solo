@@ -36,7 +36,7 @@ export function HealthCheckPage() {
     <main className="health-page">
       <section className="health-panel" aria-labelledby="health-title">
         <p className="health-eyebrow">개발 연결 확인</p>
-        <h1 id="health-title">meet-or-solo</h1>
+        <h1 id="health-title">혼자왔니</h1>
         <p className="health-description">
           현재 화면은 frontend에서 backend <code>GET /api/health</code> 연결만 확인하는 개발용 화면입니다.
         </p>

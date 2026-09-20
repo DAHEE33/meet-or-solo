@@ -59,14 +59,14 @@ export function termsDocument(): LegalDocument {
   const contact = supportContactEmail();
   return {
     id: 'TERMS',
-    title: 'meet·or·solo 이용약관',
+    title: '혼자왔니 이용약관',
     version: LEGAL_DOCUMENT_VERSION,
     effectiveDate: LEGAL_DOCUMENT_EFFECTIVE_DATE,
     sections: [
       {
         heading: '제1조 (목적)',
         paragraphs: [
-          '이 약관은 meet·or·solo(이하 "서비스")가 제공하는 축제 현장 체크인, 동행 매칭, 솔로 코스 추천 등 서비스의 이용 조건과 절차, 서비스와 회원의 권리·의무를 정하는 것을 목적으로 합니다.',
+          '이 약관은 혼자왔니(이하 "서비스")가 제공하는 축제 현장 체크인, 동행 매칭, 솔로 코스 추천 등 서비스의 이용 조건과 절차, 서비스와 회원의 권리·의무를 정하는 것을 목적으로 합니다.',
         ],
       },
       {
@@ -198,14 +198,14 @@ export function privacyDocument(): LegalDocument {
   const contact = supportContactEmail();
   return {
     id: 'PRIVACY',
-    title: 'meet·or·solo 개인정보처리방침',
+    title: '혼자왔니 개인정보처리방침',
     version: LEGAL_DOCUMENT_VERSION,
     effectiveDate: LEGAL_DOCUMENT_EFFECTIVE_DATE,
     sections: [
       {
         heading: '1. 총칙',
         paragraphs: [
-          'meet·or·solo(이하 "서비스")는 개인정보 보호법 등 관련 법령을 준수하며, 회원의 개인정보를 어떤 목적으로 수집해 어떻게 보관·이용하고 언제 파기하는지를 이 방침으로 알립니다.',
+          '혼자왔니(이하 "서비스")는 개인정보 보호법 등 관련 법령을 준수하며, 회원의 개인정보를 어떤 목적으로 수집해 어떻게 보관·이용하고 언제 파기하는지를 이 방침으로 알립니다.',
         ],
       },
       {
