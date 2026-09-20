@@ -30,10 +30,9 @@ export default function AppHeader() {
   return (
     <header className="sticky top-0 z-20 bg-sand/90 px-5 pb-2 pt-4 backdrop-blur">
       <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-1">
-          <span className="text-lg font-extrabold tracking-tight text-ink">meet</span>
-          <span className="text-lg font-extrabold text-coral">·or·</span>
-          <span className="text-lg font-extrabold tracking-tight text-ink">solo</span>
+        <div className="flex items-baseline">
+          <span className="text-lg font-extrabold tracking-tight text-ink">혼자</span>
+          <span className="text-lg font-extrabold tracking-tight text-coral">왔니</span>
         </div>
         <button
           type="button"

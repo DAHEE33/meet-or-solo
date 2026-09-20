@@ -40,7 +40,7 @@ export default function AdminLoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-sand p-6">
       <section className="w-full max-w-sm rounded-3xl bg-white p-8">
         <h1 className="text-xl font-bold text-ink">
-          meet·or·solo <span className="ml-1 text-sm font-medium text-ink/45">관리자</span>
+          혼자<span className="text-coral">왔니</span> <span className="ml-1 text-sm font-medium text-ink/45">관리자</span>
         </h1>
         <p className="mt-2 text-sm text-ink/60">관리자 계정으로 로그인하세요.</p>
 

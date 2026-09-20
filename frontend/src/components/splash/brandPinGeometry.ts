@@ -1,5 +1,5 @@
 /**
- * meet·or·solo 핀 심볼의 좌표.
+ * 혼자왔니 핀 심볼의 좌표.
  *
  * <p>스플래시의 {@link BrandPin}(애니메이션 SVG)과 `public/icons/icon.svg`(favicon·PWA 아이콘)가
  * <b>같은 도형</b>을 그린다. 한쪽만 고치면 탭 아이콘과 앱 첫 화면의 로고가 달라지므로, 좌표를

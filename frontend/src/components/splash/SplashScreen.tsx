@@ -23,10 +23,9 @@ export default function SplashScreen({ fadingOut }: SplashScreenProps) {
       ].join(' ')}
     >
       <BrandPin className="h-56 w-auto" />
-      <div className="flex animate-wordmark-rise items-baseline gap-1 text-3xl font-extrabold tracking-tight motion-reduce:animate-none">
-        <span className="text-ink">meet</span>
-        <span className="text-coral">·or·</span>
-        <span className="text-ink">solo</span>
+      <div className="flex animate-wordmark-rise items-baseline text-3xl font-extrabold tracking-tight motion-reduce:animate-none">
+        <span className="text-ink">혼자</span>
+        <span className="text-coral">왔니</span>
       </div>
     </div>
   );
